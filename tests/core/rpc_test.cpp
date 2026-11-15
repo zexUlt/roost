@@ -124,6 +124,9 @@ private slots:
     void HandlerThrows();
     void HandlerFails();
     void HandlerDropsThePromise();
+    void HandlerFinishesWithoutAResult();
+    void BatchSurvivesEveryFailure();
+    void AnswerOutlivesTheDispatcher();
     void ReservedAndTakenNames();
 };
 
@@ -449,6 +452,83 @@ void RpcTest::HandlerDropsThePromise() {
     const QJsonValue response =
         Answer(dispatcher, R"({"jsonrpc": "2.0", "method": "drop", "id": 1})");
     QCOMPARE(ErrorCode(response), Code(EErrorCode::InternalError));
+}
+
+void RpcTest::HandlerFinishesWithoutAResult() {
+    Dispatcher dispatcher;
+    QVERIFY(dispatcher.Register(QStringLiteral("empty"), [](const Call&) {
+        QPromise<Result> promise;
+        promise.start();
+        promise.finish();
+        return promise.future();
+    }));
+    const QJsonValue response =
+        Answer(dispatcher, R"({"jsonrpc": "2.0", "method": "empty", "id": 1})");
+    QCOMPARE(ErrorCode(response), Code(EErrorCode::InternalError));
+    QCOMPARE(response[QStringLiteral("id")], QJsonValue(1));
+}
+
+// Every way a handler can fail, side by side in one batch: each element gets
+// its own error and the healthy one its result.
+void RpcTest::BatchSurvivesEveryFailure() {
+    SpecMethods spec;
+    QVERIFY(spec.Methods.Register(
+        QStringLiteral("throw"),
+        [](const Call&) -> QFuture<Result> { throw std::runtime_error("x"); }));
+    QVERIFY(spec.Methods.Register(QStringLiteral("fail"), [](const Call&) {
+        QPromise<Result> promise;
+        promise.start();
+        promise.setException(std::make_exception_ptr(std::runtime_error("x")));
+        promise.finish();
+        return promise.future();
+    }));
+    QVERIFY(spec.Methods.Register(QStringLiteral("drop"), [](const Call&) {
+        QPromise<Result> promise;
+        promise.start();
+        return promise.future();
+    }));
+    QVERIFY(spec.Methods.Register(QStringLiteral("empty"), [](const Call&) {
+        QPromise<Result> promise;
+        promise.start();
+        promise.finish();
+        return promise.future();
+    }));
+
+    const QJsonArray responses = Answer(spec.Methods, R"([
+        {"jsonrpc": "2.0", "method": "throw", "id": 1},
+        {"jsonrpc": "2.0", "method": "fail", "id": 2},
+        {"jsonrpc": "2.0", "method": "drop", "id": 3},
+        {"jsonrpc": "2.0", "method": "empty", "id": 4},
+        {"jsonrpc": "2.0", "method": "drop"},
+        {"jsonrpc": "2.0", "method": "sum", "params": [5], "id": 5}
+    ])")
+                                     .toArray();
+
+    QCOMPARE(responses.size(), 5);
+    for (int i = 0; i < 4; ++i) {
+        QCOMPARE(ErrorCode(responses[i]), Code(EErrorCode::InternalError));
+        QCOMPARE(responses[i][QStringLiteral("id")], QJsonValue(i + 1));
+    }
+    QCOMPARE(responses[4], Json(R"({"jsonrpc": "2.0", "result": 5, "id": 5})"));
+}
+
+void RpcTest::AnswerOutlivesTheDispatcher() {
+    auto dispatcher = std::make_unique<Dispatcher>();
+    auto promise = std::make_shared<QPromise<Result>>();
+    QVERIFY(
+        dispatcher->Register(QStringLiteral("slow"), [promise](const Call&) {
+            promise->start();
+            return promise->future();
+        }));
+    const QFuture<QByteArray> response = dispatcher->Handle(
+        R"({"jsonrpc": "2.0", "method": "slow", "id": 1})", nullptr);
+    dispatcher.reset();
+
+    promise->addResult(Result(1));
+    promise->finish();
+    QVERIFY(response.isFinished());
+    QCOMPARE(Json(response.result()),
+             Json(R"({"jsonrpc": "2.0", "result": 1, "id": 1})"));
 }
 
 void RpcTest::ReservedAndTakenNames() {
