@@ -30,6 +30,15 @@ roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
 roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 
+# A plugin backend that misbehaves on request.
+qt_add_executable(fixture_backend helpers/fixture_backend.cpp)
+target_link_libraries(fixture_backend PRIVATE roost::compile_options Qt6::Core)
+
+roost_add_qt_test(backend_test roostd/backend_test.cpp roostd_lib)
+target_compile_definitions(backend_test PRIVATE
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(backend_test fixture_backend)
+
 # The real binary, started as a process.
 roost_add_qt_test(roostd_test roostd/roostd_test.cpp)
 target_compile_definitions(roostd_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
