@@ -34,6 +34,16 @@ const uint8_t* Bytes(QByteArrayView bytes) {
     return reinterpret_cast<const uint8_t*>(bytes.data());
 }
 
+std::expected<void, QString> CheckSize(quint16 columns, quint16 rows) {
+    if (columns == 0 || rows == 0 || columns > VtTerminal::MAX_SIZE ||
+        rows > VtTerminal::MAX_SIZE) {
+        return std::unexpected(
+            QStringLiteral("the size must be from 1 to %1 columns and rows")
+                .arg(VtTerminal::MAX_SIZE));
+    }
+    return {};
+}
+
 }  // namespace
 
 struct VtTerminal::State {
@@ -44,9 +54,13 @@ struct VtTerminal::State {
 
     static void WritePty(GhosttyTerminal /*terminal*/, void* userdata,
                          const uint8_t* data, size_t len) {
-        const auto* state = static_cast<const State*>(userdata);
-        state->Respond(QByteArrayView(reinterpret_cast<const char*>(data),
-                                      static_cast<qsizetype>(len)));
+        // A copy, so the handler may replace itself while it runs.
+        const ResponseHandler respond =
+            static_cast<const State*>(userdata)->Respond;
+        const QByteArrayView response(reinterpret_cast<const char*>(data),
+                                      static_cast<qsizetype>(len));
+        // An exception must not unwind through the library's frames.
+        [&]() noexcept { respond(response); }();
     }
 
     GhosttyTerminal Terminal;
@@ -62,8 +76,8 @@ VtTerminal::~VtTerminal() = default;
 
 std::expected<VtTerminal, QString> VtTerminal::Create(quint16 columns,
                                                       quint16 rows) {
-    if (columns == 0 || rows == 0) {
-        return std::unexpected(QStringLiteral("the size must be above zero"));
+    if (auto size = CheckSize(columns, rows); !size) {
+        return std::unexpected(size.error());
     }
     GhosttyTerminal terminal = nullptr;
     if (const auto result =
@@ -110,7 +124,20 @@ std::expected<VtTerminal, QString> VtTerminal::FromSnapshot(
         result != GHOSTTY_SUCCESS) {
         return std::unexpected(Failed("cannot decode the snapshot", result));
     }
-    return VtTerminal(std::make_unique<State>(terminal));
+    auto state = std::make_unique<State>(terminal);
+    std::size_t consumed = 0;
+    if (const auto result = ghostty_snapshot_decoder_get(
+            decoder.get(), GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET,
+            &consumed);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot read the snapshot", result));
+    }
+    if (consumed != static_cast<std::size_t>(snapshot.size())) {
+        return std::unexpected(
+            QStringLiteral("%1 bytes follow the snapshot")
+                .arg(static_cast<std::size_t>(snapshot.size()) - consumed));
+    }
+    return VtTerminal(std::move(state));
 }
 
 void VtTerminal::SetResponseHandler(ResponseHandler handler) {
@@ -133,8 +160,8 @@ void VtTerminal::Write(QByteArrayView bytes) {
 }
 
 std::expected<void, QString> VtTerminal::Resize(quint16 columns, quint16 rows) {
-    if (columns == 0 || rows == 0) {
-        return std::unexpected(QStringLiteral("the size must be above zero"));
+    if (auto size = CheckSize(columns, rows); !size) {
+        return size;
     }
     // Cell pixels only matter for image protocols and pixel size reports,
     // which the daemon does not serve.

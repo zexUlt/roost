@@ -167,14 +167,20 @@ private slots:
     void AStreamFedByteByByteEndsWhereTheWholeOneDoes();
     void ASnapshotRestoresTheTerminal();
     void ASnapshotCutInASequenceIsFinishedByTheRest();
+    void ALongSequenceCutAnywhereIsFinishedByTheRest();
+    void ASequenceOverTheLimitIsSnapshottedOnceItEnds();
     void ADumpTellsApartWhatTheScreenHides();
     void ClearingTheHandlerSilencesTheTerminal();
+    void AHandlerMayClearItself();
+    void AMovedTerminalStillAnswers();
     void AQueryGetsOneAnswer();
     void AQuerySplitAcrossWritesGetsOneAnswer();
     void ResizeChangesTheSize();
-    void AZeroSizeIsRefused();
+    void ResizeAnswersASizeReportAskedFor();
+    void ASizeOutOfRangeIsRefused();
     void JunkIsNotASnapshot();
     void ATruncatedSnapshotIsRefused();
+    void BytesAfterASnapshotAreRefused();
 };
 
 void VtTerminalTest::ACutStreamEndsWhereTheWholeOneDoes() {
@@ -244,18 +250,64 @@ void VtTerminalTest::ASnapshotCutInASequenceIsFinishedByTheRest() {
     }
 }
 
+void VtTerminalTest::ALongSequenceCutAnywhereIsFinishedByTheRest() {
+    // A clipboard write far longer than the sequences of Stream(). Its tail,
+    // if lost, would come out as text.
+    const QByteArray payload(100'000, 'A');
+    const QByteArray stream =
+        "before \x1b]52;c;" + payload + "\x1b\\ after\r\n";
+    VtTerminal whole = Make();
+    whole.Write(stream);
+    const QByteArray expected = Screens(whole);
+    QVERIFY(!expected.contains("AAAA"));
+
+    for (const qsizetype at :
+         {qsizetype{9}, qsizetype{12}, qsizetype{50'000}, stream.size() - 30,
+          stream.size() - 20, stream.size() - 15, stream.size() - 9}) {
+        VtTerminal daemon = Make();
+        daemon.Write(QByteArrayView(stream).first(at));
+        auto window = VtTerminal::FromSnapshot(SnapshotOf(daemon));
+        QVERIFY2(window, qPrintable(ErrorOf(window)));
+        window->Write(QByteArrayView(stream).sliced(at));
+        QVERIFY2(Screens(*window) == expected,
+                 qPrintable(QStringLiteral("cut at byte %1").arg(at)));
+    }
+}
+
+void VtTerminalTest::ASequenceOverTheLimitIsSnapshottedOnceItEnds() {
+    VtTerminal terminal = Make();
+    terminal.Write("\x1b]52;c;" +
+                   QByteArray(VtTerminal::MAX_CONTINUATION_BYTES + 16, 'A'));
+    QVERIFY(!terminal.Snapshot());
+    terminal.Write(
+        "\x07"
+        "after");
+    auto restored = VtTerminal::FromSnapshot(SnapshotOf(terminal));
+    QVERIFY2(restored, qPrintable(ErrorOf(restored)));
+    QCOMPARE(DumpOf(*restored), DumpOf(terminal));
+}
+
 void VtTerminalTest::ADumpTellsApartWhatTheScreenHides() {
     // Same text, different state: the comparisons above would miss these.
     for (const QByteArray& extra :
          {QByteArray("\x1b[1;1H"), QByteArray("\x1b[?2004h"),
-          QByteArray("\x1b[5;10r"), QByteArray("\x1b[1;31m"),
-          QByteArray("\x1b(0"), QByteArray("\x1b[3g")}) {
+          QByteArray("\x1b[1;31m"), QByteArray("\x1b(0"),
+          QByteArray("\x1b[3g")}) {
         VtTerminal plain = Make();
         plain.Write("text");
         VtTerminal other = Make();
         other.Write("text" + extra);
         QVERIFY2(DumpOf(other) != DumpOf(plain),
                  extra.toPercentEncoding().constData());
+    }
+    // Setting the region homes the cursor; with the cursor put back, only
+    // the region differs.
+    {
+        VtTerminal plain = Make();
+        plain.Write("text\x1b[1;5H");
+        VtTerminal other = Make();
+        other.Write("text\x1b[5;10r\x1b[1;5H");
+        QVERIFY(DumpOf(other) != DumpOf(plain));
     }
 }
 
@@ -266,6 +318,32 @@ void VtTerminalTest::ClearingTheHandlerSilencesTheTerminal() {
     terminal.SetResponseHandler(nullptr);
     terminal.Write("\x1b[c\x1b[6n");
     QCOMPARE(answers, 0);
+}
+
+void VtTerminalTest::AHandlerMayClearItself() {
+    VtTerminal terminal = Make();
+    int answers = 0;
+    terminal.SetResponseHandler([&terminal, &answers](QByteArrayView) {
+        ++answers;
+        terminal.SetResponseHandler(nullptr);
+    });
+    terminal.Write("\x1b[c\x1b[6n");
+    terminal.Write("\x1b[c");
+    QCOMPARE(answers, 1);
+}
+
+void VtTerminalTest::AMovedTerminalStillAnswers() {
+    QList<QByteArray> answers;
+    VtTerminal first = Make();
+    first.SetResponseHandler([&answers](QByteArrayView answer) {
+        answers.append(answer.toByteArray());
+    });
+    VtTerminal second = std::move(first);
+    second.Write("\x1b[c");
+    VtTerminal third = Make();
+    third = std::move(second);
+    third.Write("\x1b[6n");
+    QCOMPARE(answers, (QList<QByteArray>{"\x1b[?62;22c", "\x1b[1;1R"}));
 }
 
 void VtTerminalTest::AQueryGetsOneAnswer() {
@@ -308,12 +386,33 @@ void VtTerminalTest::ResizeChangesTheSize() {
     QCOMPARE(answers, (QList<QByteArray>{"\x1b[30;100R"}));
 }
 
-void VtTerminalTest::AZeroSizeIsRefused() {
+void VtTerminalTest::ResizeAnswersASizeReportAskedFor() {
+    VtTerminal terminal = Make();
+    QList<QByteArray> answers;
+    terminal.SetResponseHandler([&answers](QByteArrayView answer) {
+        answers.append(answer.toByteArray());
+    });
+    // In-band resize notifications; the daemon reports no pixel sizes.
+    terminal.Write("\x1b[?2048h");
+    answers.clear();
+    QVERIFY(terminal.Resize(100, 30));
+    QCOMPARE(answers, (QList<QByteArray>{"\x1b[48;30;100;0;0t"}));
+}
+
+void VtTerminalTest::ASizeOutOfRangeIsRefused() {
+    constexpr quint16 limit = VtTerminal::MAX_SIZE;
     QVERIFY(!VtTerminal::Create(0, ROWS));
     QVERIFY(!VtTerminal::Create(COLUMNS, 0));
+    QVERIFY(!VtTerminal::Create(limit + 1, ROWS));
+    QVERIFY(!VtTerminal::Create(COLUMNS, limit + 1));
+    QVERIFY(VtTerminal::Create(limit, 1));
+    QVERIFY(VtTerminal::Create(1, limit));
     VtTerminal terminal = Make();
     QVERIFY(!terminal.Resize(0, ROWS));
     QVERIFY(!terminal.Resize(COLUMNS, 0));
+    QVERIFY(!terminal.Resize(limit + 1, ROWS));
+    QVERIFY(!terminal.Resize(COLUMNS, limit + 1));
+    QVERIFY(terminal.Resize(limit, 1));
 }
 
 void VtTerminalTest::JunkIsNotASnapshot() {
@@ -333,6 +432,16 @@ void VtTerminalTest::ATruncatedSnapshotIsRefused() {
                            .arg(size)
                            .arg(snapshot.size())));
     }
+}
+
+void VtTerminalTest::BytesAfterASnapshotAreRefused() {
+    VtTerminal terminal = Make();
+    terminal.Write(Stream(5, 300));
+    const QByteArray snapshot = SnapshotOf(terminal);
+    QVERIFY(VtTerminal::FromSnapshot(snapshot));
+    const auto followed = VtTerminal::FromSnapshot(snapshot + "x");
+    QVERIFY(!followed);
+    QCOMPARE(followed.error(), QString("1 bytes follow the snapshot"));
 }
 
 QTEST_GUILESS_MAIN(VtTerminalTest)
