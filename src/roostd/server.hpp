@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonValue>
 #include <QObject>
 #include <QString>
@@ -19,6 +20,10 @@ class QLocalServer;
 class QLockFile;
 
 namespace roost {
+
+namespace detail {
+class Connection;
+}  // namespace detail
 
 // The uid of the process on the other end of a connected unix socket:
 // getpeereid on macOS, SO_PEERCRED on Linux. Nothing if the system cannot
@@ -43,9 +48,15 @@ std::optional<uid_t> PeerUid(qintptr descriptor);
 //   bus.publish {name, payload?} -> null
 //
 // A connection's subscriptions end with it. Session channels (design.md §4)
-// are left to the layer above: it sends channel frames and notifications to
-// the connection a request came from and gets the input frames greeted
-// connections send. A broken stream, an output or snapshot frame from the
+// are left to the layer above: it names the connection a request came from by
+// ConnectionOf(call.Peer), sends it channel frames and notifications, and gets
+// the input frames greeted connections send.
+//
+// A frame sent from inside a handler goes out before the handler's answer.
+// To send one after it, answer with a future and finish it first: the answer
+// is written from inside QPromise::finish().
+//
+// A broken stream, an output or snapshot frame from the
 // peer, an input frame without a channel number, or a peer that stops reading
 // while more than MAX_UNSENT_BYTES wait for it closes the connection.
 class Server : public QObject {
@@ -53,6 +64,9 @@ class Server : public QObject {
 
 public:
     static constexpr qint64 MAX_UNSENT_BYTES = 64LL * 1024 * 1024;
+
+    // Not reused: an id of a closed connection stays dead.
+    using ConnectionId = quint64;
 
     explicit Server(QObject* parent = nullptr);
     ~Server() override;
@@ -70,25 +84,37 @@ public:
 
     EventBus& Bus() { return Bus_; }
 
-    // To the connection that is the Call::Peer of a request it made; its
-    // destroyed() says it is gone. False if the peer is no open connection of
-    // this server or the bytes do not fit a frame (MAX_CHANNEL_BYTES).
-    bool SendToChannel(QObject* peer, EFrameKind kind, std::uint32_t channel,
-                       QByteArrayView bytes);
+    // The connection behind the Call::Peer of a handler's call. Nothing if it
+    // is no open connection of this server.
+    std::optional<ConnectionId> ConnectionOf(const QObject* peer) const;
+
+    // False if the connection is closed, closes for this frame because its
+    // peer does not read, or the bytes do not fit a frame
+    // (MAX_CHANNEL_BYTES).
+    bool SendToChannel(ConnectionId connection, EFrameKind kind,
+                       std::uint32_t channel, QByteArrayView bytes);
     // A JSON-RPC notification; false as for SendToChannel.
-    bool Notify(QObject* peer, const QString& method, const QJsonValue& params);
+    bool Notify(ConnectionId connection, const QString& method,
+                const QJsonValue& params);
 
     qsizetype ConnectionCount() const;
 
 signals:
     // An input frame from a greeted connection. Input that comes before hello
     // is dropped: no channel can be open yet.
-    void InputReceived(QObject* peer, std::uint32_t channel,
+    void InputReceived(Server::ConnectionId connection, std::uint32_t channel,
                        const QByteArray& bytes);
+    // Once per connection, from the event loop after it closed for any
+    // reason. Not while the server is destroyed.
+    void ConnectionClosed(Server::ConnectionId connection);
 
 private:
     void Accept();
     void RegisterBuiltins();
+    detail::Connection* OpenConnection(ConnectionId connection) const;
+
+    QHash<ConnectionId, detail::Connection*> Connections_;
+    ConnectionId NextConnectionId_ = 1;
 
     rpc::Dispatcher Dispatcher_;
     EventBus Bus_;

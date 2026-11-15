@@ -103,6 +103,30 @@ private:
     FrameDecoder Decoder_;
 };
 
+// Takes warnings into a list instead of the test log while it lives.
+class WarningCapture {
+public:
+    WarningCapture() {
+        CAPTURED.clear();
+        Previous_ = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext&, const QString& text) {
+                if (type == QtWarningMsg) {
+                    CAPTURED.append(text);
+                }
+            });
+    }
+    ~WarningCapture() { qInstallMessageHandler(Previous_); }
+
+    WarningCapture(const WarningCapture&) = delete;
+    WarningCapture& operator=(const WarningCapture&) = delete;
+
+    const QStringList& Warnings() const { return CAPTURED; }
+
+private:
+    static inline QStringList CAPTURED;
+    QtMessageHandler Previous_ = nullptr;
+};
+
 QByteArray ChannelBodyOf(std::uint32_t channel, const QByteArray& bytes) {
     QByteArray body(4, Qt::Uninitialized);
     qToBigEndian(channel, body.data());
@@ -117,7 +141,11 @@ class ChannelsTest : public QObject {
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
-    // A server with test.peer, which remembers the connection that calls it.
+    // A server with three methods:
+    //   test.peer remembers the connection that calls it in Id_;
+    //   test.openNow sends a snapshot on channel 5 and answers {channel: 5};
+    //   test.openLater answers {channel: 6} from the event loop, then sends
+    //   a snapshot on channel 6.
     std::unique_ptr<Server> Start() {
         auto server = std::make_unique<Server>();
         const auto listening = server->Listen(SocketPath());
@@ -125,36 +153,62 @@ private:
             qWarning("%s", qUtf8Printable(listening.error()));
             return nullptr;
         }
+        Server* raw = server.get();
         const bool registered =
-            server->Register("test.peer", [this](const rpc::Call& call) {
-                Peer_ = call.Peer;
-                return rpc::Ready(QJsonValue());
+            server->Register("test.peer",
+                             [this, raw](const rpc::Call& call) {
+                                 Id_ = raw->ConnectionOf(call.Peer);
+                                 return rpc::Ready(QJsonValue());
+                             }) &&
+            server->Register("test.openNow",
+                             [raw](const rpc::Call& call) {
+                                 raw->SendToChannel(
+                                     raw->ConnectionOf(call.Peer).value(),
+                                     EFrameKind::Snapshot, 5, "now");
+                                 return rpc::Ready(QJsonObject{{"channel", 5}});
+                             }) &&
+            server->Register("test.openLater", [raw](const rpc::Call& call) {
+                const Server::ConnectionId id =
+                    raw->ConnectionOf(call.Peer).value();
+                auto promise = std::make_shared<QPromise<rpc::Result>>();
+                promise->start();
+                QMetaObject::invokeMethod(
+                    raw,
+                    [raw, id, promise] {
+                        promise->addResult(QJsonObject{{"channel", 6}});
+                        promise->finish();
+                        raw->SendToChannel(id, EFrameKind::Snapshot, 6,
+                                           "later");
+                    },
+                    Qt::QueuedConnection);
+                return promise->future();
             });
         return registered ? std::move(server) : nullptr;
     }
 
-    // A greeted client whose connection is Peer_.
+    // A greeted client whose connection is Id_.
     std::unique_ptr<RpcClient> Connected() {
+        Id_.reset();
         auto client = std::make_unique<RpcClient>();
         QFuture<rpc::Result> hello = client->Connect(SocketPath());
         if (!WaitFor(hello) || !hello.result()) {
             return nullptr;
         }
         QFuture<rpc::Result> peer = client->Request("test.peer");
-        if (!WaitFor(peer) || !peer.result() || Peer_ == nullptr) {
+        if (!WaitFor(peer) || !peer.result() || !Id_) {
             return nullptr;
         }
         return client;
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
-    QPointer<QObject> Peer_;
+    std::optional<Server::ConnectionId> Id_;
 
 private slots:
     void init() {
         Dir_ = std::make_unique<QTemporaryDir>();
         QVERIFY(Dir_->isValid());
-        Peer_.clear();
+        Id_.reset();
     }
 
     // --- the codec -------------------------------------------------------
@@ -209,7 +263,7 @@ private slots:
         client->SendInput(7, "ls\r");
         client->SendInput(0, "");
         QTRY_COMPARE(input.count(), 2);
-        QCOMPARE(input.at(0).at(0).value<QObject*>(), Peer_.data());
+        QCOMPARE(input.at(0).at(0).value<Server::ConnectionId>(), *Id_);
         QCOMPARE(input.at(0).at(1).value<std::uint32_t>(), 7U);
         QCOMPARE(input.at(0).at(2).toByteArray(), QByteArray("ls\r"));
         QCOMPARE(input.at(1).at(1).value<std::uint32_t>(), 0U);
@@ -226,7 +280,8 @@ private slots:
         QByteArray received;
         int frames = 0;
         connect(server.get(), &Server::InputReceived,
-                [&](QObject*, std::uint32_t channel, const QByteArray& bytes) {
+                [&](Server::ConnectionId, std::uint32_t channel,
+                    const QByteArray& bytes) {
                     QCOMPARE(channel, 3U);
                     received += bytes;
                     ++frames;
@@ -324,33 +379,166 @@ private slots:
                         params.toObject().value("channel").toInt());
                 });
 
-        QVERIFY(server->SendToChannel(Peer_, EFrameKind::Snapshot, 4, "snap"));
-        QVERIFY(server->SendToChannel(Peer_, EFrameKind::Output, 4, "out"));
-        QVERIFY(server->Notify(Peer_, "session.closed",
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Snapshot, 4, "snap"));
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Output, 4, "out"));
+        QVERIFY(server->Notify(*Id_, "session.closed",
                                QJsonObject{{"channel", 4}}));
-        QVERIFY(server->SendToChannel(Peer_, EFrameKind::Output, 0, ""));
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Output, 0, ""));
         QTRY_COMPARE(log.size(), 4);
         QCOMPARE(log, (QStringList{"snapshot 4 snap", "output 4 out",
                                    "session.closed 4", "output 0 "}));
     }
 
-    void OnlyAnOpenConnectionGetsFrames() {
+    void OnlyAConnectionOfTheServerIsNamed() {
         const auto server = Start();
         QVERIFY(server);
         QObject stranger;
-        QVERIFY(!server->SendToChannel(nullptr, EFrameKind::Output, 1, "x"));
-        QVERIFY(!server->SendToChannel(&stranger, EFrameKind::Output, 1, "x"));
-        QVERIFY(!server->Notify(&stranger, "session.closed", QJsonObject{}));
+        QVERIFY(!server->ConnectionOf(nullptr));
+        QVERIFY(!server->ConnectionOf(&stranger));
+        QVERIFY(!server->SendToChannel(0, EFrameKind::Output, 1, "x"));
+        QVERIFY(!server->Notify(0, "session.closed", QJsonObject{}));
 
+        // A connection of another server is no connection of this one.
         Server other;
         QVERIFY(other.Listen(Dir_->filePath("other.sock")));
+        std::optional<std::optional<Server::ConnectionId>> crossed;
+        QVERIFY(other.Register("test.cross", [&](const rpc::Call& call) {
+            crossed = server->ConnectionOf(call.Peer);
+            return rpc::Ready(QJsonValue());
+        }));
+        RpcClient client;
+        QVERIFY(WaitFor(client.Connect(Dir_->filePath("other.sock"))));
+        QVERIFY(WaitFor(client.Request("test.cross")));
+        QVERIFY(crossed);
+        QVERIFY(!*crossed);
+    }
+
+    void AClosedConnectionStaysClosed() {
+        const auto server = Start();
+        QVERIFY(server);
+        QSignalSpy closed(server.get(), &Server::ConnectionClosed);
+        const auto first = Connected();
+        QVERIFY(first);
+        const Server::ConnectionId gone = *Id_;
+        first->Disconnect();
+        QTRY_COMPARE(closed.count(), 1);
+        QCOMPARE(closed.at(0).at(0).value<Server::ConnectionId>(), gone);
+        QVERIFY(!server->SendToChannel(gone, EFrameKind::Output, 1, "x"));
+        QVERIFY(!server->Notify(gone, "session.closed", QJsonObject{}));
+
+        // The next connection may take the memory of the last one, never its
+        // id.
+        const auto second = Connected();
+        QVERIFY(second);
+        QVERIFY(*Id_ != gone);
+        QSignalSpy output(second.get(), &RpcClient::OutputReceived);
+        QVERIFY(!server->SendToChannel(gone, EFrameKind::Output, 1, "stale"));
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Output, 1, "fresh"));
+        QTRY_COMPARE(output.count(), 1);
+        QCOMPARE(output.at(0).at(1).toByteArray(), QByteArray("fresh"));
+        QCOMPARE(closed.count(), 1);
+    }
+
+    void AConnectionTheServerClosesIsReportedOnce() {
+        const auto server = Start();
+        QVERIFY(server);
+        RawPeer peer;
+        QVERIFY(peer.Connect(SocketPath()));
+        peer.Greet();
+        QVERIFY(peer.Receive());
+        peer.Call(1, "test.peer", QJsonObject{});
+        QVERIFY(peer.Receive());
+        QVERIFY(Id_);
+        QSignalSpy closed(server.get(), &Server::ConnectionClosed);
+
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression("^roostd: closing a connection"));
+        peer.SendFrame(EFrameKind::Output, ChannelBodyOf(1, "x"));
+        QTRY_COMPARE(closed.count(), 1);
+        QCOMPARE(closed.at(0).at(0).value<Server::ConnectionId>(), *Id_);
+        QVERIFY(!server->SendToChannel(*Id_, EFrameKind::Output, 1, "x"));
+        QVERIFY(peer.WaitClosed());
+        QTest::qWait(50);
+        QCOMPARE(closed.count(), 1);
+    }
+
+    void TheFrameThatOverflowsAPeerIsRefused() {
+        const auto server = Start();
+        QVERIFY(server);
+        RawPeer peer;
+        QVERIFY(peer.Connect(SocketPath()));
+        peer.Greet();
+        QVERIFY(peer.Receive());
+        peer.Call(1, "test.peer", QJsonObject{});
+        QVERIFY(peer.Receive());
+        QVERIFY(Id_);
+        QSignalSpy closed(server.get(), &Server::ConnectionClosed);
+
+        // The peer reads no more; MAX_UNSENT_BYTES is four such frames. The
+        // call whose frame closes the connection is the first to say false.
+        QStringList warnings;
+        int sent = 0;
+        {
+            const WarningCapture capture;
+            const QByteArray big(MAX_CHANNEL_BYTES, 'b');
+            while (sent < 10 &&
+                   server->SendToChannel(*Id_, EFrameKind::Output, 1, big)) {
+                QVERIFY2(capture.Warnings().isEmpty(),
+                         qPrintable(capture.Warnings().join('\n')));
+                ++sent;
+            }
+            warnings = capture.Warnings();
+        }
+        QVERIFY2(sent >= 3 && sent < 10, qPrintable(QString::number(sent)));
+        QCOMPARE(warnings.size(), 1);
+        QVERIFY2(warnings[0].startsWith("roostd: closing a connection: the "
+                                        "peer does not read"),
+                 qPrintable(warnings[0]));
+        QVERIFY(!server->SendToChannel(*Id_, EFrameKind::Output, 1, "x"));
+        QTRY_COMPARE(closed.count(), 1);
+    }
+
+    void TheLargestChannelFrameGoesThrough() {
+        const auto server = Start();
+        QVERIFY(server);
         const auto client = Connected();
         QVERIFY(client);
-        QVERIFY(!other.SendToChannel(Peer_, EFrameKind::Output, 1, "x"));
-        QVERIFY(!other.Notify(Peer_, "session.closed", QJsonObject{}));
+        QSignalSpy snapshot(client.get(), &RpcClient::SnapshotReceived);
+        const QByteArray largest(MAX_CHANNEL_BYTES, 's');
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Snapshot, 2, largest));
+        QTRY_COMPARE_WITH_TIMEOUT(snapshot.count(), 1, TIMEOUT_MS);
+        QCOMPARE(snapshot.at(0).at(0).value<std::uint32_t>(), 2U);
+        QCOMPARE(snapshot.at(0).at(1).toByteArray(), largest);
+    }
 
-        client->Disconnect();
-        QTRY_VERIFY(Peer_.isNull());
+    void AFrameFromAHandlerGoesBeforeItsAnswer_data() {
+        QTest::addColumn<QString>("method");
+        QTest::addColumn<QStringList>("expected");
+        QTest::newRow("sent by the handler")
+            << "test.openNow" << QStringList{"snapshot 5 now", "answer 5"};
+        QTest::newRow("sent after finish")
+            << "test.openLater" << QStringList{"answer 6", "snapshot 6 later"};
+    }
+
+    void AFrameFromAHandlerGoesBeforeItsAnswer() {
+        QFETCH(QString, method);
+        QFETCH(QStringList, expected);
+        const auto server = Start();
+        QVERIFY(server);
+        const auto client = Connected();
+        QVERIFY(client);
+        QStringList log;
+        connect(client.get(), &RpcClient::SnapshotReceived,
+                [&](std::uint32_t channel, const QByteArray& bytes) {
+                    log << QString("snapshot %1 %2").arg(channel).arg(bytes);
+                });
+        client->Request(method).then(client.get(), [&](const rpc::Result&
+                                                           result) {
+            log << QString("answer %1")
+                       .arg(result.value().toObject().value("channel").toInt());
+        });
+        QTRY_COMPARE(log.size(), 2);
+        QCOMPARE(log, expected);
     }
 
     void WhatDoesNotFitIsRefusedAndTheConnectionStays() {
@@ -360,12 +548,12 @@ private slots:
         QVERIFY(client);
         QSignalSpy output(client.get(), &RpcClient::OutputReceived);
 
-        QVERIFY(!server->SendToChannel(Peer_, EFrameKind::Snapshot, 1,
+        QVERIFY(!server->SendToChannel(*Id_, EFrameKind::Snapshot, 1,
                                        QByteArray(MAX_CHANNEL_BYTES + 1, 's')));
         QVERIFY(!server->Notify(
-            Peer_, "session.big",
+            *Id_, "session.big",
             QString(static_cast<qsizetype>(MAX_FRAME_LENGTH), u'n')));
-        QVERIFY(server->SendToChannel(Peer_, EFrameKind::Output, 1, "after"));
+        QVERIFY(server->SendToChannel(*Id_, EFrameKind::Output, 1, "after"));
         QTRY_COMPARE(output.count(), 1);
         QCOMPARE(output.at(0).at(1).toByteArray(), QByteArray("after"));
         QVERIFY(client->IsConnected());

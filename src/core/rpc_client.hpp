@@ -23,8 +23,8 @@ namespace roost {
 //
 // One object is one connection: after it is lost, make a new client. Use it
 // from the thread it lives in; its futures finish there, inside its socket's
-// signal handlers, so a continuation must not delete the client (deleteLater
-// it instead).
+// signal handlers, so a continuation, or a slot of its signals, must not
+// delete the client (deleteLater it instead).
 class RpcClient : public QObject {
     Q_OBJECT
 
