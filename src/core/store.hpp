@@ -9,17 +9,21 @@ namespace roost {
 
 // Where roostd keeps its state (design.md §8): $ROOST_CONFIG if set, else
 // $XDG_CONFIG_HOME/roost if that is an absolute path, else ~/.config/roost.
-// Tests always set ROOST_CONFIG, so they never touch the real directory.
-QString ConfigDirectory();
+// An error if it comes to HOME and HOME is unset, relative or "/". Tests
+// always set ROOST_CONFIG, so they never touch the real directory.
+std::expected<QString, QString> ConfigDirectory();
 
 // One JSON object per plugin, in <directory>/<plugin id>.json.
 //
 // A save goes to a temporary file in the same directory and is renamed over
 // the old one, so a crash or a full disk leaves either the old document or the
-// new one, never half of either. A file that does not parse is an error, not
-// an empty document: saving over it would lose what the user had.
+// new one, never half of either. Files are owner-only, 0600.
+//
+// Load reports a file that does not parse as an error rather than an empty
+// document, so the caller can tell the user before a Save replaces it.
 class Store {
 public:
+    // The directory must be an absolute path; Load and Save fail otherwise.
     explicit Store(QString directory);
 
     // Lowercase letters, digits, '.', '_' and '-', starting with a letter or a
@@ -37,6 +41,7 @@ public:
                                       const QJsonObject& document) const;
 
 private:
+    std::expected<void, QString> CheckRequest(const QString& pluginId) const;
     QString PathOf(const QString& pluginId) const;
 
     QString Directory_;

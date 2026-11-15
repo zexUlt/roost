@@ -89,6 +89,13 @@ private slots:
     void ConfigDirectoryFromXdg();
     void ConfigDirectoryIgnoresRelativeXdg();
     void ConfigDirectoryFromHome();
+    void ConfigDirectoryCleansRoostConfig();
+    void ConfigDirectoryNeedsAHome_data();
+    void ConfigDirectoryNeedsAHome();
+    void FilesAreOwnerOnly();
+    void TargetThatIsADirectory();
+    void UnreadableFileIsAnError();
+    void DirectoryMustBeAbsolute();
 };
 
 void StoreTest::RoundTrip() {
@@ -233,20 +240,21 @@ void StoreTest::InvalidPluginIds() {
 void StoreTest::ConfigDirectoryFromRoostConfig() {
     const ScopedEnv roost("ROOST_CONFIG", QByteArray("/somewhere/state"));
     const ScopedEnv xdg("XDG_CONFIG_HOME", QByteArray("/xdg"));
-    QCOMPARE(roost::ConfigDirectory(), QStringLiteral("/somewhere/state"));
+    QCOMPARE(roost::ConfigDirectory().value(),
+             QStringLiteral("/somewhere/state"));
 }
 
 void StoreTest::ConfigDirectoryFromXdg() {
     const ScopedEnv roost("ROOST_CONFIG", std::nullopt);
     const ScopedEnv xdg("XDG_CONFIG_HOME", QByteArray("/xdg/"));
-    QCOMPARE(roost::ConfigDirectory(), QStringLiteral("/xdg/roost"));
+    QCOMPARE(roost::ConfigDirectory().value(), QStringLiteral("/xdg/roost"));
 }
 
 void StoreTest::ConfigDirectoryIgnoresRelativeXdg() {
     const ScopedEnv roost("ROOST_CONFIG", std::nullopt);
     const ScopedEnv xdg("XDG_CONFIG_HOME", QByteArray("relative"));
     const ScopedEnv home("HOME", QByteArray("/home/someone"));
-    QCOMPARE(roost::ConfigDirectory(),
+    QCOMPARE(roost::ConfigDirectory().value(),
              QStringLiteral("/home/someone/.config/roost"));
 }
 
@@ -254,8 +262,96 @@ void StoreTest::ConfigDirectoryFromHome() {
     const ScopedEnv roost("ROOST_CONFIG", std::nullopt);
     const ScopedEnv xdg("XDG_CONFIG_HOME", std::nullopt);
     const ScopedEnv home("HOME", QByteArray("/home/someone"));
-    QCOMPARE(roost::ConfigDirectory(),
+    QCOMPARE(roost::ConfigDirectory().value(),
              QStringLiteral("/home/someone/.config/roost"));
+}
+
+void StoreTest::ConfigDirectoryCleansRoostConfig() {
+    {
+        const ScopedEnv roost("ROOST_CONFIG", QByteArray("/a/b//"));
+        QCOMPARE(roost::ConfigDirectory().value(), QStringLiteral("/a/b"));
+    }
+    const ScopedEnv roost("ROOST_CONFIG", QByteArray("state"));
+    QCOMPARE(roost::ConfigDirectory().value(),
+             QDir::current().filePath(QStringLiteral("state")));
+}
+
+void StoreTest::ConfigDirectoryNeedsAHome_data() {
+    QTest::addColumn<std::optional<QByteArray>>("home");
+    QTest::newRow("unset") << std::optional<QByteArray>();
+    QTest::newRow("empty") << std::optional(QByteArray());
+    QTest::newRow("root") << std::optional(QByteArray("/"));
+    QTest::newRow("relative") << std::optional(QByteArray("me"));
+}
+
+void StoreTest::ConfigDirectoryNeedsAHome() {
+    QFETCH(std::optional<QByteArray>, home);
+    const ScopedEnv roost("ROOST_CONFIG", std::nullopt);
+    const ScopedEnv xdg("XDG_CONFIG_HOME", std::nullopt);
+    const ScopedEnv scopedHome("HOME", home);
+    const auto directory = roost::ConfigDirectory();
+    QVERIFY2(!directory, qPrintable(directory.value_or(QString())));
+    QVERIFY(directory.error().contains(QStringLiteral("ROOST_CONFIG")));
+}
+
+// Plugin state may hold tokens: 0600 in a directory someone left open, and
+// 0600 again over a file that was not.
+void StoreTest::FilesAreOwnerOnly() {
+    QTemporaryDir root;
+    QVERIFY(QFile::setPermissions(
+        root.path(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                         QFile::ReadOther | QFile::ExeOther));
+    const Store store(root.path());
+    const QString path = root.filePath(QStringLiteral("claude.json"));
+    auto mode = [&path] {
+        struct stat info{};
+        if (::stat(QFile::encodeName(path).constData(), &info) != 0) {
+            qFatal("cannot stat %s", qPrintable(path));
+        }
+        return info.st_mode & 0777U;
+    };
+
+    QVERIFY(store.Save(QStringLiteral("claude"), {}));
+    QCOMPARE(mode(), 0600U);
+
+    QVERIFY(QFile::setPermissions(
+        path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadOther));
+    QCOMPARE(mode(), 0604U);
+    QVERIFY(store.Save(QStringLiteral("claude"), {{QStringLiteral("v"), 1}}));
+    QCOMPARE(mode(), 0600U);
+}
+
+void StoreTest::TargetThatIsADirectory() {
+    QTemporaryDir root;
+    QVERIFY(QDir(root.path()).mkdir(QStringLiteral("claude.json")));
+    const Store store(root.path());
+    QVERIFY(!store.Save(QStringLiteral("claude"), {}));
+    QVERIFY(!store.Load(QStringLiteral("claude")));
+    QCOMPARE(FilesIn(root.path()), QStringList({"claude.json"}));
+}
+
+void StoreTest::UnreadableFileIsAnError() {
+    if (::geteuid() == 0) {
+        QSKIP("root reads through file permissions");
+    }
+    QTemporaryDir root;
+    const QString path = root.filePath(QStringLiteral("claude.json"));
+    WriteRaw(path, "{}");
+    QVERIFY(QFile::setPermissions(path, QFile::Permissions()));
+    const auto loaded = Store(root.path()).Load(QStringLiteral("claude"));
+    QVERIFY(!loaded);
+    QVERIFY2(loaded.error().contains(QStringLiteral("claude.json")),
+             qPrintable(loaded.error()));
+}
+
+void StoreTest::DirectoryMustBeAbsolute() {
+    for (const QString& directory : {QString(), QStringLiteral("relative")}) {
+        const Store store(directory);
+        QVERIFY(!store.Save(QStringLiteral("claude"), {}));
+        QVERIFY(!store.Load(QStringLiteral("claude")));
+    }
+    QVERIFY(!QFile::exists(QStringLiteral("relative")));
+    QVERIFY(!QFile::exists(QStringLiteral("/claude.json")));
 }
 
 QTEST_GUILESS_MAIN(StoreTest)
