@@ -127,6 +127,8 @@ private slots:
             << QJsonArray{"./run"} << QStringList{DIRECTORY + "/run"};
         QTest::newRow("dot dot that stays inside")
             << QJsonArray{"backend/../run"} << QStringList{DIRECTORY + "/run"};
+        QTest::newRow("empty argument")
+            << QJsonArray{"run", ""} << QStringList{DIRECTORY + "/run", ""};
     }
 
     void BackendIsResolvedInsideThePlugin() {
@@ -189,10 +191,10 @@ private slots:
             << backend(QJsonObject{{"command", "run"}}) << "\"backend\"";
         QTest::newRow("backend argument not a string")
             << backend(QJsonObject{{"command", QJsonArray{"run", 1}}})
-            << "non-empty strings";
-        QTest::newRow("backend argument empty")
-            << backend(QJsonObject{{"command", QJsonArray{"run", ""}}})
-            << "non-empty strings";
+            << "must hold strings";
+        QTest::newRow("backend program empty")
+            << backend(QJsonObject{{"command", QJsonArray{""}}})
+            << "inside the plugin directory";
         QTest::newRow("absolute program")
             << backend(QJsonObject{{"command", QJsonArray{"/bin/sh"}}})
             << "inside the plugin directory";
@@ -244,12 +246,35 @@ private slots:
             << contributes("keybindings",
                            QJsonArray{QJsonObject{{"key", "Ctrl+N"}}})
             << "a keybinding needs";
+        QTest::newRow("keybinding with a blank key")
+            << Json(With(
+                   Minimal(), "contributes",
+                   QJsonObject{
+                       {"commands",
+                        QJsonArray{QJsonObject{{"id", "a.b"}, {"title", "T"}}}},
+                       {"keybindings", QJsonArray{QJsonObject{
+                                           {"command", "a.b"}, {"key", " "}}}},
+                   }))
+            << "a keybinding needs";
+        QTest::newRow("keybinding to another plugin's command")
+            << contributes("keybindings",
+                           QJsonArray{QJsonObject{{"command", "a.b"},
+                                                  {"key", "Ctrl+N"}}})
+            << "key Ctrl+N is bound to a.b, a command the plugin does not "
+               "declare";
         QTest::newRow("agents as object")
             << contributes("agents", QJsonObject{}) << "contributes.agents";
         QTest::newRow("panels as string")
             << contributes("panels", "x") << "contributes.panels";
         QTest::newRow("settings as number")
             << contributes("settings", 1) << "contributes.settings";
+        QTest::newRow("settings outside")
+            << contributes("settings", "../../etc/passwd")
+            << "contributes.settings";
+        QTest::newRow("settings absolute")
+            << contributes("settings", "/etc/passwd") << "contributes.settings";
+        QTest::newRow("settings empty")
+            << contributes("settings", "") << "contributes.settings";
     }
 
     void BadManifestsAreRefused() {
@@ -315,6 +340,9 @@ private slots:
             << QByteArray("::/a::") << QStringList{"/a", config};
         QTest::newRow("relative entries are skipped")
             << QByteArray("rel:/a:./x") << QStringList{"/a", config};
+        QTest::newRow("each directory once")
+            << QByteArray("/a:/a/:/config/plugins:/b:/a")
+            << QStringList{"/a", config, "/b"};
     }
 
     void SearchPathComesFromTheEnvironment() {
@@ -333,13 +361,14 @@ private slots:
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QDir root(dir.path());
-        for (const char* path :
-             {"first/b", "first/a", "first/empty", "second/c", "second/a"}) {
+        for (const char* path : {"first/b", "first/a", "first/Zed",
+                                 "first/empty", "second/c", "second/a"}) {
             QVERIFY(root.mkpath(path));
         }
         for (const char* path :
              {"first/b/plugin.json", "first/a/plugin.json",
-              "second/c/plugin.json", "second/a/plugin.json"}) {
+              "first/Zed/plugin.json", "second/c/plugin.json",
+              "second/a/plugin.json"}) {
             WriteFile(root.filePath(path), "{}");
         }
         // A file named like a manifest is not a plugin directory.
@@ -349,7 +378,9 @@ private slots:
         const QStringList found = FindPluginDirectories(
             {root.filePath("first"), root.filePath("missing"),
              root.filePath("second")});
+        // Case first: Z before a.
         QCOMPARE(found, (QStringList{
+                            root.filePath("first/Zed"),
                             root.filePath("first/a"),
                             root.filePath("first/b"),
                             root.filePath("second/a"),
@@ -410,14 +441,50 @@ private slots:
 
     void FirstBindingOfAKeyWins() {
         PluginRegistry registry;
-        QVERIFY(registry.Add(Plugin("one", {}, {"Ctrl+N"})));
-        QVERIFY(registry.Add(Plugin("two", {}, {"ctrl+n", "Ctrl+M"})));
+        QVERIFY(registry.Add(Plugin("one", {"one.x"}, {"Ctrl+N"})));
+        QVERIFY(registry.Add(Plugin("two", {"two.x"}, {"ctrl+n", "Ctrl+M"})));
         QCOMPARE(registry.KeyOwner("CTRL+N")->Id, QString("one"));
         QCOMPARE(registry.KeyOwner("Ctrl+M")->Id, QString("two"));
         QVERIFY(!registry.KeyOwner("Ctrl+K"));
         QCOMPARE(registry.Problems(),
                  QStringList{"key ctrl+n of plugin two is ignored: plugin one "
                              "binds it"});
+    }
+
+    void KeyBoundTwiceInOnePluginIsAProblem() {
+        PluginRegistry registry;
+        QVERIFY(registry.Add(Plugin("one", {"one.x"}, {"Ctrl+N", "ctrl+N"})));
+        QCOMPARE(registry.KeyOwner("Ctrl+N")->Id, QString("one"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"key ctrl+N of plugin one is ignored: plugin one "
+                             "binds it"});
+    }
+
+    void KeyOfALostCommandIsIgnored() {
+        PluginRegistry registry;
+        QVERIFY(registry.Add(Plugin("one", {"shared.run"})));
+        PluginManifest two = Plugin("two", {"shared.run"});
+        two.Keybindings.append({.Command = "shared.run", .Key = "Ctrl+Q"});
+        QVERIFY(registry.Add(two));
+        // Ctrl+Q would run plugin one's command.
+        QVERIFY(!registry.KeyOwner("Ctrl+Q"));
+        QCOMPARE(registry.Problems(),
+                 (QStringList{
+                     "command shared.run of plugin two is ignored: plugin one "
+                     "has it",
+                     "key Ctrl+Q of plugin two is ignored: its command "
+                     "shared.run belongs to plugin one",
+                 }));
+    }
+
+    void KeyOfAnUndeclaredCommandIsIgnored() {
+        PluginRegistry registry;
+        QVERIFY(registry.Add(Plugin("one", {"one.run"})));
+        QVERIFY(registry.Add(Plugin("two", {}, {"Ctrl+Q"})));
+        QVERIFY(!registry.KeyOwner("Ctrl+Q"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"key Ctrl+Q of plugin two is ignored: the plugin "
+                             "has no command two.x"});
     }
 
     void ProblemsKeepTheirOrder() {
