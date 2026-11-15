@@ -27,6 +27,14 @@ roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
+
+# A TUI that draws, asks its terminal questions and counts the answers.
+add_executable(fake_tui helpers/fake_tui.cpp)
+target_link_libraries(fake_tui PRIVATE roost::compile_options)
+
+roost_add_qt_test(pty_test core/pty_test.cpp roost_test_helpers)
+target_compile_definitions(pty_test PRIVATE FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>")
+add_dependencies(pty_test fake_tui)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
 roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 
