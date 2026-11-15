@@ -11,6 +11,7 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 
 #include <cerrno>
 #include <memory>
@@ -40,12 +41,16 @@ bool Greets(const QString& socketPath) {
     return false;
 }
 
-// The descriptors of this process that any child of it inherits.
+// The pipes and sockets of this process that any child of it inherits, as
+// fixture.fds lists them.
 QJsonArray InheritedDescriptors() {
     QJsonArray inherited;
     for (int fd = 3; fd < 1024; ++fd) {
         const int flags = ::fcntl(fd, F_GETFD);
-        if (flags != -1 && (flags & FD_CLOEXEC) == 0) {
+        struct stat status{};
+        if (flags != -1 && (flags & FD_CLOEXEC) == 0 &&
+            ::fstat(fd, &status) == 0 &&
+            (S_ISFIFO(status.st_mode) || S_ISSOCK(status.st_mode))) {
             inherited.append(fd);
         }
     }
