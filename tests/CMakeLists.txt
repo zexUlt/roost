@@ -39,10 +39,17 @@ target_compile_definitions(backend_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(backend_test fixture_backend)
 
+roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
+target_compile_definitions(plugins_test PRIVATE
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(plugins_test fixture_backend)
+
 # The real binary, started as a process.
 roost_add_qt_test(roostd_test roostd/roostd_test.cpp)
-target_compile_definitions(roostd_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
-add_dependencies(roostd_test roostd)
+target_compile_definitions(roostd_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(roostd_test roostd fixture_backend)
 
 # The window comes up and renders a frame under the offscreen platform.
 add_test(NAME roost_smoke COMMAND roost --smoke)

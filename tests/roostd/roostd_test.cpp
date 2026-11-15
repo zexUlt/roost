@@ -1,11 +1,16 @@
 #include <QDeadlineTimer>
+#include <QDir>
 #include <QFile>
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <signal.h>
+
+#include <cerrno>
 #include <memory>
 
 #include "core/protocol.hpp"
@@ -48,6 +53,7 @@ private:
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
         environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
+        environment.insert("ROOST_PLUGINS_PATH", Dir_->filePath("plugins"));
         process->setProcessEnvironment(environment);
         process->start(ROOSTD_PATH, {});
         return process;
@@ -94,6 +100,95 @@ private slots:
 
         first->terminate();
         QVERIFY(first->waitForFinished(TIMEOUT_MS));
+    }
+
+    void StopsCleanlyOnSigterm() {
+        const auto daemon = Launch();
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(daemon->exitCode(), 0);
+        QVERIFY(!QFile::exists(SocketPath()));
+        QVERIFY(!QFile::exists(SocketPath() + ".lock"));
+    }
+
+    // The M1 criterion: a client runs a plugin command through the socket,
+    // and a crashed backend comes back after an event about the crash.
+    void RunsAPluginCommandAndReportsItsCrash() {
+        const QDir plugin(Dir_->filePath("plugins/fixture"));
+        QVERIFY(plugin.mkpath("."));
+        QVERIFY(QFile::link(FIXTURE_BACKEND_PATH, plugin.filePath("backend")));
+        QFile manifest(plugin.filePath("plugin.json"));
+        QVERIFY(manifest.open(QIODevice::WriteOnly));
+        manifest.write(R"({
+            "id": "fixture", "version": "1", "api": "0",
+            "backend": {"command": ["backend"]},
+            "contributes": {"commands": [
+                {"id": "fixture.echo", "title": "Echo"},
+                {"id": "fixture.pid", "title": "Process id"},
+                {"id": "fixture.crash", "title": "Crash"}
+            ]}
+        })");
+        manifest.close();
+
+        const auto daemon = Launch();
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        RpcClient client;
+        QFuture<rpc::Result> hello = client.Connect(SocketPath());
+        QVERIFY(
+            QTest::qWaitFor([&] { return hello.isFinished(); }, TIMEOUT_MS));
+        QVERIFY(hello.result());
+        QSignalSpy notified(&client, &RpcClient::NotificationReceived);
+        const auto call = [&](const QString& method,
+                              const QJsonObject& params) {
+            QFuture<rpc::Result> future = client.Request(method, params);
+            if (!QTest::qWaitFor([&] { return future.isFinished(); },
+                                 TIMEOUT_MS)) {
+                return rpc::Result(
+                    std::unexpected(rpc::Error{.Message = "timed out"}));
+            }
+            return future.result();
+        };
+        QVERIFY(call("bus.subscribe", {{"pattern", "plugin.*"}}));
+
+        const rpc::Result echoed = call(
+            "commands.run", {{"command", "fixture.echo"}, {"args", "hello"}});
+        QVERIFY(echoed);
+        QCOMPARE(*echoed, QJsonValue("hello"));
+        const qint64 pid =
+            call("commands.run", {{"command", "fixture.pid"}})->toInteger();
+
+        const rpc::Result crashed =
+            call("commands.run", {{"command", "fixture.crash"}});
+        QVERIFY(!crashed);
+        QCOMPARE(crashed.error().Code,
+                 static_cast<int>(protocol::EErrorCode::BackendUnavailable));
+        QTRY_COMPARE_WITH_TIMEOUT(notified.count(), 1, TIMEOUT_MS);
+        QCOMPARE(notified[0][0].toString(), "bus.event");
+        const QJsonObject event = notified[0][1].value<QJsonValue>().toObject();
+        QCOMPARE(event.value("name"), QJsonValue("plugin.backendCrashed"));
+        QCOMPARE(event.value("payload"),
+                 QJsonValue(QJsonObject{{"plugin", "fixture"},
+                                        {"reason", "exited with code 3"},
+                                        {"restartInMs", 500}}));
+
+        // Back after the delay, as another process.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            call("commands.run", {{"command", "fixture.echo"}}).has_value(),
+            TIMEOUT_MS);
+        const qint64 restarted =
+            call("commands.run", {{"command", "fixture.pid"}})->toInteger();
+        QVERIFY(restarted != pid);
+
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitCode(), 0);
+        // The backend went with it.
+        QVERIFY(::kill(static_cast<pid_t>(restarted), 0) == -1 &&
+                errno == ESRCH);
     }
 
     void KilledDaemonIsReplaced() {

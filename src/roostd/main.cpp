@@ -1,9 +1,59 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QSocketNotifier>
+
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <csignal>
+#include <cstring>
 
 #include "core/protocol.hpp"
+#include "core/store.hpp"
 #include "core/version.hpp"
+#include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
+
+namespace {
+
+// The signal handler writes a byte here; the event loop reads it.
+int STOP_PIPE[2] = {-1, -1};
+
+void RequestStop(int /*signal*/) {
+    const char byte = 0;
+    // A full pipe already holds a stop request.
+    [[maybe_unused]] const ssize_t written = ::write(STOP_PIPE[1], &byte, 1);
+}
+
+// SIGTERM and SIGINT end the event loop, so the socket, its lock and the
+// backends are cleaned up on the way out.
+bool StopOnSignals(QCoreApplication& app) {
+    if (::pipe(STOP_PIPE) != 0) {
+        return false;
+    }
+    for (const int fd : STOP_PIPE) {
+        // Backends do not inherit it.
+        if (::fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+            return false;
+        }
+    }
+    struct sigaction action{};
+    action.sa_handler = RequestStop;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    if (::sigaction(SIGTERM, &action, nullptr) != 0 ||
+        ::sigaction(SIGINT, &action, nullptr) != 0) {
+        return false;
+    }
+    auto* notifier =
+        new QSocketNotifier(STOP_PIPE[0], QSocketNotifier::Read, &app);
+    QObject::connect(notifier, &QSocketNotifier::activated, &app,
+                     &QCoreApplication::quit);
+    return true;
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
@@ -18,6 +68,16 @@ int main(int argc, char* argv[]) {
     parser.addVersionOption();
     parser.process(app);
 
+    const auto config = roost::ConfigDirectory();
+    if (!config) {
+        qCritical("roostd: %s", qUtf8Printable(config.error()));
+        return 1;
+    }
+    if (!StopOnSignals(app)) {
+        qCritical("roostd: cannot handle signals: %s", strerror(errno));
+        return 1;
+    }
+
     roost::Server server;
     const QString socketPath = roost::protocol::SocketPath();
     if (auto listening = server.Listen(socketPath); !listening) {
@@ -25,6 +85,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     qInfo("roostd: listening on %s", qUtf8Printable(socketPath));
+
+    // Gone before the server.
+    roost::PluginHost plugins(server);
+    plugins.Load(roost::PluginSearchPath(*config));
+    for (const QString& problem : plugins.Registry().Problems()) {
+        qWarning("roostd: %s", qUtf8Printable(problem));
+    }
+    qInfo("roostd: %zu plugins loaded", plugins.Registry().Plugins().size());
 
     return QCoreApplication::exec();
 }

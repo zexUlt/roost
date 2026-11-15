@@ -2,6 +2,7 @@
 add_library(roostd_lib STATIC
     backend.cpp
     manifest.cpp
+    plugins.cpp
     server.cpp
 )
 

@@ -133,8 +133,13 @@ GUI-поток не разбирает вывод никогда. Qt Quick по 
 | `bus.subscribe` | `{pattern}` | `{subscription}` |
 | `bus.unsubscribe` | `{subscription}` | `null` |
 | `bus.publish` | `{name, payload?}` | `null` |
+| `commands.run` | `{command, args?}` | ответ бэкенда плагина, которому принадлежит команда |
 
 События шины приходят уведомлениями `bus.event {subscription, name, payload}`. Подписки соединения снимаются вместе с ним, а снять чужую подписку нельзя. Событие, которое не поместится в кадр, `bus.publish` отвергает с `InvalidParams`, а не теряет у подписчиков.
+
+`commands.run` передаёт бэкенду владельца тот же запрос (`src/roostd/plugins.hpp`). Неизвестная команда — `InvalidParams`, плагин без бэкенда или с лежащим бэкендом — -32003. О бэкендах демон сам публикует события `plugin.backendCrashed {plugin, reason, restartInMs}` и `plugin.backendGaveUp {plugin, reason}`.
+
+По SIGTERM и SIGINT демон останавливает бэкенды и убирает сокет и lock-файл.
 
 Коды ошибок демона лежат в диапазоне, который JSON-RPC оставляет серверам (`src/core/protocol.hpp`):
 
