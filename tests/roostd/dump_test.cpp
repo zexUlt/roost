@@ -55,6 +55,12 @@ std::optional<int> DumpAgainst(const QByteArray& sent, bool close,
         return std::nullopt;
     }
     QLocalSocket* client = server.nextPendingConnection();
+    // As roostd does, answers only once the dump has said all it says.
+    QByteArray received;
+    while (!received.contains("bus.subscribe") &&
+           client->waitForReadyRead(TIMEOUT_MS)) {
+        received += client->readAll();
+    }
     client->write(sent);
     if (close) {
         client->disconnectFromServer();
