@@ -7,6 +7,8 @@
 #include <QLocalSocket>
 #include <QSignalBlocker>
 
+#include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "core/protocol.hpp"
@@ -96,6 +98,19 @@ QFuture<rpc::Result> RpcClient::Request(const QString& method,
     return future;
 }
 
+void RpcClient::SendInput(std::uint32_t channel, QByteArrayView bytes) {
+    if (State_ != EState::Connected) {
+        return;
+    }
+    do {
+        const QByteArrayView piece =
+            bytes.first(std::min<qsizetype>(bytes.size(), MAX_CHANNEL_BYTES));
+        Socket_->write(
+            EncodeChannelFrame(EFrameKind::Input, channel, piece).value());
+        bytes = bytes.sliced(piece.size());
+    } while (!bytes.isEmpty());
+}
+
 void RpcClient::Disconnect() {
     Lose(QStringLiteral("disconnected by the client"));
 }
@@ -112,8 +127,20 @@ void RpcClient::Read() {
         if (!frame) {
             break;
         }
-        // Session channels come with M2; nothing sends them yet.
         if (frame->Kind != EFrameKind::Rpc) {
+            const std::optional<ChannelBody> body =
+                DecodeChannelBody(frame->Body);
+            if (frame->Kind == EFrameKind::Input) {
+                Lose(QStringLiteral("roostd sent an input frame"));
+            } else if (!body) {
+                Lose(
+                    QStringLiteral("roostd sent a channel frame without a "
+                                   "channel"));
+            } else if (frame->Kind == EFrameKind::Output) {
+                emit OutputReceived(body->Channel, body->Bytes);
+            } else {
+                emit SnapshotReceived(body->Channel, body->Bytes);
+            }
             continue;
         }
         QJsonParseError error{};

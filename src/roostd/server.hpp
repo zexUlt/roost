@@ -6,11 +6,13 @@
 
 #include <sys/types.h>
 
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
 
 #include "core/bus.hpp"
+#include "core/frame.hpp"
 #include "core/rpc.hpp"
 
 class QLocalServer;
@@ -40,9 +42,12 @@ std::optional<uid_t> PeerUid(qintptr descriptor);
 //     Only the connection's own subscriptions.
 //   bus.publish {name, payload?} -> null
 //
-// A connection's subscriptions end with it. A broken stream, a frame of a
-// kind M1 does not serve, or a peer that stops reading while more than
-// MAX_UNSENT_BYTES wait for it closes the connection.
+// A connection's subscriptions end with it. Session channels (design.md §4)
+// are left to the layer above: it sends channel frames and notifications to
+// the connection a request came from and gets the input frames greeted
+// connections send. A broken stream, an output or snapshot frame from the
+// peer, an input frame without a channel number, or a peer that stops reading
+// while more than MAX_UNSENT_BYTES wait for it closes the connection.
 class Server : public QObject {
     Q_OBJECT
 
@@ -65,7 +70,21 @@ public:
 
     EventBus& Bus() { return Bus_; }
 
+    // To the connection that is the Call::Peer of a request it made; its
+    // destroyed() says it is gone. False if the peer is no open connection of
+    // this server or the bytes do not fit a frame (MAX_CHANNEL_BYTES).
+    bool SendToChannel(QObject* peer, EFrameKind kind, std::uint32_t channel,
+                       QByteArrayView bytes);
+    // A JSON-RPC notification; false as for SendToChannel.
+    bool Notify(QObject* peer, const QString& method, const QJsonValue& params);
+
     qsizetype ConnectionCount() const;
+
+signals:
+    // An input frame from a greeted connection. Input that comes before hello
+    // is dropped: no channel can be open yet.
+    void InputReceived(QObject* peer, std::uint32_t channel,
+                       const QByteArray& bytes);
 
 private:
     void Accept();

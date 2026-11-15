@@ -37,6 +37,7 @@ roost_add_qt_test(pty_test core/pty_test.cpp roost_test_helpers)
 target_compile_definitions(pty_test PRIVATE FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>")
 add_dependencies(pty_test fake_tui)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
+roost_add_qt_test(channels_test roostd/channels_test.cpp roostd_lib)
 roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 
 # A plugin backend that misbehaves on request.

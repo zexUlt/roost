@@ -85,6 +85,7 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     bool Greeted() const { return Greeted_; }
+    bool IsOpen() const { return !Closed_; }
     void Greet() { Greeted_ = true; }
 
     std::optional<EventBus::SubscriptionId> Subscribe(const QString& pattern) {
@@ -109,6 +110,20 @@ public:
         return Bus_.Unsubscribe(id);
     }
 
+    // A frame of any kind that the caller has made sure fits.
+    void SendFrame(const QByteArray& frame) {
+        if (Closed_) {
+            return;
+        }
+        Socket_->write(frame);
+        if (Socket_->bytesToWrite() > Server::MAX_UNSENT_BYTES) {
+            Close(QStringLiteral("the peer does not read its messages"));
+        }
+    }
+
+signals:
+    void InputReceived(std::uint32_t channel, const QByteArray& bytes);
+
 private:
     void Read() {
         Decoder_.Feed(Socket_->readAll());
@@ -116,6 +131,18 @@ private:
             std::optional<Frame> frame = Decoder_.Next();
             if (!frame) {
                 break;
+            }
+            if (frame->Kind == EFrameKind::Input) {
+                std::optional<ChannelBody> input =
+                    DecodeChannelBody(frame->Body);
+                if (!input) {
+                    Close(QStringLiteral("an input frame without a channel"));
+                    return;
+                }
+                if (Greeted_) {
+                    emit InputReceived(input->Channel, input->Bytes);
+                }
+                continue;
             }
             if (frame->Kind != EFrameKind::Rpc) {
                 Close(QStringLiteral("frames of kind %1 are not served")
@@ -146,10 +173,7 @@ private:
                       .arg(body.size()));
             return;
         }
-        Socket_->write(*frame);
-        if (Socket_->bytesToWrite() > Server::MAX_UNSENT_BYTES) {
-            Close(QStringLiteral("the peer does not read its messages"));
-        }
+        SendFrame(*frame);
     }
 
     // Drops the connection; the object goes once control is back in the event
@@ -326,6 +350,44 @@ bool Server::Register(const QString& method, rpc::Handler handler) {
         });
 }
 
+bool Server::SendToChannel(QObject* peer, EFrameKind kind,
+                           std::uint32_t channel, QByteArrayView bytes) {
+    auto* connection = qobject_cast<Connection*>(peer);
+    if (connection == nullptr || connection->parent() != this ||
+        !connection->IsOpen()) {
+        return false;
+    }
+    const std::optional<QByteArray> frame =
+        EncodeChannelFrame(kind, channel, bytes);
+    if (!frame) {
+        return false;
+    }
+    connection->SendFrame(*frame);
+    return true;
+}
+
+bool Server::Notify(QObject* peer, const QString& method,
+                    const QJsonValue& params) {
+    auto* connection = qobject_cast<Connection*>(peer);
+    if (connection == nullptr || connection->parent() != this ||
+        !connection->IsOpen()) {
+        return false;
+    }
+    const std::optional<QByteArray> frame = EncodeFrame(
+        EFrameKind::Rpc,
+        QJsonDocument(QJsonObject{
+                          {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                          {QStringLiteral("method"), method},
+                          {QStringLiteral("params"), params},
+                      })
+            .toJson(QJsonDocument::Compact));
+    if (!frame) {
+        return false;
+    }
+    connection->SendFrame(*frame);
+    return true;
+}
+
 qsizetype Server::ConnectionCount() const {
     return findChildren<Connection*>(Qt::FindDirectChildrenOnly).size();
 }
@@ -340,7 +402,12 @@ void Server::Accept() {
             socket->deleteLater();
             continue;
         }
-        new Connection(socket, Dispatcher_, Bus_, this);
+        auto* connection = new Connection(socket, Dispatcher_, Bus_, this);
+        connect(
+            connection, &Connection::InputReceived, this,
+            [this, connection](std::uint32_t channel, const QByteArray& bytes) {
+                emit InputReceived(connection, channel, bytes);
+            });
     }
 }
 

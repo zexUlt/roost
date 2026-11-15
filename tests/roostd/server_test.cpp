@@ -369,8 +369,8 @@ private slots:
         QTest::newRow("zero length") << QByteArray("\0\0\0\0", 4);
         QTest::newRow("unknown kind") << QByteArray("\0\0\0\1\x7f", 5);
         QTest::newRow("oversized") << QByteArray("\x7f\xff\xff\xff\0", 5);
-        QTest::newRow("channel frame")
-            << EncodeFrame(EFrameKind::Input, QByteArray("\0\0\0\1x", 5))
+        QTest::newRow("output frame")
+            << EncodeFrame(EFrameKind::Output, QByteArray("\0\0\0\1x", 5))
                    .value();
     }
 

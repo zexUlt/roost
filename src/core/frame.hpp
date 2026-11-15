@@ -38,6 +38,25 @@ struct Frame {
 [[nodiscard]] std::optional<QByteArray> EncodeFrame(EFrameKind kind,
                                                     QByteArrayView body);
 
+// The body of a channel frame (kinds 1-3): a big-endian u32 channel number,
+// then the bytes of that channel.
+struct ChannelBody {
+    std::uint32_t Channel = 0;
+    QByteArray Bytes;
+};
+
+// The most channel bytes one frame carries.
+inline constexpr qsizetype MAX_CHANNEL_BYTES =
+    static_cast<qsizetype>(MAX_FRAME_LENGTH) - 1 - 4;
+
+// A frame of the channel, ready to write, or nothing if the bytes take more
+// than MAX_CHANNEL_BYTES.
+[[nodiscard]] std::optional<QByteArray> EncodeChannelFrame(
+    EFrameKind kind, std::uint32_t channel, QByteArrayView bytes);
+
+// Nothing if the body is too short to hold a channel number.
+[[nodiscard]] std::optional<ChannelBody> DecodeChannelBody(QByteArrayView body);
+
 // Turns a byte stream, cut into pieces anywhere, back into frames. No I/O: the
 // caller feeds what it read and takes frames out.
 //

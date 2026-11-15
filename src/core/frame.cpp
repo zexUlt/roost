@@ -27,6 +27,28 @@ std::optional<QByteArray> EncodeFrame(EFrameKind kind, QByteArrayView body) {
     return frame;
 }
 
+std::optional<QByteArray> EncodeChannelFrame(EFrameKind kind,
+                                             std::uint32_t channel,
+                                             QByteArrayView bytes) {
+    if (bytes.size() > MAX_CHANNEL_BYTES) {
+        return std::nullopt;
+    }
+    QByteArray body(sizeof(channel), Qt::Uninitialized);
+    qToBigEndian(channel, body.data());
+    body.append(bytes);
+    return EncodeFrame(kind, body);
+}
+
+std::optional<ChannelBody> DecodeChannelBody(QByteArrayView body) {
+    if (body.size() < static_cast<qsizetype>(sizeof(std::uint32_t))) {
+        return std::nullopt;
+    }
+    return ChannelBody{
+        .Channel = qFromBigEndian<std::uint32_t>(body.data()),
+        .Bytes = body.sliced(sizeof(std::uint32_t)).toByteArray(),
+    };
+}
+
 void FrameDecoder::Feed(QByteArrayView bytes) {
     if (Failed()) {
         return;
