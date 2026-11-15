@@ -3,6 +3,7 @@ add_library(roost_core STATIC
     bus.cpp
     frame.cpp
     rpc.cpp
+    store.cpp
     version.cpp
 )
 

@@ -226,6 +226,7 @@ struct AgentAdapter {
 ## 8. Состояние и миграция
 
 - `roostd` хранит состояние в JSON под `~/.config/roost/`, отдельное пространство имён на плагин. Запись атомарная: временный файл и `rename`.
+- Каталог: `ROOST_CONFIG`, иначе `$XDG_CONFIG_HOME/roost`, иначе `~/.config/roost`. Созданный демоном каталог закрыт правами 0700. Файл плагина — `<id>.json`. В id только строчные латинские буквы, цифры, `.`, `_` и `-`, первым символом буква или цифра: на нечувствительной к регистру ФС macOS `Claude` и `claude` иначе стали бы одним файлом. Файл, который не разбирается, — ошибка, а не пустой документ.
 - Первый запуск импортирует `~/.config/cc-fleet/{categories,archive,colors,names,seen,settings}.json`. Исходные файлы не меняются.
 - Из cc-fleet переезжает логика: категории, пины, архив, имена, цвета, непрочитанные, переходы и тексты уведомлений, поиск PR по worktree, keep-awake. Тесты cc-fleet (`test_pins`, `test_tree`, `test_fold_cursor`, `test_notify`, `test_pulls`, `test_awake`, `test_subagents`, `test_launched`, `test_title`) переносятся в Qt Test случай за случаем.
 
