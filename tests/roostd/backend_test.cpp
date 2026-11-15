@@ -10,7 +10,9 @@
 #include <QTest>
 #include <QTimer>
 
+#include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <chrono>
@@ -68,6 +70,18 @@ BackendOptions Fast() {
     };
 }
 
+// The descriptors of this process that any child of it inherits.
+QJsonArray InheritedDescriptors() {
+    QJsonArray inherited;
+    for (int fd = 3; fd < 1024; ++fd) {
+        const int flags = ::fcntl(fd, F_GETFD);
+        if (flags != -1 && (flags & FD_CLOEXEC) == 0) {
+            inherited.append(fd);
+        }
+    }
+    return inherited;
+}
+
 bool IsAlive(qint64 pid) {
     return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH;
 }
@@ -120,6 +134,20 @@ private slots:
         QVERIFY(result);
         QCOMPARE(QDir(result->toString()).canonicalPath(),
                  QDir(Dir_->path()).canonicalPath());
+    }
+
+    void RunsInASessionOfItsOwn() {
+        const auto backend = Make();
+        backend->Start();
+        const auto pid = static_cast<pid_t>(
+            Run(*backend, "fixture.pid").value_or(0).toInteger());
+        QVERIFY(pid > 0);
+        QCOMPARE(::getsid(pid), pid);
+        QCOMPARE(::getpgid(pid), pid);
+        const rpc::Result fds = Run(*backend, "fixture.fds");
+        QVERIFY(fds);
+        // Nothing but what this process hands down to every child.
+        QCOMPARE(*fds, QJsonValue(InheritedDescriptors()));
     }
 
     void ReportsItsProcessId() {
@@ -256,6 +284,8 @@ private slots:
             << "fixture.stray" << "answered a request nobody made";
         QTest::newRow("a line too long")
             << "fixture.flood" << "sent a line longer than 16777216 bytes";
+        QTest::newRow("an error that is not an object")
+            << "fixture.badError" << "sent an error that is not an object";
     }
 
     void KillsOneThatBreaksTheProtocol() {
@@ -279,6 +309,25 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(started.count(), 2, TIMEOUT_MS);
         QVERIFY(Run(*backend, "fixture.echo"));
+    }
+
+    void StartFromAContinuationWaitsForTheRestart() {
+        QTest::failOnWarning(QRegularExpression("already running"));
+        const auto backend = Make();
+        QSignalSpy started(backend.get(), &Backend::Started);
+        QSignalSpy crashed(backend.get(), &Backend::Crashed);
+        backend->Start();
+        Backend* raw = backend.get();
+        // Without a context the continuation runs as the request fails.
+        const QFuture<void> continued =
+            backend->Request("commands.run", Command("fixture.crash"))
+                .then([raw](const rpc::Result&) { raw->Start(); });
+
+        QVERIFY(WaitFor(continued));
+        QTRY_COMPARE_WITH_TIMEOUT(started.count(), 2, TIMEOUT_MS);
+        QVERIFY(Run(*backend, "fixture.echo"));
+        QCOMPARE(started.count(), 2);
+        QCOMPARE(crashed.count(), 1);
     }
 
     void ReportsAFailedStart() {
@@ -413,6 +462,21 @@ private slots:
         QVERIFY(hanging.isFinished());
         QCOMPARE(CodeOf(hanging.result()), UNAVAILABLE);
         QCOMPARE(crashed.count(), 0);
+    }
+
+    void IgnoresWhatItSaysWhileStopping() {
+        QTest::failOnWarning(QRegularExpression("nobody made"));
+        auto backend = Make();
+        backend->Start();
+        const QFuture<rpc::Result> last =
+            backend->Request("commands.run", Command("fixture.lastWord"));
+        // Answered in order, so the last word is now owed.
+        QVERIFY(Run(*backend, "fixture.echo"));
+
+        backend.reset();
+        QVERIFY(last.isFinished());
+        QCOMPARE(last.result().error().Message,
+                 "roostd stopped the backend of fixture");
     }
 
     void KillsOneThatWillNotStop() {

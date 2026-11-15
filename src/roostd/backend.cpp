@@ -40,6 +40,12 @@ Backend::Backend(QString name, QStringList command, QString workingDirectory,
       Options_(options),
       Process_(new QProcess(this)) {
     Process_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    // In a session of its own, Ctrl-C in roostd's terminal does not reach it.
+    // Descriptors are not closed here: that walks the whole descriptor limit
+    // on every start. roostd opens its own with FD_CLOEXEC instead.
+    Process_->setUnixProcessParameters(
+        QProcess::UnixProcessFlag::CreateNewSession |
+        QProcess::UnixProcessFlag::ResetSignalHandlers);
     RestartTimer_.setSingleShot(true);
     connect(&RestartTimer_, &QTimer::timeout, this, &Backend::Launch);
     connect(Process_, &QProcess::started, this, &Backend::Started);
@@ -62,7 +68,9 @@ Backend::Backend(QString name, QStringList command, QString workingDirectory,
         });
     connect(Process_, &QProcess::errorOccurred, this,
             [this](QProcess::ProcessError error) {
-                // Every other error ends in finished(), handled there.
+                // A crash ends in finished(), handled there. A write to a
+                // backend that closed its stdin but lives on fails quietly:
+                // the request waits, as for a backend that never answers.
                 if (error == QProcess::FailedToStart && !Stopping_) {
                     OnStopped(QStringLiteral("failed to start: %1")
                                   .arg(Process_->errorString()));
@@ -134,6 +142,10 @@ void Backend::Launch() {
 }
 
 void Backend::Read() {
+    // Whatever it says while it stops, nobody waits for.
+    if (Stopping_) {
+        return;
+    }
     Buffer_.append(Process_->readAllStandardOutput());
     qsizetype start = 0;
     while (BreakReason_.isEmpty()) {
@@ -181,10 +193,15 @@ void Backend::Dispatch(const QByteArray& line) {
         Break(QStringLiteral("answered a request nobody made"));
         return;
     }
+    const QJsonValue failure = message.value(QStringLiteral("error"));
+    if (!failure.isUndefined() && !failure.isObject()) {
+        // The request fails with the rest, once the backend is down.
+        Break(QStringLiteral("sent an error that is not an object"));
+        return;
+    }
     QPromise<rpc::Result> promise = std::move(pending->second);
     Pending_.erase(pending);
 
-    const QJsonValue failure = message.value(QStringLiteral("error"));
     if (failure.isObject()) {
         const QJsonObject object = failure.toObject();
         Settle(
@@ -226,23 +243,25 @@ void Backend::Break(const QString& reason) {
 }
 
 void Backend::OnStopped(const QString& reason) {
-    FailPending(QStringLiteral("the backend of %1 %2").arg(Name_, reason));
     if (Uptime_.durationElapsed() >= Options_.StableRun) {
         CrashesInARow_ = 0;
     }
     ++CrashesInARow_;
+    // The restart is settled before anyone hears of the crash: a slot or a
+    // continuation that calls Start then waits for it.
     if (CrashesInARow_ > Options_.MaxRestarts) {
         emit GaveUp(reason);
-        return;
+    } else {
+        std::chrono::milliseconds delay = Options_.FirstRestartDelay;
+        for (int i = 1; i < CrashesInARow_ && delay < Options_.MaxRestartDelay;
+             ++i) {
+            delay *= 2;
+        }
+        delay = std::min(delay, Options_.MaxRestartDelay);
+        RestartTimer_.start(delay);
+        emit Crashed(reason, delay.count());
     }
-    std::chrono::milliseconds delay = Options_.FirstRestartDelay;
-    for (int i = 1; i < CrashesInARow_ && delay < Options_.MaxRestartDelay;
-         ++i) {
-        delay *= 2;
-    }
-    delay = std::min(delay, Options_.MaxRestartDelay);
-    RestartTimer_.start(delay);
-    emit Crashed(reason, delay.count());
+    FailPending(QStringLiteral("the backend of %1 %2").arg(Name_, reason));
 }
 
 void Backend::FailPending(const QString& reason) {
