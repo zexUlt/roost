@@ -16,6 +16,7 @@ function(roost_add_qt_test name source)
 endfunction()
 
 roost_add_qt_test(ghostty_formatter_test core/ghostty_formatter_test.cpp ghostty-vt-static)
+roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 

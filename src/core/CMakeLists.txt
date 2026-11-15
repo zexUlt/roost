@@ -1,5 +1,6 @@
 # What roost and roostd share. No GUI: roostd links QtCore only.
 add_library(roost_core STATIC
+    bus.cpp
     frame.cpp
     rpc.cpp
     version.cpp
