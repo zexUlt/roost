@@ -22,7 +22,8 @@
       "inherits": "base",
       "displayName": "dev — debug build with assertions",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GHOSTTY_ZIG_BUILD_FLAGS": "-Doptimize=ReleaseSafe"
       }
     },
     {
@@ -31,6 +32,7 @@
       "displayName": "asan-ubsan — address and undefined behaviour sanitizers",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "GHOSTTY_ZIG_BUILD_FLAGS": "-Doptimize=ReleaseSafe",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }

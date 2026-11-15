@@ -7,6 +7,12 @@
 # tests/ checks that the linked library reports this version.
 # To build against a local checkout instead:
 #   cmake --preset dev -DFETCHCONTENT_SOURCE_DIR_GHOSTTY=/path/to/ghostty
+#
+# The debug presets build the library with -Doptimize=ReleaseSafe
+# (GHOSTTY_ZIG_BUILD_FLAGS): Zig's own Debug mode checks every page after each
+# change and records a stack trace per allocation, so feeding a terminal a few
+# hundred kilobytes takes seconds. ReleaseSafe keeps the bounds and overflow
+# checks.
 
 set(ROOST_GHOSTTY_VT_VERSION 1.0.1)
 set(ROOST_ZIG_MIN_VERSION 0.17.0)
