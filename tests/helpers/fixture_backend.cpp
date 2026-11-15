@@ -3,7 +3,8 @@
 //   fixture.echo     the args
 //   fixture.pid      its process id
 //   fixture.cwd      its working directory
-//   fixture.fds      the descriptors it has open besides stdio
+//   fixture.fds      the pipes and sockets it has open besides stdio; files
+//                    are left out, a sanitizer runtime opens its own
 //   fixture.crash    exits with code 3 without answering
 //   fixture.garbage  prints a line that is not JSON
 //   fixture.stray    answers a request id nobody sent
@@ -25,7 +26,7 @@
 #include <QJsonValue>
 #include <QString>
 
-#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -79,7 +80,9 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
     } else if (command == "fixture.fds") {
         QJsonArray open;
         for (int fd = 3; fd < 1024; ++fd) {
-            if (::fcntl(fd, F_GETFD) != -1) {
+            struct stat status{};
+            if (::fstat(fd, &status) == 0 &&
+                (S_ISFIFO(status.st_mode) || S_ISSOCK(status.st_mode))) {
                 open.append(fd);
             }
         }
