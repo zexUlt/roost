@@ -2,13 +2,9 @@
 
 #include <ghostty/vt.h>
 
-#include <string_view>
-
 namespace roost {
 
-namespace {
-
-std::string_view GhosttyVtVersion() {
+std::string GhosttyVtVersion() {
     GhosttyString version{};
     if (ghostty_build_info(GHOSTTY_BUILD_INFO_VERSION_STRING, &version) !=
         GHOSTTY_SUCCESS) {
@@ -16,8 +12,6 @@ std::string_view GhosttyVtVersion() {
     }
     return {reinterpret_cast<const char*>(version.ptr), version.len};
 }
-
-}  // namespace
 
 std::string VersionString() {
     std::string result = ROOST_VERSION;

@@ -20,6 +20,12 @@ roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp)
+roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
+
+# The real binary, started as a process.
+roost_add_qt_test(roostd_test roostd/roostd_test.cpp)
+target_compile_definitions(roostd_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(roostd_test roostd)
 
 # The window comes up and renders a frame under the offscreen platform.
 add_test(NAME roost_smoke COMMAND roost --smoke)

@@ -113,6 +113,16 @@ QFuture<Result> Ready(Result result) {
     return QtFuture::makeReadyValueFuture(std::move(result));
 }
 
+std::optional<qint64> ToInteger(const QJsonValue& value) {
+    // toInteger gives its default for anything that is not an integer, so two
+    // different defaults agree only on a real one.
+    const qint64 integer = value.toInteger(0);
+    if (integer != value.toInteger(1)) {
+        return std::nullopt;
+    }
+    return integer;
+}
+
 bool Dispatcher::Register(const QString& method, Handler handler) {
     if (method.startsWith(QLatin1String("rpc.")) ||
         Handlers_.contains(method)) {

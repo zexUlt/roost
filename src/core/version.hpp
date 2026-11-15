@@ -9,4 +9,7 @@ namespace roost {
 // version is read from the library itself, not from its headers.
 std::string VersionString();
 
+// The version of the linked libghostty-vt, read from the library: "1.0.1".
+std::string GhosttyVtVersion();
+
 }  // namespace roost

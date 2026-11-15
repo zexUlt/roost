@@ -87,9 +87,10 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.MethodCase
     value: CamelCase
-  # Qt Test finds the rows of a data-driven test by the suffix "_data".
+  # Qt Test calls its hooks by fixed names and finds the rows of a
+  # data-driven test by the suffix "_data".
   - key: readability-identifier-naming.MethodIgnoredRegexp
-    value: '[A-Z][A-Za-z0-9]*_data'
+    value: '^([A-Z][A-Za-z0-9]*_data|init|cleanup|initTestCase|cleanupTestCase)$'
 
   - key: readability-identifier-naming.ParameterCase
     value: camelBack

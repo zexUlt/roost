@@ -54,6 +54,9 @@ using Handler = std::function<QFuture<Result>(const Call&)>;
 
 QFuture<Result> Ready(Result result);
 
+// An integer, as JSON numbers carry one: 3 and 3.0, not 3.5, "3" or 2^64.
+std::optional<qint64> ToInteger(const QJsonValue& value);
+
 class Dispatcher {
 public:
     // False if the method is already taken, or the name is reserved by the

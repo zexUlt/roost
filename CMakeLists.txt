@@ -39,7 +39,7 @@ option(ROOST_WERROR "Treat warnings as errors" ON)
 # Only modules available under LGPLv3, linked dynamically (design.md §10).
 # 6.8 is the floor for QQuickWindow::createTextNode() and the CMake API used
 # here; CI builds against one pinned version.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick)
 qt_standard_project_setup(REQUIRES 6.8)
 
 include(cmake/CompileOptions.cmake)

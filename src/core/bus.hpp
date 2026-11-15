@@ -3,6 +3,7 @@
 #include <QJsonValue>
 #include <QString>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -51,6 +52,8 @@ public:
     // False, and nothing delivered, if the name is not valid or the publish
     // would nest deeper than MAX_PUBLISH_DEPTH.
     bool Publish(const QString& name, const QJsonValue& payload);
+
+    std::size_t SubscriptionCount() const { return Subscriptions_.size(); }
 
 private:
     struct Subscription {
