@@ -11,6 +11,8 @@
 //                    notification
 //   fixture.ask      sends roostd a request and returns its answer
 //   fixture.hang     never answers
+//   fixture.badError answers with an error that is not an object
+//   fixture.lastWord answers only when its stdin closes, on the way out
 // With --crash-on-start it exits with code 3 at once. It exits with code 0 when
 // its stdin closes, or after --linger-ms N more milliseconds.
 
@@ -63,7 +65,8 @@ QJsonObject ReadMessage() {
     return {};
 }
 
-void Run(const QJsonValue& id, const QString& command, const QJsonValue& args) {
+void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
+         QJsonValue& lastWord) {
     if (command == "fixture.echo") {
         Answer(id, args);
     } else if (command == "fixture.pid") {
@@ -98,6 +101,10 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args) {
         Answer(id, reply);
     } else if (command == "fixture.hang") {
         // No answer.
+    } else if (command == "fixture.badError") {
+        Send({{"jsonrpc", "2.0"}, {"id", id}, {"error", "boom"}});
+    } else if (command == "fixture.lastWord") {
+        lastWord = id;
     } else {
         Fail(id, -32602, QString("unknown command %1").arg(command));
     }
@@ -116,6 +123,7 @@ int main(int argc, char** argv) {
             lingerMs = std::atoi(argv[++i]);
         }
     }
+    QJsonValue lastWord = QJsonValue::Undefined;
     for (;;) {
         const QJsonObject message = ReadMessage();
         if (message.isEmpty()) {
@@ -127,7 +135,11 @@ int main(int argc, char** argv) {
             continue;
         }
         const QJsonObject params = message.value("params").toObject();
-        Run(id, params.value("command").toString(), params.value("args"));
+        Run(id, params.value("command").toString(), params.value("args"),
+            lastWord);
+    }
+    if (!lastWord.isUndefined()) {
+        Answer(lastWord, "last word");
     }
     if (lingerMs >= 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(lingerMs));

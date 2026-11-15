@@ -41,6 +41,9 @@ struct BackendOptions {
 // emitted and it starts again after a delay that doubles with each crash in
 // a row. After MaxRestarts crashes in a row it stays down and GaveUp is
 // emitted instead.
+//
+// Signals and continuations of requests run inside the backend's own code: a
+// Backend is not deleted from them, only through deleteLater().
 class Backend : public QObject {
     Q_OBJECT
 
