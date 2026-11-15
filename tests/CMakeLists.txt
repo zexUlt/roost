@@ -75,3 +75,10 @@ add_test(NAME roostd_version COMMAND roostd --version)
 set_tests_properties(roostd_version PROPERTIES
     PASS_REGULAR_EXPRESSION "^roostd ${PROJECT_VERSION} \\(libghostty-vt ${_ghostty_vt_version_regex}[^)]*\\)"
 )
+
+# The Claude adapter: its parsing, then the real binary over stdio.
+roost_add_qt_test(claude_adapter_test plugins/claude_adapter_test.cpp claude_adapter_lib)
+target_compile_definitions(claude_adapter_test PRIVATE
+    CLAUDE_ADAPTER_PATH="$<TARGET_FILE:claude-adapter>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_dependencies(claude_adapter_test claude-adapter)

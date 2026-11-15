@@ -46,6 +46,7 @@ include(cmake/CompileOptions.cmake)
 include(cmake/ghostty.cmake)
 
 add_subdirectory(src)
+add_subdirectory(plugins)
 
 if(ROOST_BUILD_TESTS)
     enable_testing()

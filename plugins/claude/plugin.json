@@ -1,0 +1,9 @@
+{
+  "id": "claude",
+  "version": "0.1.0",
+  "api": "0",
+  "backend": { "command": ["backend/claude-adapter"] },
+  "contributes": {
+    "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }]
+  }
+}

@@ -76,7 +76,7 @@ jobs:
 
       - name: C++
         run: |
-          files=$(find src tests -name '*.cpp' -o -name '*.hpp' | sort)
+          files=$(find src tests plugins -name '*.cpp' -o -name '*.hpp' | sort)
           clang-format --dry-run --Werror $files
 
       - name: QML
@@ -123,7 +123,7 @@ jobs:
       - name: Naming and the static analyser
         run: |
           sdk=$(xcrun --show-sdk-path)
-          find src tests -name '*.cpp' -not -path 'tests/gates/*' | sort |
+          find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' | sort |
             xargs -P "$(sysctl -n hw.ncpu)" -n 1 clang-tidy -p build/dev --quiet \
               --warnings-as-errors='*' "--extra-arg=-isysroot$sdk"
 
