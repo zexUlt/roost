@@ -14,8 +14,10 @@ bool IsKnownKind(std::uint8_t kind) {
 
 }  // namespace
 
-QByteArray EncodeFrame(EFrameKind kind, QByteArrayView body) {
-    Q_ASSERT(body.size() < static_cast<qsizetype>(MAX_FRAME_LENGTH));
+std::optional<QByteArray> EncodeFrame(EFrameKind kind, QByteArrayView body) {
+    if (body.size() >= static_cast<qsizetype>(MAX_FRAME_LENGTH)) {
+        return std::nullopt;
+    }
     const auto length = static_cast<std::uint32_t>(body.size() + 1);
 
     QByteArray frame(HEADER_SIZE, Qt::Uninitialized);

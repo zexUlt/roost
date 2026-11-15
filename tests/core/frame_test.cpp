@@ -8,6 +8,7 @@
 #include <QtEndian>
 
 #include <cstdint>
+#include <optional>
 
 #include "core/frame.hpp"
 
@@ -34,7 +35,7 @@ QList<Frame> SampleFrames() {
 QByteArray EncodeAll(const QList<Frame>& frames) {
     QByteArray stream;
     for (const Frame& frame : frames) {
-        stream += roost::EncodeFrame(frame.Kind, frame.Body);
+        stream += roost::EncodeFrame(frame.Kind, frame.Body).value();
     }
     return stream;
 }
@@ -94,14 +95,18 @@ private slots:
     void OversizedLengthFailsBeforeTheBody();
     void UnknownKindFailsBeforeTheBody();
     void FailureIsFinal();
+    void EncodeRefusesABodyOverTheLimit();
+    void LargestFrameDecodes();
+    void KindIsCheckedWhenItArrives();
+    void BufferStaysBoundedOnALongStream();
 };
 
 void FrameTest::EncodesLengthBigEndianAfterItself() {
-    QCOMPARE(roost::EncodeFrame(EFrameKind::Input, "ab"),
+    QCOMPARE(roost::EncodeFrame(EFrameKind::Input, "ab").value(),
              QByteArray("\x00\x00\x00\x03\x02"
                         "ab",
                         7));
-    QCOMPARE(roost::EncodeFrame(EFrameKind::Rpc, {}),
+    QCOMPARE(roost::EncodeFrame(EFrameKind::Rpc, {}).value(),
              QByteArray("\x00\x00\x00\x01\x00", 5));
 }
 
@@ -198,9 +203,74 @@ void FrameTest::FailureIsFinal() {
     FrameDecoder decoder;
     decoder.Feed(Header(1, 9));
     QVERIFY(!decoder.Next());
-    decoder.Feed(roost::EncodeFrame(EFrameKind::Rpc, "{}"));
+    QVERIFY(decoder.Failed());
+    const qsizetype held = decoder.Buffered();
+
+    // A failed decoder neither decodes nor keeps what a broken peer sends.
+    decoder.Feed(roost::EncodeFrame(EFrameKind::Rpc, "{}").value());
     QVERIFY(!decoder.Next());
     QVERIFY(decoder.Failed());
+    QCOMPARE(decoder.Buffered(), held);
+}
+
+void FrameTest::EncodeRefusesABodyOverTheLimit() {
+    const QByteArray largest(roost::MAX_FRAME_LENGTH - 1, 'x');
+    QVERIFY(roost::EncodeFrame(EFrameKind::Snapshot, largest));
+    QVERIFY(!roost::EncodeFrame(EFrameKind::Snapshot, largest + 'x'));
+}
+
+void FrameTest::LargestFrameDecodes() {
+    const QByteArray largest(roost::MAX_FRAME_LENGTH - 1, 'x');
+    FrameDecoder decoder;
+    decoder.Feed(roost::EncodeFrame(EFrameKind::Snapshot, largest).value());
+    const std::optional<Frame> frame = decoder.Next();
+    QVERIFY(frame);
+    QCOMPARE(frame->Kind, EFrameKind::Snapshot);
+    QCOMPARE(frame->Body.size(), largest.size());
+    QVERIFY(!decoder.Failed());
+}
+
+void FrameTest::KindIsCheckedWhenItArrives() {
+    FrameDecoder decoder;
+    const QByteArray header = Header(100, 4);
+    decoder.Feed(header.first(4));
+    QVERIFY(!decoder.Next());
+    QVERIFY(!decoder.Failed());
+
+    decoder.Feed(header.sliced(4));
+    QVERIFY(!decoder.Next());
+    QVERIFY(decoder.Failed());
+}
+
+// A long-lived connection reading in pieces that rarely end on a frame
+// boundary: the consumed bytes must still be dropped as it goes.
+void FrameTest::BufferStaysBoundedOnALongStream() {
+    constexpr qsizetype chunk = 1000;
+    const QByteArray frame =
+        roost::EncodeFrame(EFrameKind::Output, "12345678").value();
+    // Coprime with the chunk size: a boundary only every 13 chunks.
+    QCOMPARE(frame.size(), 13);
+    QByteArray stream;
+    for (int i = 0; i < 100000; ++i) {
+        stream += frame;
+    }
+
+    FrameDecoder decoder;
+    int frames = 0;
+    for (qsizetype at = 0; at < stream.size(); at += chunk) {
+        decoder.Feed(
+            QByteArrayView(stream).sliced(at, qMin(chunk, stream.size() - at)));
+        while (decoder.Next()) {
+            ++frames;
+        }
+        if (decoder.Buffered() > 2 * chunk) {
+            QFAIL(qPrintable(QStringLiteral("%1 bytes held at offset %2")
+                                 .arg(decoder.Buffered())
+                                 .arg(at)));
+        }
+    }
+    QCOMPARE(frames, 100000);
+    QCOMPARE(decoder.Buffered(), 0);
 }
 
 QTEST_GUILESS_MAIN(FrameTest)

@@ -22,7 +22,8 @@ enum class EFrameKind : std::uint8_t {
     Snapshot = 3,  // u32 channel, terminal snapshot; daemon to window
 };
 
-// A frame larger than this is a protocol error, not a big message: the peer is
+// The largest length field: kind byte and body, without the four bytes of the
+// length itself. More is a protocol error, not a big message: the peer is
 // broken or hostile, and buffering it would let it take the daemon's memory.
 inline constexpr std::uint32_t MAX_FRAME_LENGTH = 16U * 1024U * 1024U;
 
@@ -31,16 +32,19 @@ struct Frame {
     QByteArray Body;
 };
 
-// The bytes of one frame, ready to write. The body must fit MAX_FRAME_LENGTH
-// together with the kind byte; that is the caller's contract (asserted).
-QByteArray EncodeFrame(EFrameKind kind, QByteArrayView body);
+// The bytes of one frame, ready to write, or nothing if the body does not fit
+// MAX_FRAME_LENGTH together with the kind byte. The body is not looked into:
+// the channel number of kinds 1-3 is the business of the layer above.
+[[nodiscard]] std::optional<QByteArray> EncodeFrame(EFrameKind kind,
+                                                    QByteArrayView body);
 
 // Turns a byte stream, cut into pieces anywhere, back into frames. No I/O: the
 // caller feeds what it read and takes frames out.
 //
 // An oversized length, a zero length or an unknown kind fails the decoder for
 // good: after that the stream has no frame boundaries to trust, and the only
-// sane thing is to drop the connection.
+// sane thing is to drop the connection. Bytes are only checked by Next(), so
+// Failed() is meaningful after it, not right after Feed().
 class FrameDecoder {
 public:
     void Feed(QByteArrayView bytes);
@@ -51,6 +55,10 @@ public:
 
     bool Failed() const { return !Error_.isEmpty(); }
     const QString& Error() const { return Error_; }
+
+    // Bytes held in memory, frames already taken included until the buffer is
+    // compacted. Bounded on a healthy stream; stops growing after a failure.
+    qsizetype Buffered() const { return Buffer_.size(); }
 
 private:
     void Compact();
