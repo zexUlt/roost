@@ -27,6 +27,7 @@ roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
+roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
 roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 

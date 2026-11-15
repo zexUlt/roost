@@ -7,6 +7,7 @@ add_library(roost_core STATIC
     rpc_client.cpp
     store.cpp
     version.cpp
+    vt_terminal.cpp
 )
 
 target_include_directories(roost_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
