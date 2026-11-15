@@ -542,14 +542,18 @@ private slots:
     }
 
     void AListTooBigForAFrameIsRefused() {
-        AddPlugin("one", {"claude"});
-        // Each session grows once roostd adds its agent, title and cwd.
+        AddPlugin("one", {"alpha", "beta"});
+        // Each answer fits a line from the backend; the two together do not
+        // fit a frame.
         QJsonArray sessions;
-        for (int i = 0; i < 300'000; ++i) {
-            sessions.append(Session(QString::number(i), "idle"));
+        for (int i = 0; i < 9; ++i) {
+            QJsonObject session = Session(QString::number(i), "idle");
+            session.insert("title", QString(1024 * 1024, u'x'));
+            sessions.append(session);
         }
         SetAnswers("one", {{"agent.listSessions",
-                            QJsonObject{{"claude", Result(sessions)}}}});
+                            QJsonObject{{"alpha", Result(sessions)},
+                                        {"beta", Result(sessions)}}}});
         QVERIFY(Start());
         const rpc::Result listed = ListSessions();
         QVERIFY(!listed);
