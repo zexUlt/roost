@@ -6,6 +6,8 @@
 #include <QJsonValue>
 #include <QProcess>
 
+#include <signal.h>
+
 #include <utility>
 
 namespace roost::claude {
@@ -31,16 +33,21 @@ bool IsOurs(const QJsonObject& params) {
     return params.value(QStringLiteral("agent")).toString() == Adapter::AGENT;
 }
 
-// A run that timed out, or one still going when the adapter stops.
+// A run that timed out, or one still going when the adapter stops: its
+// process group too, so what claude started does not outlive it. The group is
+// killed only while its leader runs: until then its id cannot be reused.
 void StopRun(QProcess& process) {
     if (process.state() != QProcess::NotRunning) {
+        ::killpg(static_cast<pid_t>(process.processId()), SIGKILL);
         process.kill();
         process.waitForFinished();
     }
 }
 
-QString FirstLine(const QByteArray& text) {
-    return QString::fromUtf8(text.trimmed()).section(u'\n', 0, 0);
+// ": <the first line of stderr>", or nothing if it is empty.
+QString StderrSuffix(const QByteArray& text) {
+    const QString line = QString::fromUtf8(text.trimmed()).section(u'\n', 0, 0);
+    return line.isEmpty() ? QString() : QStringLiteral(": ") + line;
 }
 
 }  // namespace
@@ -105,6 +112,11 @@ void Adapter::Poll() {
     process->setArguments({QStringLiteral("agents"), QStringLiteral("--json"),
                            QStringLiteral("--all")});
     process->setStandardInputFile(QProcess::nullDevice());
+    // A group of its own to kill on a timeout, and default signal handlers,
+    // as roostd gives its backends.
+    process->setUnixProcessParameters(
+        QProcess::UnixProcessFlag::CreateNewSession |
+        QProcess::UnixProcessFlag::ResetSignalHandlers);
 
     // Exactly one of these ends a run; the process is gone after it.
     const auto finish = [this,
@@ -129,20 +141,21 @@ void Adapter::Poll() {
                             .arg(process->errorString())));
                 }
             });
-    connect(process, &QProcess::finished, this,
-            [process, finish](int code, QProcess::ExitStatus status) {
-                if (status != QProcess::NormalExit) {
-                    finish(std::unexpected(
-                        QStringLiteral("claude agents crashed")));
-                } else if (code != 0) {
-                    finish(std::unexpected(
-                        QStringLiteral("claude agents exited with code %1: %2")
-                            .arg(code)
-                            .arg(FirstLine(process->readAllStandardError()))));
-                } else {
-                    finish(ParseAgents(process->readAllStandardOutput()));
-                }
-            });
+    connect(
+        process, &QProcess::finished, this,
+        [process, finish](int code, QProcess::ExitStatus status) {
+            if (status != QProcess::NormalExit) {
+                finish(
+                    std::unexpected(QStringLiteral("claude agents crashed")));
+            } else if (code != 0) {
+                finish(std::unexpected(
+                    QStringLiteral("claude agents exited with code %1%2")
+                        .arg(code)
+                        .arg(StderrSuffix(process->readAllStandardError()))));
+            } else {
+                finish(ParseAgents(process->readAllStandardOutput()));
+            }
+        });
     connect(&TimeoutTimer_, &QTimer::timeout, this, [this, finish] {
         finish(std::unexpected(
             QStringLiteral("claude agents did not finish in %1 ms")

@@ -42,8 +42,9 @@ struct AdapterOptions {
 //     list
 //
 // Requests wait for the first run. While the last run failed, both fail with
-// its reason. After every run but the first, each session that is new or
-// changed its state is sent as session.stateChanged {agent, session}.
+// its reason. After every successful run but the first one, each session
+// that is new or changed its state since the previous successful run is sent
+// as session.stateChanged {agent, session}.
 class Adapter : public QObject {
     Q_OBJECT
 

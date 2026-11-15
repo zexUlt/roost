@@ -56,7 +56,10 @@ QJsonObject Request(qint64 id, const QString& method,
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 echo "start $*" >> "$dir/calls"
-if [ -f "$dir/hang" ]; then echo $$ > "$dir/pid"; exec sleep 600; fi
+if [ -f "$dir/sigpipe" ]; then ( yes 2>/dev/null; echo $? > "$dir/yes" ) | true; fi
+if [ -f "$dir/hang" ]; then
+  sleep 600 & echo $! >> "$dir/pids"; echo $$ >> "$dir/pids"; exec sleep 600
+fi
 if [ -f "$dir/sleep" ]; then sleep "$(cat "$dir/sleep")"; fi
 if [ -f "$dir/stderr" ]; then cat "$dir/stderr" >&2; fi
 if [ -f "$dir/agents.json" ]; then cat "$dir/agents.json"; fi
@@ -203,8 +206,12 @@ private slots:
 
     void cleanup() {
         if (Adapter_) {
-            Adapter_->kill();
-            Adapter_->waitForFinished(TIMEOUT_MS);
+            // Let it stop its run of claude; a killed adapter leaves it.
+            Adapter_->closeWriteChannel();
+            if (!Adapter_->waitForFinished(TIMEOUT_MS)) {
+                Adapter_->kill();
+                Adapter_->waitForFinished(TIMEOUT_MS);
+            }
             Adapter_.reset();
         }
     }
@@ -593,19 +600,49 @@ private slots:
 
     void ARunThatHangsIsKilled() {
         Put("hang", "");
-        StartAdapter({"--timeout-ms", "300"});
+        // Long enough for sh to start under load and note its pids.
+        StartAdapter({"--timeout-ms", "1500", "--poll-ms", "200"});
         QCOMPARE(ListSessions(),
                  QJsonValue(QJsonObject{
                      {"code", -32603},
-                     {"message", "claude agents did not finish in 300 ms"}}));
-        QFile pidFile(FakePath("pid"));
+                     {"message", "claude agents did not finish in 1500 ms"}}));
+        // The first run: what claude started, then claude.
+        QFile pidFile(FakePath("pids"));
         QVERIFY(pidFile.open(QIODevice::ReadOnly));
-        const pid_t pid = pidFile.readAll().trimmed().toInt();
-        QVERIFY(pid > 0);
-        QTRY_VERIFY_WITH_TIMEOUT(::kill(pid, 0) != 0, TIMEOUT_MS);
+        const QList<QByteArray> pids = pidFile.readAll().split('\n');
+        QVERIFY2(pids.size() >= 2, pids.join(' ').constData());
+        for (const QByteArray& line : pids.first(2)) {
+            const pid_t pid = line.toInt();
+            QVERIFY(pid > 0);
+            QTRY_VERIFY_WITH_TIMEOUT(::kill(pid, 0) != 0, TIMEOUT_MS);
+        }
         // And runs again.
         QVERIFY(QTest::qWaitFor(
             [&] { return Calls().count("start agents --json --all") >= 2; },
+            TIMEOUT_MS));
+    }
+
+    void AnExitWithoutStderrSaysOnlyTheCode() {
+        Put("exit", "3");
+        StartAdapter();
+        QCOMPARE(ListSessions(),
+                 QJsonValue(QJsonObject{
+                     {"code", -32603},
+                     {"message", "claude agents exited with code 3"}}));
+    }
+
+    void ClaudeGetsDefaultSignalHandlers() {
+        // The adapter ignores SIGPIPE; claude must not. yes dies of SIGPIPE
+        // with 141, and exits with 1 if it is ignored.
+        Put("sigpipe", "");
+        Put("agents.json", Agents({}));
+        StartAdapter();
+        QVERIFY(QTest::qWaitFor(
+            [&] {
+                QFile yes(FakePath("yes"));
+                return yes.open(QIODevice::ReadOnly) &&
+                       yes.readAll().trimmed() == "141";
+            },
             TIMEOUT_MS));
     }
 
@@ -627,7 +664,7 @@ private slots:
         Put("hang", "");
         StartAdapter();
         Write(Request(1, "agent.listSessions", {{"agent", "claude"}}));
-        QVERIFY(QTest::qWaitFor([&] { return QFile::exists(FakePath("pid")); },
+        QVERIFY(QTest::qWaitFor([&] { return QFile::exists(FakePath("pids")); },
                                 TIMEOUT_MS));
         Adapter_->closeWriteChannel();
         QVERIFY(Adapter_->waitForFinished(TIMEOUT_MS));
