@@ -1,5 +1,6 @@
 # Everything of roostd but main(), so that tests drive the real thing.
 add_library(roostd_lib STATIC
+    adapter_bridge.cpp
     backend.cpp
     dump.cpp
     manifest.cpp

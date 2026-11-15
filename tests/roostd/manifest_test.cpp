@@ -100,6 +100,23 @@ private slots:
         QCOMPARE(manifest->Contributes.value("settings").toString(),
                  QString("qml/Settings.qml"));
         QCOMPARE(manifest->Contributes.value("panels").toArray().size(), 1);
+        QCOMPARE(manifest->Agents.size(), 1);
+        QCOMPARE(manifest->Agents.front().Id, QString("claude"));
+        QCOMPARE(manifest->Agents.front().Capabilities,
+                 (QStringList{"backgroundDaemon", "nativeTuiAttach"}));
+    }
+
+    void AgentMayLeaveCapabilitiesOut() {
+        QJsonObject json = With(Minimal(), "backend",
+                                QJsonObject{{"command", QJsonArray{"run"}}});
+        json.insert(
+            "contributes",
+            QJsonObject{{"agents", QJsonArray{QJsonObject{{"id", "codex"}}}}});
+        const auto manifest = ParseManifest(Json(json), DIRECTORY);
+        QVERIFY2(manifest, qPrintable(Why(manifest)));
+        QCOMPARE(manifest->Agents.size(), 1);
+        QCOMPARE(manifest->Agents.front().Id, QString("codex"));
+        QVERIFY(manifest->Agents.front().Capabilities.isEmpty());
     }
 
     void MinimalManifestHasNothingToRun() {
@@ -108,6 +125,7 @@ private slots:
         QVERIFY(manifest->Backend.isEmpty());
         QVERIFY(manifest->Commands.isEmpty());
         QVERIFY(manifest->Keybindings.isEmpty());
+        QVERIFY(manifest->Agents.isEmpty());
         QVERIFY(manifest->Contributes.isEmpty());
     }
 
@@ -264,6 +282,30 @@ private slots:
                "declare";
         QTest::newRow("agents as object")
             << contributes("agents", QJsonObject{}) << "contributes.agents";
+        // With a backend, so that the agent itself is what is wrong.
+        const auto agents = [](const QJsonValue& value) {
+            return Json(With(With(Minimal(), "backend",
+                                  QJsonObject{{"command", QJsonArray{"run"}}}),
+                             "contributes", QJsonObject{{"agents", value}}));
+        };
+        QTest::newRow("agent without an id")
+            << agents(QJsonArray{QJsonObject{}}) << "an agent needs an id";
+        QTest::newRow("agent as string")
+            << agents(QJsonArray{"claude"}) << "an agent needs an id";
+        QTest::newRow("agent id in capitals")
+            << agents(QJsonArray{QJsonObject{{"id", "Claude"}}})
+            << "an agent needs an id";
+        QTest::newRow("capabilities as string")
+            << agents(QJsonArray{
+                   QJsonObject{{"id", "claude"}, {"capabilities", "all"}}})
+            << "the capabilities of agent claude must be an array";
+        QTest::newRow("capability as number")
+            << agents(QJsonArray{QJsonObject{{"id", "claude"},
+                                             {"capabilities", QJsonArray{1}}}})
+            << "the capabilities of agent claude must be strings";
+        QTest::newRow("agent without a backend")
+            << contributes("agents", QJsonArray{QJsonObject{{"id", "claude"}}})
+            << "a plugin with agents needs a backend";
         QTest::newRow("panels as string")
             << contributes("panels", "x") << "contributes.panels";
         QTest::newRow("settings as number")
@@ -485,6 +527,45 @@ private slots:
         QCOMPARE(registry.Problems(),
                  QStringList{"key Ctrl+Q of plugin two is ignored: the plugin "
                              "has no command two.x"});
+    }
+
+    void FirstOwnerOfAnAgentWins() {
+        PluginRegistry registry;
+        PluginManifest one = Plugin("one", {});
+        one.Agents = {{.Id = "claude", .Capabilities = {}},
+                      {.Id = "one", .Capabilities = {}}};
+        PluginManifest two = Plugin("two", {});
+        two.Agents = {{.Id = "claude", .Capabilities = {}},
+                      {.Id = "two", .Capabilities = {}}};
+        QVERIFY(registry.Add(one));
+        QVERIFY(registry.Add(two));
+        QCOMPARE(registry.AgentOwner("claude")->Id, QString("one"));
+        QCOMPARE(registry.AgentOwner("two")->Id, QString("two"));
+        QVERIFY(!registry.AgentOwner("codex"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"agent claude of plugin two is ignored: plugin "
+                             "one serves it"});
+    }
+
+    void AgentDeclaredTwiceIsAProblem() {
+        PluginRegistry registry;
+        PluginManifest one = Plugin("one", {});
+        one.Agents = {{.Id = "claude", .Capabilities = {}},
+                      {.Id = "claude", .Capabilities = {}}};
+        QVERIFY(registry.Add(one));
+        QCOMPARE(registry.AgentOwner("claude")->Id, QString("one"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"agent claude of plugin one is ignored: plugin "
+                             "one serves it"});
+    }
+
+    void ARefusedPluginServesNoAgent() {
+        PluginRegistry registry;
+        QVERIFY(registry.Add(Plugin("one", {})));
+        PluginManifest again = Plugin("one", {});
+        again.Agents = {{.Id = "claude", .Capabilities = {}}};
+        QVERIFY(!registry.Add(again));
+        QVERIFY(!registry.AgentOwner("claude"));
     }
 
     void ProblemsKeepTheirOrder() {

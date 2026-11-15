@@ -175,11 +175,34 @@ private slots:
         QCOMPARE(crashed.count(), 0);
     }
 
+    void PassesNotificationsOn() {
+        const auto backend = Make();
+        QSignalSpy notified(backend.get(), &Backend::Notified);
+        backend->Start();
+        const QJsonArray messages{
+            QJsonObject{{"jsonrpc", "2.0"},
+                        {"method", "session.stateChanged"},
+                        {"params", QJsonObject{{"agent", "claude"}}}},
+            QJsonObject{{"jsonrpc", "2.0"}, {"method", "bare"}},
+        };
+        QVERIFY(Run(*backend, "fixture.notify", messages));
+        QCOMPARE(notified.count(), 2);
+        QCOMPARE(notified.at(0).at(0).toString(),
+                 QString("session.stateChanged"));
+        QCOMPARE(notified.at(0).at(1).value<QJsonValue>(),
+                 QJsonValue(QJsonObject{{"agent", "claude"}}));
+        QCOMPARE(notified.at(1).at(0).toString(), QString("bare"));
+        QVERIFY(notified.at(1).at(1).value<QJsonValue>().isUndefined());
+    }
+
     void AnswersARequestFromTheBackend() {
         const auto backend = Make();
+        QSignalSpy notified(backend.get(), &Backend::Notified);
         backend->Start();
         const rpc::Result result = Run(*backend, "fixture.ask");
         QVERIFY(result);
+        // A request is not a notification.
+        QCOMPARE(notified.count(), 0);
         const QJsonObject reply = result->toObject();
         QCOMPARE(reply.value("id"), QJsonValue("ask"));
         QCOMPARE(reply.value("error").toObject().value("code").toInt(),
@@ -269,6 +292,8 @@ private slots:
             << "fixture.flood" << "sent a line longer than 16777216 bytes";
         QTest::newRow("an error that is not an object")
             << "fixture.badError" << "sent an error that is not an object";
+        QTest::newRow("neither a result nor an error")
+            << "fixture.empty" << "answered with neither a result nor an error";
     }
 
     void KillsOneThatBreaksTheProtocol() {

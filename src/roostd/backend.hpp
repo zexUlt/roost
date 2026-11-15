@@ -32,9 +32,10 @@ struct BackendOptions {
 
 // A plugin backend (design.md §5): a child process that speaks JSON-RPC 2.0
 // over stdio, one compact message per line. roostd sends requests and the
-// backend answers them; a request from the backend is answered with
-// MethodNotFound until roostd serves backends methods. Its stderr goes to
-// roostd's. Its stdin closing means it should exit.
+// backend answers them; the backend's notifications come out as Notified, and
+// a request from it is answered with MethodNotFound until roostd serves
+// backends methods. Its stderr goes to roostd's. Its stdin closing means it
+// should exit.
 //
 // A backend that exits on its own, fails to start or breaks the protocol has
 // crashed: its pending requests fail with BackendUnavailable, Crashed is
@@ -74,6 +75,8 @@ signals:
     void Started();
     void Crashed(const QString& reason, qint64 restartInMs);
     void GaveUp(const QString& reason);
+    // params is Undefined if the notification has none.
+    void Notified(const QString& method, const QJsonValue& params);
 
 private:
     void Launch();
