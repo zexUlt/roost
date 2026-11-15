@@ -7,6 +7,13 @@ set(ROOST_TEST_ENVIRONMENT
     QML_DISABLE_DISK_CACHE=1
 )
 
+# Shared by several tests.
+add_library(roost_test_helpers STATIC
+    helpers/scoped_env.cpp
+)
+target_include_directories(roost_test_helpers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(roost_test_helpers PUBLIC roost::compile_options Qt6::Core)
+
 # One executable per test file, so a crash in one does not hide the others.
 function(roost_add_qt_test name source)
     qt_add_executable(${name} ${source})
@@ -19,8 +26,9 @@ roost_add_qt_test(ghostty_formatter_test core/ghostty_formatter_test.cpp ghostty
 roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
-roost_add_qt_test(store_test core/store_test.cpp)
+roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
+roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 
 # The real binary, started as a process.
 roost_add_qt_test(roostd_test roostd/roostd_test.cpp)

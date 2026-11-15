@@ -15,36 +15,12 @@
 #include <unistd.h>
 
 #include "core/store.hpp"
+#include "helpers/scoped_env.hpp"
 
 using roost::Store;
+using roost::testing::ScopedEnv;
 
 namespace {
-
-// Sets or unsets an environment variable for one scope.
-class ScopedEnv {
-public:
-    ScopedEnv(const char* name, std::optional<QByteArray> value)
-        : Name_(name),
-          Old_(qEnvironmentVariableIsSet(name) ? std::optional(qgetenv(name))
-                                               : std::nullopt) {
-        Set(value);
-    }
-    ~ScopedEnv() { Set(Old_); }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
-private:
-    void Set(const std::optional<QByteArray>& value) {
-        if (value) {
-            qputenv(Name_, *value);
-        } else {
-            qunsetenv(Name_);
-        }
-    }
-
-    const char* Name_;
-    std::optional<QByteArray> Old_;
-};
 
 ino_t InodeOf(const QString& path) {
     struct stat info{};
