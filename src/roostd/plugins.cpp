@@ -91,10 +91,14 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
                           for (qsizetype i = 0; i < done.size(); ++i) {
                               const Listed answer = done[i].result();
                               if (!answer) {
+                                  const rpc::Error& error = answer.error();
                                   unavailable.append(QJsonObject{
                                       {QStringLiteral("agent"), agents[i]},
                                       {QStringLiteral("reason"),
-                                       answer.error().Message},
+                                       error.Message.isEmpty()
+                                           ? QStringLiteral("error %1")
+                                                 .arg(error.Code)
+                                           : error.Message},
                                   });
                                   continue;
                               }
@@ -102,10 +106,18 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
                                   sessions.append(ToJson(session));
                               }
                           }
-                          return QJsonObject{
+                          const QJsonObject list{
                               {QStringLiteral("sessions"), sessions},
                               {QStringLiteral("unavailable"), unavailable},
                           };
+                          // Refused rather than closing the connection.
+                          if (!Server::AnswerFitsAFrame(list)) {
+                              return std::unexpected(rpc::Error::FromCode(
+                                  rpc::EErrorCode::InternalError,
+                                  QStringLiteral("the session list does not "
+                                                 "fit a frame")));
+                          }
+                          return list;
                       });
         });
     Q_ASSERT(listing);
@@ -134,8 +146,10 @@ void PluginHost::Load(const QStringList& searchPath) {
         }
         StartBackend(plugin);
         for (const PluginAgent& agent : plugin.Agents) {
-            // An agent lost to an earlier plugin stays with that one.
-            if (Registry_.AgentOwner(agent.Id) == &plugin) {
+            // An agent lost to an earlier plugin stays with that one; one
+            // the plugin declares twice gets one bridge.
+            if (Registry_.AgentOwner(agent.Id) == &plugin &&
+                BridgeOf(agent.Id) == nullptr) {
                 Bridges_.push_back(std::make_unique<AdapterBridge>(
                     agent.Id, agent.Capabilities, *BackendOf(plugin.Id)));
             }
@@ -179,8 +193,16 @@ void PluginHost::OnNotified(const QString& pluginId, const QString& method,
                  qUtf8Printable(pluginId), qUtf8Printable(session.error()));
         return;
     }
-    Server_.Bus().Publish(QStringLiteral("session.stateChanged"),
-                          ToJson(*session));
+    const QString event = QStringLiteral("session.stateChanged");
+    const QJsonObject payload = ToJson(*session);
+    if (!Server::EventFitsAFrame(event, payload)) {
+        qWarning(
+            "roostd: the backend of %s told a session state too big for "
+            "a frame",
+            qUtf8Printable(pluginId));
+        return;
+    }
+    Server_.Bus().Publish(event, payload);
 }
 
 void PluginHost::StartBackend(const PluginManifest& plugin) {

@@ -292,6 +292,8 @@ private slots:
             << "fixture.flood" << "sent a line longer than 16777216 bytes";
         QTest::newRow("an error that is not an object")
             << "fixture.badError" << "sent an error that is not an object";
+        QTest::newRow("neither a result nor an error")
+            << "fixture.empty" << "answered with neither a result nor an error";
     }
 
     void KillsOneThatBreaksTheProtocol() {

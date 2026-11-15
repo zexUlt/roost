@@ -202,6 +202,10 @@ void Backend::Dispatch(const QByteArray& line) {
         Break(QStringLiteral("sent an error that is not an object"));
         return;
     }
+    if (failure.isUndefined() && !message.contains(QStringLiteral("result"))) {
+        Break(QStringLiteral("answered with neither a result nor an error"));
+        return;
+    }
     QPromise<rpc::Result> promise = std::move(pending->second);
     Pending_.erase(pending);
 

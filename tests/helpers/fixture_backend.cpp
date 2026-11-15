@@ -1,6 +1,6 @@
 // A plugin backend for tests: speaks JSON-RPC over stdio one line at a time
 // and misbehaves on request. It answers commands.run {command, args}:
-//   fixture.echo     the args
+//   fixture.echo     the args, null if there are none
 //   fixture.pid      its process id
 //   fixture.cwd      its working directory
 //   fixture.fds      the pipes and sockets it has open besides stdio
@@ -13,6 +13,7 @@
 //   fixture.ask      sends roostd a request and returns its answer
 //   fixture.hang     never answers
 //   fixture.badError answers with an error that is not an object
+//   fixture.empty    answers with neither a result nor an error
 //   fixture.lastWord answers only when its stdin closes, on the way out
 //   fixture.notify   sends each message of the args as it is, then answers
 // An agent method such as agent.listSessions {agent, ...} is answered as
@@ -79,7 +80,8 @@ QJsonObject ReadMessage() {
 void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
          QJsonValue& lastWord) {
     if (command == "fixture.echo") {
-        Answer(id, args);
+        // Absent args come back as null: a result cannot be absent.
+        Answer(id, args.isUndefined() ? QJsonValue() : args);
     } else if (command == "fixture.pid") {
         Answer(id, static_cast<qint64>(getpid()));
     } else if (command == "fixture.cwd") {
@@ -124,6 +126,8 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
         // No answer.
     } else if (command == "fixture.badError") {
         Send({{"jsonrpc", "2.0"}, {"id", id}, {"error", "boom"}});
+    } else if (command == "fixture.empty") {
+        Send({{"jsonrpc", "2.0"}, {"id", id}});
     } else if (command == "fixture.lastWord") {
         lastWord = id;
     } else if (command == "fixture.notify") {

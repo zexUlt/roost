@@ -144,7 +144,7 @@ GUI-поток не разбирает вывод никогда. Qt Quick по 
 
 `commands.run` передаёт бэкенду владельца тот же запрос (`src/roostd/plugins.hpp`). Неизвестная команда — `InvalidParams`, плагин без бэкенда или с лежащим бэкендом — -32003. О бэкендах демон сам публикует события `plugin.backendCrashed {plugin, reason, restartInMs}` и `plugin.backendGaveUp {plugin, reason}`.
 
-`sessions.list` опрашивает адаптеры всех агентов разом (§7) и отдаёт сессии агент за агентом в порядке загрузки плагинов. Сессия — `{agent, id, title, cwd, state, startedAt?}`, `startedAt` в миллисекундах от эпохи. Упавший или ответивший не по схеме адаптер не валит список, а попадает в `unavailable` с причиной. Таймаута нет: зависший адаптер держит ответ, пока его бэкенд не остановят. Смену состояния сессии демон публикует событием `session.stateChanged` с сессией в том же виде.
+`sessions.list` опрашивает адаптеры всех агентов разом (§7) и отдаёт сессии агент за агентом в порядке загрузки плагинов. Сессия — `{agent, id, title, cwd, state, startedAt?}`, `startedAt` в миллисекундах от эпохи. Упавший или ответивший не по схеме адаптер не валит список, а попадает в `unavailable` с причиной. Таймаута нет: зависший адаптер держит ответ, пока его бэкенд не остановят, и каждый новый `sessions.list` добавляет ещё один ждущий запрос к нему. Список, который не помещается в кадр, — `InternalError`, а не обрыв соединения. Смену состояния сессии демон публикует событием `session.stateChanged` с сессией в том же виде; событие больше кадра отбрасывается с записью в лог.
 
 По SIGTERM и SIGINT демон останавливает бэкенды и убирает сокет и lock-файл. Запрос, который ждал бэкенд, ответа не получит: клиент увидит обрыв соединения.
 
@@ -246,7 +246,7 @@ struct AgentAdapter {
     virtual QFuture<std::vector<Session>> ListSessions() = 0;
     virtual QFuture<SessionRef> Start(const StartOptions&) = 0;
     virtual QFuture<void> Stop(const SessionRef&) = 0;
-    virtual std::optional<PtySpec> AttachCommand(const SessionRef&) = 0;  // roostd запускает в PTY
+    virtual QFuture<std::optional<PtySpec>> AttachCommand(const SessionRef&) = 0;  // roostd запускает в PTY
     virtual QFuture<void> Send(const SessionRef&, const QString& text) = 0;
     virtual QFuture<void> AnswerPermission(const SessionRef&, const QString& requestId, const PermissionAnswer&) = 0;
     // события: StateChanged, PermissionRequested, TitleChanged, Usage
@@ -255,7 +255,7 @@ struct AgentAdapter {
 
 - Асинхронность — `QFuture<T>` из QtCore (`QPromise`, `then`): без корутин и без новой зависимости.
 - Внешние адаптеры работают как бэкенды плагинов; `roostd` оборачивает их мостом, который реализует этот интерфейс поверх JSON-RPC. Адаптер Claude — встроенный плагин на том же протоколе.
-- Мост — `src/roostd/adapter_bridge.hpp`, по одному на агента. Демон зовёт бэкенд `agent.listSessions {agent}` → `[{id, state, title?, cwd?, startedAt?}]` и `agent.attachCommand {agent, session}` → `{program, args?, cwd?, env?}` или `null`, если к сессии не подключиться; `env` — объект `{ИМЯ: значение}`. Бэкенд сам шлёт уведомление `session.stateChanged {agent, session}` о своих агентах. Ответ не по схеме — `InternalError` с причиной; уведомление о чужом агенте или не по схеме демон пишет в лог и отбрасывает. Пока реализованы только эти три части интерфейса, и `AttachCommand` асинхронный: ответ идёт из другого процесса.
+- Мост — `src/roostd/adapter_bridge.hpp`, по одному на агента. Демон зовёт бэкенд `agent.listSessions {agent}` → `[{id, state, title?, cwd?, startedAt?}]` и `agent.attachCommand {agent, session}` → `{program, args?, cwd?, env?}` или `null`, если к сессии не подключиться; `env` — объект `{ИМЯ: значение}`. Бэкенд сам шлёт уведомление `session.stateChanged {agent, session}` о своих агентах. Ответ не по схеме — `InternalError` с причиной; уведомление о чужом агенте или не по схеме демон пишет в лог и отбрасывает. Пока реализованы только эти три части интерфейса. Ошибка адаптера без `message` попадает в `unavailable` как `error <code>`. Агент, объявленный плагином дважды, получает один мост.
 - Общие состояния: `working`, `blocked` (ждёт человека), `idle`, `done`, `failed`.
 
 | Агент | Сессии и состояние | Видимый TUI | Свой демон |

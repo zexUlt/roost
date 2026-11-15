@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -13,9 +14,11 @@
 #include <memory>
 #include <type_traits>
 
+#include "core/frame.hpp"
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
 #include "roostd/adapter_bridge.hpp"
+#include "roostd/backend.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
 
@@ -477,6 +480,101 @@ private slots:
                  QString("mine"));
     }
 
+    void AnAgentDeclaredTwiceGetsOneBridge() {
+        AddPlugin("one", {"claude", "claude"});
+        SetAnswers("one", {{"agent.listSessions",
+                            QJsonObject{{"claude", Result(QJsonArray{Session(
+                                                       "s1", "idle")})}}}});
+        QVERIFY(Start());
+        const rpc::Result listed = ListSessions();
+        QVERIFY2(listed, qPrintable(Why(listed)));
+        QCOMPARE(listed->toObject().value("sessions").toArray().size(), 1);
+    }
+
+    void TheListFollowsTheLoadOrder() {
+        // Plugins load by directory name; agent names sort the other way.
+        AddPlugin("a", {"zeta"});
+        AddPlugin("b", {"alpha"});
+        AddPlugin("c", {"omega"});
+        AddPlugin("d", {"beta"});
+        SetAnswers(
+            "a", {{"agent.listSessions",
+                   QJsonObject{
+                       {"zeta", Result(QJsonArray{Session("z1", "idle")})}}}});
+        SetAnswers(
+            "b", {{"agent.listSessions",
+                   QJsonObject{
+                       {"alpha", Result(QJsonArray{Session("a1", "idle")})}}}});
+        SetAnswers("c", {{"agent.listSessions",
+                          QJsonObject{{"omega", Result(QJsonObject{})}}}});
+        SetAnswers("d", {{"agent.listSessions",
+                          QJsonObject{{"beta", Result(QJsonValue())}}}});
+        QVERIFY(Start());
+        const rpc::Result listed = ListSessions();
+        QVERIFY2(listed, qPrintable(Why(listed)));
+        const QJsonArray sessions =
+            listed->toObject().value("sessions").toArray();
+        QCOMPARE(sessions.size(), 2);
+        QCOMPARE(sessions[0].toObject().value("id").toString(), QString("z1"));
+        QCOMPARE(sessions[1].toObject().value("id").toString(), QString("a1"));
+        const QJsonArray unavailable =
+            listed->toObject().value("unavailable").toArray();
+        QCOMPARE(unavailable.size(), 2);
+        QCOMPARE(unavailable[0].toObject().value("agent").toString(),
+                 QString("omega"));
+        QCOMPARE(unavailable[1].toObject().value("agent").toString(),
+                 QString("beta"));
+    }
+
+    void AnErrorWithoutAMessageGivesItsCode() {
+        AddPlugin("one", {"claude"});
+        SetAnswers("one",
+                   {{"agent.listSessions",
+                     QJsonObject{
+                         {"claude",
+                          QJsonObject{{"error", QJsonObject{{"code", 7}}}}}}}});
+        QVERIFY(Start());
+        const rpc::Result listed = ListSessions();
+        QVERIFY2(listed, qPrintable(Why(listed)));
+        QCOMPARE(listed->toObject().value("unavailable"),
+                 QJsonValue(QJsonArray{
+                     QJsonObject{{"agent", "claude"}, {"reason", "error 7"}}}));
+    }
+
+    void AListTooBigForAFrameIsRefused() {
+        AddPlugin("one", {"claude"});
+        // Each session grows once roostd adds its agent, title and cwd.
+        QJsonArray sessions;
+        for (int i = 0; i < 300'000; ++i) {
+            sessions.append(Session(QString::number(i), "idle"));
+        }
+        SetAnswers("one", {{"agent.listSessions",
+                            QJsonObject{{"claude", Result(sessions)}}}});
+        QVERIFY(Start());
+        const rpc::Result listed = ListSessions();
+        QVERIFY(!listed);
+        QCOMPARE(listed.error().Code,
+                 static_cast<int>(rpc::EErrorCode::InternalError));
+        QCOMPARE(listed.error().Message,
+                 QString("the session list does not fit a frame"));
+    }
+
+    void AdaptersAreAskedAtOnce() {
+        AddPlugin("one", {"alpha"});
+        AddPlugin("two", {"beta"});
+        SetAnswers("one",
+                   {{"agent.listSessions", QJsonObject{{"alpha", "hang"}}}});
+        SetAnswers("two",
+                   {{"agent.listSessions", QJsonObject{{"beta", "crash"}}}});
+        QVERIFY(Start());
+        QSignalSpy crashed(Host_->BackendOf("two"), &Backend::Crashed);
+        const QFuture<rpc::Result> future =
+            Client_->Request("sessions.list", QJsonObject{});
+        // beta is asked although alpha, loaded first, has not answered.
+        QTRY_VERIFY(!crashed.isEmpty());
+        QVERIFY(!future.isFinished());
+    }
+
     void TheAttachCommandComesFromTheAdapter() {
         AddPlugin("one", {"claude"});
         SetAnswers(
@@ -567,6 +665,21 @@ private slots:
                              QJsonObject{{"agent", "claude"},
                                          {"session", Session("s1", "done")}}),
             });
+        QTest::ignoreMessage(QtWarningMsg,
+                             "roostd: the backend of one told a session "
+                             "state too big for a frame");
+        // The line from the backend fits; the event, a little longer, does
+        // not.
+        const QJsonObject huge{
+            {"agent", "claude"},
+            {"session",
+             QJsonObject{{"id", "s2"},
+                         {"state", "idle"},
+                         {"title", QString(MAX_FRAME_LENGTH - 140, u'x')}}}};
+        QVERIFY(QJsonDocument(Notification("session.stateChanged", huge))
+                    .toJson(QJsonDocument::Compact)
+                    .size() < Backend::MAX_LINE_LENGTH);
+        Notify("one", {Notification("session.stateChanged", huge)});
         QCOMPARE(events.size(), 1);
         QCOMPARE(events[0], QJsonValue(QJsonObject{
                                 {"name", "session.stateChanged"},
@@ -586,7 +699,9 @@ private slots:
         const QFuture<rpc::Result> future =
             Client_->Request("sessions.list", QJsonObject{});
         QVERIFY(!WaitFor(future, 200));
-        // The answer is sent on the way out, while the server still runs.
+        // A backend stopped while the server runs on, as when plugins are
+        // unloaded, ends the wait. roostd stopping drops the connection
+        // instead (design.md §4).
         Host_.reset();
         QVERIFY(WaitFor(future));
         const rpc::Result listed = future.result();
