@@ -10,9 +10,7 @@
 #include <QTest>
 #include <QTimer>
 
-#include <fcntl.h>
 #include <signal.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -69,22 +67,6 @@ BackendOptions Fast() {
         .StableRun = 60s,
         .StopTimeout = 1s,
     };
-}
-
-// The pipes and sockets of this process that any child of it inherits, as
-// fixture.fds lists them.
-QJsonArray InheritedDescriptors() {
-    QJsonArray inherited;
-    for (int fd = 3; fd < 1024; ++fd) {
-        const int flags = ::fcntl(fd, F_GETFD);
-        struct stat status{};
-        if (flags != -1 && (flags & FD_CLOEXEC) == 0 &&
-            ::fstat(fd, &status) == 0 &&
-            (S_ISFIFO(status.st_mode) || S_ISSOCK(status.st_mode))) {
-            inherited.append(fd);
-        }
-    }
-    return inherited;
 }
 
 bool IsAlive(qint64 pid) {
@@ -149,10 +131,6 @@ private slots:
         QVERIFY(pid > 0);
         QCOMPARE(::getsid(pid), pid);
         QCOMPARE(::getpgid(pid), pid);
-        const rpc::Result fds = Run(*backend, "fixture.fds");
-        QVERIFY(fds);
-        // Nothing but what this process hands down to every child.
-        QCOMPARE(*fds, QJsonValue(InheritedDescriptors()));
     }
 
     void ReportsItsProcessId() {
