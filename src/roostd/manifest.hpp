@@ -42,8 +42,9 @@ struct PluginManifest {
 
 // Checks a manifest read from `directory`, which must be absolute. Unknown
 // keys are ignored, so an older roostd reads a newer manifest of the same
-// API. The backend program is a path relative to the plugin directory that
-// stays inside it.
+// API. The backend program and the settings page are paths relative to the
+// plugin directory that stay inside it, as written: symlinks are not
+// followed. A keybinding names a command of the same plugin.
 std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
                                                      const QString& directory);
 
@@ -52,17 +53,22 @@ std::expected<PluginManifest, QString> LoadManifest(const QString& directory);
 
 // Where plugins are looked for, in load order: each absolute entry of
 // ROOST_PLUGINS_PATH (separated by ':'), then <config directory>/plugins.
+// Each directory is listed once, where it first comes.
 QStringList PluginSearchPath(const QString& configDirectory);
 
 // The subdirectories with a plugin.json, of each search directory in turn,
-// by name within one. Missing search directories are skipped.
+// by name within one, case first: "Zed" comes before "alpha". Missing search
+// directories are skipped.
 QStringList FindPluginDirectories(const QStringList& searchPath);
 
 // The loaded plugins and who owns each contribution (design.md §5). The
 // earlier plugin wins a conflict: a second plugin with a taken id is not
 // loaded, and a command id or a key that is taken stays with its first
-// owner. Every refusal is kept as a problem for the user to see. Keys are
-// compared ignoring case; their full normal form comes with the keymap (M5).
+// owner, and so do the keys bound to it. Every refusal is kept as a problem
+// for the user to see. Keys are compared ignoring case; their full normal
+// form comes with the keymap (M5).
+//
+// The pointers and the reference it hands out are good until the next Add.
 class PluginRegistry {
 public:
     // False if the plugin is refused for its id.

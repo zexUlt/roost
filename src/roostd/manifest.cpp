@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 
+#include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "core/bus.hpp"
@@ -36,6 +38,18 @@ bool IsValidCommandId(const QJsonValue& value) {
     return value.isString() && EventBus::IsValidName(value.toString());
 }
 
+// The path a manifest names, resolved, if it stays inside the plugin
+// directory. The check is on the text: a symlink is not followed, as the
+// plugin's own code runs as the user anyway.
+std::optional<QString> InsidePlugin(const QString& directory,
+                                    const QString& path) {
+    const QString resolved = QDir::cleanPath(directory + u'/' + path);
+    if (QDir::isAbsolutePath(path) || !resolved.startsWith(directory + u'/')) {
+        return std::nullopt;
+    }
+    return resolved;
+}
+
 Checked ParseBackend(const QJsonValue& value, PluginManifest& manifest) {
     if (value.isUndefined()) {
         return {};
@@ -46,22 +60,21 @@ Checked ParseBackend(const QJsonValue& value, PluginManifest& manifest) {
             "\"backend\" must be {\"command\": [program, arguments...]}"));
     }
     for (const QJsonValue& part : command) {
-        if (!IsNonEmptyString(part)) {
-            return Fail(QStringLiteral(
-                "\"backend.command\" must hold non-empty strings"));
+        if (!part.isString()) {
+            return Fail(
+                QStringLiteral("\"backend.command\" must hold strings"));
         }
         manifest.Backend.append(part.toString());
     }
     const QString program = manifest.Backend.front();
-    const QString resolved =
-        QDir::cleanPath(manifest.Directory + u'/' + program);
-    if (QDir::isAbsolutePath(program) ||
-        !resolved.startsWith(manifest.Directory + u'/')) {
+    const std::optional<QString> resolved =
+        InsidePlugin(manifest.Directory, program);
+    if (!resolved) {
         return Fail(QStringLiteral("backend program \"%1\" must be a path "
                                    "inside the plugin directory")
                         .arg(program));
     }
-    manifest.Backend.front() = resolved;
+    manifest.Backend.front() = *resolved;
     return {};
 }
 
@@ -100,9 +113,19 @@ Checked ParseKeybindings(const QJsonValue& value, PluginManifest& manifest) {
         const QJsonObject binding = entry.toObject();
         const QJsonValue command = binding.value("command");
         const QJsonValue key = binding.value("key");
-        if (!IsValidCommandId(command) || !IsNonEmptyString(key)) {
+        if (!IsValidCommandId(command) || !key.isString() ||
+            key.toString().trimmed().isEmpty()) {
             return Fail(
                 QStringLiteral("a keybinding needs a command id and a key"));
+        }
+        const bool declared = std::ranges::any_of(
+            manifest.Commands, [&](const PluginCommand& own) {
+                return own.Id == command.toString();
+            });
+        if (!declared) {
+            return Fail(QStringLiteral("key %1 is bound to %2, a command the "
+                                       "plugin does not declare")
+                            .arg(key.toString(), command.toString()));
         }
         manifest.Keybindings.append(
             {.Command = command.toString(), .Key = key.toString()});
@@ -112,7 +135,8 @@ Checked ParseKeybindings(const QJsonValue& value, PluginManifest& manifest) {
 
 // The parts only the window reads are checked for their JSON type here, so a
 // broken manifest fails at load rather than when a panel opens.
-Checked CheckWindowParts(const QJsonObject& contributes) {
+Checked CheckWindowParts(const QJsonObject& contributes,
+                         const QString& directory) {
     for (const char* key : {"agents", "panels"}) {
         const QJsonValue value = contributes.value(QLatin1StringView(key));
         if (!value.isUndefined() && !value.isArray()) {
@@ -121,8 +145,12 @@ Checked CheckWindowParts(const QJsonObject& contributes) {
         }
     }
     const QJsonValue settings = contributes.value("settings");
-    if (!settings.isUndefined() && !settings.isString()) {
-        return Fail(QStringLiteral("\"contributes.settings\" must be a path"));
+    if (!settings.isUndefined() &&
+        (!settings.isString() ||
+         !InsidePlugin(directory, settings.toString()))) {
+        return Fail(
+            QStringLiteral("\"contributes.settings\" must be a path "
+                           "inside the plugin directory"));
     }
     return {};
 }
@@ -189,7 +217,9 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
         !keybindings) {
         return std::unexpected(keybindings.error());
     }
-    if (auto window = CheckWindowParts(manifest.Contributes); !window) {
+    if (auto window =
+            CheckWindowParts(manifest.Contributes, manifest.Directory);
+        !window) {
         return std::unexpected(window.error());
     }
     return manifest;
@@ -223,7 +253,9 @@ QStringList PluginSearchPath(const QString& configDirectory) {
             path.append(QDir::cleanPath(entry));
         }
     }
-    path.append(configDirectory + QStringLiteral("/plugins"));
+    path.append(QDir::cleanPath(configDirectory + QStringLiteral("/plugins")));
+    // A directory searched twice would hold every plugin twice.
+    path.removeDuplicates();
     return path;
 }
 
@@ -268,6 +300,21 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         Commands_.insert(command.Id, index);
     }
     for (const PluginKeybinding& binding : manifest.Keybindings) {
+        // A key runs the command of whoever owns it, so a plugin binds only
+        // the commands it kept.
+        if (const auto command = Commands_.constFind(binding.Command);
+            command == Commands_.cend() || *command != index) {
+            Problems_.append(
+                command == Commands_.cend()
+                    ? QStringLiteral("key %1 of plugin %2 is ignored: the "
+                                     "plugin has no command %3")
+                          .arg(binding.Key, manifest.Id, binding.Command)
+                    : QStringLiteral("key %1 of plugin %2 is ignored: its "
+                                     "command %3 belongs to plugin %4")
+                          .arg(binding.Key, manifest.Id, binding.Command,
+                               ownerOf(*command)));
+            continue;
+        }
         const QString key = binding.Key.toLower();
         if (const auto taken = Keys_.constFind(key); taken != Keys_.cend()) {
             Problems_.append(

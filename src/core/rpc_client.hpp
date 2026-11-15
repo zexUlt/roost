@@ -35,7 +35,8 @@ public:
 
     // Connects and sends hello with the versions of this build. The future
     // yields hello's result or error: VersionMismatch from a roostd of
-    // another build, ConnectionLost if no roostd listens at the path.
+    // another build, ConnectionLost if no roostd listens at the path. A
+    // refused hello drops the connection.
     QFuture<rpc::Result> Connect(const QString& socketPath);
 
     // Requests made while the connection is coming up wait for it; after it
@@ -68,6 +69,7 @@ private:
     QByteArray Unsent_;  // frames written before the socket connected
     std::unordered_map<qint64, QPromise<rpc::Result>> Pending_;
     qint64 NextId_ = 1;
+    qint64 HelloId_ = 0;
 };
 
 }  // namespace roost

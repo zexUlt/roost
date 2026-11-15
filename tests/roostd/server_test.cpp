@@ -5,10 +5,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalServer>
 #include <QLocalSocket>
+#include <QProcess>
 #include <QPromise>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -608,6 +611,48 @@ private slots:
         QCOMPARE(echoed.count(), 0);
     }
 
+    void EventTooBigForAFrameIsRefused() {
+        const auto server = Start();
+        QVERIFY(server);
+        const auto listener = Connected();
+        const auto publisher = Connected();
+        QVERIFY(listener && publisher);
+        QSignalSpy heard(listener.get(), &RpcClient::NotificationReceived);
+        QVERIFY(WaitFor(listener->Request("bus.subscribe",
+                                          QJsonObject{{"pattern", "test.*"}})));
+
+        // The request fits a frame, the event it makes does not: it is a few
+        // bytes longer.
+        const auto requestSize = [](const QString& payload) {
+            return QJsonDocument(
+                       QJsonObject{
+                           {"jsonrpc", "2.0"},
+                           {"id", 99999},
+                           {"method", "bus.publish"},
+                           {"params", QJsonObject{{"name", "test.big"},
+                                                  {"payload", payload}}},
+                       })
+                .toJson(QJsonDocument::Compact)
+                .size();
+        };
+        const qsizetype room =
+            qsizetype{MAX_FRAME_LENGTH} - 1 - requestSize(QString());
+        QFuture<rpc::Result> published = publisher->Request(
+            "bus.publish", QJsonObject{{"name", "test.big"},
+                                       {"payload", QString(room, u'x')}});
+        QVERIFY(WaitFor(published));
+        QCOMPARE(CodeOf(published.result()),
+                 Code(rpc::EErrorCode::InvalidParams));
+
+        // The subscriber heard nothing and is still there.
+        QVERIFY(WaitFor(publisher->Request(
+            "bus.publish", QJsonObject{{"name", "test.small"}})));
+        QTRY_COMPARE(heard.count(), 1);
+        QCOMPARE(heard.at(0).at(1).value<QJsonValue>().toObject().value("name"),
+                 QJsonValue("test.small"));
+        QCOMPARE(server->ConnectionCount(), 2);
+    }
+
     void PublishWithoutPayloadSendsNull() {
         const auto server = Start();
         QVERIFY(server);
@@ -859,6 +904,53 @@ private slots:
                  qPrintable(tooLong.error()));
     }
 
+    void RefusedHelloDropsTheConnection() {
+        // A roostd of another build, as the client sees it.
+        QLocalServer fake;
+        QVERIFY(fake.listen(SocketPath()));
+        QLocalSocket* accepted = nullptr;
+        FrameDecoder decoder;
+        connect(&fake, &QLocalServer::newConnection, [&] {
+            accepted = fake.nextPendingConnection();
+            connect(accepted, &QLocalSocket::readyRead, [&] {
+                decoder.Feed(accepted->readAll());
+                const std::optional<Frame> frame = decoder.Next();
+                if (!frame) {
+                    return;
+                }
+                const QJsonValue id =
+                    QJsonDocument::fromJson(frame->Body).object().value("id");
+                accepted->write(
+                    EncodeFrame(
+                        EFrameKind::Rpc,
+                        QJsonDocument(
+                            QJsonObject{
+                                {"jsonrpc", "2.0"},
+                                {"id", id},
+                                {"error", QJsonObject{{"code", -32001},
+                                                      {"message", "too old"}}},
+                            })
+                            .toJson(QJsonDocument::Compact))
+                        .value());
+            });
+        });
+
+        RpcClient client;
+        QSignalSpy disconnected(&client, &RpcClient::Disconnected);
+        QFuture<rpc::Result> hello = client.Connect(SocketPath());
+        QFuture<rpc::Result> queued = client.Request("test.echo");
+        QVERIFY(WaitFor(hello));
+        QCOMPARE(CodeOf(hello.result()),
+                 Code(protocol::EErrorCode::VersionMismatch));
+        QVERIFY(queued.isFinished());
+        QCOMPARE(CodeOf(queued.result()),
+                 Code(protocol::EErrorCode::ConnectionLost));
+        QVERIFY(!client.IsConnected());
+        QCOMPARE(disconnected.count(), 1);
+        QCOMPARE(disconnected.at(0).at(0).toString(),
+                 QString("roostd refused hello: too old"));
+    }
+
     void SecondServerIsRefused() {
         const auto first = Start();
         QVERIFY(first);
@@ -888,6 +980,34 @@ private slots:
                  0);
         ::close(fd);
         QVERIFY(QFile::exists(SocketPath()));
+
+        const auto server = Start();
+        QVERIFY(server);
+        QVERIFY(Connected());
+    }
+
+    void LockOfADeadDaemonIsTakenOver_data() {
+        QTest::addColumn<QString>("host");
+        QTest::newRow("same host") << QSysInfo::machineHostName();
+        // A Mac renames itself with the network it joins.
+        QTest::newRow("renamed host") << "some-old-hostname.local";
+    }
+
+    void LockOfADeadDaemonIsTakenOver() {
+        QFETCH(QString, host);
+        QProcess gone;
+        gone.start("/usr/bin/true", {});
+        QVERIFY(gone.waitForStarted(TIMEOUT_MS));
+        const qint64 pid = gone.processId();
+        QVERIFY(gone.waitForFinished(TIMEOUT_MS));
+
+        // As QLockFile writes it.
+        QFile lock(SocketPath() + ".lock");
+        QVERIFY(lock.open(QIODevice::WriteOnly));
+        lock.write(QByteArray::number(pid) + "\nroostd\n" + host.toUtf8() +
+                   '\n' + QSysInfo::machineUniqueId() + '\n' +
+                   QSysInfo::bootUniqueId() + '\n');
+        lock.close();
 
         const auto server = Start();
         QVERIFY(server);

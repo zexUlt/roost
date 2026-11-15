@@ -49,6 +49,7 @@ QFuture<rpc::Result> RpcClient::Connect(const QString& socketPath) {
         return rpc::Ready(Lost(QStringLiteral("a client connects only once")));
     }
     State_ = EState::Connecting;
+    HelloId_ = NextId_;
     QFuture<rpc::Result> hello =
         Request(QStringLiteral("hello"),
                 QJsonObject{
@@ -161,13 +162,17 @@ void RpcClient::Dispatch(const QJsonValue& value) {
     const QJsonValue error = message.value(QStringLiteral("error"));
     if (error.isObject()) {
         const QJsonObject object = error.toObject();
-        Settle(
-            promise,
-            std::unexpected(rpc::Error{
-                .Code = object.value(QStringLiteral("code")).toInt(),
-                .Message = object.value(QStringLiteral("message")).toString(),
-                .Data = object.value(QStringLiteral("data")),
-            }));
+        const QString text = object.value(QStringLiteral("message")).toString();
+        Settle(promise,
+               std::unexpected(rpc::Error{
+                   .Code = object.value(QStringLiteral("code")).toInt(),
+                   .Message = text,
+                   .Data = object.value(QStringLiteral("data")),
+               }));
+        // Nothing else would be served.
+        if (*id == HelloId_) {
+            Lose(QStringLiteral("roostd refused hello: %1").arg(text));
+        }
         return;
     }
     const QJsonValue result = message.value(QStringLiteral("result"));
