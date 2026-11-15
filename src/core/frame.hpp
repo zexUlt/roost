@@ -60,6 +60,9 @@ public:
     // compacted. Bounded on a healthy stream; stops growing after a failure.
     qsizetype Buffered() const { return Buffer_.size(); }
 
+    // Bytes fed but not taken as frames yet: the start of a frame to come.
+    qsizetype Unread() const { return Buffer_.size() - Offset_; }
+
 private:
     void Compact();
 
