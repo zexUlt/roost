@@ -133,16 +133,52 @@ Checked ParseKeybindings(const QJsonValue& value, PluginManifest& manifest) {
     return {};
 }
 
+Checked ParseAgents(const QJsonValue& value, PluginManifest& manifest) {
+    if (value.isUndefined()) {
+        return {};
+    }
+    if (!value.isArray()) {
+        return Fail(QStringLiteral("\"contributes.agents\" must be an array"));
+    }
+    for (const QJsonValue& entry : value.toArray()) {
+        const QJsonObject agent = entry.toObject();
+        const QJsonValue id = agent.value("id");
+        if (!id.isString() || !Store::IsValidPluginId(id.toString())) {
+            return Fail(QStringLiteral(
+                "an agent needs an id of lowercase letters, digits, '.', '_' "
+                "and '-'"));
+        }
+        const QJsonValue capabilities = agent.value("capabilities");
+        if (!capabilities.isUndefined() && !capabilities.isArray()) {
+            return Fail(
+                QStringLiteral("the capabilities of agent %1 must be an array")
+                    .arg(id.toString()));
+        }
+        PluginAgent parsed{.Id = id.toString(), .Capabilities = {}};
+        for (const QJsonValue& capability : capabilities.toArray()) {
+            if (!IsNonEmptyString(capability)) {
+                return Fail(QStringLiteral("the capabilities of agent %1 must "
+                                           "be strings")
+                                .arg(id.toString()));
+            }
+            parsed.Capabilities.append(capability.toString());
+        }
+        manifest.Agents.append(std::move(parsed));
+    }
+    if (!manifest.Agents.isEmpty() && manifest.Backend.isEmpty()) {
+        return Fail(QStringLiteral(
+            "a plugin with agents needs a backend to serve them"));
+    }
+    return {};
+}
+
 // The parts only the window reads are checked for their JSON type here, so a
 // broken manifest fails at load rather than when a panel opens.
 Checked CheckWindowParts(const QJsonObject& contributes,
                          const QString& directory) {
-    for (const char* key : {"agents", "panels"}) {
-        const QJsonValue value = contributes.value(QLatin1StringView(key));
-        if (!value.isUndefined() && !value.isArray()) {
-            return Fail(
-                QStringLiteral("\"contributes.%1\" must be an array").arg(key));
-        }
+    const QJsonValue panels = contributes.value("panels");
+    if (!panels.isUndefined() && !panels.isArray()) {
+        return Fail(QStringLiteral("\"contributes.panels\" must be an array"));
     }
     const QJsonValue settings = contributes.value("settings");
     if (!settings.isUndefined() &&
@@ -216,6 +252,11 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
             manifest.Contributes.value("keybindings"), manifest);
         !keybindings) {
         return std::unexpected(keybindings.error());
+    }
+    if (auto agents =
+            ParseAgents(manifest.Contributes.value("agents"), manifest);
+        !agents) {
+        return std::unexpected(agents.error());
     }
     if (auto window =
             CheckWindowParts(manifest.Contributes, manifest.Directory);
@@ -325,6 +366,17 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         }
         Keys_.insert(key, index);
     }
+    for (const PluginAgent& agent : manifest.Agents) {
+        if (const auto taken = Agents_.constFind(agent.Id);
+            taken != Agents_.cend()) {
+            Problems_.append(
+                QStringLiteral("agent %1 of plugin %2 is ignored: plugin %3 "
+                               "serves it")
+                    .arg(agent.Id, manifest.Id, ownerOf(*taken)));
+            continue;
+        }
+        Agents_.insert(agent.Id, index);
+    }
     ById_.insert(manifest.Id, index);
     Plugins_.push_back(std::move(manifest));
     return true;
@@ -343,6 +395,11 @@ const PluginManifest* PluginRegistry::CommandOwner(
     const QString& commandId) const {
     const auto it = Commands_.constFind(commandId);
     return it == Commands_.cend() ? nullptr : &Plugins_[*it];
+}
+
+const PluginManifest* PluginRegistry::AgentOwner(const QString& agentId) const {
+    const auto it = Agents_.constFind(agentId);
+    return it == Agents_.cend() ? nullptr : &Plugins_[*it];
 }
 
 const PluginManifest* PluginRegistry::KeyOwner(const QString& key) const {

@@ -53,6 +53,10 @@ roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
 target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(plugins_test fixture_backend)
+roost_add_qt_test(agents_test roostd/agents_test.cpp roostd_lib)
+target_compile_definitions(agents_test PRIVATE
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(agents_test fixture_backend)
 
 # The real binary, started as a process.
 roost_add_qt_test(roostd_test roostd/roostd_test.cpp)

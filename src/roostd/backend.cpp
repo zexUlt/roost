@@ -178,11 +178,14 @@ void Backend::Dispatch(const QByteArray& line) {
         return;
     }
     const QJsonObject message = document.object();
-    if (message.value(QStringLiteral("method")).isString()) {
-        // A notification needs no answer; a request gets the only one there
-        // is for now.
+    const QJsonValue method = message.value(QStringLiteral("method"));
+    if (method.isString()) {
+        // A request gets the only answer there is for now.
         if (message.contains(QStringLiteral("id"))) {
             Answer(message.value(QStringLiteral("id")));
+        } else {
+            emit Notified(method.toString(),
+                          message.value(QStringLiteral("params")));
         }
         return;
     }
@@ -197,6 +200,10 @@ void Backend::Dispatch(const QByteArray& line) {
     if (!failure.isUndefined() && !failure.isObject()) {
         // The request fails with the rest, once the backend is down.
         Break(QStringLiteral("sent an error that is not an object"));
+        return;
+    }
+    if (failure.isUndefined() && !message.contains(QStringLiteral("result"))) {
+        Break(QStringLiteral("answered with neither a result nor an error"));
         return;
     }
     QPromise<rpc::Result> promise = std::move(pending->second);

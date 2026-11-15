@@ -45,11 +45,7 @@ QByteArray EventMessage(qint64 subscription, const QString& name,
         .toJson(QJsonDocument::Compact);
 }
 
-// Whether every subscriber can get the event: the longest id makes the
-// longest message.
-bool FitsAFrame(const QString& name, const QJsonValue& payload) {
-    const qsizetype size =
-        EventMessage(std::numeric_limits<qint64>::max(), name, payload).size();
+bool FitsAFrame(qsizetype size) {
     // The length counts the kind byte too.
     return size < static_cast<qsizetype>(MAX_FRAME_LENGTH);
 }
@@ -344,6 +340,26 @@ void Server::Accept() {
     }
 }
 
+// The longest id makes the longest message.
+bool Server::EventFitsAFrame(const QString& name, const QJsonValue& payload) {
+    return FitsAFrame(
+        EventMessage(std::numeric_limits<qint64>::max(), name, payload).size());
+}
+
+// Numeric ids pass through a double: the longest one makes the longest
+// response.
+bool Server::AnswerFitsAFrame(const QJsonValue& result) {
+    return FitsAFrame(
+        QJsonDocument(
+            QJsonObject{
+                {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                {QStringLiteral("id"), std::numeric_limits<double>::lowest()},
+                {QStringLiteral("result"), result},
+            })
+            .toJson(QJsonDocument::Compact)
+            .size());
+}
+
 void Server::RegisterBuiltins() {
     const bool registered =
         Dispatcher_.Register(
@@ -428,7 +444,7 @@ void Server::RegisterBuiltins() {
             }
             // Refused here rather than dropping the subscribers it would not
             // reach.
-            if (!FitsAFrame(name.toString(), payload)) {
+            if (!EventFitsAFrame(name.toString(), payload)) {
                 return rpc::Ready(InvalidParams(QStringLiteral(
                     "bus.publish: the event does not fit a frame")));
             }

@@ -65,6 +65,15 @@ public:
 
     EventBus& Bus() { return Bus_; }
 
+    // Whether every subscriber can get the event: bus.publish refuses one
+    // that does not fit, and so must anything else that publishes what a
+    // plugin sent.
+    static bool EventFitsAFrame(const QString& name, const QJsonValue& payload);
+    // Whether a response with this result fits a frame for any numeric
+    // request id; a long string id may still overflow it. A response that
+    // does not fit closes the connection.
+    static bool AnswerFitsAFrame(const QJsonValue& result);
+
     qsizetype ConnectionCount() const;
 
 private:

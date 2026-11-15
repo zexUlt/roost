@@ -1,6 +1,8 @@
 #include "roostd/plugins.hpp"
 
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QList>
 #include <QPointer>
 
 #include "core/protocol.hpp"
@@ -60,7 +62,67 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
             return backend->Request(QStringLiteral("commands.run"), request);
         });
     Q_ASSERT(registered);
+    const bool listing = Server_.Register(
+        QStringLiteral("sessions.list"),
+        [self](const rpc::Call& /*call*/) -> QFuture<rpc::Result> {
+            if (!self) {
+                return rpc::Ready(
+                    Unavailable(QStringLiteral("plugins are not loaded")));
+            }
+            using Listed = AdapterBridge::Answer<std::vector<AgentSession>>;
+            QStringList agents;
+            QList<QFuture<Listed>> listed;
+            for (const auto& bridge : self->Bridges_) {
+                agents.append(bridge->Agent());
+                listed.append(bridge->ListSessions());
+            }
+            if (listed.isEmpty()) {
+                return rpc::Ready(QJsonObject{
+                    {QStringLiteral("sessions"), QJsonArray()},
+                    {QStringLiteral("unavailable"), QJsonArray()},
+                });
+            }
+            return QtFuture::whenAll(listed.begin(), listed.end())
+                .then(QtFuture::Launch::Sync,
+                      [agents](
+                          const QList<QFuture<Listed>>& done) -> rpc::Result {
+                          QJsonArray sessions;
+                          QJsonArray unavailable;
+                          for (qsizetype i = 0; i < done.size(); ++i) {
+                              const Listed answer = done[i].result();
+                              if (!answer) {
+                                  const rpc::Error& error = answer.error();
+                                  unavailable.append(QJsonObject{
+                                      {QStringLiteral("agent"), agents[i]},
+                                      {QStringLiteral("reason"),
+                                       error.Message.isEmpty()
+                                           ? QStringLiteral("error %1")
+                                                 .arg(error.Code)
+                                           : error.Message},
+                                  });
+                                  continue;
+                              }
+                              for (const AgentSession& session : *answer) {
+                                  sessions.append(ToJson(session));
+                              }
+                          }
+                          const QJsonObject list{
+                              {QStringLiteral("sessions"), sessions},
+                              {QStringLiteral("unavailable"), unavailable},
+                          };
+                          // Refused rather than closing the connection.
+                          if (!Server::AnswerFitsAFrame(list)) {
+                              return std::unexpected(rpc::Error::FromCode(
+                                  rpc::EErrorCode::InternalError,
+                                  QStringLiteral("the session list does not "
+                                                 "fit a frame")));
+                          }
+                          return list;
+                      });
+        });
+    Q_ASSERT(listing);
     Q_UNUSED(registered);
+    Q_UNUSED(listing);
 }
 
 PluginHost::~PluginHost() = default;
@@ -79,8 +141,18 @@ void PluginHost::Load(const QStringList& searchPath) {
         Registry_.Add(*std::move(manifest));
     }
     for (const PluginManifest& plugin : Registry_.Plugins()) {
-        if (!plugin.Backend.isEmpty()) {
-            StartBackend(plugin);
+        if (plugin.Backend.isEmpty()) {
+            continue;
+        }
+        StartBackend(plugin);
+        for (const PluginAgent& agent : plugin.Agents) {
+            // An agent lost to an earlier plugin stays with that one; one
+            // the plugin declares twice gets one bridge.
+            if (Registry_.AgentOwner(agent.Id) == &plugin &&
+                BridgeOf(agent.Id) == nullptr) {
+                Bridges_.push_back(std::make_unique<AdapterBridge>(
+                    agent.Id, agent.Capabilities, *BackendOf(plugin.Id)));
+            }
         }
     }
 }
@@ -88,6 +160,49 @@ void PluginHost::Load(const QStringList& searchPath) {
 Backend* PluginHost::BackendOf(const QString& pluginId) const {
     const auto it = Backends_.find(pluginId);
     return it == Backends_.end() ? nullptr : it->second.get();
+}
+
+AdapterBridge* PluginHost::BridgeOf(const QString& agentId) const {
+    for (const auto& bridge : Bridges_) {
+        if (bridge->Agent() == agentId) {
+            return bridge.get();
+        }
+    }
+    return nullptr;
+}
+
+void PluginHost::OnNotified(const QString& pluginId, const QString& method,
+                            const QJsonValue& params) {
+    if (method != QStringLiteral("session.stateChanged")) {
+        return;
+    }
+    const QString agent =
+        params.toObject().value(QStringLiteral("agent")).toString();
+    const PluginManifest* owner = Registry_.AgentOwner(agent);
+    if (owner == nullptr || owner->Id != pluginId) {
+        qWarning(
+            "roostd: the backend of %s told the state of agent \"%s\", "
+            "which it does not serve",
+            qUtf8Printable(pluginId), qUtf8Printable(agent));
+        return;
+    }
+    const auto session = SessionFromJson(
+        agent, params.toObject().value(QStringLiteral("session")));
+    if (!session) {
+        qWarning("roostd: the backend of %s told a bad session state: %s",
+                 qUtf8Printable(pluginId), qUtf8Printable(session.error()));
+        return;
+    }
+    const QString event = QStringLiteral("session.stateChanged");
+    const QJsonObject payload = ToJson(*session);
+    if (!Server::EventFitsAFrame(event, payload)) {
+        qWarning(
+            "roostd: the backend of %s told a session state too big for "
+            "a frame",
+            qUtf8Printable(pluginId));
+        return;
+    }
+    Server_.Bus().Publish(event, payload);
 }
 
 void PluginHost::StartBackend(const PluginManifest& plugin) {
@@ -118,6 +233,10 @@ void PluginHost::StartBackend(const PluginManifest& plugin) {
                                           {QStringLiteral("plugin"), id},
                                           {QStringLiteral("reason"), reason},
                                       });
+            });
+    connect(backend.get(), &Backend::Notified, this,
+            [this, id](const QString& method, const QJsonValue& params) {
+                OnNotified(id, method, params);
             });
     backend->Start();
     Backends_.emplace(id, std::move(backend));
