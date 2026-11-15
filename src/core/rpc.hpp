@@ -47,7 +47,9 @@ struct Call {
 };
 
 // A handler answers through a future, so it can wait on a backend process. One
-// that knows the answer at once returns Ready(...).
+// that knows the answer at once returns Ready(...). The Call is gone once the
+// handler returns: an asynchronous handler copies what it needs. The response
+// is built on the thread that completes the future.
 using Handler = std::function<QFuture<Result>(const Call&)>;
 
 QFuture<Result> Ready(Result result);
@@ -60,8 +62,12 @@ public:
 
     // Handles one message: a request, a notification or a batch of them. The
     // future yields the response body, or an empty array when the message
-    // needs none (notifications only). A handler that throws or drops its
-    // promise answers with InternalError.
+    // needs none (notifications only). A handler that throws, fails its
+    // future, drops its promise or finishes it without a result answers with
+    // InternalError.
+    //
+    // Numeric ids pass through a double: integers beyond 2^53 come back
+    // rounded. roost's own clients send small integers.
     QFuture<QByteArray> Handle(QByteArrayView message, QObject* peer) const;
 
 private:

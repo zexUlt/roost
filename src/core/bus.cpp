@@ -1,5 +1,6 @@
 #include "core/bus.hpp"
 
+#include <QScopeGuard>
 #include <QStringView>
 
 #include <utility>
@@ -76,9 +77,12 @@ bool EventBus::Unsubscribe(SubscriptionId id) {
 }
 
 bool EventBus::Publish(const QString& name, const QJsonValue& payload) {
-    if (!IsValidName(name)) {
+    if (!IsValidName(name) || Depth_ >= MAX_PUBLISH_DEPTH) {
         return false;
     }
+    ++Depth_;
+    // Undone on every way out, a listener's exception included.
+    const auto nesting = qScopeGuard([this] { --Depth_; });
     // Ids only grow, so the subscriptions made by the listeners of this event
     // are exactly those past the last id handed out before it.
     const SubscriptionId last = NextId_ - 1;

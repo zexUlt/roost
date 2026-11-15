@@ -83,6 +83,22 @@ std::optional<QJsonValue> ParseJson(QByteArrayView message) {
     return std::nullopt;
 }
 
+// What a finished, not canceled, handler future amounts to.
+Result Settle(QFuture<Result> done) {
+    try {
+        done.waitForFinished();  // rethrows what the handler failed with
+    } catch (...) {
+        return Fail(EErrorCode::InternalError,
+                    QStringLiteral("Internal error: handler failed"));
+    }
+    if (done.resultCount() == 0) {
+        return Fail(EErrorCode::InternalError,
+                    QStringLiteral(
+                        "Internal error: handler finished without a result"));
+    }
+    return done.result();
+}
+
 }  // namespace
 
 Error Error::FromCode(EErrorCode code, QString message, QJsonValue data) {
@@ -204,22 +220,24 @@ QFuture<QJsonValue> Dispatcher::HandleOne(const QJsonValue& message,
         }
     }
 
+    // then() with the whole future settles a failure and a missing result;
+    // onFailed would instead pass a healthy future on by copying its result,
+    // which crashes on a promise finished without one. A canceled future
+    // skips then(), so onCanceled comes after it, where the value it passes
+    // on always exists.
+    auto reply = [isNotification, id](const Result& result) {
+        // A notification is never answered, not even with an error.
+        return isNotification ? QJsonValue(QJsonValue::Undefined)
+                              : Response(id, result);
+    };
     return answer
-        .onFailed([] {
-            return Fail(EErrorCode::InternalError,
-                        QStringLiteral("Internal error: handler failed"));
-        })
-        .onCanceled([] {
-            return Fail(
-                EErrorCode::InternalError,
-                QStringLiteral("Internal error: handler dropped the request"));
-        })
         .then(QtFuture::Launch::Sync,
-              [isNotification, id](const Result& result) {
-                  // A notification is never answered, not even with an error.
-                  return isNotification ? QJsonValue(QJsonValue::Undefined)
-                                        : Response(id, result);
-              });
+              [reply](QFuture<Result> done) { return reply(Settle(done)); })
+        .onCanceled([reply] {
+            return reply(Fail(
+                EErrorCode::InternalError,
+                QStringLiteral("Internal error: handler dropped the request")));
+        });
 }
 
 }  // namespace roost::rpc

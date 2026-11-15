@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
 
 #include "core/bus.hpp"
 
@@ -46,6 +47,12 @@ private slots:
     void ListenerUnsubscribesALaterOne();
     void ListenerSubscribesAnother();
     void ListenerPublishes();
+    void NameCharacters();
+    void NestedPublishUnsubscribesAPendingOuterListener();
+    void NewSubscriptionGetsANestedPublish();
+    void ListenerUnsubscribesItselfThenPublishes();
+    void ThrowingListenerLeavesTheBusWhole();
+    void RepublishingListenerStopsAtTheDepthLimit();
 };
 
 void BusTest::Matching_data() {
@@ -211,6 +218,116 @@ void BusTest::ListenerPublishes() {
 
     QVERIFY(bus.Publish(QStringLiteral("outer"), QJsonValue::Null));
     QCOMPARE(log, QStringList({"1:outer", "1:inner", "3:inner", "3:outer"}));
+}
+
+void BusTest::NameCharacters() {
+    EventBus bus;
+    QStringList log;
+    Record(bus, QStringLiteral("Plugin_9.state-x.*"), QStringLiteral("s"), log);
+    QVERIFY(
+        bus.Publish(QStringLiteral("Plugin_9.state-x.on_2"), QJsonValue::Null));
+    QCOMPARE(log, QStringList({"s:Plugin_9.state-x.on_2"}));
+    for (const char* name : {"a", "Z", "0", "_", "-", "a_b-c.D9"}) {
+        QVERIFY2(EventBus::IsValidName(QString::fromLatin1(name)), name);
+    }
+}
+
+void BusTest::NestedPublishUnsubscribesAPendingOuterListener() {
+    EventBus bus;
+    QStringList log;
+    EventBus::SubscriptionId pending = 0;
+    QVERIFY(bus.Subscribe(
+        QStringLiteral("outer"), [&](const QString&, const QJsonValue&) {
+            bus.Publish(QStringLiteral("inner"), QJsonValue::Null);
+        }));
+    QVERIFY(bus.Subscribe(
+        QStringLiteral("inner"),
+        [&](const QString&, const QJsonValue&) { bus.Unsubscribe(pending); }));
+    pending =
+        Record(bus, QStringLiteral("outer"), QStringLiteral("pending"), log);
+
+    QVERIFY(bus.Publish(QStringLiteral("outer"), QJsonValue::Null));
+    QVERIFY(log.isEmpty());
+}
+
+void BusTest::NewSubscriptionGetsANestedPublish() {
+    EventBus bus;
+    QStringList log;
+    bool done = false;
+    QVERIFY(bus.Subscribe(
+        QStringLiteral("a"), [&](const QString&, const QJsonValue& payload) {
+            if (done || payload.isString()) {
+                return;
+            }
+            done = true;
+            Record(bus, QStringLiteral("a"), QStringLiteral("new"), log);
+            bus.Publish(QStringLiteral("a"), QStringLiteral("nested"));
+        }));
+
+    QVERIFY(bus.Publish(QStringLiteral("a"), QJsonValue::Null));
+    QCOMPARE(log, QStringList({"new:a"}));
+}
+
+void BusTest::ListenerUnsubscribesItselfThenPublishes() {
+    EventBus bus;
+    QStringList log;
+    auto self = std::make_shared<EventBus::SubscriptionId>(0);
+    *self = *bus.Subscribe(QStringLiteral("a"),
+                           [&bus, self, tag = QStringLiteral("gone")](
+                               const QString&, const QJsonValue&) {
+                               bus.Unsubscribe(*self);
+                               bus.Publish(QStringLiteral("b"), tag);
+                           });
+    QVERIFY(bus.Subscribe(QStringLiteral("b"),
+                          [&log](const QString&, const QJsonValue& payload) {
+                              log.append(payload.toString());
+                          }));
+
+    QVERIFY(bus.Publish(QStringLiteral("a"), QJsonValue::Null));
+    QVERIFY(bus.Publish(QStringLiteral("a"), QJsonValue::Null));
+    QCOMPARE(log, QStringList({"gone"}));
+}
+
+void BusTest::ThrowingListenerLeavesTheBusWhole() {
+    EventBus bus;
+    QStringList log;
+    Record(bus, QStringLiteral("a"), QStringLiteral("1"), log);
+    QVERIFY(bus.Subscribe(QStringLiteral("a"),
+                          [](const QString&, const QJsonValue& payload) {
+                              if (payload.toBool()) {
+                                  throw std::runtime_error("listener");
+                              }
+                          }));
+    Record(bus, QStringLiteral("a"), QStringLiteral("3"), log);
+
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                             bus.Publish(QStringLiteral("a"), true));
+    QCOMPARE(log, QStringList({"1:a"}));
+
+    QVERIFY(bus.Publish(QStringLiteral("a"), false));
+    QCOMPARE(log, QStringList({"1:a", "1:a", "3:a"}));
+}
+
+// A listener on "a.*" that publishes under "a." would recurse forever.
+void BusTest::RepublishingListenerStopsAtTheDepthLimit() {
+    EventBus bus;
+    int calls = 0;
+    bool refused = false;
+    QVERIFY(bus.Subscribe(
+        QStringLiteral("a.*"), [&](const QString&, const QJsonValue&) {
+            ++calls;
+            if (!bus.Publish(QStringLiteral("a.x"), QJsonValue::Null)) {
+                refused = true;
+            }
+        }));
+
+    QVERIFY(bus.Publish(QStringLiteral("a.x"), QJsonValue::Null));
+    QCOMPARE(calls, EventBus::MAX_PUBLISH_DEPTH);
+    QVERIFY(refused);
+    // The depth unwinds: the bus publishes again afterwards.
+    calls = 0;
+    QVERIFY(bus.Publish(QStringLiteral("a.x"), QJsonValue::Null));
+    QCOMPARE(calls, EventBus::MAX_PUBLISH_DEPTH);
 }
 
 QTEST_GUILESS_MAIN(BusTest)
