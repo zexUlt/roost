@@ -12,6 +12,7 @@
 #include "core/protocol.hpp"
 #include "core/store.hpp"
 #include "core/version.hpp"
+#include "roostd/dump.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
 
@@ -66,7 +67,16 @@ int main(int argc, char* argv[]) {
         QStringLiteral("roost daemon: agent sessions, PTYs, plugin backends"));
     parser.addHelpOption();
     parser.addVersionOption();
+    const QCommandLineOption dump(
+        QStringLiteral("dump"),
+        QStringLiteral("Connect to the running roostd and print every frame "
+                       "it sends: answers and all events."));
+    parser.addOption(dump);
     parser.process(app);
+
+    if (parser.isSet(dump)) {
+        return roost::Dump(roost::protocol::SocketPath());
+    }
 
     const auto config = roost::ConfigDirectory();
     if (!config) {

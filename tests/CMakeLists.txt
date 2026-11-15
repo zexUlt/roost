@@ -39,6 +39,7 @@ target_compile_definitions(backend_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(backend_test fixture_backend)
 
+roost_add_qt_test(dump_test roostd/dump_test.cpp roostd_lib)
 roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
 target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")

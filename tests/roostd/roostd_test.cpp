@@ -47,7 +47,7 @@ class RoostdTest : public QObject {
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
-    std::unique_ptr<QProcess> Launch() const {
+    std::unique_ptr<QProcess> Launch(const QStringList& arguments = {}) const {
         auto process = std::make_unique<QProcess>();
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
@@ -55,7 +55,7 @@ private:
         environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
         environment.insert("ROOST_PLUGINS_PATH", Dir_->filePath("plugins"));
         process->setProcessEnvironment(environment);
-        process->start(ROOSTD_PATH, {});
+        process->start(ROOSTD_PATH, arguments);
         return process;
     }
 
@@ -189,6 +189,53 @@ private slots:
         // The backend went with it.
         QVERIFY(::kill(static_cast<pid_t>(restarted), 0) == -1 &&
                 errno == ESRCH);
+    }
+
+    void DumpPrintsWhatRoostdSends() {
+        const auto daemon = Launch();
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        const auto dump = Launch({"--dump"});
+        QVERIFY(dump->waitForStarted(TIMEOUT_MS));
+        QByteArray printed;
+        // The answers to its hello and its subscription.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (printed += dump->readAllStandardOutput()).count('\n') >= 2,
+            TIMEOUT_MS);
+        QVERIFY2(printed.startsWith("rpc {\"id\":1,\"jsonrpc\":\"2.0\","
+                                    "\"result\":{"),
+                 printed.constData());
+
+        RpcClient client;
+        QFuture<rpc::Result> hello = client.Connect(SocketPath());
+        QVERIFY(
+            QTest::qWaitFor([&] { return hello.isFinished(); }, TIMEOUT_MS));
+        QVERIFY(hello.result());
+        client.Request("bus.publish",
+                       QJsonObject{{"name", "test.dumped"}, {"payload", 42}});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (printed += dump->readAllStandardOutput())
+                .contains(R"("name":"test.dumped","payload":42)"),
+            TIMEOUT_MS);
+        QVERIFY2(printed.contains("\nrpc {\"jsonrpc\":\"2.0\",\"method\":"
+                                  "\"bus.event\""),
+                 printed.constData());
+
+        // It ends with the daemon.
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QVERIFY(dump->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(dump->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(dump->exitCode(), 0);
+    }
+
+    void DumpWithoutADaemonFails() {
+        const auto dump = Launch({"--dump"});
+        QVERIFY(dump->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(dump->exitCode(), 1);
+        const QString error = QString::fromUtf8(dump->readAllStandardError());
+        QVERIFY2(error.startsWith("roostd --dump: cannot connect to "),
+                 qPrintable(error));
     }
 
     void KilledDaemonIsReplaced() {
