@@ -40,6 +40,12 @@ Backend::Backend(QString name, QStringList command, QString workingDirectory,
       Options_(options),
       Process_(new QProcess(this)) {
     Process_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    // In a session of its own, Ctrl-C in roostd's terminal does not reach it.
+    // Descriptors are not closed here: that walks the whole descriptor limit
+    // on every start. roostd opens its own with FD_CLOEXEC instead.
+    Process_->setUnixProcessParameters(
+        QProcess::UnixProcessFlag::CreateNewSession |
+        QProcess::UnixProcessFlag::ResetSignalHandlers);
     RestartTimer_.setSingleShot(true);
     connect(&RestartTimer_, &QTimer::timeout, this, &Backend::Launch);
     connect(Process_, &QProcess::started, this, &Backend::Started);

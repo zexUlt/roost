@@ -21,9 +21,11 @@ namespace {
 int STOP_PIPE[2] = {-1, -1};
 
 void RequestStop(int /*signal*/) {
+    const int savedErrno = errno;
     const char byte = 0;
-    // A full pipe already holds a stop request.
+    // The write end does not block: a full pipe already holds a stop request.
     [[maybe_unused]] const ssize_t written = ::write(STOP_PIPE[1], &byte, 1);
+    errno = savedErrno;
 }
 
 // SIGTERM and SIGINT end the event loop, so the socket, its lock and the
@@ -33,10 +35,13 @@ bool StopOnSignals(QCoreApplication& app) {
         return false;
     }
     for (const int fd : STOP_PIPE) {
-        // Backends do not inherit it.
+        // Child processes do not inherit it.
         if (::fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
             return false;
         }
+    }
+    if (::fcntl(STOP_PIPE[1], F_SETFL, O_NONBLOCK) != 0) {
+        return false;
     }
     struct sigaction action{};
     action.sa_handler = RequestStop;

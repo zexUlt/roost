@@ -3,6 +3,7 @@
 //   fixture.echo     the args
 //   fixture.pid      its process id
 //   fixture.cwd      its working directory
+//   fixture.fds      the descriptors it has open besides stdio
 //   fixture.crash    exits with code 3 without answering
 //   fixture.garbage  prints a line that is not JSON
 //   fixture.stray    answers a request id nobody sent
@@ -18,11 +19,13 @@
 
 #include <QByteArray>
 #include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QString>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -73,6 +76,14 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
         Answer(id, static_cast<qint64>(getpid()));
     } else if (command == "fixture.cwd") {
         Answer(id, QDir::currentPath());
+    } else if (command == "fixture.fds") {
+        QJsonArray open;
+        for (int fd = 3; fd < 1024; ++fd) {
+            if (::fcntl(fd, F_GETFD) != -1) {
+                open.append(fd);
+            }
+        }
+        Answer(id, open);
     } else if (command == "fixture.crash") {
         std::_Exit(3);
     } else if (command == "fixture.garbage") {

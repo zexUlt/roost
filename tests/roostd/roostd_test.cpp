@@ -1,6 +1,7 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -8,6 +9,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <fcntl.h>
 #include <signal.h>
 
 #include <cerrno>
@@ -36,6 +38,18 @@ bool Greets(const QString& socketPath) {
         QTest::qWait(20);
     }
     return false;
+}
+
+// The descriptors of this process that any child of it inherits.
+QJsonArray InheritedDescriptors() {
+    QJsonArray inherited;
+    for (int fd = 3; fd < 1024; ++fd) {
+        const int flags = ::fcntl(fd, F_GETFD);
+        if (flags != -1 && (flags & FD_CLOEXEC) == 0) {
+            inherited.append(fd);
+        }
+    }
+    return inherited;
 }
 
 }  // namespace
@@ -102,11 +116,18 @@ private slots:
         QVERIFY(first->waitForFinished(TIMEOUT_MS));
     }
 
-    void StopsCleanlyOnSigterm() {
+    void StopsCleanlyOnASignal_data() {
+        QTest::addColumn<int>("signal");
+        QTest::newRow("SIGTERM") << SIGTERM;
+        QTest::newRow("SIGINT") << SIGINT;
+    }
+
+    void StopsCleanlyOnASignal() {
+        QFETCH(int, signal);
         const auto daemon = Launch();
         QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
         QVERIFY(Greets(SocketPath()));
-        daemon->terminate();
+        QCOMPARE(::kill(static_cast<pid_t>(daemon->processId()), signal), 0);
         QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
         QCOMPARE(daemon->exitStatus(), QProcess::NormalExit);
         QCOMPARE(daemon->exitCode(), 0);
@@ -128,6 +149,7 @@ private slots:
             "contributes": {"commands": [
                 {"id": "fixture.echo", "title": "Echo"},
                 {"id": "fixture.pid", "title": "Process id"},
+                {"id": "fixture.fds", "title": "Open descriptors"},
                 {"id": "fixture.crash", "title": "Crash"}
             ]}
         })");
@@ -158,8 +180,15 @@ private slots:
             "commands.run", {{"command", "fixture.echo"}, {"args", "hello"}});
         QVERIFY(echoed);
         QCOMPARE(*echoed, QJsonValue("hello"));
-        const qint64 pid =
-            call("commands.run", {{"command", "fixture.pid"}})->toInteger();
+        const qint64 pid = call("commands.run", {{"command", "fixture.pid"}})
+                               .value_or(QJsonValue())
+                               .toInteger();
+        QVERIFY(pid > 0);
+        // Nothing of roostd's own, such as its socket or its signal pipe.
+        const rpc::Result fds =
+            call("commands.run", {{"command", "fixture.fds"}});
+        QVERIFY(fds);
+        QCOMPARE(*fds, QJsonValue(InheritedDescriptors()));
 
         const rpc::Result crashed =
             call("commands.run", {{"command", "fixture.crash"}});
@@ -180,8 +209,10 @@ private slots:
             call("commands.run", {{"command", "fixture.echo"}}).has_value(),
             TIMEOUT_MS);
         const qint64 restarted =
-            call("commands.run", {{"command", "fixture.pid"}})->toInteger();
-        QVERIFY(restarted != pid);
+            call("commands.run", {{"command", "fixture.pid"}})
+                .value_or(QJsonValue())
+                .toInteger();
+        QVERIFY(restarted > 0 && restarted != pid);
 
         daemon->terminate();
         QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
