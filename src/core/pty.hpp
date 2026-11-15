@@ -40,8 +40,10 @@ struct PtyOptions {
 
 // A program in a pseudo-terminal of its own (design.md §3): it runs in a new
 // session with the PTY as its controlling terminal and stdin, stdout and
-// stderr. Output is read as it comes; input is buffered until the program
-// takes it.
+// stderr. Output is read as it comes. Input is buffered without a limit until
+// the PTY takes it, and goes through the terminal's line discipline as the
+// program has set it: before the program switches to raw mode the driver
+// echoes it and turns ^C into SIGINT, as in any terminal.
 //
 // Finished is emitted once, after the program exited and the output it wrote
 // before that was emitted. Signals run inside the Pty's own code: a Pty is
@@ -51,7 +53,8 @@ class Pty : public QObject {
 
 public:
     explicit Pty(PtyOptions options = {}, QObject* parent = nullptr);
-    // Kills a program that still runs, without emitting Finished.
+    // Kills a program that still runs, with its process group, without
+    // emitting Finished.
     ~Pty() override;
 
     Pty(const Pty&) = delete;
@@ -64,8 +67,9 @@ public:
     void Write(QByteArrayView bytes);
     // TIOCSWINSZ: the program gets SIGWINCH. False once the PTY is closed.
     bool Resize(PtySize size);
-    // Closes the PTY, which sends the program SIGHUP, and kills it if it has
-    // not exited within the hang-up timeout. Output from now on is lost.
+    // Closes the PTY, which sends the program SIGHUP, and kills its process
+    // group if it has not exited within the hang-up timeout. Output from now
+    // on is lost.
     void HangUp();
 
     bool IsRunning() const;
@@ -80,6 +84,7 @@ signals:
 private:
     void Read();
     void Flush();
+    void Kill();
     void CloseMaster();
 
     PtyOptions Options_;

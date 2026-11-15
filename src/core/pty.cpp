@@ -15,7 +15,9 @@
 #include <pty.h>
 #endif
 
+#include <array>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 
 namespace roost {
@@ -24,7 +26,7 @@ namespace {
 
 // How much one wake-up reads before the event loop gets a turn.
 constexpr qsizetype READ_LIMIT = 1024 * 1024;
-constexpr qsizetype READ_CHUNK = 64 * 1024;
+constexpr std::size_t READ_CHUNK = 64 * 1024;
 
 winsize WindowSize(PtySize size) {
     return winsize{.ws_row = size.Rows,
@@ -33,9 +35,17 @@ winsize WindowSize(PtySize size) {
                    .ws_ypixel = 0};
 }
 
-bool SetCloseOnExec(int fd) {
-    const int flags = ::fcntl(fd, F_GETFD);
-    return flags != -1 && ::fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != -1;
+// Moves fd above stdio and marks it close-on-exec. Qt points the child's
+// stdin, stdout and stderr at /dev/null before the modifier runs, which would
+// clobber a slave end numbered 0 to 2: roostd may run with stdio closed.
+bool MoveAboveStdio(int& fd) {
+    const int moved = ::fcntl(fd, F_DUPFD_CLOEXEC, 3);
+    if (moved == -1) {
+        return false;
+    }
+    ::close(fd);
+    fd = moved;
+    return true;
 }
 
 bool SetNonBlocking(int fd) {
@@ -54,7 +64,7 @@ Pty::Pty(PtyOptions options, QObject* parent)
     : QObject(parent), Options_(options), Process_(new QProcess(this)) {
     // A program that ignores the hang-up is killed after a while.
     KillTimer_.setSingleShot(true);
-    connect(&KillTimer_, &QTimer::timeout, Process_, &QProcess::kill);
+    connect(&KillTimer_, &QTimer::timeout, this, &Pty::Kill);
     connect(Process_, &QProcess::finished, this,
             [this](int exitCode, QProcess::ExitStatus status) {
                 KillTimer_.stop();
@@ -73,7 +83,7 @@ Pty::~Pty() {
     disconnect(Process_, nullptr, this, nullptr);
     CloseMaster();
     if (Process_->state() != QProcess::NotRunning) {
-        Process_->kill();
+        Kill();
         Process_->waitForFinished();
     }
 }
@@ -90,7 +100,7 @@ std::expected<void, QString> Pty::Start(const PtySpec& spec, PtySize size) {
     }
     // Neither end leaks into other children; the program gets the slave end
     // through dup2, which clears the flag on the copy.
-    if (!SetCloseOnExec(master) || !SetCloseOnExec(slave) ||
+    if (!MoveAboveStdio(master) || !MoveAboveStdio(slave) ||
         !SetNonBlocking(master)) {
         const QString error = Errno("fcntl");
         ::close(master);
@@ -132,9 +142,7 @@ std::expected<void, QString> Pty::Start(const PtySpec& spec, PtySize size) {
                 process->failChildProcessModifier("dup2", errno);
             }
         }
-        if (slave > 2) {
-            ::close(slave);
-        }
+        ::close(slave);
     });
     Process_->start();
     const bool started = Process_->waitForStarted();
@@ -187,14 +195,14 @@ void Pty::Read() {
     if (Master_ == -1) {
         return;
     }
+    // Read into a buffer of its own, so that what is emitted holds no more
+    // memory than its bytes need: listeners may keep it.
+    std::array<char, READ_CHUNK> buffer{};
     QByteArray bytes;
     while (bytes.size() < READ_LIMIT) {
-        const qsizetype before = bytes.size();
-        bytes.resize(before + READ_CHUNK);
-        const ssize_t n = ::read(Master_, bytes.data() + before,
-                                 static_cast<size_t>(READ_CHUNK));
-        bytes.resize(before + (n > 0 ? n : 0));
+        const ssize_t n = ::read(Master_, buffer.data(), buffer.size());
         if (n > 0) {
+            bytes.append(buffer.data(), n);
             continue;
         }
         if (n == -1 && errno == EINTR) {
@@ -211,6 +219,15 @@ void Pty::Read() {
     if (!bytes.isEmpty()) {
         emit Output(bytes);
     }
+}
+
+void Pty::Kill() {
+    // The program leads its own session and process group: whatever it
+    // started there and that ignored the hang-up goes too.
+    if (const qint64 pid = Process_->processId(); pid > 0) {
+        ::killpg(static_cast<pid_t>(pid), SIGKILL);
+    }
+    Process_->kill();
 }
 
 void Pty::Flush() {
