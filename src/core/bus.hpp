@@ -22,13 +22,21 @@ namespace roost {
 //
 // A listener may subscribe, unsubscribe and publish while it is being called.
 // A subscription made during a delivery does not get the event being
-// delivered; one removed during a delivery gets nothing after its removal.
-// A nested publish is delivered in full before the outer one goes on.
+// delivered, though it does get the events of publishes that start after it;
+// one removed during a delivery gets nothing after its removal. A nested
+// publish is delivered in full before the outer one goes on, and publishes
+// nest at most MAX_PUBLISH_DEPTH deep, so a listener that republishes into its
+// own pattern ends instead of overflowing the stack.
+//
+// An exception from a listener stops that delivery and reaches the caller of
+// Publish; the subscriptions are left as they were.
 class EventBus {
 public:
     using Listener =
         std::function<void(const QString& name, const QJsonValue& payload)>;
     using SubscriptionId = std::uint64_t;
+
+    static constexpr int MAX_PUBLISH_DEPTH = 16;
 
     static bool IsValidName(const QString& name);
     static bool IsValidPattern(const QString& pattern);
@@ -40,7 +48,8 @@ public:
     // False if there is no such subscription, or it is already gone.
     bool Unsubscribe(SubscriptionId id);
 
-    // False, and nothing delivered, if the name is not valid.
+    // False, and nothing delivered, if the name is not valid or the publish
+    // would nest deeper than MAX_PUBLISH_DEPTH.
     bool Publish(const QString& name, const QJsonValue& payload);
 
 private:
@@ -55,6 +64,7 @@ private:
 
     std::map<SubscriptionId, Subscription> Subscriptions_;
     SubscriptionId NextId_ = 1;
+    int Depth_ = 0;
 };
 
 }  // namespace roost
