@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <limits>
 #include <memory>
 #include <set>
 #include <utility>
@@ -24,6 +25,36 @@
 #include "core/version.hpp"
 
 namespace roost {
+
+namespace {
+
+// What a subscriber gets for an event.
+QByteArray EventMessage(qint64 subscription, const QString& name,
+                        const QJsonValue& payload) {
+    return QJsonDocument(
+               QJsonObject{
+                   {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                   {QStringLiteral("method"), QStringLiteral("bus.event")},
+                   {QStringLiteral("params"),
+                    QJsonObject{
+                        {QStringLiteral("subscription"), subscription},
+                        {QStringLiteral("name"), name},
+                        {QStringLiteral("payload"), payload},
+                    }},
+               })
+        .toJson(QJsonDocument::Compact);
+}
+
+// Whether every subscriber can get the event: the longest id makes the
+// longest message.
+bool FitsAFrame(const QString& name, const QJsonValue& payload) {
+    const qsizetype size =
+        EventMessage(std::numeric_limits<qint64>::max(), name, payload).size();
+    // The length counts the kind byte too.
+    return size < static_cast<qsizetype>(MAX_FRAME_LENGTH);
+}
+
+}  // namespace
 
 namespace detail {
 
@@ -62,13 +93,7 @@ public:
         const auto id = Bus_.Subscribe(
             pattern,
             [this, self](const QString& name, const QJsonValue& payload) {
-                Notify(QStringLiteral("bus.event"),
-                       QJsonObject{
-                           {QStringLiteral("subscription"),
-                            static_cast<qint64>(*self)},
-                           {QStringLiteral("name"), name},
-                           {QStringLiteral("payload"), payload},
-                       });
+                Send(EventMessage(static_cast<qint64>(*self), name, payload));
             });
         if (id) {
             *self = *id;
@@ -108,16 +133,6 @@ private:
         if (Decoder_.Failed()) {
             Close(Decoder_.Error());
         }
-    }
-
-    void Notify(const QString& method, const QJsonValue& params) {
-        Send(QJsonDocument(
-                 QJsonObject{
-                     {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-                     {QStringLiteral("method"), method},
-                     {QStringLiteral("params"), params},
-                 })
-                 .toJson(QJsonDocument::Compact));
     }
 
     void Send(QByteArrayView body) {
@@ -403,14 +418,21 @@ void Server::RegisterBuiltins() {
         Register(QStringLiteral("bus.publish"), [this](const rpc::Call& call) {
             const QJsonObject params = call.Params.toObject();
             const QJsonValue name = params.value(QStringLiteral("name"));
-            const QJsonValue payload = params.value(QStringLiteral("payload"));
-            if (!name.isString() ||
-                !Bus_.Publish(name.toString(),
-                              payload.isUndefined() ? QJsonValue() : payload)) {
+            const QJsonValue given = params.value(QStringLiteral("payload"));
+            const QJsonValue payload =
+                given.isUndefined() ? QJsonValue() : given;
+            if (!name.isString() || !EventBus::IsValidName(name.toString())) {
                 return rpc::Ready(InvalidParams(QStringLiteral(
                     "bus.publish takes {name, payload}: a dot-separated event "
                     "name and any JSON value")));
             }
+            // Refused here rather than dropping the subscribers it would not
+            // reach.
+            if (!FitsAFrame(name.toString(), payload)) {
+                return rpc::Ready(InvalidParams(QStringLiteral(
+                    "bus.publish: the event does not fit a frame")));
+            }
+            Bus_.Publish(name.toString(), payload);
             return rpc::Ready(QJsonValue());
         });
     Q_ASSERT(registered);
