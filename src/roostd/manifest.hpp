@@ -26,8 +26,16 @@ struct PluginKeybinding {
     QString Key;
 };
 
+// An agent the plugin's backend serves (design.md §7).
+struct PluginAgent {
+    QString Id;
+    // As declared, such as "nativeTuiAttach"; names roostd does not know
+    // are kept.
+    QStringList Capabilities;
+};
+
 // plugin.json, checked. What the daemon acts on is parsed out; the rest of
-// "contributes" (agents, panels, settings) stays as JSON for the window.
+// "contributes" (panels, settings) stays as JSON for the window.
 struct PluginManifest {
     QString Id;
     QString Version;
@@ -37,6 +45,7 @@ struct PluginManifest {
     QStringList Backend;
     QList<PluginCommand> Commands;
     QList<PluginKeybinding> Keybindings;
+    QList<PluginAgent> Agents;
     QJsonObject Contributes;
 };
 
@@ -44,7 +53,8 @@ struct PluginManifest {
 // keys are ignored, so an older roostd reads a newer manifest of the same
 // API. The backend program and the settings page are paths relative to the
 // plugin directory that stay inside it, as written: symlinks are not
-// followed. A keybinding names a command of the same plugin.
+// followed. A keybinding names a command of the same plugin. A plugin with
+// agents has a backend to serve them.
 std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
                                                      const QString& directory);
 
@@ -63,10 +73,10 @@ QStringList FindPluginDirectories(const QStringList& searchPath);
 
 // The loaded plugins and who owns each contribution (design.md §5). The
 // earlier plugin wins a conflict: a second plugin with a taken id is not
-// loaded, and a command id or a key that is taken stays with its first
-// owner, and so do the keys bound to it. Every refusal is kept as a problem
-// for the user to see. Keys are compared ignoring case; their full normal
-// form comes with the keymap (M5).
+// loaded, and a command id, an agent id or a key that is taken stays with its
+// first owner, and so do the keys bound to it. Every refusal is kept as a
+// problem for the user to see. Keys are compared ignoring case; their full
+// normal form comes with the keymap (M5).
 //
 // The pointers and the reference it hands out are good until the next Add.
 class PluginRegistry {
@@ -83,6 +93,9 @@ public:
     // The plugin whose command this is, or null.
     const PluginManifest* CommandOwner(const QString& commandId) const;
 
+    // The plugin that serves this agent, or null.
+    const PluginManifest* AgentOwner(const QString& agentId) const;
+
     // The plugin whose binding of this key counts, or null.
     const PluginManifest* KeyOwner(const QString& key) const;
 
@@ -96,6 +109,7 @@ private:
     QHash<QString, std::size_t> ById_;
     QHash<QString, std::size_t> Commands_;
     QHash<QString, std::size_t> Keys_;
+    QHash<QString, std::size_t> Agents_;
     QStringList Problems_;
 };
 

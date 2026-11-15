@@ -14,11 +14,19 @@
 //   fixture.hang     never answers
 //   fixture.badError answers with an error that is not an object
 //   fixture.lastWord answers only when its stdin closes, on the way out
+//   fixture.notify   sends each message of the args as it is, then answers
+// An agent method such as agent.listSessions {agent, ...} is answered as
+// agent.json in the working directory says, read anew for each request:
+//   {"<method>": {"<agent>": {"result": ...} | {"error": {...}} | "crash" |
+//                            "hang"}}
+// An answer under "<agent>/<session>" comes first for a request with a
+// session.
 // With --crash-on-start it exits with code 3 at once. It exits with code 0 when
 // its stdin closes, or after --linger-ms N more milliseconds.
 
 #include <QByteArray>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -118,8 +126,41 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
         Send({{"jsonrpc", "2.0"}, {"id", id}, {"error", "boom"}});
     } else if (command == "fixture.lastWord") {
         lastWord = id;
+    } else if (command == "fixture.notify") {
+        for (const QJsonValue& message : args.toArray()) {
+            Send(message.toObject());
+        }
+        Answer(id, true);
     } else {
         Fail(id, -32602, QString("unknown command %1").arg(command));
+    }
+}
+
+void AnswerAgent(const QJsonValue& id, const QString& method,
+                 const QJsonObject& params) {
+    QFile file("agent.json");
+    const QJsonObject answers =
+        file.open(QIODevice::ReadOnly)
+            ? QJsonDocument::fromJson(file.readAll()).object()
+            : QJsonObject{};
+    const QJsonObject forMethod = answers.value(method).toObject();
+    const QString agent = params.value("agent").toString();
+    const QString session = agent + u'/' + params.value("session").toString();
+    const QJsonValue answer = forMethod.contains(session)
+                                  ? forMethod.value(session)
+                                  : forMethod.value(agent);
+    if (answer == QJsonValue("crash")) {
+        std::_Exit(3);
+    } else if (answer == QJsonValue("hang")) {
+        // No answer.
+    } else if (answer.toObject().contains("error")) {
+        Send({{"jsonrpc", "2.0"},
+              {"id", id},
+              {"error", answer.toObject().value("error")}});
+    } else if (answer.toObject().contains("result")) {
+        Answer(id, answer.toObject().value("result"));
+    } else {
+        Fail(id, -32602, QString("agent.json has no answer to %1").arg(method));
     }
 }
 
@@ -143,7 +184,12 @@ int main(int argc, char** argv) {
             break;
         }
         const QJsonValue id = message.value("id");
-        if (message.value("method").toString() != "commands.run") {
+        const QString method = message.value("method").toString();
+        if (method.startsWith("agent.")) {
+            AnswerAgent(id, method, message.value("params").toObject());
+            continue;
+        }
+        if (method != "commands.run") {
             Fail(id, -32601, "Method not found");
             continue;
         }
