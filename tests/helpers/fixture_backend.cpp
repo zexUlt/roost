@@ -3,8 +3,7 @@
 //   fixture.echo     the args
 //   fixture.pid      its process id
 //   fixture.cwd      its working directory
-//   fixture.fds      the pipes and sockets it has open besides stdio; files
-//                    are left out, a sanitizer runtime opens its own
+//   fixture.fds      the pipes and sockets it has open besides stdio
 //   fixture.crash    exits with code 3 without answering
 //   fixture.garbage  prints a line that is not JSON
 //   fixture.stray    answers a request id nobody sent
