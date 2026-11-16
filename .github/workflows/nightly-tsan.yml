@@ -2,7 +2,7 @@ name: Nightly TSan
 
 # ThreadSanitizer against a Qt built with TSan: the `threads` tests hand data
 # over through Qt, and a Qt from a binary distribution is not instrumented
-# (.claude/rules/threads.md). The PR job `tsan` in ci.yml runs `threads_std`.
+# (.claude/rules/threads.md). Pull requests do not run TSan.
 #
 # Separate from CI on purpose: Qt takes over an hour to build on a cache miss
 # and holds a macOS runner the pull requests wait for. A change to the

@@ -151,9 +151,9 @@ add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 
 # The tests whose code runs on more than one thread carry the label
 # `threads`. Those whose threads synchronise only through std primitives also
-# carry `threads_std`: the tsan preset runs them on every change. The rest hand
-# data over through Qt (the event queue, the scene-graph sync), which TSan sees
-# only in a Qt built with it; they run nightly against such a Qt.
+# carry `threads_std`: the tsan preset, against a binary Qt, runs only them.
+# The rest hand data over through Qt (the event queue, the scene-graph sync),
+# which TSan sees only in a Qt built with it: the tsan-qt preset, run nightly.
 set_tests_properties(terminal_session_test PROPERTIES LABELS "threads;threads_std")
 set_tests_properties(
     io_thread_test
