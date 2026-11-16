@@ -81,7 +81,9 @@ QByteArray Stream(std::uint32_t seed, qsizetype size) {
     while (stream.size() < size) {
         const int count = static_cast<int>(random() % 12) + 1;
         for (int i = 0; i < count; ++i) {
-            stream += words[random() % words.size()] + ' ';
+            const auto word =
+                random() % static_cast<std::uint32_t>(words.size());
+            stream += words[static_cast<qsizetype>(word)] + ' ';
         }
         stream += "\r\n";
     }

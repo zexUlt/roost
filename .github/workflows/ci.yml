@@ -44,8 +44,11 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
 
-  # macOS only for now; Linux joins once it is decided which Linux roost
-  # targets (design.md §14).
+  # What runs where: dev and release on macOS, the platform roost ships on;
+  # asan-ubsan on Linux arm64. macOS runners are scarce, and ASan and UBSan
+  # check the same code on Linux; ASan on macOS runs nightly
+  # (nightly-tsan.yml). Linux builds with clang and the distro's libstdc++,
+  # not libc++: a Qt from a binary distribution is built against libstdc++.
   test:
     name: test (${{ matrix.preset }})
     needs: changes
@@ -54,26 +57,55 @@ jobs:
     # so the required "test (dev)" and the others would wait for ever. The
     # job runs and its steps skip instead, on Linux: macOS runners are the
     # scarce ones.
-    runs-on: ${{ needs.changes.outputs.code != 'false' && 'macos-15' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.code != 'false' && matrix.runner || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
         # TSan runs nightly against a Qt built with it (nightly-tsan.yml).
-        preset: [dev, asan-ubsan, release]
+        include:
+          - preset: dev
+            runner: macos-15
+          - preset: asan-ubsan
+            runner: ubuntu-24.04-arm
+          - preset: release
+            runner: macos-15
     env:
       NEEDED: ${{ needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@v4
         if: env.NEEDED == 'true'
 
-      - name: Install build tools
-        if: env.NEEDED == 'true'
-        run: brew install ninja
+      - name: Install build tools (macOS)
+        if: env.NEEDED == 'true' && runner.os == 'macOS'
+        run: brew install ninja ccache
+
+      # clang 20, not the distro's 18: libstdc++ 13 declares std::expected
+      # only where the compiler reports __cpp_concepts 202002, which clang 18
+      # does not. The presets name the compiler `clang`, hence the links.
+      # libclang-rt-20-dev holds the sanitizer runtimes (clang only
+      # recommends it). After it come the libraries Qt needs to link (the
+      # OpenGL headers) and to run under the offscreen platform, and a
+      # monospace font: without one a test that draws the cursor fails.
+      - name: Install build tools (Linux)
+        if: env.NEEDED == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build clang-20 libclang-rt-20-dev ccache \
+            libgl-dev libegl1 libxkbcommon0 libfontconfig1 libglib2.0-0t64 \
+            libdbus-1-3 fonts-dejavu-mono
+          sudo ln -sf "$(command -v clang-20)" /usr/local/bin/clang
+          sudo ln -sf "$(command -v clang++-20)" /usr/local/bin/clang++
 
       - uses: jurplel/install-qt-action@v4
         if: env.NEEDED == 'true'
         with:
           version: ${{ env.QT_VERSION }}
+          # Linux runs arm64 here; macOS takes the defaults.
+          host: ${{ runner.os == 'Linux' && 'linux_arm64' || '' }}
+          arch: ${{ runner.os == 'Linux' && 'linux_gcc_arm64' || '' }}
+          # The libraries are installed above.
+          install-deps: false
           cache: true
 
       - uses: mlugg/setup-zig@v2
@@ -99,7 +131,8 @@ jobs:
       # not hit on a fresh clone (touching the sources' mtimes alone is
       # enough to miss), so the finished build is cached instead:
       # _deps holds the sources and the library, .ninja_log tells ninja that
-      # the zig build command already ran.
+      # the zig build command already ran. The key leaves the workflow file
+      # out: an edit to it must not throw the entry away.
       - name: Restore libghostty-vt
         if: env.NEEDED == 'true'
         uses: actions/cache@v4
@@ -108,7 +141,14 @@ jobs:
             build/${{ matrix.preset }}/_deps
             build/${{ matrix.preset }}/.ninja_log
             build/${{ matrix.preset }}/.ninja_deps
-          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-${{ matrix.preset }}-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-${{ matrix.preset }}-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
+
+      - name: Restore the compiler cache
+        if: env.NEEDED == 'true'
+        id: ccache
+        uses: ./.github/actions/ccache
+        with:
+          key: ${{ matrix.preset }}
 
       - name: Configure
         if: env.NEEDED == 'true'
@@ -130,6 +170,15 @@ jobs:
       - name: Qt is linked dynamically
         if: env.NEEDED == 'true'
         run: tools/check_qt_dynamic.sh build/${{ matrix.preset }}
+
+      # The compiler cache is saved by trunk pushes only: the repository's
+      # cache is full, and pull requests read what trunk left.
+      - name: Save the compiler cache
+        if: ${{ always() && env.NEEDED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
   format:
     name: format
@@ -163,20 +212,39 @@ jobs:
           done
           exit "$failed"
 
+  # On Linux x64: a macOS runner is the scarce one. The Linux build does not
+  # see the Q_OS_MACOS and __APPLE__ branches (src/core/pty.cpp,
+  # src/roostd/server.cpp, src/terminal/qt_key_mapping.cpp,
+  # tests/qml_api/terminal_item_input_test.cpp,
+  # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp,
+  # which is built on macOS only: the pre-commit tidy on the Mac covers them.
   tidy:
     name: tidy
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
+      # clang 20 for the same reason as in the test job; it is also the
+      # version of clang-tidy.
       - name: Install build tools
-        run: brew install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build clang-20 \
+            libgl-dev libegl1 libxkbcommon0 libfontconfig1 libglib2.0-0t64 \
+            libdbus-1-3
+          sudo ln -sf "$(command -v clang-20)" /usr/local/bin/clang
+          sudo ln -sf "$(command -v clang++-20)" /usr/local/bin/clang++
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
+          host: linux
+          arch: linux_gcc_64
+          # The libraries are installed above.
+          install-deps: false
           cache: true
 
       - uses: mlugg/setup-zig@v2
@@ -203,7 +271,8 @@ jobs:
       # not hit on a fresh clone (touching the sources' mtimes alone is
       # enough to miss), so the finished build is cached instead:
       # _deps holds the sources and the library, .ninja_log tells ninja that
-      # the zig build command already ran.
+      # the zig build command already ran. The key leaves the workflow file
+      # out: an edit to it must not throw the entry away.
       - name: Restore libghostty-vt
         uses: actions/cache@v4
         with:
@@ -211,10 +280,11 @@ jobs:
             build/dev/_deps
             build/dev/.ninja_log
             build/dev/.ninja_deps
-          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-dev-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-dev-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
 
       # A build, not just a configure: the libghostty-vt headers come out of
-      # zig build and the moc files out of the build as well.
+      # zig build and the moc files out of the build as well. No compiler
+      # cache: nothing but autogen and zig is compiled.
       - name: Build
         run: |
           cmake --preset dev
@@ -224,13 +294,14 @@ jobs:
           cmake --build --preset dev --target $targets
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
-      # The PyPI clang-tidy does not know where the macOS SDK is.
+      # tests/bench/terminal_memory.cpp is built on macOS only (mach), so it
+      # is not in the compilation database here.
       - name: Naming and the static analyser
         run: |
-          sdk=$(xcrun --show-sdk-path)
-          find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' | sort |
-            xargs -P "$(sysctl -n hw.ncpu)" -n 1 clang-tidy -p build/dev --quiet \
-              --warnings-as-errors='*' "--extra-arg=-isysroot$sdk"
+          find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
+            -not -path tests/bench/terminal_memory.cpp | sort |
+            xargs -P "$(nproc)" -n 1 clang-tidy -p build/dev --quiet \
+              --warnings-as-errors='*'
 
   gates:
     name: gates

@@ -1,13 +1,20 @@
-name: Nightly TSan
+name: Nightly sanitizers
 
-# ThreadSanitizer against a Qt built with TSan: the `threads` tests hand data
-# over through Qt, and a Qt from a binary distribution is not instrumented
-# (.claude/rules/threads.md). Pull requests do not run TSan.
+# Two jobs on a macOS runner, kept out of the pull requests:
 #
-# Separate from CI on purpose: Qt takes over an hour to build on a cache miss
-# and holds a macOS runner the pull requests wait for. A change to the
-# workflow or to tools/build_qt_tsan.sh is proved by dispatching it on its
+# - tsan-qt: ThreadSanitizer against a Qt built with TSan. The `threads` tests
+#   hand data over through Qt, and a Qt from a binary distribution is not
+#   instrumented (.claude/rules/threads.md). Qt takes over an hour to build on
+#   a cache miss.
+# - asan-ubsan-macos: AddressSanitizer and UBSan on macOS. The pull requests
+#   run them on Linux (ci.yml);
+#   this job checks the macOS branches and libc++.
+#
+# The file keeps its name: other files refer to nightly-tsan.yml. A change to
+# the workflow or to tools/build_qt_tsan.sh is proved by dispatching it on its
 # branch once it is on trunk: gh workflow run nightly-tsan.yml --ref <branch>.
+# The compiler cache is saved by the scheduled run on trunk only (the
+# repository's cache is full); a dispatch on a branch reads it.
 on:
   workflow_dispatch:
   schedule:
@@ -46,7 +53,7 @@ jobs:
         run: echo "ROOST_TSAN_QT_PREFIX=$RUNNER_TEMP/qt-tsan" >> "$GITHUB_ENV"
 
       - name: Install build tools
-        run: brew install ninja
+        run: brew install ninja ccache
 
       # The key follows the version and the build script: a change to either
       # rebuilds Qt, anything else reuses the finished prefix. Restore and save
@@ -91,7 +98,8 @@ jobs:
       # not hit on a fresh clone (touching the sources' mtimes alone is
       # enough to miss), so the finished build is cached instead:
       # _deps holds the sources and the library, .ninja_log tells ninja that
-      # the zig build command already ran.
+      # the zig build command already ran. The key leaves the workflow file
+      # out: an edit to it must not throw the entry away.
       - name: Restore libghostty-vt
         uses: actions/cache@v4
         with:
@@ -99,7 +107,13 @@ jobs:
             build/tsan-qt/_deps
             build/tsan-qt/.ninja_log
             build/tsan-qt/.ninja_deps
-          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-tsan-qt-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/nightly-tsan.yml') }}
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-tsan-qt-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
+
+      - name: Restore the compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache
+        with:
+          key: tsan-qt
 
       - name: Configure
         run: cmake --preset tsan-qt
@@ -122,3 +136,88 @@ jobs:
 
       - name: Qt is linked dynamically
         run: tools/check_qt_dynamic.sh build/tsan-qt
+
+      # Scheduled runs on trunk only; the run is not a pull request, so the
+      # ref is what tells a branch dispatch from the nightly.
+      - name: Save the compiler cache
+        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+
+  asan-ubsan-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja ccache
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran. The key leaves the workflow file
+      # out: an edit to it must not throw the entry away.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/asan-ubsan/_deps
+            build/asan-ubsan/.ninja_log
+            build/asan-ubsan/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-asan-ubsan-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
+
+      - name: Restore the compiler cache
+        id: ccache
+        uses: ./.github/actions/ccache
+        with:
+          key: asan-ubsan-macos
+
+      - name: Configure
+        run: cmake --preset asan-ubsan
+
+      - name: Build
+        run: cmake --build --preset asan-ubsan
+
+      # The frame budget is a timing on real hardware: a shared runner is
+      # about twice as slow and noisy, so here it only prints its numbers.
+      - name: Test
+        run: ctest --preset asan-ubsan
+        env:
+          ROOST_FRAME_BUDGET: report
+
+      - name: Qt is linked dynamically
+        run: tools/check_qt_dynamic.sh build/asan-ubsan
+
+      # Scheduled runs on trunk only; the run is not a pull request, so the
+      # ref is what tells a branch dispatch from the nightly.
+      - name: Save the compiler cache
+        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}

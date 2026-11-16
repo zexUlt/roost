@@ -127,9 +127,12 @@ std::expected<void, QString> Pty::Start(const PtySpec& spec, PtySize size) {
     // The session is made here and not with CreateNewSession: Qt may apply
     // that after the modifier, and setsid() fails once the child already
     // leads a session. Async-signal-safe calls only: this runs between fork
-    // and exec.
+    // and exec. Descriptors roostd itself inherited without close-on-exec
+    // stay out of the shell: Qt closes everything above stderr after the
+    // modifier has made the slave end the child's stdio.
     Process_->setUnixProcessParameters(
-        QProcess::UnixProcessFlag::ResetSignalHandlers);
+        QProcess::UnixProcessFlag::ResetSignalHandlers |
+        QProcess::UnixProcessFlag::CloseFileDescriptors);
     Process_->setChildProcessModifier([slave, process = Process_] {
         if (::setsid() == -1) {
             process->failChildProcessModifier("setsid", errno);
