@@ -29,7 +29,9 @@ jobs:
   # than the workflow filtering by path: the jobs below are required checks,
   # a workflow that never runs leaves them missing and the pull request
   # unmergeable, and a skipped job counts as passed. Pushes to trunk run
-  # everything.
+  # everything. If this job fails, the answer is unknown and every job runs:
+  # the conditions below test for != 'false', and !cancelled() keeps the
+  # jobs from skipping on a failed dependency.
   changes:
     name: changes
     runs-on: ubuntu-24.04
@@ -47,18 +49,19 @@ jobs:
   test:
     name: test (${{ matrix.preset }})
     needs: changes
+    if: ${{ !cancelled() }}
     # Not skipped at the job level: a skipped matrix job is never expanded,
     # so the required "test (dev)" and the others would wait for ever. The
     # job runs and its steps skip instead, on Linux: macOS runners are the
     # scarce ones.
-    runs-on: ${{ needs.changes.outputs.code == 'true' && 'macos-15' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.code != 'false' && 'macos-15' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
         # TSan runs nightly against a Qt built with it (nightly-tsan.yml).
         preset: [dev, asan-ubsan, release]
     env:
-      NEEDED: ${{ needs.changes.outputs.code }}
+      NEEDED: ${{ needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@v4
         if: env.NEEDED == 'true'
@@ -131,7 +134,7 @@ jobs:
   format:
     name: format
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -163,7 +166,7 @@ jobs:
   tidy:
     name: tidy
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -232,7 +235,7 @@ jobs:
   gates:
     name: gates
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
