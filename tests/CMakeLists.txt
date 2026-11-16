@@ -106,3 +106,13 @@ target_compile_definitions(claude_e2e_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(claude_e2e_test roostd fake_tui claude-adapter)
+
+# The window's IO thread against the real roostd, the real Claude plugin and a
+# fake `claude`.
+roost_add_qt_test(io_thread_test terminal/io_thread_test.cpp roost_terminal)
+target_compile_definitions(io_thread_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(io_thread_test roostd fake_tui claude-adapter)

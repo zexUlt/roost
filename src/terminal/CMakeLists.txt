@@ -1,6 +1,7 @@
 # The window side of a terminal: what owns one and who may touch it. No GUI
 # yet; the Qt Quick item that draws it comes later (design.md §13, M3).
 add_library(roost_terminal STATIC
+    io_thread.cpp
     terminal_session.cpp
 )
 
