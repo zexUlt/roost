@@ -6,12 +6,13 @@ set(ROOST_CLAUDE_PLUGIN_DIR ${ROOST_PLUGINS_OUTPUT_DIR}/claude)
 add_library(claude_adapter_lib STATIC
     backend/adapter.cpp
     backend/agents.cpp
+    backend/json_rpc.cpp
 )
 target_include_directories(claude_adapter_lib PUBLIC ${PROJECT_SOURCE_DIR}/plugins)
-target_link_libraries(claude_adapter_lib PUBLIC roost_core)
+target_link_libraries(claude_adapter_lib PUBLIC Qt6::Core)
 
 qt_add_executable(claude-adapter backend/main.cpp)
-target_link_libraries(claude-adapter PRIVATE claude_adapter_lib)
+target_link_libraries(claude-adapter PRIVATE claude_adapter_lib Qt6::Core)
 set_target_properties(claude-adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ROOST_CLAUDE_PLUGIN_DIR}/backend)
 
