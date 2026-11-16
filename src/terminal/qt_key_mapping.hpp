@@ -45,11 +45,20 @@ struct QtKeyOptions {
 //
 // The text is the one Qt gives, except that control codes and macOS
 // function-key codes (private use U+F700..U+F8FF) are dropped: the library
-// wants those keys named by Key, not typed (see key/event.h). A key outside
-// the mapped set that does type text, such as a letter of a non-Latin layout,
-// is Unidentified with that text, and is encoded by the text alone: so Ctrl
-// with such a key sends nothing useful. Mapping by the native scan code would
-// fix that; it is not done here.
+// wants those keys named by Key, not typed (see key/event.h). With Ctrl the
+// text is rebuilt from the key as what it types without Ctrl ("_" for
+// Ctrl+Shift+-, "[" for Ctrl+[), which is what the library's Ctrl rules read.
+//
+// A key outside the mapped set that does type text, such as a letter of a
+// non-Latin layout, is Unidentified with that text, and is encoded by the text
+// alone: so Ctrl with such a key sends nothing useful. Mapping by the native
+// scan code would fix that; it is not done here.
+//
+// Known limit: a symbol key is mapped as the key of a US layout. With the
+// Kitty "report all keys as escape codes" flag, a symbol typed through
+// another layout (AltGr+Q gives "@" on a German one) is reported as the US
+// key of that symbol. The fix is to map native scan codes to physical keys;
+// that is a later change.
 std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
                                  const QString& text, EKeyAction action,
                                  const QtKeyOptions& options);

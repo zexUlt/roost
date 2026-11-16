@@ -98,12 +98,8 @@ std::expected<void, QString> TerminalSession::SyncKeyEncoder(
     return encoder.SyncFrom(Terminal_);
 }
 
-std::expected<QByteArray, QString> TerminalSession::EncodePaste(
-    const Locked& lock, QStringView text) const {
-    if (!Check(lock, "EncodePaste")) {
-        return std::unexpected(QStringLiteral("wrong lock token"));
-    }
-    return Terminal_.EncodePaste(text);
+bool TerminalSession::BracketedPaste(const Locked& lock) const {
+    return Check(lock, "BracketedPaste") && Terminal_.BracketedPaste();
 }
 
 std::expected<void, QString> TerminalSession::BeginRenderUpdate(
