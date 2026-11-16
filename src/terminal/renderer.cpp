@@ -1,6 +1,7 @@
 #include "terminal/renderer.hpp"
 
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QFontMetricsF>
 #include <QPointF>
 #include <QQuickWindow>
@@ -72,6 +73,17 @@ bool SameStyle(const Run& run, const Run& other) {
            run.Strikethrough == other.Strikethrough;
 }
 
+// Whether the face the font resolves to is fixed pitch. The platform's own
+// flag is not enough: offscreen, the fixed font can resolve to a proportional
+// face that still claims to be fixed, so the advances are compared as well.
+bool IsFixedPitch(const QFont& font) {
+    if (!QFontInfo(font).fixedPitch()) {
+        return false;
+    }
+    const QFontMetricsF metrics(font);
+    return metrics.horizontalAdvance(u'i') == metrics.horizontalAdvance(u'W');
+}
+
 }  // namespace
 
 CellMetrics MeasureCell(const QFont& font) {
@@ -82,7 +94,36 @@ CellMetrics MeasureCell(const QFont& font) {
 }
 
 QFont DefaultTerminalFont() {
-    return QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    const auto system = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    if (IsFixedPitch(system)) {
+        return system;
+    }
+    // The system's fixed font is not one (offscreen on macOS resolves it to a
+    // proportional face). Ask for any monospace face by style hint, then for
+    // well-known families; a missing family resolves to the proportional
+    // default, which the check rejects.
+    const auto sized = [&](QFont font) {
+        font.setPointSizeF(system.pointSizeF());
+        return font;
+    };
+    for (const auto hint : {QFont::Monospace, QFont::TypeWriter}) {
+        auto font = sized(QFont());
+        font.setStyleHint(hint);
+        font.setFixedPitch(true);
+        if (IsFixedPitch(font)) {
+            return font;
+        }
+    }
+    for (const auto* family : {"Menlo", "SF Mono", "Monaco", "DejaVu Sans Mono",
+                               "Liberation Mono", "Noto Sans Mono"}) {
+        const auto font = sized(QFont(QString::fromLatin1(family)));
+        if (IsFixedPitch(font)) {
+            return font;
+        }
+    }
+    // No fixed-pitch face anywhere: the system font it is. The letter spacing
+    // in Renderer still keeps runs on the grid.
+    return system;
 }
 
 QList<Run> SplitRow(const VtRenderState::Row& row, Rgb defaultForeground,

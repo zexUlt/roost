@@ -28,7 +28,9 @@ struct CellMetrics {
 // Width of "M" and the line spacing of the font, rounded up.
 CellMetrics MeasureCell(const QFont& font);
 
-// The default font of a terminal: the system's monospace one.
+// The default font of a terminal: the system's fixed font when it really is
+// fixed pitch, else the first monospace face found. Cheap, but not free: call
+// it once, not per frame.
 QFont DefaultTerminalFont();
 
 // A stretch of one row drawn in one style. It starts at its exact column and

@@ -31,6 +31,7 @@ roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(vt_render_state_test core/vt_render_state_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
 roost_add_qt_test(renderer_runs_test terminal/renderer_runs_test.cpp roost_terminal)
+roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_terminal)
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 
 # A TUI that draws, asks its terminal questions and counts the answers.
