@@ -72,6 +72,8 @@ public:
         bool InViewport = false;
         quint16 X = 0;
         quint16 Y = 0;
+        // The cursor is on the second cell of a wide character.
+        bool WideTail = false;
     };
 
     enum class EDirty { None, Partial, Full };
@@ -96,12 +98,16 @@ public:
 
     // Valid after EndUpdate.
     quint16 Columns() const;
+    quint16 RowCount() const;
     EDirty Dirty() const;
     Cursor GetCursor() const;
     Rgb DefaultForeground() const;
     Rgb DefaultBackground() const;
     // Every row of the viewport, top to bottom, with all of its cells.
     QList<Row> Rows() const;
+    // One cell of the viewport, without copying the rest; empty when the
+    // position is outside it.
+    std::optional<Cell> CellAt(quint16 column, quint16 row) const;
 
 private:
     struct State;

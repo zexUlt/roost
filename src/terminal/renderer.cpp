@@ -1,6 +1,7 @@
 #include "terminal/renderer.hpp"
 
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QFontMetricsF>
 #include <QPointF>
 #include <QQuickWindow>
@@ -72,6 +73,17 @@ bool SameStyle(const Run& run, const Run& other) {
            run.Strikethrough == other.Strikethrough;
 }
 
+// Whether the face the font resolves to is fixed pitch. The platform's own
+// flag is not enough: offscreen, the fixed font can resolve to a proportional
+// face that still claims to be fixed, so the advances are compared as well.
+bool IsFixedPitch(const QFont& font) {
+    if (!QFontInfo(font).fixedPitch()) {
+        return false;
+    }
+    const QFontMetricsF metrics(font);
+    return metrics.horizontalAdvance(u'i') == metrics.horizontalAdvance(u'W');
+}
+
 }  // namespace
 
 CellMetrics MeasureCell(const QFont& font) {
@@ -82,7 +94,36 @@ CellMetrics MeasureCell(const QFont& font) {
 }
 
 QFont DefaultTerminalFont() {
-    return QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    const auto system = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    if (IsFixedPitch(system)) {
+        return system;
+    }
+    // The system's fixed font is not one (offscreen on macOS resolves it to a
+    // proportional face). Ask for any monospace face by style hint, then for
+    // well-known families; a missing family resolves to the proportional
+    // default, which the check rejects.
+    const auto sized = [&](QFont font) {
+        font.setPointSizeF(system.pointSizeF());
+        return font;
+    };
+    for (const auto hint : {QFont::Monospace, QFont::TypeWriter}) {
+        auto font = sized(QFont());
+        font.setStyleHint(hint);
+        font.setFixedPitch(true);
+        if (IsFixedPitch(font)) {
+            return font;
+        }
+    }
+    for (const auto* family : {"Menlo", "SF Mono", "Monaco", "DejaVu Sans Mono",
+                               "Liberation Mono", "Noto Sans Mono"}) {
+        const auto font = sized(QFont(QString::fromLatin1(family)));
+        if (IsFixedPitch(font)) {
+            return font;
+        }
+    }
+    // No fixed-pitch face anywhere: the system font it is. The letter spacing
+    // in Renderer still keeps runs on the grid.
+    return system;
 }
 
 QList<Run> SplitRow(const VtRenderState::Row& row, Rgb defaultForeground,
@@ -176,15 +217,14 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
 
     const auto& state = session.RenderState();
     const auto dirty = state.Dirty();
-    const auto rows = state.Rows();
-    if (rows.isEmpty()) {
+    const auto rowCount = static_cast<int>(state.RowCount());
+    if (rowCount == 0) {
         return nullptr;
     }
 
     // The tree is the rows, then the cursor. The root stays the same node for
     // as long as the scene graph keeps it, so there is never an old root to
     // hand back for deletion.
-    const auto rowCount = static_cast<int>(rows.size());
     QSGNode* root = oldNode != nullptr ? oldNode : new QSGNode;
     const bool sameGrid =
         root->childCount() == rowCount + 1 && state.Columns() == Columns_;
@@ -209,6 +249,7 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
 
     const bool rebuildAll =
         !sameGrid || Stale_ || dirty == VtRenderState::EDirty::Full;
+    const auto rows = state.Rows();
     QSGNode* row = root->firstChild();
     for (int i = 0; i < rowCount; ++i, row = row->nextSibling()) {
         if (!rebuildAll && !rows[i].Dirty) {
@@ -295,9 +336,21 @@ void Renderer::UpdateCursor(QSGNode& cursor, const VtRenderState& state) const {
         rect.setRect(QRectF());
         return;
     }
-    rect.setRect(QRectF(static_cast<qreal>(position.X) * Metrics_.Width,
+    // One block over both cells of a wide character, whichever half the
+    // cursor is on.
+    int first = position.X;
+    int width = 1;
+    if (position.WideTail && first > 0) {
+        --first;
+        width = 2;
+    } else if (const auto cell = state.CellAt(position.X, position.Y);
+               cell && cell->Width == VtRenderState::EWidth::Wide) {
+        width = 2;
+    }
+    rect.setRect(QRectF(static_cast<qreal>(first) * Metrics_.Width,
                         static_cast<qreal>(position.Y) * Metrics_.Height,
-                        Metrics_.Width, Metrics_.Height));
+                        static_cast<qreal>(width) * Metrics_.Width,
+                        Metrics_.Height));
     rect.setColor(ToColor(state.DefaultForeground(), CURSOR_ALPHA));
 }
 

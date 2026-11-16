@@ -28,7 +28,9 @@ struct CellMetrics {
 // Width of "M" and the line spacing of the font, rounded up.
 CellMetrics MeasureCell(const QFont& font);
 
-// The default font of a terminal: the system's monospace one.
+// The default font of a terminal: the system's fixed font when it really is
+// fixed pitch, else the first monospace face found. Cheap, but not free: call
+// it once, not per frame.
 QFont DefaultTerminalFont();
 
 // A stretch of one row drawn in one style. It starts at its exact column and
@@ -60,6 +62,13 @@ QList<Run> SplitRow(const VtRenderState::Row& row,
                     VtRenderState::Rgb defaultForeground,
                     VtRenderState::Rgb defaultBackground);
 
+// Within one run a glyph the primary face lacks, drawn by a fallback face of
+// another advance, can shift the rest of that run. What keeps the grid is the
+// split between runs (each starts at its exact column, a wide character is a
+// run of its own) and, for a monospace primary face, the letter spacing that
+// makes a glyph advance exactly one cell. A proportional primary face drifts
+// within a run.
+//
 // Draws one TerminalSession into scene graph nodes. Only the Qt Quick render
 // thread uses it, from QQuickItem::updatePaintNode.
 //
