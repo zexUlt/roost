@@ -9,7 +9,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -104,12 +106,20 @@ signals:
 private:
     class Worker;
 
-    // Runs fn(Worker&) in the IO thread. False if the thread is stopped.
-    template <typename TFn>
-    bool Post(TFn&& fn);
+    using Task = std::function<void(Worker&)>;
+
+    // Runs task(Worker&) in the IO thread, in the order of the calls. False if
+    // the thread is stopped.
+    bool Post(Task task);
 
     QThread Thread_;
     std::unique_ptr<Worker> Worker_;
+    // The tasks for the IO thread. They cross threads under this mutex, not
+    // through the Qt event queue: TSan sees std::mutex, and does not see the
+    // synchronisation inside Qt (see .claude/rules/threads.md). Qt only wakes
+    // the thread, with a call that carries no data.
+    std::mutex TaskMutex_;
+    std::deque<Task> Tasks_;
     // The flag of each channel: set while an Updated is in flight. The IO
     // thread keeps its own copy of the pointer, so the lock is only for the
     // map.

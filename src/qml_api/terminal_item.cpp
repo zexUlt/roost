@@ -1,5 +1,6 @@
 #include "qml_api/terminal_item.hpp"
 
+#include "core/tsan.hpp"
 #include "core/vt_terminal.hpp"
 
 #include <QClipboard>
@@ -83,7 +84,7 @@ void TerminalItem::setSession(std::shared_ptr<TerminalSession> session) {
     // The old session's rows are still in the scene; a clean session on the
     // same grid would leave them there.
     Renderer_.Invalidate();
-    update();
+    requestRender();
 }
 
 QFont TerminalItem::font() const { return Renderer_.Font(); }
@@ -99,7 +100,7 @@ void TerminalItem::setFont(const QFont& font) {
         emit cellSizeChanged();
         updateGridSize();
     }
-    update();
+    requestRender();
 }
 
 qreal TerminalItem::cellWidth() const { return Renderer_.Metrics().Width; }
@@ -218,7 +219,7 @@ void TerminalItem::scrollToBottom() {
             return;
         }
     }
-    update();
+    requestRender();
 }
 
 void TerminalItem::paste(const QString& text) {
@@ -468,7 +469,7 @@ void TerminalItem::runSelection(const SelectionStep& step) {
         HasSelection_ = selected;
         emit hasSelectionChanged();
     }
-    update();
+    requestRender();
 }
 
 void TerminalItem::autoscrollTick() {
@@ -586,7 +587,7 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
     }
     // Whatever the wheel did to the selection, QML and the frame hear of it.
     syncHasSelection();
-    update();
+    requestRender();
     if (scrolled) {
         return;
     }
@@ -642,7 +643,16 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
 
 int TerminalItem::rowsRebuilt() const { return Renderer_.RowsRebuilt(); }
 
+void TerminalItem::requestRender() {
+    // Pairs with TsanAcquire in updatePaintNode.
+    TsanRelease(this);
+    update();
+}
+
 QSGNode* TerminalItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
+    // The GUI thread is blocked while this runs (Qt's sync of the scene
+    // graph), and everything it wrote before requestRender() is visible here.
+    TsanAcquire(this);
     if (!Session_ || window() == nullptr) {
         return nullptr;
     }

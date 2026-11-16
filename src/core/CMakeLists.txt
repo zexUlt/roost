@@ -8,6 +8,7 @@ add_library(roost_core STATIC
     rpc.cpp
     rpc_client.cpp
     store.cpp
+    tsan.cpp
     version.cpp
     vt_key_encoder.cpp
     vt_mouse_encoder.cpp

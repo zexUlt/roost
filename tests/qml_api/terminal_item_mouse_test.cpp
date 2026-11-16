@@ -105,8 +105,8 @@ private:
     // Waits for the frame the item asked for and says what its top row is.
     // Fails the test if there is none.
     QString TopRowAfterFrame() {
-        QSignalSpy swapped(&Window_, &QQuickWindow::frameSwapped);
-        if (!swapped.wait(ASKED_FRAME_MS)) {
+        QSignalSpy synced(&Window_, &QQuickWindow::afterSynchronizing);
+        if (!synced.wait(ASKED_FRAME_MS)) {
             QTest::qFail("the item asked for no frame", __FILE__, __LINE__);
             return {};
         }
@@ -438,8 +438,8 @@ private slots:
         SendWheel({5, 5}, QPoint(0, 0), QPoint(0, third));
         SendWheel({5, 5}, QPoint(0, 0), QPoint(0, third));
         QVERIFY(AtBottom());
-        QSignalSpy swapped(&Window_, &QQuickWindow::frameSwapped);
-        QVERIFY(!swapped.wait(NO_FRAME_MS));
+        QSignalSpy synced(&Window_, &QQuickWindow::afterSynchronizing);
+        QVERIFY(!synced.wait(NO_FRAME_MS));
 
         SendWheel({5, 5}, QPoint(0, 0), QPoint(0, third));
         QCOMPARE(TopRowAfterFrame(), QStringLiteral("L21"));
@@ -447,7 +447,7 @@ private slots:
         // What was left over is not lost, and not repeated: the next third
         // is still short of a row.
         SendWheel({5, 5}, QPoint(0, 0), QPoint(0, third));
-        QSignalSpy again(&Window_, &QQuickWindow::frameSwapped);
+        QSignalSpy again(&Window_, &QQuickWindow::afterSynchronizing);
         QVERIFY(!again.wait(NO_FRAME_MS));
         QCOMPARE(RowText(0), QStringLiteral("L21"));
 
