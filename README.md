@@ -21,7 +21,7 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `release`.
+Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`.
 
 ## License
 

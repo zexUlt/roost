@@ -38,6 +38,17 @@
       }
     },
     {
+      "name": "tsan",
+      "inherits": "base",
+      "displayName": "tsan — thread sanitizer (libghostty-vt is not instrumented: the debug lock checks cover it)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GHOSTTY_ZIG_BUILD_FLAGS": "-Doptimize=ReleaseSafe",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "displayName": "release — what ships",
@@ -49,6 +60,7 @@
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
+    { "name": "tsan", "configurePreset": "tsan" },
     { "name": "release", "configurePreset": "release" }
   ],
   "testPresets": [
@@ -60,6 +72,16 @@
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
     { "name": "asan-ubsan", "inherits": "base", "configurePreset": "asan-ubsan" },
+    {
+      "name": "tsan",
+      "inherits": "base",
+      "configurePreset": "tsan",
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1",
+        "QTEST_FUNCTION_TIMEOUT": "300000"
+      },
+      "execution": { "noTestsAction": "error", "timeout": 900 }
+    },
     { "name": "release", "inherits": "base", "configurePreset": "release" }
   ]
 }

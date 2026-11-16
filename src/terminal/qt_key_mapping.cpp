@@ -277,4 +277,45 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
     return event;
 }
 
+bool IsCopyShortcut(int key, Qt::KeyboardModifiers modifiers,
+                    const QtKeyOptions& options) {
+    if (key != Qt::Key_C) {
+        return false;
+    }
+    // The keypad flag rides on some keys on macOS and means nothing here.
+    modifiers &= ~Qt::KeypadModifier;
+    return options.SwapControlAndMeta
+               ? modifiers == Qt::ControlModifier
+               : modifiers == (Qt::ControlModifier | Qt::ShiftModifier);
+}
+
+KeyMods MapQtModifiers(Qt::KeyboardModifiers modifiers,
+                       const QtKeyOptions& options) {
+    KeyMods mods;
+    mods.Shift = modifiers.testFlag(Qt::ShiftModifier);
+    mods.Alt = modifiers.testFlag(Qt::AltModifier);
+    const bool control = modifiers.testFlag(Qt::ControlModifier);
+    const bool meta = modifiers.testFlag(Qt::MetaModifier);
+    mods.Ctrl = options.SwapControlAndMeta ? meta : control;
+    mods.Super = options.SwapControlAndMeta ? control : meta;
+    return mods;
+}
+
+EMouseButton MapQtMouseButton(Qt::MouseButton button) {
+    switch (button) {
+        case Qt::LeftButton:
+            return EMouseButton::Left;
+        case Qt::MiddleButton:
+            return EMouseButton::Middle;
+        case Qt::RightButton:
+            return EMouseButton::Right;
+        case Qt::BackButton:
+            return EMouseButton::Back;
+        case Qt::ForwardButton:
+            return EMouseButton::Forward;
+        default:
+            return EMouseButton::None;
+    }
+}
+
 }  // namespace roost

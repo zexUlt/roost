@@ -30,12 +30,15 @@ roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(vt_render_state_test core/vt_render_state_test.cpp)
 roost_add_qt_test(vt_key_encoder_test core/vt_key_encoder_test.cpp)
+roost_add_qt_test(vt_mouse_encoder_test core/vt_mouse_encoder_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
 roost_add_qt_test(renderer_runs_test terminal/renderer_runs_test.cpp roost_terminal)
 roost_add_qt_test(qt_key_mapping_test terminal/qt_key_mapping_test.cpp roost_terminal)
 roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_terminal)
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 
 # The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no

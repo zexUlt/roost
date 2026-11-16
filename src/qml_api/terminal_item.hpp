@@ -1,14 +1,19 @@
 #pragma once
 
 #include "core/vt_key_encoder.hpp"
+#include "core/vt_mouse_encoder.hpp"
 #include "terminal/qt_key_mapping.hpp"
 #include "terminal/renderer.hpp"
 #include "terminal/terminal_session.hpp"
 
 #include <QtQml/qqmlregistration.h>
 #include <QFont>
+#include <QList>
 #include <QQuickItem>
+#include <QTimer>
 
+#include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -23,6 +28,28 @@ namespace roost {
 // by the output the PTY echoes back (design.md §3). The owner connects `input`
 // to the session's channel.
 //
+// The mouse goes out the same way: when the program tracks it (DECSET 9,
+// 1000, 1002, 1003), clicks, drags, motion and the wheel become the reports
+// it asked for. When it does not, the wheel scrolls the viewport through the
+// scrollback (primary screen) or types cursor keys (alternate screen with
+// alternate scroll, mode 1007), as Ghostty does.
+// Typing and pasting scroll the viewport back to the bottom.
+//
+// Selecting is Ghostty's too. A left press and drag select by cell, a double
+// click a word, a triple click a line, when the program does not track the
+// mouse, or when Shift is held while it does (Shift is then not reported). A
+// click without a drag clears the selection. A drag past the top or bottom
+// edge scrolls the viewport on a 15 ms timer, a row a tick. The selection is
+// the terminal's, so it follows the text through output and scrollback.
+// Command+C (macOS) or Ctrl+Shift+C copies it as plain text, with wrapped
+// lines joined, and sends nothing to the program; with no selection they do
+// nothing. A key that sends bytes clears the selection, and so does a wheel
+// that goes to the program (reports while it tracks the mouse, arrow keys on
+// the alternate screen); scrolling the scrollback keeps it. A drag that loses
+// the mouse grab ends where it is. On Linux, as in
+// Ghostty, a finished selection also goes to the selection clipboard
+// (copy-on-select = primary); on macOS it does not. A click takes the focus.
+//
 // The item does not resize the session either. It says how many columns and
 // rows fit (`gridSizeChanged`), and the owner sends session.resize, which
 // resizes the local terminal as well.
@@ -36,6 +63,7 @@ class TerminalItem : public QQuickItem {
     // VtTerminal::MAX_SIZE, the bound the terminal accepts.
     Q_PROPERTY(int columns READ columns NOTIFY gridSizeChanged)
     Q_PROPERTY(int rows READ rows NOTIFY gridSizeChanged)
+    Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY hasSelectionChanged)
 
 public:
     explicit TerminalItem(QQuickItem* parent = nullptr);
@@ -55,6 +83,11 @@ public:
     // emitted for an empty text or without a session.
     Q_INVOKABLE void paste(const QString& text);
 
+    bool hasSelection() const;
+    // Puts the selected text on the system clipboard; nothing is copied, and
+    // the clipboard stays as it was, without a selection.
+    Q_INVOKABLE void copy();
+
     // How many rows the last frame rebuilt; for tests and the benchmark.
     int rowsRebuilt() const;
 
@@ -62,18 +95,56 @@ signals:
     void fontChanged();
     void cellSizeChanged();
     void gridSizeChanged();
+    void hasSelectionChanged();
     // Bytes to write to the program.
     void input(const QByteArray& bytes);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    // The grab is gone (window, popup or scene took it) with no release: the
+    // drag is over, and what it selected stays.
+    void mouseUngrabEvent() override;
+    void hoverMoveEvent(QHoverEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
     void geometryChange(const QRectF& newGeometry,
                         const QRectF& oldGeometry) override;
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
 
 private:
     void handleKey(QKeyEvent* event, EKeyAction action);
+    // Whether the program tracks the mouse now.
+    bool mouseTracked() const;
+    using SelectionStep = std::function<std::expected<void, QString>(
+        const TerminalSession::Locked&)>;
+    // Runs a step on the selection under one lock, then learns what it did:
+    // whether there is a selection, whether the drag wants the viewport to
+    // scroll (the timer follows), and asks for a frame.
+    void runSelection(const SelectionStep& step);
+    void autoscrollTick();
+    // The drag stops: no more selection steps and no autoscroll. The
+    // selection made so far stays.
+    void endDrag();
+    // Reads whether the terminal has a selection and tells QML if it changed.
+    void syncHasSelection();
+    // The left button press, its drag and its release, as selecting.
+    void startSelection(QMouseEvent* event);
+    void finishSelection(QMouseEvent* event);
+    void dragSelection(QMouseEvent* event);
+    MouseGeometry mouseGeometry() const;
+    // The reports for these events, from one sync of the encoder under a
+    // short lock; empty if the terminal does not track the mouse.
+    QByteArray encodeMouse(const QList<MouseEvent>& events);
+    // One press, release or motion; true if it was reported.
+    bool reportMouse(EMouseAction action, EMouseButton button,
+                     const QPointF& position, Qt::MouseButtons buttons,
+                     Qt::KeyboardModifiers modifiers);
+    // Scrolls the viewport to the bottom if it is not there, and asks for a
+    // frame.
+    void scrollToBottom();
     // Recomputes the grid from the size and the cell; emits gridSizeChanged
     // if it differs.
     void updateGridSize();
@@ -86,9 +157,22 @@ private:
     // GUI thread only. Empty if the library could not make one: keys are then
     // ignored.
     std::optional<VtKeyEncoder> KeyEncoder_;
+    // The same for the mouse: without one, the mouse is ignored.
+    std::optional<VtMouseEncoder> MouseEncoder_;
+    // Wheel movement in pixels that has not added up to a whole row yet.
+    qreal PendingWheelX_ = 0;
+    qreal PendingWheelY_ = 0;
     QtKeyOptions KeyOptions_ = QtKeyOptions::ForThisPlatform();
     int Columns_ = 1;
     int Rows_ = 1;
+    // GUI thread only (the render thread only reads HasSelection_ while the
+    // GUI thread is blocked).
+    // A left press went to the selection and the button is still down.
+    bool Selecting_ = false;
+    bool HasSelection_ = false;
+    // Where the pointer was last, for the autoscroll ticks.
+    QPointF LastPointer_;
+    QTimer AutoscrollTimer_;
 };
 
 }  // namespace roost

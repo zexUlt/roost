@@ -156,9 +156,10 @@ private slots:
         Show(NewSession());
         QSignalSpy input(Item_, &TerminalItem::input);
 
-        // Qt::ControlModifier is Command on macOS: Cmd+C is the application's
-        // (copy), not a Ctrl+C, and not the letter either.
-        QVERIFY(!Press(Qt::Key_C, Qt::ControlModifier, "c"));
+        // Qt::ControlModifier is Command on macOS: Cmd+X is the application's,
+        // not a Ctrl+X, and not the letter either. (Cmd+C is the copy key,
+        // taken by the item; see terminal_item_selection_test.)
+        QVERIFY(!Press(Qt::Key_X, Qt::ControlModifier, "x"));
         QCOMPARE(input.count(), 0);
     }
 #endif

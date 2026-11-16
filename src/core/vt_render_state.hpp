@@ -58,12 +58,26 @@ public:
         bool Faint = false;
         bool Strikethrough = false;
         bool Invisible = false;
+        // Inside the selection of its row; how it is drawn is up to the
+        // caller.
+        bool Selected = false;
+    };
+
+    // The columns of one row the selection covers, both ends included.
+    struct SelectionRange {
+        quint16 Start = 0;
+        quint16 End = 0;
+
+        friend bool operator==(const SelectionRange&,
+                               const SelectionRange&) = default;
     };
 
     struct Row {
         // True for every row while Dirty() is Full.
         bool Dirty = false;
         QList<Cell> Cells;
+        // Empty when the row has no selected cell.
+        std::optional<SelectionRange> Selection;
     };
 
     struct Cursor {
