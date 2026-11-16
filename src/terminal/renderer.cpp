@@ -176,15 +176,14 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
 
     const auto& state = session.RenderState();
     const auto dirty = state.Dirty();
-    const auto rows = state.Rows();
-    if (rows.isEmpty()) {
+    const auto rowCount = static_cast<int>(state.RowCount());
+    if (rowCount == 0) {
         return nullptr;
     }
 
     // The tree is the rows, then the cursor. The root stays the same node for
     // as long as the scene graph keeps it, so there is never an old root to
     // hand back for deletion.
-    const auto rowCount = static_cast<int>(rows.size());
     QSGNode* root = oldNode != nullptr ? oldNode : new QSGNode;
     const bool sameGrid =
         root->childCount() == rowCount + 1 && state.Columns() == Columns_;
@@ -209,6 +208,7 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
 
     const bool rebuildAll =
         !sameGrid || Stale_ || dirty == VtRenderState::EDirty::Full;
+    const auto rows = state.Rows();
     QSGNode* row = root->firstChild();
     for (int i = 0; i < rowCount; ++i, row = row->nextSibling()) {
         if (!rebuildAll && !rows[i].Dirty) {
@@ -295,9 +295,21 @@ void Renderer::UpdateCursor(QSGNode& cursor, const VtRenderState& state) const {
         rect.setRect(QRectF());
         return;
     }
-    rect.setRect(QRectF(static_cast<qreal>(position.X) * Metrics_.Width,
+    // One block over both cells of a wide character, whichever half the
+    // cursor is on.
+    int first = position.X;
+    int width = 1;
+    if (position.WideTail && first > 0) {
+        --first;
+        width = 2;
+    } else if (const auto cell = state.CellAt(position.X, position.Y);
+               cell && cell->Width == VtRenderState::EWidth::Wide) {
+        width = 2;
+    }
+    rect.setRect(QRectF(static_cast<qreal>(first) * Metrics_.Width,
                         static_cast<qreal>(position.Y) * Metrics_.Height,
-                        Metrics_.Width, Metrics_.Height));
+                        static_cast<qreal>(width) * Metrics_.Width,
+                        Metrics_.Height));
     rect.setColor(ToColor(state.DefaultForeground(), CURSOR_ALPHA));
 }
 

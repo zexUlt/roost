@@ -60,6 +60,13 @@ QList<Run> SplitRow(const VtRenderState::Row& row,
                     VtRenderState::Rgb defaultForeground,
                     VtRenderState::Rgb defaultBackground);
 
+// Within one run a glyph the primary face lacks, drawn by a fallback face of
+// another advance, can shift the rest of that run. What keeps the grid is the
+// split between runs (each starts at its exact column, a wide character is a
+// run of its own) and, for a monospace primary face, the letter spacing that
+// makes a glyph advance exactly one cell. A proportional primary face drifts
+// within a run.
+//
 // Draws one TerminalSession into scene graph nodes. Only the Qt Quick render
 // thread uses it, from QQuickItem::updatePaintNode.
 //
