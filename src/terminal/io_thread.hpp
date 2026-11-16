@@ -63,7 +63,9 @@ public:
     // Opens a session channel (session.open). The future finishes once the
     // snapshot frame of the channel has been applied, so the session already
     // shows the screen. It fails with the error of roostd, or with
-    // InternalError if the snapshot cannot be restored.
+    // InternalError if the snapshot cannot be restored. After it, the channel
+    // raises no Updated until the opener's first AcknowledgeUpdate, which the
+    // opener calls before its first read of the session.
     QFuture<OpenResult> Open(const QString& agent, const QString& session,
                              quint16 columns, quint16 rows);
 
@@ -71,7 +73,8 @@ public:
     void SendInput(std::uint32_t channel, const QByteArray& bytes);
 
     // session.resize, and on success the same size for the local terminal,
-    // under its lock. Raises Updated.
+    // under its lock. Raises Updated. A size outside 1..VtTerminal::MAX_SIZE
+    // fails with InvalidParams, and nothing is sent.
     QFuture<rpc::Result> Resize(std::uint32_t channel, quint16 columns,
                                 quint16 rows);
 
@@ -80,7 +83,8 @@ public:
     QFuture<rpc::Result> Close(std::uint32_t channel);
 
     // Lets the next output of the channel raise Updated again. Call it before
-    // reading the terminal. Thread-safe.
+    // reading the terminal; for a new channel, before the first read, since
+    // Open leaves the channel without Updated until then. Thread-safe.
     void AcknowledgeUpdate(std::uint32_t channel);
 
     // Closes the connection, fails the pending futures with ConnectionLost

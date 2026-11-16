@@ -50,7 +50,8 @@ public:
         friend class TerminalSession;
         explicit Locked(TerminalSession& session);
 
-        TerminalSession* Session_;
+        // Read only by the debug-build check.
+        [[maybe_unused]] TerminalSession* Session_;
         std::unique_lock<std::mutex> Lock_;
     };
 
