@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
         Render(*session);
     }
     report("after render update");
-    std::printf("rows held, scrollback included: %lld\n",
+    std::printf("peak rows while filling, scrollback included: %lld\n",
                 static_cast<long long>(rows));
     return 0;
 }
