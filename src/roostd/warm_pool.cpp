@@ -45,12 +45,20 @@ std::expected<void, QString> WarmSession::Resize(PtySize size) {
     if (Closed_) {
         return std::unexpected(QStringLiteral("the session is closed"));
     }
-    // The terminal checks the size before the PTY takes it.
-    if (auto resized = Terminal_.Resize(size.Columns, size.Rows); !resized) {
-        return resized;
+    // Check the size first, then the PTY, then the terminal: the terminal
+    // fails only on a bad size, so nothing needs rolling back.
+    if (size.Columns == 0 || size.Rows == 0 ||
+        size.Columns > VtTerminal::MAX_SIZE ||
+        size.Rows > VtTerminal::MAX_SIZE) {
+        return std::unexpected(
+            QStringLiteral("columns and rows are from 1 to %1")
+                .arg(VtTerminal::MAX_SIZE));
     }
     if (!Pty_->Resize(size)) {
         return std::unexpected(QStringLiteral("the PTY is closed"));
+    }
+    if (auto resized = Terminal_.Resize(size.Columns, size.Rows); !resized) {
+        return resized;
     }
     return {};
 }

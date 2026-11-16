@@ -83,6 +83,10 @@ struct WarmPoolOptions {
 // When one more is opened, the one viewed least recently is evicted: its
 // program is hung up and its session closed.
 //
+// An evicted session leaves the pool at once and does not count in Capacity,
+// but its program lives until it exits on SIGHUP, at most a hang-up timeout:
+// for a moment more than Capacity programs may be alive.
+//
 // Destroying the pool kills the programs without emitting Closed.
 class WarmPool : public QObject {
     Q_OBJECT
@@ -94,7 +98,8 @@ public:
     // program of the spec, in a PTY and a terminal of the size. Either way the
     // session counts as viewed now. A warm session keeps its size: the caller
     // resizes it if it needs to. Nothing is evicted if the program fails to
-    // start.
+    // start. Do not call it from a slot of WarmSession::Output: an eviction
+    // would close a PTY inside its own read.
     std::expected<WarmSession*, QString> Open(const WarmSessionKey& key,
                                               const PtySpec& spec,
                                               PtySize size);
