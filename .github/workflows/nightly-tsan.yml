@@ -37,10 +37,12 @@ jobs:
     runs-on: macos-15
     # Qt itself takes hours to build on a cache miss.
     timeout-minutes: 300
-    env:
-      ROOST_TSAN_QT_PREFIX: ${{ runner.temp }}/qt-tsan
     steps:
       - uses: actions/checkout@v4
+
+      # The runner context is not available in job-level env.
+      - name: Qt prefix
+        run: echo "ROOST_TSAN_QT_PREFIX=$RUNNER_TEMP/qt-tsan" >> "$GITHUB_ENV"
 
       - name: Install build tools
         run: brew install ninja
