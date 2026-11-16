@@ -29,10 +29,15 @@ roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(vt_render_state_test core/vt_render_state_test.cpp)
+roost_add_qt_test(vt_key_encoder_test core/vt_key_encoder_test.cpp)
+roost_add_qt_test(vt_mouse_encoder_test core/vt_mouse_encoder_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
 roost_add_qt_test(renderer_runs_test terminal/renderer_runs_test.cpp roost_terminal)
+roost_add_qt_test(qt_key_mapping_test terminal/qt_key_mapping_test.cpp roost_terminal)
 roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_terminal)
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 
 # A TUI that draws, asks its terminal questions and counts the answers.
 add_executable(fake_tui helpers/fake_tui.cpp)
@@ -119,3 +124,21 @@ target_compile_definitions(io_thread_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(io_thread_test roostd fake_tui claude-adapter)
+
+# The developer mode: one TerminalItem wired to a session of the real roostd,
+# and the roost executable started with --session against it.
+roost_add_qt_test(single_session_test roost/single_session_test.cpp roost_app)
+target_compile_definitions(single_session_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    ROOST_PATH="$<TARGET_FILE:roost>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
+
+# Memory of one terminal in the window (docs/prior-art.md §2.5). Not a test:
+# not registered with ctest, built only where it can read the process memory.
+if(APPLE)
+    add_executable(terminal_memory bench/terminal_memory.cpp)
+    target_link_libraries(terminal_memory PRIVATE roost_terminal)
+endif()

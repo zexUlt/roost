@@ -90,6 +90,59 @@ std::expected<QByteArray, QString> TerminalSession::Dump(
     return Terminal_.Dump();
 }
 
+std::expected<void, QString> TerminalSession::SyncKeyEncoder(
+    const Locked& lock, VtKeyEncoder& encoder) const {
+    if (!Check(lock, "SyncKeyEncoder")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return encoder.SyncFrom(Terminal_);
+}
+
+std::expected<void, QString> TerminalSession::SyncMouseEncoder(
+    const Locked& lock, VtMouseEncoder& encoder,
+    const MouseGeometry& geometry) const {
+    if (!Check(lock, "SyncMouseEncoder")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return encoder.SyncFrom(Terminal_, geometry);
+}
+
+std::expected<VtTerminal::WheelModes, QString> TerminalSession::ReadWheelModes(
+    const Locked& lock) const {
+    if (!Check(lock, "ReadWheelModes")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ReadWheelModes();
+}
+
+std::expected<void, QString> TerminalSession::ScrollViewport(const Locked& lock,
+                                                             qint64 rows) {
+    if (!Check(lock, "ScrollViewport")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ScrollViewport(rows);
+}
+
+std::expected<void, QString> TerminalSession::ScrollViewportToBottom(
+    const Locked& lock) {
+    if (!Check(lock, "ScrollViewportToBottom")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ScrollViewportToBottom();
+}
+
+std::expected<bool, QString> TerminalSession::ViewportAtBottom(
+    const Locked& lock) const {
+    if (!Check(lock, "ViewportAtBottom")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ViewportAtBottom();
+}
+
+bool TerminalSession::BracketedPaste(const Locked& lock) const {
+    return Check(lock, "BracketedPaste") && Terminal_.BracketedPaste();
+}
+
 std::expected<void, QString> TerminalSession::BeginRenderUpdate(
     const Locked& lock) {
     if (!Check(lock, "BeginRenderUpdate")) {

@@ -9,6 +9,8 @@ add_library(roost_core STATIC
     rpc_client.cpp
     store.cpp
     version.cpp
+    vt_key_encoder.cpp
+    vt_mouse_encoder.cpp
     vt_render_state.cpp
     vt_terminal.cpp
 )

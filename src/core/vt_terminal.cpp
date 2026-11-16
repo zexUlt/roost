@@ -209,4 +209,108 @@ std::expected<QByteArray, QString> VtTerminal::Dump() const {
     return dump;
 }
 
+std::expected<VtTerminal::WheelModes, QString> VtTerminal::ReadWheelModes()
+    const {
+    WheelModes modes;
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+            &modes.MouseTracking);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot read the mouse mode", result));
+    }
+    GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot read the screen", result));
+    }
+    modes.AlternateScreen = screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE;
+    GhosttyTerminalModeConfig scroll{
+        .mode = GHOSTTY_MODE_MOUSE_ALTERNATE_SCROLL, .value = false};
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_MODE, &scroll);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(
+            Failed("cannot read the alternate scroll mode", result));
+    }
+    modes.AlternateScroll = scroll.value;
+    GhosttyTerminalModeConfig cursorKeys{.mode = GHOSTTY_MODE_CURSOR_KEYS,
+                                         .value = false};
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_MODE, &cursorKeys);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(
+            Failed("cannot read the cursor keys mode", result));
+    }
+    modes.CursorKeysApplication = cursorKeys.value;
+    return modes;
+}
+
+std::expected<void, QString> VtTerminal::ScrollViewport(qint64 rows) {
+    GhosttyTerminalScrollViewport behavior{};
+    behavior.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
+    behavior.value.delta = static_cast<intptr_t>(rows);
+    if (const auto result =
+            ghostty_terminal_scroll_viewport(State_->Terminal, behavior);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot scroll the viewport", result));
+    }
+    return {};
+}
+
+std::expected<void, QString> VtTerminal::ScrollViewportToBottom() {
+    GhosttyTerminalScrollViewport behavior{};
+    behavior.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM;
+    if (const auto result =
+            ghostty_terminal_scroll_viewport(State_->Terminal, behavior);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot scroll the viewport", result));
+    }
+    return {};
+}
+
+std::expected<bool, QString> VtTerminal::ViewportAtBottom() const {
+    bool active = true;
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, &active);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot read the viewport", result));
+    }
+    return active;
+}
+
+bool VtTerminal::BracketedPaste() const {
+    GhosttyTerminalModeConfig mode{.mode = GHOSTTY_MODE_BRACKETED_PASTE,
+                                   .value = false};
+    return ghostty_terminal_get(State_->Terminal, GHOSTTY_TERMINAL_DATA_MODE,
+                                &mode) == GHOSTTY_SUCCESS &&
+           mode.value;
+}
+
+std::expected<QByteArray, QString> VtTerminal::EncodePaste(QStringView text,
+                                                           bool bracketed) {
+    // The library cleans the buffer in place.
+    QByteArray data = text.toUtf8();
+    std::size_t needed = 0;
+    auto result =
+        ghostty_paste_encode(data.data(), static_cast<std::size_t>(data.size()),
+                             bracketed, nullptr, 0, &needed);
+    if (result == GHOSTTY_SUCCESS) {
+        return QByteArray();
+    }
+    if (result != GHOSTTY_OUT_OF_SPACE) {
+        return std::unexpected(Failed("cannot encode the paste", result));
+    }
+    QByteArray encoded(static_cast<qsizetype>(needed), Qt::Uninitialized);
+    std::size_t written = 0;
+    result = ghostty_paste_encode(
+        data.data(), static_cast<std::size_t>(data.size()), bracketed,
+        reinterpret_cast<uint8_t*>(encoded.data()), needed, &written);
+    if (result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot encode the paste", result));
+    }
+    encoded.truncate(static_cast<qsizetype>(written));
+    return encoded;
+}
+
 }  // namespace roost

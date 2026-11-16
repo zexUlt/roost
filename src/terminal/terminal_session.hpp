@@ -1,11 +1,14 @@
 #pragma once
 
+#include "core/vt_key_encoder.hpp"
+#include "core/vt_mouse_encoder.hpp"
 #include "core/vt_render_state.hpp"
 #include "core/vt_terminal.hpp"
 
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
+#include <QStringView>
 
 #include <expected>
 #include <memory>
@@ -90,6 +93,32 @@ public:
                                         quint16 rows);
     // For tests: see VtTerminal::Dump.
     std::expected<QByteArray, QString> Dump(const Locked& lock) const;
+    // Copies the terminal's input modes (cursor keys, keypad, Kitty keyboard
+    // protocol, ...) into the encoder. The GUI thread does it under a short
+    // lock before encoding a key; the encoding itself then needs no lock.
+    std::expected<void, QString> SyncKeyEncoder(const Locked& lock,
+                                                VtKeyEncoder& encoder) const;
+    // Copies the terminal's mouse tracking mode and format into the encoder,
+    // with the geometry of the grid on screen. As for keys: a short lock for
+    // the sync, no lock for the encoding.
+    std::expected<void, QString> SyncMouseEncoder(
+        const Locked& lock, VtMouseEncoder& encoder,
+        const MouseGeometry& geometry) const;
+    // What the wheel should do now; see VtTerminal::ReadWheelModes.
+    std::expected<VtTerminal::WheelModes, QString> ReadWheelModes(
+        const Locked& lock) const;
+    // Moves the viewport by whole rows, negative toward older output; see
+    // VtTerminal::ScrollViewport. The render state picks the move up at the
+    // next update, so the caller asks for a frame.
+    std::expected<void, QString> ScrollViewport(const Locked& lock,
+                                                qint64 rows);
+    // Back to the active area: what typing and pasting do.
+    std::expected<void, QString> ScrollViewportToBottom(const Locked& lock);
+    // False while the viewport is scrolled into history.
+    std::expected<bool, QString> ViewportAtBottom(const Locked& lock) const;
+    // Whether bracketed paste is on, for VtTerminal::EncodePaste, which then
+    // runs without the lock. False for a wrong token.
+    bool BracketedPaste(const Locked& lock) const;
     // The first phase of a render update, for the render thread: the state
     // may be finished and read after the token is gone.
     std::expected<void, QString> BeginRenderUpdate(const Locked& lock);
