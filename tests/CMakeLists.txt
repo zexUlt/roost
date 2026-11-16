@@ -145,3 +145,10 @@ target_compile_definitions(single_session_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
+
+# Memory of one terminal in the window (docs/prior-art.md §2.5). Not a test:
+# not registered with ctest, built only where it can read the process memory.
+if(APPLE)
+    add_executable(terminal_memory bench/terminal_memory.cpp)
+    target_link_libraries(terminal_memory PRIVATE roost_terminal)
+endif()
