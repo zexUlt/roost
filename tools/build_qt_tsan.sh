@@ -18,7 +18,9 @@ base_url=https://download.qt.io/official_releases/qt/$series/$version/submodules
 modules=(qtbase qtshadertools qtdeclarative)
 jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc)
 
-work=$(mktemp -d)
+# Qt refuses a build directory whose path goes through a symlink, and on
+# macOS mktemp answers under /var, a link to /private/var.
+work=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 
 fetch() {
