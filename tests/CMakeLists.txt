@@ -137,6 +137,22 @@ target_compile_definitions(single_session_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 
+# The tests whose code runs on more than one thread: the IO thread, the
+# terminal session it writes while the render thread reads it, and the item
+# that hands the session to the render thread. The tsan preset runs only
+# these, under the threaded render loop the app uses on macOS; everything else
+# is single-threaded and gives ThreadSanitizer nothing to check.
+set_tests_properties(
+    terminal_session_test
+    io_thread_test
+    single_session_test
+    terminal_item_test
+    terminal_item_input_test
+    terminal_item_mouse_test
+    terminal_item_selection_test
+    PROPERTIES LABELS threads
+)
+
 # Memory of one terminal in the window (docs/prior-art.md §2.5). Not a test:
 # not registered with ctest, built only where it can read the process memory.
 if(APPLE)

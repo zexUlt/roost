@@ -78,8 +78,10 @@
       "configurePreset": "tsan",
       "environment": {
         "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1",
-        "QTEST_FUNCTION_TIMEOUT": "300000"
+        "QTEST_FUNCTION_TIMEOUT": "300000",
+        "QSG_RENDER_LOOP": "threaded"
       },
+      "filter": { "include": { "label": "threads" } },
       "execution": { "noTestsAction": "error", "timeout": 900 }
     },
     { "name": "release", "inherits": "base", "configurePreset": "release" }

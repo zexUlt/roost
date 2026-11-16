@@ -81,33 +81,6 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
-      # TEMPORARY: which descriptors a TSan-built process has open by itself.
-      - name: Descriptors of a TSan process
-        if: matrix.preset == 'tsan'
-        run: |
-          cat > "$RUNNER_TEMP/fds.c" <<'C'
-          #include <fcntl.h>
-          #include <stdio.h>
-          #include <sys/stat.h>
-          int main(void) {
-              for (int fd = 3; fd < 1024; ++fd) {
-                  const int flags = fcntl(fd, F_GETFD);
-                  struct stat st;
-                  if (flags != -1 && fstat(fd, &st) == 0) {
-                      char path[1024] = "";
-                      fcntl(fd, F_GETPATH, path);
-                      printf("fd %d cloexec=%d type=%o path=%s\n", fd,
-                             flags & FD_CLOEXEC, st.st_mode & S_IFMT, path);
-                  }
-              }
-              return 0;
-          }
-          C
-          clang "$RUNNER_TEMP/fds.c" -o "$RUNNER_TEMP/fds_plain"
-          clang -fsanitize=thread "$RUNNER_TEMP/fds.c" -o "$RUNNER_TEMP/fds_tsan"
-          clang -fsanitize=address "$RUNNER_TEMP/fds.c" -o "$RUNNER_TEMP/fds_asan"
-          for v in plain tsan asan; do echo "== $v"; "$RUNNER_TEMP/fds_$v"; done
-
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
