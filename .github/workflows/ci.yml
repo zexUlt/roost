@@ -47,10 +47,16 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-          use-tool-cache: true
+          cache-key: ${{ matrix.preset }}
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
+
+      # Zig keys its cache on source file mtimes, and a fresh clone has new
+      # ones every run, so the restored cache never hits and the library
+      # compiles again (about two minutes). Pin the mtimes.
+      - name: Pin libghostty-vt source mtimes
+        run: find build/${{ matrix.preset }}/_deps/ghostty-src -exec touch -t 202001010000 {} +
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -108,7 +114,6 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-          use-tool-cache: true
 
       - name: Install clang-tidy
         run: pipx install "clang-tidy==${CLANG_TIDY_VERSION}"
@@ -118,23 +123,11 @@ jobs:
       - name: Build
         run: |
           cmake --preset dev "-DGHOSTTY_ZIG_BUILD_FLAGS=-Doptimize=ReleaseSafe;--summary;all"
+          find build/dev/_deps/ghostty-src -exec touch -t 202001010000 {} +
           targets=$(ninja -C build/dev -t targets all |
             sed -nE 's/^(zig_build_lib_vt|[A-Za-z0-9_-]+_autogen):.*/\1/p')
           echo "$targets"
           cmake --build --preset dev --target $targets
-
-      - name: DIAG zig rebuild
-        run: |
-          src=build/dev/_deps/ghostty-src
-          f="-Demit-lib-vt -Doptimize=ReleaseSafe --summary all"
-          echo "== same tree, second build"
-          ( cd $src && time zig build $f 2>&1 | grep -E "compile lib|Build Summary" | sort | uniq -c )
-          echo "== copied tree (new inodes and mtimes)"
-          cp -R $src $src.new && rm -rf $src && mv $src.new $src
-          ( cd $src && time zig build $f 2>&1 | grep -E "compile lib|Build Summary" | sort | uniq -c )
-          echo "== touched mtimes only"
-          find $src -type f -exec touch {} +
-          ( cd $src && time zig build $f 2>&1 | grep -E "compile lib|Build Summary" | sort | uniq -c )
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
       # The PyPI clang-tidy does not know where the macOS SDK is.
