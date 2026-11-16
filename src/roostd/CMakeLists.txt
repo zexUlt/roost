@@ -6,6 +6,7 @@ add_library(roostd_lib STATIC
     manifest.cpp
     plugins.cpp
     server.cpp
+    warm_pool.cpp
 )
 
 target_link_libraries(roostd_lib PUBLIC roost_core Qt6::Network)

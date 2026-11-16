@@ -38,6 +38,9 @@ target_compile_definitions(pty_test PRIVATE FAKE_TUI_PATH="$<TARGET_FILE:fake_tu
 add_dependencies(pty_test fake_tui)
 roost_add_qt_test(server_test roostd/server_test.cpp roostd_lib)
 roost_add_qt_test(channels_test roostd/channels_test.cpp roostd_lib)
+roost_add_qt_test(warm_pool_test roostd/warm_pool_test.cpp roostd_lib)
+target_compile_definitions(warm_pool_test PRIVATE FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>")
+add_dependencies(warm_pool_test fake_tui)
 roost_add_qt_test(manifest_test roostd/manifest_test.cpp roostd_lib roost_test_helpers)
 
 # A plugin backend that misbehaves on request.
