@@ -40,6 +40,18 @@ roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp 
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 
+# The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
+# writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
+# RHI, so Qt Quick draws in software, whose render thread exists only with
+# QSG_RENDER_LOOP=threaded (prior-art section 5.1).
+roost_add_qt_test(frame_budget_test bench/frame_budget_test.cpp roost_qml_api)
+set_tests_properties(frame_budget_test PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
+    TIMEOUT 120
+    # The budget is a timing check: never beside other tests under ctest -j.
+    RUN_SERIAL TRUE
+)
+
 # A TUI that draws, asks its terminal questions and counts the answers.
 add_executable(fake_tui helpers/fake_tui.cpp)
 target_link_libraries(fake_tui PRIVATE roost::compile_options)
