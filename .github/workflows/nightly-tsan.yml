@@ -3,23 +3,24 @@ name: Nightly TSan
 # ThreadSanitizer against a Qt built with TSan: the `threads` tests hand data
 # over through Qt, and a Qt from a binary distribution is not instrumented
 # (.claude/rules/threads.md). The PR job `tsan` in ci.yml runs `threads_std`.
+#
+# Separate from CI on purpose: Qt takes over an hour to build on a cache miss
+# and holds a macOS runner the pull requests wait for. A change to the
+# workflow or to tools/build_qt_tsan.sh is proved by dispatching it on its
+# branch once it is on trunk: gh workflow run nightly-tsan.yml --ref <branch>.
 on:
+  workflow_dispatch:
   schedule:
     - cron: "23 2 * * *"
-  workflow_dispatch:
-  # A PR that touches the files below proves the workflow.
-  pull_request:
-    paths:
-      - .github/workflows/nightly-tsan.yml
-      - tools/build_qt_tsan.sh
-      - CMakePresets.json
 
 permissions:
   contents: read
 
+# Per ref: a run of one branch has no reason to wait for another's, and a
+# Qt build half done is not thrown away.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 # Keep in step with ci.yml.
 env:
@@ -108,6 +109,16 @@ jobs:
 
       - name: Test
         run: ctest --preset tsan-qt
+
+      # The reports are in the test output; the log keeps them past the
+      # job's own log, which is cut at its size limit.
+      - name: Keep the TSan reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-tsan-reports
+          path: build/tsan-qt/Testing/Temporary/
+          if-no-files-found: ignore
 
       - name: Qt is linked dynamically
         run: tools/check_qt_dynamic.sh build/tsan-qt
