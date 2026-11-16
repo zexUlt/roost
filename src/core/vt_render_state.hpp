@@ -36,11 +36,19 @@ public:
         friend bool operator==(const Rgb&, const Rgb&) = default;
     };
 
-    // One grid cell. The second half of a wide character has an empty Text.
+    // How many columns a cell takes, as the library says. A wide character
+    // is a Wide cell followed by a SpacerTail; a SpacerHead is the blank
+    // cell at the end of a soft-wrapped line that a wide character did not
+    // fit into.
+    enum class EWidth { Narrow, Wide, SpacerTail, SpacerHead };
+
+    // One grid cell. The second half of a wide character (SpacerTail) has an
+    // empty Text.
     // A color the cell does not choose is empty: use the default one.
     // Palette colors come resolved; inverse and bold are not applied to them.
     struct Cell {
         QString Text;
+        EWidth Width = EWidth::Narrow;
         std::optional<Rgb> Foreground;
         std::optional<Rgb> Background;
         bool Bold = false;
@@ -64,6 +72,8 @@ public:
         bool InViewport = false;
         quint16 X = 0;
         quint16 Y = 0;
+        // The cursor is on the second cell of a wide character.
+        bool WideTail = false;
     };
 
     enum class EDirty { None, Partial, Full };
@@ -88,12 +98,16 @@ public:
 
     // Valid after EndUpdate.
     quint16 Columns() const;
+    quint16 RowCount() const;
     EDirty Dirty() const;
     Cursor GetCursor() const;
     Rgb DefaultForeground() const;
     Rgb DefaultBackground() const;
     // Every row of the viewport, top to bottom, with all of its cells.
     QList<Row> Rows() const;
+    // One cell of the viewport, without copying the rest; empty when the
+    // position is outside it.
+    std::optional<Cell> CellAt(quint16 column, quint16 row) const;
 
 private:
     struct State;

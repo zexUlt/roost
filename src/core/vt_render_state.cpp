@@ -77,6 +77,28 @@ struct VtRenderState::State {
                                   static_cast<qsizetype>(text.len));
         }
 
+        GhosttyCell raw = 0;
+        GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+        if (ghostty_render_state_row_cells_get(
+                Cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw) ==
+                GHOSTTY_SUCCESS &&
+            ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide) ==
+                GHOSTTY_SUCCESS) {
+            switch (wide) {
+                case GHOSTTY_CELL_WIDE_WIDE:
+                    cell.Width = VtRenderState::EWidth::Wide;
+                    break;
+                case GHOSTTY_CELL_WIDE_SPACER_TAIL:
+                    cell.Width = VtRenderState::EWidth::SpacerTail;
+                    break;
+                case GHOSTTY_CELL_WIDE_SPACER_HEAD:
+                    cell.Width = VtRenderState::EWidth::SpacerHead;
+                    break;
+                default:
+                    break;
+            }
+        }
+
         GhosttyColorRgb color{};
         if (ghostty_render_state_row_cells_get(
                 Cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &color) ==
@@ -157,6 +179,13 @@ quint16 VtRenderState::Columns() const {
     return State_->Get<std::uint16_t>(GHOSTTY_RENDER_STATE_DATA_COLS);
 }
 
+quint16 VtRenderState::RowCount() const {
+    if (!State_ || State_->Updating) {
+        return 0;
+    }
+    return State_->Get<std::uint16_t>(GHOSTTY_RENDER_STATE_DATA_ROWS);
+}
+
 VtRenderState::EDirty VtRenderState::Dirty() const {
     if (!State_ || State_->Updating) {
         return EDirty::None;
@@ -186,6 +215,7 @@ VtRenderState::Cursor VtRenderState::GetCursor() const {
         if (raw.viewport_has_value) {
             cursor.X = raw.viewport_x;
             cursor.Y = raw.viewport_y;
+            cursor.WideTail = raw.wide_tail;
         }
     }
     return cursor;
@@ -238,6 +268,34 @@ QList<VtRenderState::Row> VtRenderState::Rows() const {
         rows.append(std::move(row));
     }
     return rows;
+}
+
+std::optional<VtRenderState::Cell> VtRenderState::CellAt(quint16 column,
+                                                         quint16 row) const {
+    if (!State_ || State_->Updating) {
+        return std::nullopt;
+    }
+    if (ghostty_render_state_get(State_->Render,
+                                 GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                                 &State_->Iterator) != GHOSTTY_SUCCESS) {
+        return std::nullopt;
+    }
+    for (quint32 at = 0; at <= row; ++at) {
+        if (!ghostty_render_state_row_iterator_next(State_->Iterator)) {
+            return std::nullopt;
+        }
+    }
+    if (ghostty_render_state_row_get(State_->Iterator,
+                                     GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                                     &State_->Cells) != GHOSTTY_SUCCESS) {
+        return std::nullopt;
+    }
+    for (quint32 at = 0; at <= column; ++at) {
+        if (!ghostty_render_state_row_cells_next(State_->Cells)) {
+            return std::nullopt;
+        }
+    }
+    return State_->ReadCell();
 }
 
 }  // namespace roost
