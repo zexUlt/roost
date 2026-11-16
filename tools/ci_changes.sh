@@ -31,6 +31,11 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
+# An empty BASE would diff HEAD with itself and skip everything.
+if ! git rev-parse --verify -q "$1^{commit}" >/dev/null; then
+    echo "ci_changes: BASE '$1' is not a commit" >&2
+    exit 1
+fi
 # --no-renames: a rename is listed by its new name only, so moving
 # src/a.cpp to docs/a.md would look like a change to documentation.
 if ! changed=$(git diff --name-only --no-renames "$1"...HEAD); then

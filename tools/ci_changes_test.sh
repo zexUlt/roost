@@ -45,27 +45,50 @@ expect ".clang-tidy" true
 expect "plugins/claude/plugin.json" true
 expect "docs/design.md,src/core/rpc.cpp" true
 
-# The BASE form on a real history: moving code into documentation still
-# changes code.
+# The BASE form on a real history. A git hook running this test exports
+# these, and they would point every git call below at the hook's repository.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 repo=$(mktemp -d)
 trap 'rm -rf "$repo"' EXIT
 git_() { git -C "$repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
-git_ init -q
-mkdir -p "$repo/src"
+
+# expect_base <name> <base> <true|false>: stdout, which goes to
+# $GITHUB_OUTPUT, is that one line and nothing else.
+expect_base() {
+    local got
+    got=$(cd "$repo" && "$classify" "$2" 2>/dev/null)
+    [ "$got" = "code=$3" ] || fail "$1" "code=$3" "$got"
+}
+
+git_ init -q -b trunk
+mkdir -p "$repo/src" "$repo/docs"
 echo 'int main() {}' > "$repo/src/a.cpp"
 echo 'cmake_minimum_required(VERSION 3.28)' > "$repo/CMakeLists.txt"
+echo 'notes' > "$repo/docs/notes.md"
 git_ add -A && git_ commit -q -m base
 base=$(git_ rev-parse HEAD)
-mkdir -p "$repo/docs"
+
+# Moving code into documentation still changes code.
+git_ checkout -q -b move
 git_ mv src/a.cpp docs/a.md
 git_ mv CMakeLists.txt NOTES.md
 git_ commit -q -m move
-got=$(cd "$repo" && "$classify" "$base" 2>/dev/null)
-[ "$got" = code=true ] || fail "rename src/a.cpp -> docs/a.md" code=true "$got"
+expect_base "rename src/a.cpp -> docs/a.md" "$base" true
 
-if (cd "$repo" && "$classify" no-such-ref >/dev/null 2>&1); then
-    fail "unknown BASE" "exit status 1" "exit status 0"
-fi
+# BASE...HEAD: what trunk did after the branch point is not this change.
+git_ checkout -q trunk
+echo 'int main() { return 0; }' > "$repo/src/a.cpp"
+git_ commit -q -am trunk-moves-on
+git_ checkout -q -b docs-only "$base"
+echo 'more notes' >> "$repo/docs/notes.md"
+git_ commit -q -am docs
+expect_base "docs on a branch behind trunk" trunk false
+
+for bad in "" no-such-ref; do
+    if (cd "$repo" && "$classify" "$bad" >/dev/null 2>&1); then
+        fail "BASE '$bad'" "exit status 1" "exit status 0"
+    fi
+done
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures case(s) failed" >&2
