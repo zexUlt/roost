@@ -32,7 +32,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [dev, asan-ubsan, tsan, release]
+        # TSan runs nightly against a Qt built with it (nightly-tsan.yml).
+        preset: [dev, asan-ubsan, release]
     steps:
       - uses: actions/checkout@v4
 
