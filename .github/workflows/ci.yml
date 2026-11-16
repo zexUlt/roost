@@ -47,16 +47,24 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-          cache-key: ${{ matrix.preset }}
+          use-cache: false
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/${{ matrix.preset }}/_deps
+            build/${{ matrix.preset }}/.ninja_log
+            build/${{ matrix.preset }}/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-${{ matrix.preset }}-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
-
-      # Zig keys its cache on source file mtimes, and a fresh clone has new
-      # ones every run, so the restored cache never hits and the library
-      # compiles again (about two minutes). Pin the mtimes.
-      - name: Pin libghostty-vt source mtimes
-        run: find build/${{ matrix.preset }}/_deps/ghostty-src -exec touch -t 202001010000 {} +
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -114,16 +122,30 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-cache: false
 
       - name: Install clang-tidy
         run: pipx install "clang-tidy==${CLANG_TIDY_VERSION}"
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/dev/_deps
+            build/dev/.ninja_log
+            build/dev/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-dev-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
 
       # A build, not just a configure: the libghostty-vt headers come out of
       # zig build and the moc files out of the build as well.
       - name: Build
         run: |
-          cmake --preset dev "-DGHOSTTY_ZIG_BUILD_FLAGS=-Doptimize=ReleaseSafe;--summary;all"
-          find build/dev/_deps/ghostty-src -exec touch -t 202001010000 {} +
+          cmake --preset dev
           targets=$(ninja -C build/dev -t targets all |
             sed -nE 's/^(zig_build_lib_vt|[A-Za-z0-9_-]+_autogen):.*/\1/p')
           echo "$targets"
