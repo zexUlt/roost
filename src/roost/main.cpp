@@ -48,12 +48,14 @@ void ExitAfterFirstFrame(QQuickWindow* window, roost::SingleSession* session) {
 
 // QGuiApplication takes "-session <id>" and "--session <id>" for itself, as
 // the id of an X11 session manager, and hides both from the parser. The form
-// with "=" it leaves alone, so "--session <id>" is rewritten to it first.
+// with "=" it leaves alone, so both are rewritten to "--session=<id>" first.
 class SessionArguments {
 public:
     SessionArguments(int argc, char** argv) {
         for (int i = 0; i < argc; ++i) {
-            if (std::string_view(argv[i]) == "--session" && i + 1 < argc) {
+            const std::string_view argument(argv[i]);
+            if ((argument == "--session" || argument == "-session") &&
+                i + 1 < argc) {
                 Joined_.push_back(std::string("--session=") + argv[++i]);
             } else {
                 Joined_.emplace_back(argv[i]);

@@ -202,6 +202,19 @@ bool IsTyped(const QString& text) {
            !(first >= 0xf700 && first <= 0xf8ff);
 }
 
+// What a key types without Ctrl, for the keys Qt gives a control code instead
+// of text under Ctrl. The library wants that character (Ctrl+Shift+- as "_"),
+// not the code: it makes the code itself, or a CSI u sequence where the code
+// would be ambiguous. Qt names a letter by its capital, a symbol by itself.
+QString CtrlText(int key, bool shift) {
+    if (key < 0x20 || key >= 0x7f) {
+        return {};
+    }
+    const QChar typed(static_cast<char16_t>(key));
+    return typed.isLetter() && !shift ? QString(typed.toLower())
+                                      : QString(typed);
+}
+
 }  // namespace
 
 QtKeyOptions QtKeyOptions::ForThisPlatform() {
@@ -239,6 +252,9 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
             (typed.isLetter() && !event.Mods.Shift) ? typed.toLower() : typed;
     } else if (IsTyped(text)) {
         event.Text = text;
+    } else if (event.Mods.Ctrl && event.Key != EKey::Unidentified) {
+        // Qt's text is a control code or nothing.
+        event.Text = CtrlText(key, event.Mods.Shift);
     }
 
     if (event.Key == EKey::Unidentified) {

@@ -3,6 +3,8 @@
 // the events that map to nothing. Pure data in, pure data out: no window.
 
 #include "terminal/qt_key_mapping.hpp"
+#include "core/vt_key_encoder.hpp"
+#include "core/vt_terminal.hpp"
 
 #include <QTest>
 
@@ -85,9 +87,16 @@ private slots:
         row("cyrillic_capital", Linux, 0x042E, shift, "\xd0\xae",
             EKey::Unidentified, SHIFT, SHIFT, "\xd0\xae", 0x44e);
 
-        // Control codes are not text: the key is named instead.
-        row("ctrl_c", Linux, Qt::Key_C, control, "\x03", EKey::C, CTRL, 0, "",
+        // Control codes are not text. Under Ctrl the library wants what the
+        // key types without it, and makes the code itself.
+        row("ctrl_c", Linux, Qt::Key_C, control, "\x03", EKey::C, CTRL, 0, "c",
             'c');
+        row("ctrl_shift_underscore", Linux, Qt::Key_Underscore, control | shift,
+            "\x1f", EKey::Minus, CTRL | SHIFT, SHIFT, "_", '-');
+        row("ctrl_bracket", Linux, Qt::Key_BracketLeft, control, "\x1b",
+            EKey::BracketLeft, CTRL, 0, "[", '[');
+        row("ctrl_shift_at_without_text", Linux, Qt::Key_At, control | shift,
+            "", EKey::Digit2, CTRL | SHIFT, SHIFT, "@", '2');
         row("enter", Linux, Qt::Key_Return, 0, "\r", EKey::Enter, 0, 0, "", 0);
         row("tab", Linux, Qt::Key_Tab, 0, "\t", EKey::Tab, 0, 0, "", 0);
         row("backspace", Linux, Qt::Key_Backspace, 0, "\x08", EKey::Backspace,
@@ -134,7 +143,7 @@ private slots:
         row("linux_meta", Linux, Qt::Key_X, meta, "x", EKey::X, SUPER, 0, "x",
             'x');
         // macOS: Qt's Control is Command and its Meta is the Control key.
-        row("mac_ctrl_c", Mac, Qt::Key_C, meta, "\x03", EKey::C, CTRL, 0, "",
+        row("mac_ctrl_c", Mac, Qt::Key_C, meta, "\x03", EKey::C, CTRL, 0, "c",
             'c');
         row("mac_command_c", Mac, Qt::Key_C, control, "c", EKey::C, SUPER, 0,
             "c", 'c');
@@ -180,6 +189,66 @@ private slots:
         QCOMPARE(event->Text, typed);
         QCOMPARE(static_cast<int>(event->UnshiftedCodepoint), unshifted);
         QCOMPARE(event->Action, EKeyAction::Press);
+    }
+
+    void EncodesCtrlKeys_data() {
+        QTest::addColumn<QByteArray>("setup");
+        QTest::addColumn<int>("qtKey");
+        QTest::addColumn<int>("qtMods");
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<QByteArray>("expected");
+
+        const QByteArray none;
+        const QByteArray disambiguate = "\x1b[>1u";
+        const int ctrl = Qt::ControlModifier;
+        const int shift = Qt::ShiftModifier;
+        const auto row = [](const char* name, const QByteArray& setup,
+                            int qtKey, int qtMods, const QString& text,
+                            const QByteArray& expected) {
+            QTest::newRow(name) << setup << qtKey << qtMods << text << expected;
+        };
+
+        // What Qt gives for the key, then the library's rules (ctrlSeq in
+        // key_encode.zig): C0 codes for the keys of the Kitty table, CSI u for
+        // the ones fixterms keeps apart (Ctrl+[, Ctrl+Shift+@, Ctrl+Shift+
+        // letter).
+        row("ctrl_c", none, Qt::Key_C, ctrl, "\x03", "\x03");
+        row("ctrl_shift_minus", none, Qt::Key_Underscore, ctrl | shift, "\x1f",
+            "\x1f");
+        row("ctrl_slash", none, Qt::Key_Slash, ctrl, "\x1f", "\x1f");
+        row("ctrl_shift_6", none, Qt::Key_AsciiCircum, ctrl | shift, "\x1e",
+            "\x1e");
+        row("ctrl_bracket", none, Qt::Key_BracketLeft, ctrl, "\x1b",
+            "\x1b[91;5u");
+        row("ctrl_shift_2", none, Qt::Key_At, ctrl | shift, "", "\x1b[64;5u");
+        row("ctrl_shift_a", none, Qt::Key_A, ctrl | shift, "\x01",
+            "\x1b[97;6u");
+        row("kitty_ctrl_shift_minus", disambiguate, Qt::Key_Underscore,
+            ctrl | shift, "\x1f", "\x1b[45;6u");
+    }
+
+    void EncodesCtrlKeys() {
+        QFETCH(QByteArray, setup);
+        QFETCH(int, qtKey);
+        QFETCH(int, qtMods);
+        QFETCH(QString, text);
+        QFETCH(QByteArray, expected);
+
+        auto terminal = roost::VtTerminal::Create(80, 24);
+        QVERIFY(terminal.has_value());
+        terminal->Write(setup);
+        auto encoder = roost::VtKeyEncoder::Create();
+        QVERIFY(encoder.has_value());
+        QVERIFY(encoder->SyncFrom(*terminal).has_value());
+
+        const auto event = MapQtKey(
+            qtKey,
+            Qt::KeyboardModifiers::fromInt(static_cast<unsigned>(qtMods)), text,
+            EKeyAction::Press, {});
+        QVERIFY(event.has_value());
+        const auto bytes = encoder->Encode(*event);
+        QVERIFY(bytes.has_value());
+        QCOMPARE(*bytes, expected);
     }
 
     void MapsToNothing_data() {

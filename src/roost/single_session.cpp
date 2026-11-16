@@ -39,10 +39,18 @@ std::shared_ptr<TerminalSession> SingleSession::Session() const {
 }
 
 void SingleSession::Start(const QString& socketPath) {
+    if (Item_ == nullptr) {
+        Fail(QStringLiteral("no terminal item to show the session in"));
+        return;
+    }
     Io_.Connect(socketPath).then(this, [this](const rpc::Result& result) {
         if (!result) {
             Fail(QStringLiteral("cannot connect to roostd: ") +
                  result.error().Message);
+            return;
+        }
+        if (Item_ == nullptr) {
+            Fail(QStringLiteral("the terminal item is gone"));
             return;
         }
         const auto columns = static_cast<quint16>(Item_->columns());
@@ -64,6 +72,7 @@ void SingleSession::OnOpened(const OpenResult& result) {
     }
     Opened_ = *result;
     if (Item_ == nullptr) {
+        Fail(QStringLiteral("the terminal item is gone"));
         return;
     }
     Item_->setSession(Opened_.Session);
@@ -74,6 +83,8 @@ void SingleSession::OnOpened(const OpenResult& result) {
     WantedSize_ = std::pair{static_cast<quint16>(Item_->columns()),
                             static_cast<quint16>(Item_->rows())};
     PumpResize();
+    qInfo("roost: session %s of %s opened", qPrintable(SessionId_),
+          qPrintable(Agent_));
     emit Opened();
 }
 
