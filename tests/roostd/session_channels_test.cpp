@@ -641,7 +641,13 @@ private slots:
         QVERIFY(stranger->WaitDump(1, "answers da1=1 cpr=1"));
         stranger->Rpc.SendInput(1, "q");
         QVERIFY(stranger->WaitDump(1, "answers da1=2 cpr=2"));
-        QVERIFY(!owner->Dump(1).contains("input"));
+        // The owner's program heard neither key. Row 1 holds the working
+        // directory, which may itself contain "input"; the input row is
+        // "input <bytes> total=N".
+        const QByteArray ownerScreen = owner->Dump(1);
+        QVERIFY2(!ownerScreen.contains("input "), ownerScreen.constData());
+        QVERIFY2(ownerScreen.contains("answers da1=2 cpr=2"),
+                 ownerScreen.constData());
     }
 
     void InputForAnUnknownChannelIsDropped() {
