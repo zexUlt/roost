@@ -15,6 +15,13 @@
 // CMake sets it for this test, and the test fails if the loop is not
 // threaded. Software rendering is not the speed of a real screen.
 //
+// Whole-thread check: the phases above see only the work of the scene graph
+// and of the update slot. Any other GUI-thread work (a timer, a model, a
+// handler) is invisible to them, so the gate also takes the GUI thread's CPU
+// time over the measured window, per frame, and adds the mean time blocked in
+// sync (the thread burns no CPU while blocked). That sum, the mean GUI busy
+// time per frame, must be within the same budget.
+//
 // What is measured, per frame: the GUI thread's time, in three phases (see
 // FrameProbe): the polish of the items, the sync, in which the GUI thread is
 // blocked while the render thread runs updatePaintNode, and the slots that
@@ -29,6 +36,7 @@
 #include <QObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 #include <QThread>
@@ -48,6 +56,13 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/thread_act.h>
+#elif defined(__linux__)
+#include <ctime>
+#endif
 
 using roost::TerminalItem;
 using roost::TerminalSession;
@@ -87,6 +102,8 @@ constexpr int WRITER_IDLE_US = 100;
 // design.md §9: GUI-thread work per frame must stay within 4 ms. The test
 // checks the 95th percentile of the frames of the run against it.
 constexpr double P95_BUDGET_MS = 4.0;
+// The same budget for the mean GUI busy time per frame (CPU plus sync).
+constexpr double BUSY_BUDGET_MS = 4.0;
 
 // How long the window may take to draw its first frame.
 constexpr int FIRST_FRAME_TIMEOUT_MS = 20000;
@@ -95,6 +112,36 @@ std::int64_t NowNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
                Clock::now().time_since_epoch())
         .count();
+}
+
+// CPU time (user + system) of the calling thread, in ns; -1 where the
+// platform has no way to read it.
+std::int64_t ThreadCpuNs() {
+#if defined(__APPLE__)
+    const mach_port_t port = mach_thread_self();
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    const auto status =
+        thread_info(port, THREAD_BASIC_INFO,
+                    reinterpret_cast<thread_info_t>(&info), &count);
+    mach_port_deallocate(mach_task_self(), port);
+    if (status != KERN_SUCCESS) {
+        return -1;
+    }
+    const auto toNs = [](const time_value_t& value) {
+        return static_cast<std::int64_t>(value.seconds) * 1'000'000'000 +
+               static_cast<std::int64_t>(value.microseconds) * 1000;
+    };
+    return toNs(info.user_time) + toNs(info.system_time);
+#elif defined(__linux__)
+    timespec now{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0) {
+        return -1;
+    }
+    return static_cast<std::int64_t>(now.tv_sec) * 1'000'000'000 + now.tv_nsec;
+#else
+    return -1;
+#endif
 }
 
 // A deterministic xorshift: the same stream on every run and machine.
@@ -447,6 +494,11 @@ struct Summary {
 // What a scenario measured.
 struct Result {
     Summary Gui;
+    // Mean GUI busy time per frame, ms: CpuPerFrame + MeanSync. Negative
+    // CpuPerFrame (and Busy) where the platform cannot read thread CPU time.
+    double CpuPerFrame = -1;
+    double MeanSync = 0;
+    double Busy = -1;
     double Seconds = 0;
     std::size_t FrameCount = 0;
     int Swapped = 0;
@@ -486,6 +538,14 @@ private slots:
             "the %.1f ms budget is not checked",
             result.Gui.P95, P95_BUDGET_MS);
 #else
+        QVERIFY2(result.Busy >= 0,
+                 "no GUI-thread CPU time on this platform: the whole-thread "
+                 "check cannot run");
+        QVERIFY2(result.Busy <= BUSY_BUDGET_MS,
+                 qPrintable(QString("mean GUI busy %1 ms per frame is over "
+                                    "the budget of %2 ms")
+                                .arg(result.Busy)
+                                .arg(BUSY_BUDGET_MS)));
         QVERIFY2(result.Gui.P95 <= P95_BUDGET_MS,
                  qPrintable(QString("p95 %1 ms is over the budget of %2 ms "
                                     "(design.md section 9)")
@@ -526,6 +586,13 @@ private:
 
         QQuickWindow window;
         FrameProbe probe(&window);
+        // The probe's beforeRendering handler runs on the render thread, and
+        // the probe is destroyed before the window. Hiding the window under
+        // the threaded loop waits for the render thread to stop, so after
+        // this guard no handler can touch the probe. It is declared right
+        // after the probe, so it runs first on every exit, including the
+        // early returns of a failed QVERIFY.
+        const auto stopRendering = qScopeGuard([&window] { window.hide(); });
         Feed feed;
         std::vector<BenchItem*> items;
 
@@ -597,10 +664,12 @@ private:
         }
         const auto busyBefore = feed.BusyNs();
         const auto framesBefore = swapped.count();
+        const auto cpuBefore = ThreadCpuNs();
         probe.StartRecording();
         QElapsedTimer clock;
         clock.start();
         RunFor(MEASURE_MS);
+        const auto cpuAfter = ThreadCpuNs();
         const auto seconds = static_cast<double>(clock.nsecsElapsed()) / 1e9;
         const auto recorded = probe.StopRecording();
         const auto framesSwapped = swapped.count() - framesBefore;
@@ -636,6 +705,16 @@ private:
                       .P95 = Percentile(frames, 0.95),
                       .P99 = Percentile(frames, 0.99),
                       .Max = frames.back()};
+        result.MeanSync = std::accumulate(recorded.begin(), recorded.end(), 0.0,
+                                          [](double sum, const Frame& frame) {
+                                              return sum + frame.Sync;
+                                          }) /
+                          static_cast<double>(recorded.size());
+        if (cpuBefore >= 0 && cpuAfter >= 0) {
+            result.CpuPerFrame = static_cast<double>(cpuAfter - cpuBefore) /
+                                 1e6 / static_cast<double>(recorded.size());
+            result.Busy = result.CpuPerFrame + result.MeanSync;
+        }
         result.Seconds = seconds;
         result.FrameCount = frames.size();
         result.Swapped = static_cast<int>(framesSwapped);
@@ -656,6 +735,11 @@ private:
             " p99 %.3f  max %.3f",
             name, result.Gui.P50, result.Gui.P95, result.Gui.P99,
             result.Gui.Max);
+        qInfo(
+            "frame budget [%s]: mean GUI busy per frame %.3f ms (thread CPU "
+            "%.3f + sync %.3f) against the %.1f ms budget",
+            name, result.Busy, result.CpuPerFrame, result.MeanSync,
+            BUSY_BUDGET_MS);
         qInfo(
             "frame budget [%s]: p50 by phase: polish %.3f  sync %.3f  "
             "slots %.3f",

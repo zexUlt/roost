@@ -45,6 +45,8 @@ roost_add_qt_test(frame_budget_test bench/frame_budget_test.cpp roost_qml_api)
 set_tests_properties(frame_budget_test PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
     TIMEOUT 120
+    # The budget is a timing check: never beside other tests under ctest -j.
+    RUN_SERIAL TRUE
 )
 
 # A TUI that draws, asks its terminal questions and counts the answers.
