@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The plugin link gate (design.md §5): built-in plugins use the public API
 # only, so a target under plugins/ may link Qt and its own targets and may not
-# include from src/. cmake/PluginGate.cmake checks that at configure time.
+# include from or above src/ nor compile its files. cmake/PluginGate.cmake
+# checks that at configure time.
 #
 # tests/gates/plugin_links/ holds one tiny CMake project per case. They need
 # no Qt (Qt faked by an imported target); most need no compiler (LANGUAGES
@@ -61,7 +62,13 @@ check links_core fail "plugin_a: links roost_core" "design.md §5"
 check links_core_static fail "plugin_a: links roost_core"
 check alias_core fail "plugin_a: links roost::core"
 check includes_src fail "plugin_a: includes" "/src/core" "design.md §5"
-check genex fail "plugin_a: links" "cannot check"
+check genex fail "plugin_a: links" "roost_core is not Qt"
 check interface_link fail "plugin_a: links roost_core"
+check qml_module pass
+check genex_internal fail "plugin_a: links" "TARGET_OBJECTS:roost_core" "roost_core is not Qt" \
+    "plugin_b: includes"
+check includes_root fail "plugin_a: includes" "plugin_b: includes" "/src/.."
+check includes_symlink fail "plugin_a: includes" "/shortcut"
+check sources_src fail "plugin_a: lists source" "plugin_b: lists source" "../src/core/x.cpp"
 
 exit "$failed"
