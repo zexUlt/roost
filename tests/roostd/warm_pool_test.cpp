@@ -186,6 +186,25 @@ private slots:
         QCOMPARE(pool.Find(Key("c")), *c);
     }
 
+    void OpeningAWarmSessionCountsAsViewing() {
+        WarmPool pool({.Capacity = 2, .Pty = {}});
+        auto a = pool.Open(Key("a"), FakeTui(), {});
+        auto b = pool.Open(Key("b"), FakeTui(), {});
+        QVERIFY(a && b);
+        QSignalSpy aClosed(*a, &WarmSession::Closed);
+        QSignalSpy bClosed(*b, &WarmSession::Closed);
+        auto again = pool.Open(Key("a"), FakeTui(), {});
+        QVERIFY2(again, qPrintable(ErrorOf(again)));
+        QCOMPARE(*again, *a);
+        auto c = pool.Open(Key("c"), FakeTui(), {});
+        QVERIFY2(c, qPrintable(ErrorOf(c)));
+        QCOMPARE(bClosed.size(), 1);
+        QCOMPARE(bClosed.first().first().toString(), "evicted");
+        QVERIFY(aClosed.isEmpty());
+        QCOMPARE(pool.Find(Key("a")), *a);
+        QCOMPARE(pool.Find(Key("c")), *c);
+    }
+
     void AnEvictedProgramThatIgnoresTheHangUpIsKilled() {
         WarmPool pool({.Capacity = 1, .Pty = {.HangUpTimeout = 200ms}});
         auto stubborn = pool.Open(Key("a"), FakeTui({"--ignore-hangup"}), {});
