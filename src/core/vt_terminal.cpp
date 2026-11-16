@@ -1,5 +1,7 @@
 #include "core/vt_terminal.hpp"
 
+#include "core/ghostty_result.hpp"
+
 #include <ghostty/vt.h>
 
 #include <utility>
@@ -7,22 +9,6 @@
 namespace roost {
 
 namespace {
-
-QString Describe(GhosttyResult result) {
-    switch (result) {
-        case GHOSTTY_OUT_OF_MEMORY:
-            return QStringLiteral("out of memory");
-        case GHOSTTY_INVALID_VALUE:
-            return QStringLiteral("invalid value");
-        default:
-            return QStringLiteral("error %1").arg(static_cast<int>(result));
-    }
-}
-
-QString Failed(const char* what, GhosttyResult result) {
-    return QStringLiteral("%1: %2").arg(QLatin1StringView(what),
-                                        Describe(result));
-}
 
 bool AppendTo(void* userdata, const uint8_t* data, size_t len) {
     static_cast<QByteArray*>(userdata)->append(
@@ -139,6 +125,8 @@ std::expected<VtTerminal, QString> VtTerminal::FromSnapshot(
     }
     return VtTerminal(std::move(state));
 }
+
+void* VtTerminal::NativeHandle() const { return State_->Terminal; }
 
 void VtTerminal::SetResponseHandler(ResponseHandler handler) {
     State_->Respond = std::move(handler);

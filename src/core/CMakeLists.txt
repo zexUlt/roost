@@ -2,12 +2,14 @@
 add_library(roost_core STATIC
     bus.cpp
     frame.cpp
+    ghostty_result.cpp
     protocol.cpp
     pty.cpp
     rpc.cpp
     rpc_client.cpp
     store.cpp
     version.cpp
+    vt_render_state.cpp
     vt_terminal.cpp
 )
 

@@ -65,9 +65,13 @@ public:
     std::expected<QByteArray, QString> Dump() const;
 
 private:
+    friend class VtRenderState;
     struct State;
 
     explicit VtTerminal(std::unique_ptr<State> state);
+    // The libghostty-vt handle (a GhosttyTerminal), for VtRenderState only,
+    // so that no library type shows in this header.
+    void* NativeHandle() const;
 
     std::unique_ptr<State> State_;
 };
