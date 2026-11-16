@@ -30,7 +30,8 @@ class Api : public QObject {
 public:
     explicit Api(QObject* parent = nullptr);
 
-    // Connects and says hello; the outcome is one of the signals below.
+    // Connects and says hello; the outcome is one of the signals below. Only
+    // the first call does it: a later one logs a warning and changes nothing.
     void Connect(const QString& socketPath);
     bool IsConnected() const;
 
@@ -59,6 +60,7 @@ private:
     CommandService Commands_;
     PluginService Plugins_;
     Dispatcher Dispatch_;
+    bool Started_ = false;
     bool Connected_ = false;
 };
 

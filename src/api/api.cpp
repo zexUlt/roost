@@ -1,5 +1,9 @@
 #include "api/api.hpp"
 
+#include <QtLogging>
+
+#include <utility>
+
 #include "api/thread_check.hpp"
 #include "core/protocol.hpp"
 
@@ -19,6 +23,11 @@ Api::Api(QObject* parent)
 
 void Api::Connect(const QString& socketPath) {
     if (!CheckThread(*this, "Api::Connect")) {
+        return;
+    }
+    if (std::exchange(Started_, true)) {
+        qWarning(
+            "Api::Connect is called once; the connection is left as it is");
         return;
     }
     Io_.Connect(socketPath).then(this, [this](const rpc::Result& hello) {

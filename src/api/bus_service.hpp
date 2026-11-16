@@ -25,12 +25,14 @@ namespace roost::api {
 // are local; the service keeps one bus.subscribe at roostd for each distinct
 // pattern while it has a listener, and routes the bus.event notifications to
 // the listeners of the pattern. Use it from the GUI thread; callbacks run
-// there, in the order the listeners subscribed. A callback may subscribe and
+// there, in the order the listeners subscribed to the same pattern; across
+// patterns there is no promised order. A callback may subscribe and
 // unsubscribe.
 //
 // No reconnect yet: after the connection is lost the listeners stay but hear
-// nothing, and a new subscription fails to reach roostd (a warning is logged
-// and its listeners are dropped).
+// nothing (Unsubscribe still works), and a new subscription makes a fresh
+// bus.subscribe, which fails: a warning is logged and its listeners are
+// dropped.
 class BusService : public QObject {
     Q_OBJECT
 
@@ -85,6 +87,9 @@ private:
 
     void OnNotified(const QString& method, const QJsonValue& params);
     void OnSubscribed(const QString& pattern, const rpc::Result& answer);
+    // Forgets all that is roostd's: the connection is gone and its
+    // subscriptions with it. The local listeners stay, silent.
+    void OnDisconnected();
     void Deliver(const QString& pattern, const QString& name,
                  const QJsonValue& payload);
     void Forget(LocalId id);
@@ -93,7 +98,8 @@ private:
 
     IoThread& Io_;
     LocalId NextId_ = 1;
-    // Ordered, so that listeners hear in the order they subscribed.
+    // Ordered, so that the listeners of a pattern hear in the order they
+    // subscribed (across patterns the order is not promised).
     std::map<LocalId, Local> Locals_;
     std::map<QString, Remote> Remotes_;
     // roostd's subscription -> its pattern; only answered ones.
@@ -101,6 +107,8 @@ private:
     // Subscriptions whose answer is pending; while any, events for an unknown
     // subscription may belong to one of them and are parked.
     int Pending_ = 0;
+    // Counts the connections lost; an answer of an older one is not ours.
+    std::uint64_t Epoch_ = 0;
     std::vector<Parked> Parked_;
 };
 

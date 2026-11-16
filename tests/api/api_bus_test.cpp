@@ -3,15 +3,18 @@
 // the races between an answer and the events that follow it.
 
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTest>
 #include <QThread>
 
+#include <atomic>
 #include <memory>
 #include <utility>
 #include <vector>
 
 #include "api/api.hpp"
+#include "api/thread_check.hpp"
 #include "api_test_support.hpp"
 #include "core/protocol.hpp"
 #include "helpers/roostd_process.hpp"
@@ -28,6 +31,20 @@ struct Event {
 };
 
 using Events = std::vector<Event>;
+
+// Counts the warnings of a failed bus.subscribe, and passes the rest on.
+std::atomic<int> SUBSCRIBE_WARNINGS{0};
+QtMessageHandler PREVIOUS_HANDLER = nullptr;
+
+void CountSubscribeWarnings(QtMsgType type, const QMessageLogContext& context,
+                            const QString& message) {
+    if (type == QtWarningMsg && message.contains("bus.subscribe") &&
+        message.contains("its listeners are dropped")) {
+        ++SUBSCRIBE_WARNINGS;
+        return;
+    }
+    PREVIOUS_HANDLER(type, context, message);
+}
 
 }  // namespace
 
@@ -299,6 +316,111 @@ private slots:
         QVERIFY(heard.empty());
         Flush();
         QCOMPARE(heard, (Events{{"x.a", "early"}}));
+    }
+
+    void ASubscribeFromAnotherThreadIsRefused() {
+#ifdef NDEBUG
+        QSKIP("the check is compiled out of release builds");
+#endif
+        static std::atomic<int> calls{0};
+        calls = 0;
+        const auto previous =
+            api::SetCheckHandler([](const char*) { ++calls; });
+        Events heard;
+        std::expected<api::BusService::LocalId, rpc::Error> id;
+        std::unique_ptr<QThread> thread(QThread::create([&] {
+            id = Api_->Bus().Subscribe("x.a", nullptr, Record(heard));
+        }));
+        thread->start();
+        QVERIFY(thread->wait(TIMEOUT_MS));
+        api::SetCheckHandler(previous);
+
+        QCOMPARE(calls.load(), 1);
+        QVERIFY(!id);
+        // Nothing reached roostd, and nothing is heard.
+        Publish("x.a", 1);
+        Flush();
+        QVERIFY(heard.empty());
+        QCOMPARE(SubscriptionsAtRoostd(), 0);
+    }
+
+    void AnEventOfADeadSubscriptionDoesNotReachANewListener() {
+        // The next subscription of roostd is the probe's plus one.
+        const auto probe = Api_->Io().Request(
+            "bus.subscribe", QJsonObject{{"pattern", "probe"}});
+        QVERIFY(WaitFor(probe));
+        QVERIFY(probe.result());
+        const qint64 old =
+            probe.result()->toObject().value("subscription").toInteger() + 1;
+
+        Events gone;
+        const auto first = Subscribe("x.a", this, Record(gone));
+        // Answered, so that the subscription is routed.
+        Flush();
+        Api_->Bus().Unsubscribe(first);
+        Events heard;
+        QVERIFY(Subscribe("x.a", this, Record(heard)));
+        Flush();
+
+        // A late event of the first subscription, which no longer exists.
+        emit Api_->Io().Notified("bus.event", QJsonObject{{"subscription", old},
+                                                          {"name", "x.a"},
+                                                          {"payload", "late"}});
+        QVERIFY(heard.empty());
+        Publish("x.a", 1);
+        Flush();
+        QVERIFY(gone.empty());
+        QCOMPARE(heard, (Events{{"x.a", 1}}));
+    }
+
+    void ASecondConnectChangesNothing() {
+        Events heard;
+        QVERIFY(Subscribe("x.a", this, Record(heard)));
+        Flush();
+        QSignalSpy connected(Api_.get(), &api::Api::Connected);
+        QSignalSpy disconnected(Api_.get(), &api::Api::Disconnected);
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression("Api::Connect is called once"));
+        Api_->Connect(Daemon_->SocketPath());
+        QVERIFY(!connected.wait(500));
+        QVERIFY(disconnected.isEmpty());
+        QVERIFY(Api_->IsConnected());
+        Publish("x.a", 1);
+        Flush();
+        QCOMPARE(heard, (Events{{"x.a", 1}}));
+    }
+
+    void AfterTheDaemonIsGoneASubscribeIsRefusedAndItsListenersDropped() {
+        Events before;
+        Events known;
+        Events fresh;
+        const auto old = Subscribe("x.a", this, Record(before));
+        Flush();
+        QSignalSpy disconnected(Api_.get(), &api::Api::Disconnected);
+        Daemon_->Stop();
+        QVERIFY(disconnected.wait(TIMEOUT_MS));
+
+        SUBSCRIBE_WARNINGS = 0;
+        PREVIOUS_HANDLER = qInstallMessageHandler(&CountSubscribeWarnings);
+        // A pattern that was active before the loss, and a new one.
+        const auto again = Subscribe("x.a", this, Record(known));
+        const auto other = Subscribe("x.b", this, Record(fresh));
+        QVERIFY(again && other);
+        QTRY_COMPARE_WITH_TIMEOUT(SUBSCRIBE_WARNINGS.load(), 2, TIMEOUT_MS);
+        // The failure left no stale state: the same pattern fails again.
+        const auto third = Subscribe("x.b", this, Record(fresh));
+        QTRY_COMPARE_WITH_TIMEOUT(SUBSCRIBE_WARNINGS.load(), 3, TIMEOUT_MS);
+        Api_->Bus().Unsubscribe(third);
+        qInstallMessageHandler(PREVIOUS_HANDLER);
+
+        // Dropped: nothing to unsubscribe, nothing was or will be called.
+        Api_->Bus().Unsubscribe(again);
+        Api_->Bus().Unsubscribe(other);
+        // The listener from before the loss is still there, and silent.
+        Api_->Bus().Unsubscribe(old);
+        QVERIFY(before.empty());
+        QVERIFY(known.empty());
+        QVERIFY(fresh.empty());
     }
 
     void StoreChangedArrivesThroughTheBus() {

@@ -87,7 +87,8 @@ public:
     // plugins.list: the future yields roostd's answer or error. Not for the
     // methods that carry channel state (session.open, session.resize,
     // session.close): those have their own calls above. Fails with
-    // ConnectionLost if not connected. The future finishes in the IO thread.
+    // ConnectionLost if not connected. The future finishes in the IO thread;
+    // after Stop it finishes at once, in the caller's thread.
     QFuture<rpc::Result> Request(
         const QString& method,
         const QJsonValue& params = QJsonValue::Undefined);

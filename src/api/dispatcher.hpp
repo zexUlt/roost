@@ -43,9 +43,9 @@ public:
     QStringList Methods() const;
 
     // The future finishes in the thread of `context` (this object's, if
-    // null), and not at all if the context is destroyed first. An unknown name
-    // is MethodNotFound; errors of roostd, whatever their code, pass
-    // unchanged. Null params are no params.
+    // null), and finishes canceled if the context is destroyed first. An
+    // unknown name is MethodNotFound; errors of roostd, whatever their code,
+    // pass unchanged. Null params are no params.
     QFuture<rpc::Result> Call(const QString& method, const QJsonValue& params,
                               QObject* context);
 

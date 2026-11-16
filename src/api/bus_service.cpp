@@ -23,6 +23,7 @@ rpc::Error InvalidParams(QString message) {
 BusService::BusService(IoThread& io, QObject* parent)
     : QObject(parent), Io_(io) {
     connect(&Io_, &IoThread::Notified, this, &BusService::OnNotified);
+    connect(&Io_, &IoThread::Disconnected, this, &BusService::OnDisconnected);
 }
 
 std::expected<BusService::LocalId, rpc::Error> BusService::Subscribe(
@@ -58,9 +59,12 @@ std::expected<BusService::LocalId, rpc::Error> BusService::Subscribe(
         ++Pending_;
         Io_.Request(QStringLiteral("bus.subscribe"),
                     QJsonObject{{QStringLiteral("pattern"), pattern}})
-            .then(this, [this, pattern](const rpc::Result& answer) {
-                OnSubscribed(pattern, answer);
-            });
+            .then(this,
+                  [this, pattern, epoch = Epoch_](const rpc::Result& answer) {
+                      if (epoch == Epoch_) {
+                          OnSubscribed(pattern, answer);
+                      }
+                  });
     }
     return id;
 }
@@ -153,6 +157,14 @@ void BusService::OnSubscribed(const QString& pattern,
     }
 }
 
+void BusService::OnDisconnected() {
+    ++Epoch_;
+    Remotes_.clear();
+    Routes_.clear();
+    Parked_.clear();
+    Pending_ = 0;
+}
+
 void BusService::Deliver(const QString& pattern, const QString& name,
                          const QJsonValue& payload) {
     const auto remote = Remotes_.find(pattern);
@@ -188,7 +200,12 @@ void BusService::Drop(LocalId id) {
     }
     const auto remote = Remotes_.find(local->second.Pattern);
     Forget(id);
-    std::erase(remote->second.Locals, id);
+    // No Remote, or one of a later connection that does not know the id: the
+    // listener was left over from a lost connection.
+    if (remote == Remotes_.end() ||
+        std::erase(remote->second.Locals, id) == 0) {
+        return;
+    }
     // While the answer is pending the Remote stays: OnSubscribed ends it, or
     // a new listener of the pattern takes it over.
     if (remote->second.Locals.empty() && remote->second.Subscription) {

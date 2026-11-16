@@ -89,9 +89,32 @@ private slots:
             QVERIFY2(messages.filter(method).size() >= 1, method);
         }
         // The methods that failed their check did nothing: the dispatcher
-        // still lacks the method, and no bus.subscribe was made.
+        // still lacks the method. That a refused Subscribe makes no
+        // bus.subscribe is checked in api_bus_test.
         QVERIFY(!api.Dispatch().Methods().contains("t.x"));
         QVERIFY(!api.Plugins().IsLoaded());
+    }
+
+    void ASubscribeFromAnotherThreadIsRefused() {
+#ifdef NDEBUG
+        QSKIP("the check is compiled out of release builds");
+#endif
+        api::Api api;
+        const auto previous = api::SetCheckHandler(&Record);
+        bool heard = false;
+        std::expected<api::BusService::LocalId, rpc::Error> id;
+        std::unique_ptr<QThread> thread(QThread::create([&] {
+            id = api.Bus().Subscribe(
+                "x", nullptr,
+                [&heard](const QString&, const QJsonValue&) { heard = true; });
+        }));
+        thread->start();
+        QVERIFY(thread->wait(10000));
+        api::SetCheckHandler(previous);
+
+        QCOMPARE(Recorded().size(), 1);
+        QVERIFY(!id);
+        QVERIFY(!heard);
     }
 
     void ACallFromTheGuiThreadDoesNot() {
