@@ -1,5 +1,6 @@
 #include "roostd/store_service.hpp"
 
+#include <QDebug>
 #include <QJsonObject>
 #include <QPointer>
 
@@ -57,8 +58,15 @@ StoreService::StoreService(Store store, Server& server,
             if (!document) {
                 return rpc::Ready(StoreFailed(document.error()));
             }
-            return rpc::Ready(
-                QJsonObject{{QStringLiteral("document"), *document}});
+            const QJsonObject answer{{QStringLiteral("document"), *document}};
+            // Refused rather than closing the connection.
+            if (!Server::AnswerFitsAFrame(answer)) {
+                return rpc::Ready(StoreFailed(
+                    QStringLiteral("the document of \"%1\" is too big to send "
+                                   "in a frame")
+                        .arg(plugin.toString())));
+            }
+            return rpc::Ready(answer);
         });
     Q_ASSERT(getting);
     const bool setting = Server_.Register(
@@ -91,7 +99,13 @@ StoreService::StoreService(Store store, Server& server,
             if (!saved) {
                 return rpc::Ready(StoreFailed(saved.error()));
             }
-            self->Server_.Bus().Publish(CHANGED, changed);
+            if (!self->Server_.Bus().Publish(CHANGED, changed)) {
+                qWarning().noquote()
+                    << QStringLiteral(
+                           "store.changed for \"%1\" was not announced: "
+                           "the bus refused the publish")
+                           .arg(plugin.toString());
+            }
             return rpc::Ready(QJsonValue());
         });
     Q_ASSERT(setting);

@@ -13,6 +13,7 @@ namespace roost {
 namespace {
 
 constexpr qsizetype MAX_PLUGIN_ID_LENGTH = 64;
+const QString RESERVED_PLUGIN_ID_KEYMAP = QStringLiteral("keymap");
 
 bool IsIdStart(QChar c) {
     return (c >= u'a' && c <= u'z') || (c >= u'0' && c <= u'9');
@@ -40,6 +41,10 @@ std::expected<QString, QString> ConfigDirectory() {
     return QDir::cleanPath(home + QStringLiteral("/.config/roost"));
 }
 
+bool Store::IsReservedPluginId(const QString& id) {
+    return id == RESERVED_PLUGIN_ID_KEYMAP;
+}
+
 Store::Store(QString directory) : Directory_(std::move(directory)) {}
 
 bool Store::IsValidPluginId(const QString& id) {
@@ -65,6 +70,10 @@ std::expected<void, QString> Store::CheckRequest(
     if (!IsValidPluginId(pluginId)) {
         return std::unexpected(
             QStringLiteral("invalid plugin id \"%1\"").arg(pluginId));
+    }
+    if (IsReservedPluginId(pluginId)) {
+        return std::unexpected(
+            QStringLiteral("plugin id \"%1\" is reserved").arg(pluginId));
     }
     return {};
 }

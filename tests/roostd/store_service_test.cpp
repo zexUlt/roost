@@ -277,6 +277,28 @@ private slots:
         QCOMPARE(file.readAll(), garbage);
     }
 
+    void DocumentTooBigForAFrameIsStoreFailedAndConnectionLives() {
+        AddPlugin("known");
+        QVERIFY(QDir().mkpath(ConfigPath()));
+        {
+            // One string value just over the frame limit; valid JSON.
+            QFile file(FileOf("known"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("{\"blob\":\"");
+            file.write(QByteArray(20 * 1024 * 1024, 'x'));
+            file.write("\"}");
+        }
+        QVERIFY(Start());
+        const rpc::Result result =
+            Call("store.get", QJsonObject{{"plugin", "known"}});
+        QCOMPARE(CodeOf(result), STORE_FAILED);
+        QVERIFY2(MessageOf(result).contains("too big"),
+                 qPrintable(MessageOf(result)));
+        // The connection is still open.
+        QCOMPARE(CodeOf(Call("store.get", QJsonObject{{"plugin", "known"}})),
+                 STORE_FAILED);
+    }
+
     void SaveFailureIsStoreFailedAndNotAnnounced() {
         AddPlugin("known");
         // The config path is a file, so the directory cannot be created.

@@ -219,6 +219,12 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
         return std::unexpected(QStringLiteral(
             "\"id\" must be lowercase letters, digits, '.', '_' and '-'"));
     }
+    if (Store::IsReservedPluginId(id.toString())) {
+        return std::unexpected(
+            QStringLiteral("\"id\" \"%1\" is reserved: the state directory "
+                           "keeps the user's file of that name")
+                .arg(id.toString()));
+    }
     manifest.Id = id.toString();
     const QJsonValue version = root.value("version");
     if (!IsNonEmptyString(version)) {
