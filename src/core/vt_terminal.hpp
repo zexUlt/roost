@@ -75,8 +75,31 @@ public:
     // it.
     std::expected<QByteArray, QString> EncodePaste(QStringView text) const;
 
+    // The modes that decide what the mouse wheel does (design.md §3).
+    struct WheelModes {
+        // Some mouse tracking mode (X10, normal, button, any) is on.
+        bool MouseTracking = false;
+        // The alternate screen is the active one; it has no scrollback.
+        bool AlternateScreen = false;
+        // Alternate scroll (1007): on the alternate screen the wheel types
+        // cursor keys.
+        bool AlternateScroll = false;
+    };
+    std::expected<WheelModes, QString> ReadWheelModes() const;
+    // Moves the viewport through the scrollback by whole rows: negative
+    // toward older output, positive toward newer. Stops at the top and at
+    // the active area. The viewport stays where it is while output arrives,
+    // until it is moved to the bottom or the screen is cleared.
+    std::expected<void, QString> ScrollViewport(qint64 rows);
+    // Back to the active area, where the cursor is.
+    std::expected<void, QString> ScrollViewportToBottom();
+    // Whether the viewport follows the active area (not scrolled into
+    // history).
+    std::expected<bool, QString> ViewportAtBottom() const;
+
 private:
     friend class VtKeyEncoder;
+    friend class VtMouseEncoder;
     friend class VtRenderState;
     struct State;
 

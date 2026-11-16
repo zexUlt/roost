@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/vt_key_encoder.hpp"
+#include "core/vt_mouse_encoder.hpp"
 
 #include <QString>
 #include <Qt>
@@ -53,5 +54,15 @@ struct QtKeyOptions {
 std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
                                  const QString& text, EKeyAction action,
                                  const QtKeyOptions& options);
+
+// The modifiers of a mouse event, with the platform's names for Control and
+// Meta as in MapQtKey. Shift, Control and Alt are what the mouse protocols
+// carry; Super is set for completeness.
+KeyMods MapQtModifiers(Qt::KeyboardModifiers modifiers,
+                       const QtKeyOptions& options);
+
+// The button an event is about; None for Qt::NoButton and for the buttons
+// the protocols have no number for.
+EMouseButton MapQtMouseButton(Qt::MouseButton button);
 
 }  // namespace roost
