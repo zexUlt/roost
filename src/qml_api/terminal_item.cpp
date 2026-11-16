@@ -292,32 +292,29 @@ void TerminalItem::hoverMoveEvent(QHoverEvent* event) {
 
 void TerminalItem::wheelEvent(QWheelEvent* event) {
     event->ignore();
-    if (!Session_ || !KeyEncoder_ || !MouseEncoder_) {
+    if (!Session_ || !MouseEncoder_) {
         return;
-    }
-    if (event->phase() == Qt::ScrollBegin) {
-        PendingWheelX_ = 0;
-        PendingWheelY_ = 0;
     }
     const auto cell = Renderer_.Metrics();
     // A trackpad says pixels, a wheel says notches; both become pixels, and
-    // rows once they add up to one.
+    // rows once they add up to one. Like Ghostty, the remainder survives the
+    // start of a gesture. A notch sideways is one report, not three: Ghostty
+    // sends the rounded notch count as it is.
     qreal dx = 0;
     qreal dy = 0;
     if (!event->pixelDelta().isNull()) {
         dx = event->pixelDelta().x();
         dy = event->pixelDelta().y();
     } else {
-        dx = event->angleDelta().x() / UNITS_PER_NOTCH * ROWS_PER_NOTCH *
-             cell.Width;
+        dx = event->angleDelta().x() / UNITS_PER_NOTCH * cell.Width;
         dy = event->angleDelta().y() / UNITS_PER_NOTCH * ROWS_PER_NOTCH *
              cell.Height;
     }
-    // Positive: up and right, the way Qt counts.
+    // Positive: up, and Qt's positive x, which Ghostty reports as button 6.
     const int up = takeWhole(PendingWheelY_, dy, cell.Height);
-    const int right = takeWhole(PendingWheelX_, dx, cell.Width);
+    const int across = takeWhole(PendingWheelX_, dx, cell.Width);
     event->accept();
-    if (up == 0 && right == 0) {
+    if (up == 0 && across == 0) {
         return;
     }
 
@@ -338,7 +335,7 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
         if (modes.MouseTracking) {
             synced = Session_->SyncMouseEncoder(lock, *MouseEncoder_, geometry);
         } else if (arrows) {
-            synced = Session_->SyncKeyEncoder(lock, *KeyEncoder_);
+            // Fixed bytes, nothing to sync.
         } else if (up != 0) {
             // Nothing is tracking, and the alternate screen does not turn the
             // wheel into keys: the user looks through the scrollback. Only
@@ -372,6 +369,8 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
         report.Mods = MapQtModifiers(event->modifiers(), KeyOptions_);
         report.X = static_cast<float>(event->position().x());
         report.Y = static_cast<float>(event->position().y());
+        // A wheel is a press, so one outside the grid is reported in the
+        // motion modes only while a button is held.
         report.AnyButtonPressed = event->buttons() != Qt::NoButton;
         const auto send = [&](EMouseButton button, int count) {
             report.Button = button;
@@ -383,15 +382,19 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
         };
         send(up > 0 ? EMouseButton::WheelUp : EMouseButton::WheelDown,
              std::abs(up));
-        send(right > 0 ? EMouseButton::WheelRight : EMouseButton::WheelLeft,
-             std::abs(right));
+        send(across > 0 ? EMouseButton::WheelLeft : EMouseButton::WheelRight,
+             std::abs(across));
     } else if (modes.AlternateScreen && modes.AlternateScroll && up != 0) {
-        KeyEvent key;
-        key.Key = up > 0 ? EKey::ArrowUp : EKey::ArrowDown;
+        // Ghostty's fixed bytes, never the kitty form of the key: the program
+        // asked for the wheel as arrows, not for key events.
+        const char* key = nullptr;
+        if (modes.CursorKeysApplication) {
+            key = up > 0 ? "\x1bOA" : "\x1bOB";
+        } else {
+            key = up > 0 ? "\x1b[A" : "\x1b[B";
+        }
         for (int i = 0; i < std::abs(up); ++i) {
-            if (!append(KeyEncoder_->Encode(key))) {
-                break;
-            }
+            bytes += key;
         }
     }
     if (!bytes.isEmpty()) {

@@ -234,6 +234,15 @@ std::expected<VtTerminal::WheelModes, QString> VtTerminal::ReadWheelModes()
             Failed("cannot read the alternate scroll mode", result));
     }
     modes.AlternateScroll = scroll.value;
+    GhosttyTerminalModeConfig cursorKeys{.mode = GHOSTTY_MODE_CURSOR_KEYS,
+                                         .value = false};
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_MODE, &cursorKeys);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(
+            Failed("cannot read the cursor keys mode", result));
+    }
+    modes.CursorKeysApplication = cursorKeys.value;
     return modes;
 }
 

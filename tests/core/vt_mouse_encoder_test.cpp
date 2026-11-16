@@ -309,6 +309,43 @@ private slots:
                  QByteArray("\x1b[<35;7;3M"));
     }
 
+    void AWheelNotchDoesNotMakeTheSameMotionNews() {
+        auto terminal = NewTerminal();
+        auto encoder = NewEncoder();
+        terminal.Write("\x1b[?1003h\x1b[?1006h");
+        const auto send = [&](const MouseEvent& event) {
+            Sync(encoder, terminal);
+            return EncodeOne(encoder, event);
+        };
+        QCOMPARE(send(Move(EMouseButton::None, 5, 2)),
+                 QByteArray("\x1b[<35;6;3M"));
+        QCOMPARE(send(Press(EMouseButton::WheelUp, 5, 2)),
+                 QByteArray("\x1b[<64;6;3M"));
+        QCOMPARE(send(Press(EMouseButton::WheelRight, 5, 2)),
+                 QByteArray("\x1b[<67;6;3M"));
+        QCOMPARE(send(Move(EMouseButton::None, 5, 2)), QByteArray());
+    }
+
+    void AWheelOutsideTheGridNeedsAHeldButtonInMotionModes() {
+        auto terminal = NewTerminal();
+        auto encoder = NewEncoder();
+        terminal.Write("\x1b[?1003h\x1b[?1006h");
+        Sync(encoder, terminal);
+
+        auto wheel = Press(EMouseButton::WheelUp, 5, 2);
+        wheel.X = -5;
+        wheel.AnyButtonPressed = false;
+        QCOMPARE(EncodeOne(encoder, wheel), QByteArray());
+        wheel.AnyButtonPressed = true;
+        QCOMPARE(EncodeOne(encoder, wheel), QByteArray("\x1b[<64;1;3M"));
+
+        // Normal mode has no motion: outside the grid nothing is reported.
+        terminal.Write("\x1b[?1003l\x1b[?1000h");
+        Sync(encoder, terminal);
+        wheel.AnyButtonPressed = false;
+        QCOMPARE(EncodeOne(encoder, wheel), QByteArray());
+    }
+
     void SgrPixelsReportsEveryMoveInsideACell() {
         auto terminal = NewTerminal();
         auto encoder = NewEncoder();

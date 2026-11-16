@@ -84,6 +84,8 @@ public:
         // Alternate scroll (1007): on the alternate screen the wheel types
         // cursor keys.
         bool AlternateScroll = false;
+        // DECCKM: the arrows are sent as SS3 (ESC O A), not CSI (ESC [ A).
+        bool CursorKeysApplication = false;
     };
     std::expected<WheelModes, QString> ReadWheelModes() const;
     // Moves the viewport through the scrollback by whole rows: negative

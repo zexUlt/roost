@@ -50,6 +50,13 @@ GhosttyMouseButton Translate(EMouseButton button) {
     return GHOSTTY_MOUSE_BUTTON_UNKNOWN;
 }
 
+bool IsWheel(EMouseButton button) {
+    return button == EMouseButton::WheelUp ||
+           button == EMouseButton::WheelDown ||
+           button == EMouseButton::WheelLeft ||
+           button == EMouseButton::WheelRight;
+}
+
 GhosttyMods Translate(const KeyMods& mods) {
     GhosttyMods bits = 0;
     if (mods.Shift) {
@@ -177,7 +184,11 @@ std::expected<QByteArray, QString> VtMouseEncoder::Encode(
     }
 
     if (event.Action != EMouseAction::Motion) {
-        State_->LastMotion.clear();
+        // A click makes the next motion news again; a wheel notch does not
+        // move the pointer.
+        if (!IsWheel(event.Button)) {
+            State_->LastMotion.clear();
+        }
     } else if (!bytes.isEmpty()) {
         if (bytes == State_->LastMotion) {
             return QByteArray();

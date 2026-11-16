@@ -118,9 +118,11 @@ private:
         return Session_->ViewportAtBottom(lock).value_or(false);
     }
 
-    void SendWheel(const QPoint& at, QPoint angle, QPoint pixels = {}) {
+    void SendWheel(const QPoint& at, QPoint angle, QPoint pixels = {},
+                   Qt::ScrollPhase phase = Qt::NoScrollPhase,
+                   Qt::MouseButtons buttons = Qt::NoButton) {
         QWheelEvent event(QPointF(at), QPointF(Window_.mapToGlobal(at)), pixels,
-                          angle, Qt::NoButton, {}, Qt::NoScrollPhase, false);
+                          angle, buttons, {}, phase, false);
         event.setAccepted(false);
         QCoreApplication::sendEvent(&Window_, &event);
     }
@@ -379,6 +381,21 @@ private slots:
         QCOMPARE(input.count(), 3);
     }
 
+    void AlternateScrollKeysAreFixedBytesEvenUnderTheKittyProtocol() {
+        ShowWithScrollback();
+        // CSI > 31 u: the kitty keyboard protocol, all flags.
+        Write(*Session_, "\x1b[?1049h\x1b[?1007h\x1b[>31u");
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        Notch();
+        QCOMPARE(input.last().at(0).toByteArray(),
+                 QByteArray("\x1b[A\x1b[A\x1b[A"));
+        Write(*Session_, "\x1b[?1h");
+        SendWheel({5, 5}, QPoint(0, -NOTCH));
+        QCOMPARE(input.last().at(0).toByteArray(),
+                 QByteArray("\x1bOB\x1bOB\x1bOB"));
+    }
+
     void WheelOnTheAlternateScreenWithoutAlternateScrollDoesNothing() {
         ShowWithScrollback();
         Write(*Session_, "\x1b[?1049h\x1b[?1007l");
@@ -438,6 +455,98 @@ private slots:
         SendWheel({5, 5}, QPoint(0, 0), QPoint(0, -Cell_.Height * 5));
         QCOMPARE(TopRowAfterFrame(), QStringLiteral("L22"));
         QCOMPARE(input.count(), 0);
+    }
+
+    void ModifiersAreInAClickReport() {
+        Show(NewSession());
+        Write(*Session_, "\x1b[?1000h\x1b[?1006h");
+        QSignalSpy input(Item_, &TerminalItem::input);
+        const auto ctrl =
+            roost::QtKeyOptions::ForThisPlatform().SwapControlAndMeta
+                ? Qt::MetaModifier
+                : Qt::ControlModifier;
+
+        QTest::mousePress(&Window_, Qt::LeftButton, Qt::ShiftModifier,
+                          CellCenter(3, 2));
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<4;4;3M"));
+        QTest::mouseRelease(&Window_, Qt::LeftButton, Qt::ShiftModifier,
+                            CellCenter(3, 2));
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<4;4;3m"));
+        QTest::mousePress(&Window_, Qt::LeftButton, ctrl, CellCenter(3, 2));
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<16;4;3M"));
+        QTest::mouseRelease(&Window_, Qt::LeftButton, ctrl, CellCenter(3, 2));
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<16;4;3m"));
+        QCOMPARE(input.count(), 4);
+    }
+
+    void WheelReportCarriesTheModifiers() {
+        Show(NewSession());
+        Write(*Session_, "\x1b[?1000h\x1b[?1006h");
+        QSignalSpy input(Item_, &TerminalItem::input);
+        QWheelEvent event(QPointF(CellCenter(3, 2)),
+                          QPointF(Window_.mapToGlobal(CellCenter(3, 2))), {},
+                          QPoint(0, NOTCH), Qt::NoButton, Qt::ShiftModifier,
+                          Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(&Window_, &event);
+        QCOMPARE(input.last().at(0).toByteArray(),
+                 QByteArray("\x1b[<68;4;3M\x1b[<68;4;3M\x1b[<68;4;3M"));
+    }
+
+    void AWheelOutsideTheGridInAnyEventModeNeedsAHeldButton() {
+        Show(NewSession());
+        Write(*Session_, "\x1b[?1003h\x1b[?1006h");
+        // Room past the last column that is no cell of the grid.
+        const int wide = (COLUMNS + 1) * Cell_.Width - 1;
+        Item_->setSize(QSizeF(wide, ROWS * Cell_.Height));
+        Window_.resize(wide, ROWS * Cell_.Height);
+        QCOMPARE(Item_->columns(), COLUMNS);
+        QSignalSpy input(Item_, &TerminalItem::input);
+        const QPoint outside(COLUMNS * Cell_.Width + 2, 5);
+
+        SendWheel(outside, QPoint(0, NOTCH));
+        QCOMPARE(input.count(), 0);
+        // With a button held it is reported, at the edge.
+        SendWheel(outside, QPoint(0, NOTCH), {}, Qt::NoScrollPhase,
+                  Qt::LeftButton);
+        QCOMPARE(input.count(), 1);
+        QVERIFY(input.last().at(0).toByteArray().startsWith("\x1b[<64;20;1M"));
+    }
+
+    void ASidewaysNotchIsOneReportWithQtsPositiveXAsButtonSix() {
+        ShowWithScrollback();
+        Write(*Session_, "\x1b[?1000h\x1b[?1006h");
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel(CellCenter(3, 2), QPoint(NOTCH, 0));
+        QCOMPARE(input.count(), 1);
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<66;4;3M"));
+        SendWheel(CellCenter(3, 2), QPoint(-NOTCH, 0));
+        QCOMPARE(input.count(), 2);
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<67;4;3M"));
+    }
+
+    void SidewaysPixelsAddUpByCellWidth() {
+        ShowWithScrollback();
+        Write(*Session_, "\x1b[?1000h\x1b[?1006h");
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel({5, 5}, QPoint(0, 0), QPoint(Cell_.Width - 1, 0));
+        QCOMPARE(input.count(), 0);
+        SendWheel({5, 5}, QPoint(0, 0), QPoint(1, 0));
+        QCOMPARE(input.count(), 1);
+        QCOMPARE(input.last().at(0).toByteArray().count("\x1b[<66;"), 1);
+    }
+
+    void ARemainderSurvivesTheStartOfAGesture() {
+        ShowWithScrollback();
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel({5, 5}, QPoint(0, 0), QPoint(0, Cell_.Height - 1));
+        QVERIFY(AtBottom());
+        // Ghostty never drops the remainder; the pixel that completes the
+        // row counts even when a new gesture starts with it.
+        SendWheel({5, 5}, QPoint(0, 0), QPoint(0, 1), Qt::ScrollBegin);
+        QCOMPARE(TopRowAfterFrame(), QStringLiteral("L21"));
     }
 
     void TrackpadPixelsAreReportedByRowsWhenTheProgramTracks() {
