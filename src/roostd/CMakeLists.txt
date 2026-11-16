@@ -7,6 +7,7 @@ add_library(roostd_lib STATIC
     plugins.cpp
     server.cpp
     session_channels.cpp
+    store_service.cpp
     warm_pool.cpp
 )
 

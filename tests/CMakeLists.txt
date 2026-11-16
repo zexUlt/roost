@@ -80,6 +80,8 @@ roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
 target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(plugins_test fixture_backend)
+roost_add_qt_test(plugins_list_test roostd/plugins_list_test.cpp roostd_lib)
+roost_add_qt_test(store_service_test roostd/store_service_test.cpp roostd_lib)
 roost_add_qt_test(agents_test roostd/agents_test.cpp roostd_lib)
 target_compile_definitions(agents_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
@@ -96,6 +98,10 @@ target_compile_definitions(roostd_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(roostd_test roostd fixture_backend)
+roost_add_qt_test(roostd_store_test roostd/roostd_store_test.cpp)
+target_compile_definitions(roostd_store_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(roostd_store_test roostd)
 
 # The window comes up and renders a frame under the offscreen platform.
 add_test(NAME roost_smoke COMMAND roost --smoke)

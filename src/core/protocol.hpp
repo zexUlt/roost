@@ -18,6 +18,7 @@ enum class EErrorCode : int {
     VersionMismatch = -32001,     // hello with another protocol or library
     ConnectionLost = -32002,      // client side: the socket went away
     BackendUnavailable = -32003,  // the plugin's backend is not running
+    StoreFailed = -32004,         // reading or writing a plugin's state failed
 };
 
 rpc::Error MakeError(EErrorCode code, QString message,

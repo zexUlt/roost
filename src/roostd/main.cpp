@@ -16,6 +16,7 @@
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
 #include "roostd/session_channels.hpp"
+#include "roostd/store_service.hpp"
 
 namespace {
 
@@ -109,6 +110,10 @@ int main(int argc, char* argv[]) {
         qWarning("roostd: %s", qUtf8Printable(problem));
     }
     qInfo("roostd: %zu plugins loaded", plugins.Registry().Plugins().size());
+
+    // Gone before the plugins, like the channels.
+    roost::StoreService store(roost::Store(*config), server,
+                              plugins.Registry());
 
     // Gone before the plugins.
     roost::SessionChannels sessions(server, plugins);

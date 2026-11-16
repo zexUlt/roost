@@ -121,8 +121,39 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
                       });
         });
     Q_ASSERT(listing);
+    const bool plugins = Server_.Register(
+        QStringLiteral("plugins.list"),
+        [self](const rpc::Call& /*call*/) -> QFuture<rpc::Result> {
+            if (!self) {
+                return rpc::Ready(
+                    Unavailable(QStringLiteral("plugins are not loaded")));
+            }
+            QJsonArray loaded;
+            for (const PluginManifest& plugin : self->Registry_.Plugins()) {
+                loaded.append(QJsonObject{
+                    {QStringLiteral("id"), plugin.Id},
+                    {QStringLiteral("version"), plugin.Version},
+                    {QStringLiteral("directory"), plugin.Directory},
+                    {QStringLiteral("contributes"), plugin.Contributes},
+                });
+            }
+            const QJsonObject list{
+                {QStringLiteral("plugins"), loaded},
+                {QStringLiteral("problems"),
+                 QJsonArray::fromStringList(self->Registry_.Problems())},
+            };
+            // Refused rather than closing the connection.
+            if (!Server::AnswerFitsAFrame(list)) {
+                return rpc::Ready(std::unexpected(rpc::Error::FromCode(
+                    rpc::EErrorCode::InternalError,
+                    QStringLiteral("the plugin list does not fit a frame"))));
+            }
+            return rpc::Ready(list);
+        });
+    Q_ASSERT(plugins);
     Q_UNUSED(registered);
     Q_UNUSED(listing);
+    Q_UNUSED(plugins);
 }
 
 PluginHost::~PluginHost() = default;

@@ -27,6 +27,11 @@ class Server;
 //                                  every agent, agent by agent in load order,
 //                                  and {agent, reason} for each agent whose
 //                                  adapter failed to list them
+//   plugins.list                   {plugins, problems}: the loaded plugins in
+//                                  load order, each {id, version, directory,
+//                                  contributes}, and the reason of each
+//                                  plugin that did not load or lost a
+//                                  contribution
 //
 // and publishes on the bus:
 //
