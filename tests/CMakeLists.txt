@@ -9,10 +9,12 @@ set(ROOST_TEST_ENVIRONMENT
 
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
+    helpers/roostd_process.cpp
     helpers/scoped_env.cpp
 )
 target_include_directories(roost_test_helpers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(roost_test_helpers PUBLIC roost::compile_options Qt6::Core)
+target_link_libraries(roost_test_helpers PUBLIC
+    roost::compile_options roost_core Qt6::Core Qt6::Test)
 
 # One executable per test file, so a crash in one does not hide the others.
 function(roost_add_qt_test name source)
@@ -155,6 +157,17 @@ target_compile_definitions(single_session_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 
+# The window's API against the real roostd with a plugin whose backend is the
+# fixture: the services and the dispatcher, the thread check.
+foreach(_api_test api_dispatcher_test api_bus_test api_connection_test)
+    roost_add_qt_test(${_api_test} api/${_api_test}.cpp roost_api roost_test_helpers)
+    target_compile_definitions(${_api_test} PRIVATE
+        ROOSTD_PATH="$<TARGET_FILE:roostd>"
+        FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+    add_dependencies(${_api_test} roostd fixture_backend)
+endforeach()
+roost_add_qt_test(api_thread_check_test api/api_thread_check_test.cpp roost_api)
+
 # The tests whose code runs on more than one thread carry the label
 # `threads`. Those whose threads synchronise only through std primitives also
 # carry `threads_std`: the tsan preset, against a binary Qt, runs only them.
@@ -162,6 +175,10 @@ add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 # which TSan sees only in a Qt built with it: the tsan-qt preset, run nightly.
 set_tests_properties(terminal_session_test PROPERTIES LABELS "threads;threads_std")
 set_tests_properties(
+    api_dispatcher_test
+    api_bus_test
+    api_connection_test
+    api_thread_check_test
     io_thread_test
     single_session_test
     terminal_item_test

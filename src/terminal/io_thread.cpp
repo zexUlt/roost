@@ -151,6 +151,17 @@ public:
             });
     }
 
+    void Request(const SharedPromise<rpc::Result>& promise,
+                 const QString& method, const QJsonValue& params) {
+        if (!Rpc_) {
+            Settle(*promise, rpc::Result(std::unexpected(NotConnected())));
+            return;
+        }
+        Rpc_->Request(method, params).then([promise](rpc::Result answer) {
+            Settle(*promise, std::move(answer));
+        });
+    }
+
     // Closes the connection and fails everything that waits for it.
     void Reset(const QString& reason) {
         if (!Rpc_) {
@@ -258,6 +269,7 @@ private:
 
     void OnNotification(const QString& method, const QJsonValue& params) {
         if (method != QStringLiteral("session.closed")) {
+            emit Owner_.Notified(method, params);
             return;
         }
         const QJsonObject object = params.toObject();
@@ -392,6 +404,19 @@ QFuture<rpc::Result> IoThread::Close(std::uint32_t channel) {
     const QFuture<rpc::Result> future = promise->future();
     if (!Post([promise, channel](Worker& worker) {
             worker.Close(promise, channel);
+        })) {
+        Settle(*promise, rpc::Result(std::unexpected(Lost(
+                             QStringLiteral("the IO thread is stopped")))));
+    }
+    return future;
+}
+
+QFuture<rpc::Result> IoThread::Request(const QString& method,
+                                       const QJsonValue& params) {
+    auto promise = NewPromise<rpc::Result>();
+    const QFuture<rpc::Result> future = promise->future();
+    if (!Post([promise, method, params](Worker& worker) {
+            worker.Request(promise, method, params);
         })) {
         Settle(*promise, rpc::Result(std::unexpected(Lost(
                              QStringLiteral("the IO thread is stopped")))));

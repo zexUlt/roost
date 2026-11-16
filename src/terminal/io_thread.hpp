@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QFuture>
+#include <QJsonValue>
 #include <QObject>
 #include <QString>
 #include <QThread>
@@ -82,6 +83,15 @@ public:
     // caller's own shared_ptr keeps the terminal alive.
     QFuture<rpc::Result> Close(std::uint32_t channel);
 
+    // Any other request of the protocol (design.md §4), such as bus.publish or
+    // plugins.list: the future yields roostd's answer or error. Not for the
+    // methods that carry channel state (session.open, session.resize,
+    // session.close): those have their own calls above. Fails with
+    // ConnectionLost if not connected. The future finishes in the IO thread.
+    QFuture<rpc::Result> Request(
+        const QString& method,
+        const QJsonValue& params = QJsonValue::Undefined);
+
     // Lets the next output of the channel raise Updated again. Call it before
     // reading the terminal; for a new channel, before the first read, since
     // Open leaves the channel without Updated until then. Thread-safe.
@@ -98,6 +108,11 @@ signals:
     // The session of the channel ended (the session.closed notification); the
     // channel is gone. Reason is roostd's: "exited with code N" or "evicted".
     void Closed(std::uint32_t channel, const QString& reason);
+    // A notification of roostd other than session.closed (which this class
+    // handles itself), such as bus.event, in the order received. No order
+    // against the futures: an event may be heard before the answer that
+    // preceded it on the socket.
+    void Notified(const QString& method, const QJsonValue& params);
     // The connection was lost, after the pending futures have failed.
     void Disconnected(const QString& reason);
 
