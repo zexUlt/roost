@@ -47,6 +47,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-tool-cache: true
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -107,6 +108,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-tool-cache: true
 
       - name: Install clang-tidy
         run: pipx install "clang-tidy==${CLANG_TIDY_VERSION}"
@@ -116,7 +118,10 @@ jobs:
       - name: Build
         run: |
           cmake --preset dev "-DGHOSTTY_ZIG_BUILD_FLAGS=-Doptimize=ReleaseSafe;--summary;all"
-          cmake --build --preset dev
+          targets=$(ninja -C build/dev -t targets all |
+            sed -nE 's/^(zig_build_lib_vt|[A-Za-z0-9_-]+_autogen):.*/\1/p')
+          echo "$targets"
+          cmake --build --preset dev --target $targets
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
       # The PyPI clang-tidy does not know where the macOS SDK is.
