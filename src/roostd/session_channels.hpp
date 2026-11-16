@@ -32,12 +32,18 @@ class PluginHost;
 //     is; InternalError if the program does not start, or the session or the
 //     connection is gone before the channel opens.
 //   session.resize {channel, columns, rows}         null
+//     InvalidParams for a bad size or an unknown channel; InternalError if the
+//     session or its PTY cannot be resized.
 //   session.close {channel}                         null
 //     The channel only: the session stays warm and nothing is notified.
 //
 // and, as notification session.closed {channel, reason}, tells the client of
 // a channel that its session has closed: the program exited, or the pool
 // evicted it (WarmSession::Closed); the channel is gone then.
+//
+// The size belongs to the session, not to a channel: a size given by
+// session.open or session.resize is the size of the session for all of its
+// channels, and the other channels are not told.
 //
 // A channel belongs to the connection that opened it and is named by a number
 // counted from 1 per connection, never reused; another connection's number

@@ -36,6 +36,12 @@ using namespace std::chrono_literals;
 namespace {
 
 constexpr int TIMEOUT_MS = 5000;
+// Prints 3000 lines in six bursts, so that a second window can open the
+// session while the output goes on, then "done", and waits.
+constexpr const char* STREAM_SCRIPT =
+    "i=0; while [ $i -lt 3000 ]; do echo line$i; i=$((i+1)); "
+    "if [ $((i % 500)) -eq 0 ]; then sleep 0.05; fi; done; "
+    "echo done; exec sleep 60";
 constexpr int INVALID_PARAMS = static_cast<int>(rpc::EErrorCode::InvalidParams);
 constexpr int INTERNAL_ERROR = static_cast<int>(rpc::EErrorCode::InternalError);
 
@@ -213,7 +219,8 @@ private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
     // A plugin that serves the agent "fake" whose sessions s1, s2 and s3
-    // attach to fake_tui, and null, broken and missing do not attach.
+    // attach to fake_tui, stream to a shell loop, and null, broken and missing
+    // do not attach.
     bool WritePlugin() {
         const QDir directory(PluginsPath() + "/one");
         if (!directory.mkpath(".") ||
@@ -246,6 +253,10 @@ private:
                  {"fake/s1", fakeTui},
                  {"fake/s2", fakeTui},
                  {"fake/s3", fakeTui},
+                 {"fake/stream",
+                  Result(
+                      QJsonObject{{"program", "/bin/sh"},
+                                  {"args", QJsonArray{"-c", STREAM_SCRIPT}}})},
                  {"fake/null", Result(QJsonValue())},
                  {"fake/broken",
                   QJsonObject{{"error", QJsonObject{{"code", 5},
@@ -735,6 +746,107 @@ private slots:
         QVERIFY2(channel, qPrintable(Why(window->LastOpen)));
         QCOMPARE(Channels_->Pool().Find(Key("s1"))->Size(),
                  (PtySize{.Columns = 2000, .Rows = 1}));
+    }
+
+    void AClosedChannelGetsNoMoreOutput() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t closed = window->Open("s1");
+        QVERIFY(closed);
+        QVERIFY(window->WaitDump(closed, "answers da1=1 cpr=1"));
+        const rpc::Result result =
+            window->Call("session.close",
+                         QJsonObject{{"channel", static_cast<int>(closed)}});
+        QVERIFY2(result, qPrintable(Why(result)));
+        const qsizetype outputs =
+            window->Log.count(QString("output %1").arg(closed));
+
+        // The session prints again, as the answer to a key on another channel.
+        const std::uint32_t other = window->Open("s1");
+        QVERIFY2(other, qPrintable(Why(window->LastOpen)));
+        QVERIFY(other != closed);
+        window->Rpc.SendInput(other, "q");
+        QVERIFY2(window->WaitDump(other, "answers da1=2 cpr=2"),
+                 window->Dump(other).constData());
+        QTest::qWait(50);
+        QCOMPARE(window->Log.count(QString("output %1").arg(closed)), outputs);
+    }
+
+    void AConnectionClosedDuringTheAttachOpensNothing() {
+        QVERIFY(Start());
+        Window* gone = Connect();
+        Window* stays = Connect();
+        QVERIFY(gone && stays);
+        // The backend is up and answers: this one is turned down.
+        QVERIFY(!stays->OpenWith(
+            QJsonObject{{"agent", "fake"}, {"session", "null"}}));
+
+        // The client leaves before the adapter answers.
+        const QFuture<rpc::Result> pending = gone->Rpc.Request(
+            "session.open", QJsonObject{{"agent", "fake"}, {"session", "s1"}});
+        Q_UNUSED(pending);
+        // The server answers in the order it reads: once it has answered this,
+        // it has taken the open and asked the adapter.
+        QVERIFY(!gone->Call("session.close", QJsonObject{{"channel", 99}}));
+        gone->Rpc.Disconnect();
+        QTest::qWait(500);
+        QCOMPARE(Channels_->ChannelCount(), 0);
+        QCOMPARE(Channels_->Pool().Count(), 0);
+    }
+
+    void InputAndOpeningCountAsViewing_data() {
+        QTest::addColumn<bool>("byInput");
+        QTest::newRow("input") << true;
+        QTest::newRow("opening again") << false;
+    }
+
+    void InputAndOpeningCountAsViewing() {
+        QFETCH(bool, byInput);
+        QVERIFY(Start({.Capacity = 2, .Pty = {}}));
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t first = window->Open("s1");
+        const std::uint32_t second = window->Open("s2");
+        QVERIFY(first && second);
+        QVERIFY(window->WaitDump(first, "answers da1=1 cpr=1"));
+        if (byInput) {
+            window->Rpc.SendInput(first, "z");
+            QVERIFY2(window->WaitDump(first, "input z total=1"),
+                     window->Dump(first).constData());
+        } else {
+            QVERIFY(window->Open("s1"));
+        }
+
+        // s2 was viewed the longest ago.
+        QVERIFY(window->Open("s3"));
+        QTRY_COMPARE_WITH_TIMEOUT(window->Closed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Closed.at(0),
+                 (QJsonObject{{"channel", static_cast<int>(second)},
+                              {"reason", "evicted"}}));
+        QVERIFY(Channels_->Pool().Find(Key("s1")));
+        QCOMPARE(Channels_->Pool().Find(Key("s2")), nullptr);
+        QVERIFY(Channels_->Pool().Find(Key("s3")));
+    }
+
+    void OutputDuringAnOpenIsNeitherLostNorRepeated() {
+        QVERIFY(Start());
+        Window* first = Connect();
+        Window* second = Connect();
+        QVERIFY(first && second);
+        const std::uint32_t one = first->Open("stream");
+        QVERIFY2(one, qPrintable(Why(first->LastOpen)));
+        // The program is printing: the second window comes in the middle.
+        QVERIFY(QTest::qWaitFor(
+            [&] { return first->Log.count("output 1") > 0; }, TIMEOUT_MS));
+        const std::uint32_t other = second->Open("stream");
+        QVERIFY2(other, qPrintable(Why(second->LastOpen)));
+        QVERIFY(first->WaitDump(one, "done"));
+        QVERIFY(second->WaitDump(other, "done"));
+
+        const QByteArray daemon = DaemonDump(*Channels_, "stream");
+        QCOMPARE(first->Dump(one), daemon);
+        QCOMPARE(second->Dump(other), daemon);
     }
 
     void WithoutTheChannelsTheMethodsFail() {

@@ -230,11 +230,6 @@ void SessionChannels::Complete(const std::shared_ptr<PendingOpen>& open) {
             InternalError(QStringLiteral("the session is closed"))));
         return;
     }
-    if (session->IsClosed()) {
-        finish(std::unexpected(
-            InternalError(QStringLiteral("the session is closed"))));
-        return;
-    }
 
     // From the snapshot on, nothing runs that could add output.
     const auto snapshot = session->Snapshot();
@@ -328,7 +323,8 @@ QFuture<rpc::Result> SessionChannels::Resize(const rpc::Call& call) {
     if (auto resized =
             session->Resize(PtySize{.Columns = *columns, .Rows = *rows});
         !resized) {
-        return rpc::Ready(InvalidParams(resized.error()));
+        // The size is checked, so this is a closed session or the PTY.
+        return rpc::Ready(std::unexpected(InternalError(resized.error())));
     }
     Pool_.Touch(session);
     return rpc::Ready(QJsonValue());
