@@ -21,7 +21,9 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`.
+Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`, `tsan-qt`.
+`tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
+`ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
 
 ## License
 

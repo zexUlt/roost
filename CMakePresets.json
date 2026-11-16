@@ -49,6 +49,14 @@
       }
     },
     {
+      "name": "tsan-qt",
+      "inherits": "tsan",
+      "displayName": "tsan-qt — thread sanitizer against a Qt built with TSan (ROOST_TSAN_QT_PREFIX, see tools/build_qt_tsan.sh)",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{ROOST_TSAN_QT_PREFIX}"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "displayName": "release — what ships",
@@ -61,6 +69,7 @@
     { "name": "dev", "configurePreset": "dev" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
     { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "tsan-qt", "configurePreset": "tsan-qt" },
     { "name": "release", "configurePreset": "release" }
   ],
   "testPresets": [
@@ -83,6 +92,15 @@
       },
       "filter": { "include": { "label": "threads_std" } },
       "execution": { "noTestsAction": "error", "timeout": 900 }
+    },
+    {
+      "name": "tsan-qt",
+      "inherits": "tsan",
+      "configurePreset": "tsan-qt",
+      "environment": {
+        "QSG_RENDER_LOOP": "threaded"
+      },
+      "filter": { "include": { "label": "threads" } }
     },
     { "name": "release", "inherits": "base", "configurePreset": "release" }
   ]

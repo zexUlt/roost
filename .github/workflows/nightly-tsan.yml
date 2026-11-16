@@ -1,0 +1,111 @@
+name: Nightly TSan
+
+# ThreadSanitizer against a Qt built with TSan: the `threads` tests hand data
+# over through Qt, and a Qt from a binary distribution is not instrumented
+# (.claude/rules/threads.md). The PR job `tsan` in ci.yml runs `threads_std`.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+  # A PR that touches the files below proves the workflow.
+  pull_request:
+    paths:
+      - .github/workflows/nightly-tsan.yml
+      - tools/build_qt_tsan.sh
+      - CMakePresets.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Keep in step with ci.yml.
+env:
+  QT_VERSION: 6.12.0
+  ZIG_VERSION: 0.17.1
+
+# Without an explicit shell, run steps get `bash -e` and no pipefail: a failed
+# command on the left of a pipe would go unnoticed.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tsan-qt:
+    runs-on: macos-15
+    # Qt itself takes hours to build on a cache miss.
+    timeout-minutes: 300
+    env:
+      ROOST_TSAN_QT_PREFIX: ${{ runner.temp }}/qt-tsan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja
+
+      # The key follows the version and the build script: a change to either
+      # rebuilds Qt, anything else reuses the finished prefix. Restore and save
+      # are separate steps: actions/cache saves only when the whole job passes,
+      # and a night that finds a race would then rebuild Qt every night after.
+      - name: Restore Qt built with TSan
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.ROOST_TSAN_QT_PREFIX }}
+          key: qt-tsan-${{ runner.os }}-${{ runner.arch }}-${{ env.QT_VERSION }}-${{ hashFiles('tools/build_qt_tsan.sh') }}
+
+      - name: Build Qt with TSan
+        if: steps.qt.outputs.cache-hit != 'true'
+        run: tools/build_qt_tsan.sh "$QT_VERSION" "$ROOST_TSAN_QT_PREFIX"
+
+      - name: Save Qt built with TSan
+        if: steps.qt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ROOST_TSAN_QT_PREFIX }}
+          key: ${{ steps.qt.outputs.cache-primary-key }}
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/tsan-qt/_deps
+            build/tsan-qt/.ninja_log
+            build/tsan-qt/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-tsan-qt-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/nightly-tsan.yml') }}
+
+      - name: Configure
+        run: cmake --preset tsan-qt
+
+      - name: Build
+        run: cmake --build --preset tsan-qt
+
+      - name: Test
+        run: ctest --preset tsan-qt
+
+      - name: Qt is linked dynamically
+        run: tools/check_qt_dynamic.sh build/tsan-qt
