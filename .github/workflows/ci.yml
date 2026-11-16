@@ -158,6 +158,10 @@ jobs:
         if: env.NEEDED == 'true'
         run: cmake --build --preset ${{ matrix.preset }}
 
+      - name: Compiler cache hits
+        if: env.NEEDED == 'true'
+        run: ccache --show-stats
+
       # The frame budget (tests/bench/frame_budget_test.cpp) is a timing on
       # real hardware: a shared runner is about twice as slow and noisy, so
       # here it only prints its numbers.
@@ -171,10 +175,11 @@ jobs:
         if: env.NEEDED == 'true'
         run: tools/check_qt_dynamic.sh build/${{ matrix.preset }}
 
-      # The compiler cache is saved by trunk pushes only: the repository's
-      # cache is full, and pull requests read what trunk left.
+      # The compiler cache is saved by the first trunk push of a day only:
+      # the repository's cache is full, and pull requests read what trunk
+      # left (.github/actions/ccache).
       - name: Save the compiler cache
-        if: ${{ always() && env.NEEDED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk' }}
+        if: ${{ always() && env.NEEDED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk' && steps.ccache.outputs.cache-primary-key != '' && steps.ccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/ccache

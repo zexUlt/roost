@@ -6,14 +6,19 @@ description: Restores ccache and points the presets at it. Saving is the job's o
 # bugs. ccache keys on the preprocessed source instead, which survives a
 # different build directory, a different preset and a reordered file list.
 #
-# Restore only. The repository's Actions cache is full, and a pull request's
-# entries would push out what is expensive to rebuild (the Qt built with
-# TSan). So each job that uses this action ends with an actions/cache/save
-# step on trunk pushes and the nightly run only, passing the output
-# cache-primary-key as the key; pull requests read what trunk saved:
+# Restore only. The repository's Actions cache is full, and new entries push
+# out the least recently used ones, among them what is expensive to rebuild
+# (the Qt built with TSan, read every night). So the key is the day: the first
+# trunk push of a day saves, later runs that day hit it exactly and save
+# nothing, and each day adds one entry per preset. Each job that uses this
+# action ends with a save step; pull requests read what trunk saved:
 #
 #   - name: Save the compiler cache
-#     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk'
+#     if: >-
+#       always() && github.event_name != 'pull_request' &&
+#       github.ref == 'refs/heads/trunk' &&
+#       steps.ccache.outputs.cache-primary-key != '' &&
+#       steps.ccache.outputs.cache-hit != 'true'
 #     uses: actions/cache/save@v4
 #     with:
 #       path: ${{ runner.temp }}/ccache
@@ -32,16 +37,24 @@ outputs:
   cache-primary-key:
     description: The key to save the cache under
     value: ${{ steps.restore.outputs.cache-primary-key }}
+  cache-hit:
+    description: Whether today's entry was restored exactly
+    value: ${{ steps.restore.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
+    - name: Today
+      id: today
+      shell: bash
+      run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
     - name: Restore ccache
       id: restore
       uses: actions/cache/restore@v4
       with:
         path: ${{ runner.temp }}/ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.key }}-${{ github.run_id }}
+        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.key }}-${{ steps.today.outputs.date }}
         restore-keys: |
           ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.key }}-
 
@@ -63,4 +76,6 @@ runs:
           echo "CCACHE_NOHASHDIR=true"
           echo "ROOST_COMPILER_LAUNCHER=ccache"
         } >> "$GITHUB_ENV"
-        ccache --zero-stats >/dev/null 2>&1 || true
+        # $GITHUB_ENV reaches the next steps only: name the directory here.
+        # The job prints the counters after its build.
+        CCACHE_DIR="$RUNNER_TEMP/ccache" ccache --zero-stats >/dev/null

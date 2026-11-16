@@ -121,6 +121,9 @@ jobs:
       - name: Build
         run: cmake --build --preset tsan-qt
 
+      - name: Compiler cache hits
+        run: ccache --show-stats
+
       - name: Test
         run: ctest --preset tsan-qt
 
@@ -140,7 +143,7 @@ jobs:
       # Scheduled runs on trunk only; the run is not a pull request, so the
       # ref is what tells a branch dispatch from the nightly.
       - name: Save the compiler cache
-        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' }}
+        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' && steps.ccache.outputs.cache-primary-key != '' && steps.ccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/ccache
@@ -203,6 +206,9 @@ jobs:
       - name: Build
         run: cmake --build --preset asan-ubsan
 
+      - name: Compiler cache hits
+        run: ccache --show-stats
+
       # The frame budget is a timing on real hardware: a shared runner is
       # about twice as slow and noisy, so here it only prints its numbers.
       - name: Test
@@ -216,7 +222,7 @@ jobs:
       # Scheduled runs on trunk only; the run is not a pull request, so the
       # ref is what tells a branch dispatch from the nightly.
       - name: Save the compiler cache
-        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' }}
+        if: ${{ always() && github.event_name == 'schedule' && github.ref == 'refs/heads/trunk' && steps.ccache.outputs.cache-primary-key != '' && steps.ccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/ccache
