@@ -115,8 +115,6 @@ protected:
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
 
 private:
-    // Asks for a frame, after the writes that updatePaintNode reads.
-    void requestRender();
     void handleKey(QKeyEvent* event, EKeyAction action);
     // Whether the program tracks the mouse now.
     bool mouseTracked() const;

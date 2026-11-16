@@ -5,7 +5,6 @@
 #include <QPromise>
 #include <QtLogging>
 
-#include <deque>
 #include <limits>
 #include <utility>
 
@@ -48,23 +47,8 @@ rpc::Error Internal(QString message) {
 // client, the sessions and the channels waiting for their snapshot. Its
 // methods run only in that thread.
 class IoThread::Worker : public QObject {
-    Q_OBJECT
-
 public:
     explicit Worker(IoThread& owner) : Owner_(owner) {}
-
-    // Runs the tasks posted so far, in order. IoThread wakes it by name (see
-    // Post), so that the posted event holds nothing but the name.
-    Q_INVOKABLE void DrainTasks() {
-        std::deque<Task> tasks;
-        {
-            const std::scoped_lock lock(Owner_.TaskMutex_);
-            tasks.swap(Owner_.Tasks_);
-        }
-        for (auto& task : tasks) {
-            task(*this);
-        }
-    }
 
     void Connect(const SharedPromise<rpc::Result>& promise,
                  const QString& socketPath) {
@@ -348,22 +332,15 @@ IoThread::IoThread(QObject* parent)
 
 IoThread::~IoThread() { Stop(); }
 
-bool IoThread::Post(Task task) {
+template <typename TFn>
+bool IoThread::Post(TFn&& fn) {
     if (!Worker_) {
         return false;
     }
-    bool wake = false;
-    {
-        const std::scoped_lock lock(TaskMutex_);
-        wake = Tasks_.empty();
-        Tasks_.push_back(std::move(task));
-    }
-    // Only the first task of a batch wakes the thread; DrainTasks takes the
-    // rest with it. The string form builds the event inside QtCore.
-    if (wake) {
-        QMetaObject::invokeMethod(Worker_.get(), "DrainTasks",
-                                  Qt::QueuedConnection);
-    }
+    Worker* worker = Worker_.get();
+    QMetaObject::invokeMethod(
+        worker, [worker, fn = std::forward<TFn>(fn)]() mutable { fn(*worker); },
+        Qt::QueuedConnection);
     return true;
 }
 
@@ -436,14 +413,12 @@ void IoThread::Stop() {
     }
     // Queued behind the calls already made, so each of them has been handled
     // when this runs; what it leaves pending it fails.
-    {
-        const std::scoped_lock lock(TaskMutex_);
-        Tasks_.push_back([](Worker& worker) {
-            worker.Reset(QStringLiteral("the IO thread is stopped"));
-        });
-    }
-    QMetaObject::invokeMethod(Worker_.get(), "DrainTasks",
-                              Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(
+        Worker_.get(),
+        [worker = Worker_.get()] {
+            worker->Reset(QStringLiteral("the IO thread is stopped"));
+        },
+        Qt::BlockingQueuedConnection);
     Thread_.quit();
     Thread_.wait();
     // The thread is gone: the worker can be destroyed from here, and its
@@ -452,5 +427,3 @@ void IoThread::Stop() {
 }
 
 }  // namespace roost
-
-#include "io_thread.moc"
