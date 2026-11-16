@@ -17,19 +17,19 @@
 | M6 | уведомления, PR по worktree, keep-awake |
 | M7 | упаковка: `.dmg` и AppImage |
 
-Шаги и критерий готовности каждого этапа — `docs/design.md` §13. После M7: адаптеры Codex и OpenCode, удалённый `roostd` через ssh, редактор связей, сторонний плагин как проверка API.
+Шаги и критерий готовности каждого этапа — `docs/design/13-plan.md` (§13). После M7: адаптеры Codex и OpenCode, удалённый `roostd` через ssh, редактор связей, сторонний плагин как проверка API.
 
 ## Документы
 
 Два файла, оба на русском (код и идентификаторы — английские). Переводить будем, если проект станет публичным.
 
 - `docs/prior-art.md` — разбор cc-fleet, libghostty-vt, agterm, herdr, протоколов агентов и UI-стеков: как устроено, где болит, что забираем. Со ссылками `файл:строка` на исходники изучаемых проектов.
-- `docs/design.md` — архитектура roost и ADR. Источник истины по решениям; расхождение кода с ним — повод править одно из двух осознанно.
+- `docs/design.md` — индекс архитектуры roost: разделы лежат в `docs/design/`, ADR — в §15 и `docs/design/adr/`. Источник истины по решениям; расхождение кода с ним — повод править одно из двух осознанно.
 
 ## Стек
 
 - C++23, **только clang** (17+; на macOS — Apple clang из Xcode). Один компилятор — один набор диагностик.
-- Qt 6, только модули под LGPLv3: Core, Gui, Qml, Quick, Quick Controls, Network, Test. Линковка динамическая. Модули только под GPL не подключать — список в `docs/design.md`.
+- Qt 6, только модули под LGPLv3: Core, Gui, Qml, Quick, Quick Controls, Network, Test. Линковка динамическая. Модули только под GPL не подключать — список в `docs/design/10-licenses.md`.
 - libghostty-vt — из исходников через CMake `FetchContent` на теге `vt-1.0.1`. Нужен Zig ≥ 0.17.0.
 - Сборка только через пресеты: `cmake --preset dev`, `ctest --preset dev`. Пресеты: `dev`, `asan-ubsan`, `tsan`, `release`; санитайзеры гоняются в CI. TSan гоняется только ночью: `nightly-tsan.yml`, пресет `tsan-qt` с Qt под TSan, тесты с меткой `threads`; правила — `.claude/rules/threads.md`.
 - Форматирование — `.clang-format` (google, 4 пробела) для C++, `qmlformat` для QML. Нейминг — `.clang-tidy`, `readability-identifier-naming`.
