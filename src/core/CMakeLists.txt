@@ -2,6 +2,7 @@
 add_library(roost_core STATIC
     bus.cpp
     frame.cpp
+    ghostty_result.cpp
     protocol.cpp
     pty.cpp
     rpc.cpp

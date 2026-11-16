@@ -13,8 +13,7 @@ namespace roost {
 class VtTerminal;
 
 // A copy of what one frame of a VtTerminal shows: the rows, the cells, the
-// cursor (design.md §3). A renderer owns one and reads it while the terminal
-// goes on taking bytes.
+// cursor (design.md §3). It is read while the terminal goes on taking bytes.
 //
 // An update has two phases. BeginUpdate reads the terminal and needs
 // whatever serializes access to it; EndUpdate finishes the copy and touches
@@ -25,7 +24,8 @@ class VtTerminal;
 // Dirty flags are set by updates and stay set until Clean, so a frame that
 // was not drawn is not forgotten. The terminal's own dirty state is consumed
 // by BeginUpdate: two states fed from one terminal split the changes between
-// them.
+// them, and the second one misses what the first took. So there is one state
+// per terminal; TerminalSession owns it.
 class VtRenderState {
 public:
     struct Rgb {
@@ -47,9 +47,13 @@ public:
         bool Italic = false;
         bool Underline = false;
         bool Inverse = false;
+        bool Faint = false;
+        bool Strikethrough = false;
+        bool Invisible = false;
     };
 
     struct Row {
+        // True for every row while Dirty() is Full.
         bool Dirty = false;
         QList<Cell> Cells;
     };
