@@ -10,6 +10,7 @@
 
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
+#include "core/vt_terminal.hpp"
 
 namespace roost {
 
@@ -98,6 +99,18 @@ public:
                 std::uint32_t channel, quint16 columns, quint16 rows) {
         if (!Rpc_) {
             Settle(*promise, rpc::Result(std::unexpected(NotConnected())));
+            return;
+        }
+        // The same bounds as the terminals; checked first, so that roostd's
+        // PTY and the local terminal never end up at different sizes.
+        if (columns < 1 || rows < 1 || columns > VtTerminal::MAX_SIZE ||
+            rows > VtTerminal::MAX_SIZE) {
+            Settle(*promise,
+                   rpc::Result(std::unexpected(rpc::Error::FromCode(
+                       rpc::EErrorCode::InvalidParams,
+                       QStringLiteral(
+                           "the size must be from 1 to %1 columns and rows")
+                           .arg(VtTerminal::MAX_SIZE)))));
             return;
         }
         Rpc_->Request(QStringLiteral("session.resize"),
@@ -209,7 +222,10 @@ private:
         }
         Entry entry{
             .Session = std::shared_ptr<TerminalSession>(std::move(*session)),
-            .UpdatePending = std::make_shared<std::atomic<bool>>(false),
+            // Pending from the start: no Updated until the opener's first
+            // AcknowledgeUpdate, so the GUI never hears of a channel it has
+            // not yet been given.
+            .UpdatePending = std::make_shared<std::atomic<bool>>(true),
         };
         {
             const std::scoped_lock lock(Owner_.AckMutex_);
@@ -264,8 +280,12 @@ private:
                    OpenResult(std::unexpected(Internal(
                        QStringLiteral("the session closed: ") + reason))));
         }
-        Forget(number);
-        emit Owner_.Closed(number, reason);
+        // A channel that never reached the GUI (still opening, or failed to
+        // open) is not announced.
+        if (Sessions_.contains(number)) {
+            Forget(number);
+            emit Owner_.Closed(number, reason);
+        }
     }
 
     void OnDisconnected(const QString& reason) {

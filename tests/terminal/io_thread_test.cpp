@@ -9,6 +9,10 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFutureWatcher>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -25,6 +29,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/frame.hpp"
+#include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
 #include "terminal/io_thread.hpp"
 
@@ -113,6 +119,97 @@ int AnswersSeen(const OpenedSession& opened) {
     const auto match = ANSWER_COUNT.match(Screen(opened));
     return match.hasMatch() ? match.captured(1).toInt() : 0;
 }
+
+// A stand-in for roostd that answers every request with an empty result,
+// session.open with channel 7, and sends nothing else.
+class AnswersOnlyServer : public QObject {
+public:
+    bool Listen(const QString& path) {
+        Path_ = path;
+        connect(&Server_, &QLocalServer::newConnection, this, [this] {
+            Socket_ = Server_.nextPendingConnection();
+            connect(Socket_, &QLocalSocket::readyRead, this,
+                    [this] { OnReadable(); });
+        });
+        return Server_.listen(path);
+    }
+
+    const QString& Path() const { return Path_; }
+
+    bool Answered(const QString& method) const {
+        return Answered_.contains(method);
+    }
+
+private:
+    void OnReadable() {
+        Decoder_.Feed(Socket_->readAll());
+        while (const auto frame = Decoder_.Next()) {
+            if (frame->Kind != EFrameKind::Rpc) {
+                continue;
+            }
+            const QJsonObject request =
+                QJsonDocument::fromJson(frame->Body).object();
+            const QString method = request.value("method").toString();
+            const QJsonValue result =
+                method == QStringLiteral("session.open")
+                    ? QJsonValue(QJsonObject{{"channel", 7}})
+                    : QJsonValue(QJsonObject{});
+            const QJsonObject answer{{"jsonrpc", "2.0"},
+                                     {"id", request.value("id")},
+                                     {"result", result}};
+            Socket_->write(
+                EncodeFrame(EFrameKind::Rpc, QJsonDocument(answer).toJson(
+                                                 QJsonDocument::Compact))
+                    .value());
+            Answered_ << method;
+        }
+    }
+
+    QLocalServer Server_;
+    QLocalSocket* Socket_ = nullptr;
+    FrameDecoder Decoder_;
+    QString Path_;
+    QStringList Answered_;
+};
+
+// Stops the process while alive and lets it go on at the end of the scope, so
+// that a failing check does not leave a stopped daemon for cleanup to wait on.
+class Paused {
+public:
+    explicit Paused(QProcess& process)
+        : Pid_(static_cast<pid_t>(process.processId())) {
+        ::kill(Pid_, SIGSTOP);
+    }
+    ~Paused() { Resume(); }
+    Paused(const Paused&) = delete;
+    Paused& operator=(const Paused&) = delete;
+
+    void Resume() {
+        if (Pid_ > 0) {
+            ::kill(Pid_, SIGCONT);
+            Pid_ = 0;
+        }
+    }
+
+private:
+    pid_t Pid_;
+};
+
+// Counts the Updated signals in the thread that emits them, so the count is
+// exact at any moment and does not wait for the GUI event loop.
+std::atomic<int>& CountUpdates(const IoThread& io, std::atomic<int>& counter) {
+    QObject::connect(
+        &io, &IoThread::Updated, &io, [&counter] { ++counter; },
+        Qt::DirectConnection);
+    return counter;
+}
+
+int Code(const rpc::Result& result) { return result ? 0 : result.error().Code; }
+
+constexpr int CONNECTION_LOST =
+    static_cast<int>(protocol::EErrorCode::ConnectionLost);
+// How long to watch for something that must not happen.
+constexpr int QUIET_MS = 500;
 
 }  // namespace
 
@@ -290,30 +387,164 @@ private slots:
     void UpdatedIsCoalescedUntilAcknowledged() {
         const auto io = ConnectedIo();
         QVERIFY(io);
-        int updates = 0;
-        connect(io.get(), &IoThread::Updated, this, [&updates] { ++updates; });
+        std::atomic<int> updates{0};
+        CountUpdates(*io, updates);
         QVERIFY(OpenAndSettle(*io));
-        // Let what is in flight arrive, and start from an acknowledged state.
-        QTest::qWait(300);
         io->AcknowledgeUpdate(Opened_.Channel);
-        QTest::qWait(100);
-        updates = 0;
         const int before = AnswersSeen(Opened_);
 
         // Each q makes the TUI ask again and redraw: many output frames.
         constexpr int keys = 20;
         for (int i = 0; i < keys; ++i) {
             io->SendInput(Opened_.Channel, "q");
-            QTest::qWait(10);
+            QTRY_VERIFY_WITH_TIMEOUT(AnswersSeen(Opened_) >= before + i + 1,
+                                     TIMEOUT_MS);
         }
-        QTRY_VERIFY_WITH_TIMEOUT(AnswersSeen(Opened_) >= before + keys / 2,
-                                 TIMEOUT_MS);
-        QTest::qWait(300);
-        QCOMPARE(updates, 1);
+        QCOMPARE(updates.load(), 1);
 
         io->AcknowledgeUpdate(Opened_.Channel);
         io->SendInput(Opened_.Channel, "q");
-        QTRY_COMPARE_WITH_TIMEOUT(updates, 2, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(updates.load(), 2, TIMEOUT_MS);
+    }
+
+    void OutputRightAfterOpenRaisesNoUpdatedUntilTheFirstAcknowledge() {
+        const auto io = ConnectedIo();
+        QVERIFY(io);
+        std::atomic<int> updates{0};
+        CountUpdates(*io, updates);
+        // The TUI's first output (its queries answered) lands after Open.
+        QVERIFY(OpenAndSettle(*io));
+        QCOMPARE(updates.load(), 0);
+
+        io->AcknowledgeUpdate(Opened_.Channel);
+        io->SendInput(Opened_.Channel, "q");
+        QTRY_COMPARE_WITH_TIMEOUT(updates.load(), 1, TIMEOUT_MS);
+    }
+
+    void ClosingAChannelDetachesItsTerminal() {
+        const auto io = ConnectedIo();
+        QVERIFY(io);
+        std::atomic<int> updates{0};
+        CountUpdates(*io, updates);
+        QVERIFY(OpenAndSettle(*io));
+        io->AcknowledgeUpdate(Opened_.Channel);
+
+        const QFuture<rpc::Result> closing = io->Close(Opened_.Channel);
+        QVERIFY(WaitFor(closing));
+        const rpc::Result& closed = closing.result();
+        QVERIFY2(closed, qPrintable(Why(closed)));
+
+        const QString before = Screen(Opened_);
+        io->SendInput(Opened_.Channel, "hello");
+        // Proves that nothing happens: a fixed window.
+        QTest::qWait(QUIET_MS);
+        QCOMPARE(Screen(Opened_), before);
+        QVERIFY(!Screen(Opened_).contains("input hello"));
+        QCOMPARE(updates.load(), 0);
+    }
+
+    void AResizeRaisesUpdated() {
+        const auto io = ConnectedIo();
+        QVERIFY(io);
+        std::atomic<int> updates{0};
+        CountUpdates(*io, updates);
+        QVERIFY(OpenAndSettle(*io));
+        io->AcknowledgeUpdate(Opened_.Channel);
+        QCOMPARE(updates.load(), 0);
+
+        // The size stays the same, so the TUI gets no SIGWINCH and draws
+        // nothing: the only source of Updated is the resize itself.
+        const QFuture<rpc::Result> resizing =
+            io->Resize(Opened_.Channel, COLUMNS, ROWS);
+        QVERIFY(WaitFor(resizing));
+        const rpc::Result& resized = resizing.result();
+        QVERIFY2(resized, qPrintable(Why(resized)));
+        QCOMPARE(updates.load(), 1);
+    }
+
+    void AResizeOutOfRangeFailsWithoutReachingThePty() {
+        const auto io = ConnectedIo();
+        QVERIFY(io);
+        QVERIFY(OpenAndSettle(*io));
+        QVERIFY(Screen(Opened_).contains("size 80x24"));
+
+        // A stopped daemon answers nothing: a request that was sent would
+        // stay pending, one that failed up front finishes at once.
+        {
+            const Paused paused(*Daemon_);
+            for (const auto& [columns, rows] :
+                 {std::pair<quint16, quint16>{0, ROWS},
+                  {COLUMNS, 0},
+                  {2001, ROWS},
+                  {COLUMNS, 2001}}) {
+                const QFuture<rpc::Result> resizing =
+                    io->Resize(Opened_.Channel, columns, rows);
+                QVERIFY2(
+                    WaitFor(resizing, 1000),
+                    qPrintable(QStringLiteral("%1x%2").arg(columns).arg(rows)));
+                QCOMPARE(Code(resizing.result()),
+                         static_cast<int>(rpc::EErrorCode::InvalidParams));
+            }
+        }
+        QVERIFY(ProbeColumn(Opened_).endsWith("\x1b[1;80H\x1b[0m"));
+        // The PTY kept its size: a later redraw would show a new one.
+        io->SendInput(Opened_.Channel, "q");
+        QTRY_VERIFY_WITH_TIMEOUT(AnswersSeen(Opened_) >= 2, TIMEOUT_MS);
+        QVERIFY(Screen(Opened_).contains("size 80x24"));
+    }
+
+    void StopFailsAnOpenWaitingForItsSnapshotWithConnectionLost() {
+        // The real roostd sends the snapshot in the same pass as the answer,
+        // so the window in which an Open waits for it cannot be held there: a
+        // stand-in answers session.open and never sends the snapshot.
+        AnswersOnlyServer server;
+        QVERIFY(server.Listen(Dir_->filePath("fake.sock")));
+        IoThread io;
+        const QFuture<rpc::Result> hello = io.Connect(server.Path());
+        QVERIFY(WaitFor(hello));
+        QVERIFY(hello.result());
+
+        const QFuture<OpenResult> opening =
+            io.Open("claude", SESSION_ID, COLUMNS, ROWS);
+        QTRY_VERIFY_WITH_TIMEOUT(server.Answered("session.open"), TIMEOUT_MS);
+        // The answer has been sent; give the IO thread time to process it.
+        QTest::qWait(QUIET_MS);
+        QVERIFY(!opening.isFinished());
+
+        io.Stop();
+        QVERIFY(opening.isFinished());
+        QCOMPARE(opening.resultCount(), 1);
+        const OpenResult& result = opening.result();
+        QVERIFY(!result);
+        QCOMPARE(result.error().Code, CONNECTION_LOST);
+    }
+
+    void RoostdGoingAwayEmitsDisconnectedAndFailsPendingFutures() {
+        const auto io = ConnectedIo();
+        QVERIFY(io);
+        QVERIFY(OpenAndSettle(*io));
+        QStringList disconnected;
+        connect(
+            io.get(), &IoThread::Disconnected, this,
+            [&disconnected](const QString& reason) { disconnected << reason; });
+
+        QFuture<rpc::Result> resizing;
+        QFuture<OpenResult> opening;
+        {
+            // Both requests stay unanswered until the daemon is gone.
+            const Paused paused(*Daemon_);
+            resizing = io->Resize(Opened_.Channel, 100, 30);
+            opening = io->Open("claude", "bg-0a1b2c3d", COLUMNS, ROWS);
+            QVERIFY(!WaitFor(resizing, 200));
+            Daemon_->kill();
+        }
+        QVERIFY(Daemon_->waitForFinished(TIMEOUT_MS));
+        QVERIFY(WaitFor(resizing));
+        QVERIFY(WaitFor(opening));
+        QTRY_COMPARE_WITH_TIMEOUT(disconnected.size(), 1, TIMEOUT_MS);
+        QCOMPARE(Code(resizing.result()), CONNECTION_LOST);
+        QVERIFY(!opening.result());
+        QCOMPARE(opening.result().error().Code, CONNECTION_LOST);
     }
 
     void DestroyingWithAChannelAndPendingRequestsNeitherCrashesNorHangs() {
