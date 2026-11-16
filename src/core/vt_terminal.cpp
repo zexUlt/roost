@@ -140,6 +140,8 @@ std::expected<VtTerminal, QString> VtTerminal::FromSnapshot(
     return VtTerminal(std::move(state));
 }
 
+void* VtTerminal::NativeHandle() const { return State_->Terminal; }
+
 void VtTerminal::SetResponseHandler(ResponseHandler handler) {
     State_->Respond = std::move(handler);
     // Without a callback the library ignores queries instead of answering.
