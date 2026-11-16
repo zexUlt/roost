@@ -36,11 +36,19 @@ public:
         friend bool operator==(const Rgb&, const Rgb&) = default;
     };
 
-    // One grid cell. The second half of a wide character has an empty Text.
+    // How many columns a cell takes, as the library says. A wide character
+    // is a Wide cell followed by a SpacerTail; a SpacerHead is the blank
+    // cell at the end of a soft-wrapped line that a wide character did not
+    // fit into.
+    enum class EWidth { Narrow, Wide, SpacerTail, SpacerHead };
+
+    // One grid cell. The second half of a wide character (SpacerTail) has an
+    // empty Text.
     // A color the cell does not choose is empty: use the default one.
     // Palette colors come resolved; inverse and bold are not applied to them.
     struct Cell {
         QString Text;
+        EWidth Width = EWidth::Narrow;
         std::optional<Rgb> Foreground;
         std::optional<Rgb> Background;
         bool Bold = false;

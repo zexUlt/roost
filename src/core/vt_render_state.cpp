@@ -77,6 +77,28 @@ struct VtRenderState::State {
                                   static_cast<qsizetype>(text.len));
         }
 
+        GhosttyCell raw = 0;
+        GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+        if (ghostty_render_state_row_cells_get(
+                Cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw) ==
+                GHOSTTY_SUCCESS &&
+            ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide) ==
+                GHOSTTY_SUCCESS) {
+            switch (wide) {
+                case GHOSTTY_CELL_WIDE_WIDE:
+                    cell.Width = VtRenderState::EWidth::Wide;
+                    break;
+                case GHOSTTY_CELL_WIDE_SPACER_TAIL:
+                    cell.Width = VtRenderState::EWidth::SpacerTail;
+                    break;
+                case GHOSTTY_CELL_WIDE_SPACER_HEAD:
+                    cell.Width = VtRenderState::EWidth::SpacerHead;
+                    break;
+                default:
+                    break;
+            }
+        }
+
         GhosttyColorRgb color{};
         if (ghostty_render_state_row_cells_get(
                 Cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &color) ==

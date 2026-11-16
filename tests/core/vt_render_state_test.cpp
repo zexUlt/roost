@@ -85,6 +85,29 @@ private slots:
         QCOMPARE(cells[5].Text, QString());
     }
 
+    void CellWidthComesFromTheLibrary() {
+        auto terminal = NewTerminal();
+        // A wide character, "a", then a wide character in the last column
+        // of row 0: it does not fit, so the line soft-wraps and the last
+        // cell becomes a spacer head.
+        terminal.Write(
+            QByteArrayView("\xe6\xbc\xa2"
+                           "abcdefg\xe6\xbc\xa2"));
+        VtRenderState state;
+        Update(state, terminal);
+
+        const auto rows = state.Rows();
+        using EWidth = VtRenderState::EWidth;
+        const auto& cells = rows[0].Cells;
+        QCOMPARE(cells[0].Width, EWidth::Wide);
+        QCOMPARE(cells[1].Width, EWidth::SpacerTail);
+        QCOMPARE(cells[2].Width, EWidth::Narrow);
+        QCOMPARE(cells[COLUMNS - 1].Width, EWidth::SpacerHead);
+        QCOMPARE(cells[COLUMNS - 1].Text, QString());
+        QCOMPARE(rows[1].Cells[0].Width, EWidth::Wide);
+        QCOMPARE(rows[1].Cells[0].Text, QStringLiteral("漢"));
+    }
+
     void StylesAndColors() {
         auto terminal = NewTerminal();
         terminal.Write(
