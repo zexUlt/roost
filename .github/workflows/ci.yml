@@ -47,6 +47,33 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/${{ matrix.preset }}/_deps
+            build/${{ matrix.preset }}/.ninja_log
+            build/${{ matrix.preset }}/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-${{ matrix.preset }}-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -107,16 +134,46 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
 
       - name: Install clang-tidy
         run: pipx install "clang-tidy==${CLANG_TIDY_VERSION}"
+
+      # libghostty-vt takes about two minutes to build. Zig's own cache does
+      # not hit on a fresh clone (touching the sources' mtimes alone is
+      # enough to miss), so the finished build is cached instead:
+      # _deps holds the sources and the library, .ninja_log tells ninja that
+      # the zig build command already ran.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/dev/_deps
+            build/dev/.ninja_log
+            build/dev/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-dev-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
 
       # A build, not just a configure: the libghostty-vt headers come out of
       # zig build and the moc files out of the build as well.
       - name: Build
         run: |
           cmake --preset dev
-          cmake --build --preset dev
+          targets=$(ninja -C build/dev -t targets all |
+            sed -nE 's/^(zig_build_lib_vt|[A-Za-z0-9_-]+_autogen):.*/\1/p')
+          echo "$targets"
+          cmake --build --preset dev --target $targets
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
       # The PyPI clang-tidy does not know where the macOS SDK is.

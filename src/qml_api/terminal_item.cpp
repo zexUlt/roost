@@ -125,11 +125,13 @@ void TerminalItem::paste(const QString& text) {
     if (!Session_ || text.isEmpty()) {
         return;
     }
-    std::expected<QByteArray, QString> bytes;
+    bool bracketed = false;
     {
+        // Only the mode needs the terminal.
         const auto lock = Session_->Lock();
-        bytes = Session_->EncodePaste(lock, text);
+        bracketed = Session_->BracketedPaste(lock);
     }
+    const auto bytes = VtTerminal::EncodePaste(text, bracketed);
     if (!bytes) {
         qWarning("TerminalItem: %s", qPrintable(bytes.error()));
         return;
