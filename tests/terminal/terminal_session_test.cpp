@@ -103,12 +103,13 @@ std::vector<QByteArray> SmallChunks(const QByteArray& stream,
     return chunks;
 }
 
-QStringList& Failures() {
+// Used only where debug-build checks run.
+[[maybe_unused]] QStringList& Failures() {
     static QStringList failures;
     return failures;
 }
 
-void RecordFailure(const char* message) {
+[[maybe_unused]] void RecordFailure(const char* message) {
     Failures().append(QString::fromUtf8(message));
 }
 
