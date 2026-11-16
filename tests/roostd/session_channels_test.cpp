@@ -36,6 +36,8 @@ using namespace std::chrono_literals;
 namespace {
 
 constexpr int TIMEOUT_MS = 5000;
+// How long a test waits to see that something does not happen.
+constexpr int NOTHING_HAPPENS_MS = 300;
 // Prints 3000 lines in six bursts, so that a second window can open the
 // session while the output goes on, then "done", and waits.
 constexpr const char* STREAM_SCRIPT =
@@ -641,7 +643,14 @@ private slots:
         QVERIFY(stranger->WaitDump(1, "answers da1=1 cpr=1"));
         stranger->Rpc.SendInput(1, "q");
         QVERIFY(stranger->WaitDump(1, "answers da1=2 cpr=2"));
-        QVERIFY(!owner->Dump(1).contains("input"));
+        // The owner's program did not get the stranger's q: it would ask
+        // again and count a third answer. q draws no input row, so the
+        // answers are what tells; a leaked q may arrive late, hence the
+        // window.
+        QTest::qWait(NOTHING_HAPPENS_MS);
+        const QByteArray ownerScreen = owner->Dump(1);
+        QVERIFY2(ownerScreen.contains("answers da1=2 cpr=2"),
+                 ownerScreen.constData());
     }
 
     void InputForAnUnknownChannelIsDropped() {

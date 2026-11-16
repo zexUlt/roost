@@ -37,13 +37,15 @@ void Write(TerminalSession& session, QByteArrayView bytes) {
     session.Write(lock, bytes);
 }
 
-// The modifier Qt reports for the Control key on this platform: on macOS it
-// names the Command key, and Control is Meta.
-Qt::KeyboardModifier ControlKey() {
-    return roost::QtKeyOptions::ForThisPlatform().SwapControlAndMeta
-               ? Qt::MetaModifier
-               : Qt::ControlModifier;
-}
+// The modifier Qt delivers for the physical Control key, written out per
+// platform on purpose: deriving it from the options under test would pass
+// whatever they said. On macOS Qt names the Command key Control and the
+// Control key Meta.
+#ifdef Q_OS_MACOS
+constexpr Qt::KeyboardModifier CONTROL_KEY = Qt::MetaModifier;
+#else
+constexpr Qt::KeyboardModifier CONTROL_KEY = Qt::ControlModifier;
+#endif
 
 }  // namespace
 
@@ -124,7 +126,7 @@ private slots:
         QCOMPARE(Last(input), QByteArray("a"));
         QVERIFY(Press(Qt::Key_A, Qt::ShiftModifier, "A"));
         QCOMPARE(Last(input), QByteArray("A"));
-        QVERIFY(Press(Qt::Key_C, ControlKey(), "\x03"));
+        QVERIFY(Press(Qt::Key_C, CONTROL_KEY, "\x03"));
         QCOMPARE(Last(input), QByteArray("\x03"));
         QVERIFY(Press(Qt::Key_Return, {}, "\r"));
         QCOMPARE(Last(input), QByteArray("\r"));
@@ -132,6 +134,35 @@ private slots:
         QCOMPARE(Last(input), QByteArray("\x1b[Z"));
         QCOMPARE(input.count(), 5);
     }
+
+    void OptionActsAsAlt() {
+        Show(NewSession());
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        // macOS composes with Option: Qt gives "≈" for Option+X. As Alt the
+        // key is ESC x.
+#ifdef Q_OS_MACOS
+        const QString composed = QString::fromUtf8("\xe2\x89\x88");
+#else
+        const QString composed = "x";
+#endif
+        QVERIFY(Press(Qt::Key_X, Qt::AltModifier, composed));
+        QCOMPARE(input.count(), 1);
+        QCOMPARE(Last(input), QByteArray("\x1bx"));
+    }
+
+#ifdef Q_OS_MACOS
+    void CommandKeyTypesNothing() {
+        Show(NewSession());
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        // Qt::ControlModifier is Command on macOS: Cmd+X is the application's,
+        // not a Ctrl+X, and not the letter either. (Cmd+C is the copy key,
+        // taken by the item; see terminal_item_selection_test.)
+        QVERIFY(!Press(Qt::Key_X, Qt::ControlModifier, "x"));
+        QCOMPARE(input.count(), 0);
+    }
+#endif
 
     void NothingEmittedForWhatEncodesToNothing() {
         Show(NewSession());

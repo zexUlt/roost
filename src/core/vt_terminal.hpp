@@ -66,16 +66,20 @@ public:
     // them. Snapshots of terminals with equal dumps may still differ in bytes,
     // since those carry ids the library assigns.
     std::expected<QByteArray, QString> Dump() const;
-    // What to write to the program for a paste of this text, by the
-    // terminal's bracketed paste mode (2004): wrapped in ESC[200~ ... ESC[201~
-    // when it is on; with newlines turned into carriage returns when it is
-    // off. Control bytes that could end the bracket or inject commands (ESC,
-    // NUL, DEL, ...) become spaces either way, so the text cannot break out.
-    // It is not ghostty_terminal_paste: that writes through the terminal's
-    // response handler, which the window's copy must not have (it would
-    // answer queries twice), and it refuses unsafe text instead of cleaning
-    // it.
-    std::expected<QByteArray, QString> EncodePaste(QStringView text) const;
+    // Whether the program turned bracketed paste (mode 2004) on; false too
+    // when the library cannot say.
+    bool BracketedPaste() const;
+    // What to write to the program for a paste of this text: wrapped in
+    // ESC[200~ ... ESC[201~ when `bracketed`; with newlines turned into
+    // carriage returns when not. It needs no terminal, so the caller may do it
+    // outside the session's lock, after reading BracketedPaste under it.
+    // Control bytes that could end the bracket or inject commands (ESC, NUL,
+    // DEL, ...) become spaces either way, so the text cannot break out. It is
+    // not ghostty_terminal_paste: that writes through the terminal's response
+    // handler, which the window's copy must not have (it would answer queries
+    // twice), and it refuses unsafe text instead of cleaning it.
+    static std::expected<QByteArray, QString> EncodePaste(QStringView text,
+                                                          bool bracketed);
 
     // The modes that decide what the mouse wheel does (design.md §3).
     struct WheelModes {

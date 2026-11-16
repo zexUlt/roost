@@ -117,11 +117,6 @@ public:
     std::expected<void, QString> ScrollViewportToBottom(const Locked& lock);
     // False while the viewport is scrolled into history.
     std::expected<bool, QString> ViewportAtBottom(const Locked& lock) const;
-    // What to write to the program for a paste, by the terminal's bracketed
-    // paste mode; see VtTerminal::EncodePaste. Holds the lock for the whole
-    // encoding, which is linear in the text.
-    std::expected<QByteArray, QString> EncodePaste(const Locked& lock,
-                                                   QStringView text) const;
     // The selection, kept in the terminal; see VtTerminal for the gestures.
     // The viewport and the selection change, so the caller asks for a frame
     // after each of these.
@@ -150,6 +145,9 @@ public:
     // The terminal drops it by itself when its text is erased, which the GUI
     // thread learns of from this. Readable from any thread.
     bool SelectionAtLastRender() const { return SelectionAtLastRender_; }
+    // Whether bracketed paste is on, for VtTerminal::EncodePaste, which then
+    // runs without the lock. False for a wrong token.
+    bool BracketedPaste(const Locked& lock) const;
     // The first phase of a render update, for the render thread: the state
     // may be finished and read after the token is gone.
     std::expected<void, QString> BeginRenderUpdate(const Locked& lock);

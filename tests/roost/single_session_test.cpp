@@ -38,9 +38,11 @@ constexpr int ROWS = 24;
 const QRegularExpression ANSWERED_ONCE(
     QStringLiteral(R"(answers da1=1 cpr=1(?!\d))"));
 
-// What row 5 of the TUI shows once "hello" has arrived, whatever the split.
-const QRegularExpression TYPED_HELLO(
-    QStringLiteral(R"(input (?:o|lo|llo|ello|hello) total=5(?!\d))"));
+// What row 5 of the TUI shows once "world" has arrived, whatever the split. No
+// 'e', 'q' or 'x': fake_tui takes them for commands when one arrives in a read
+// of its own.
+const QRegularExpression TYPED_WORLD(
+    QStringLiteral(R"(input (?:d|ld|rld|orld|world) total=5(?!\d))"));
 
 // A fake `claude`, steered by the files next to it: agents.json is what
 // `agents` prints, and `attach <id>` runs fake_tui.
@@ -196,6 +198,28 @@ private:
         QCOMPARE(Item_->rows(), rows);
     }
 
+    // Runs the executable with the given leading arguments and --smoke, and
+    // returns what it printed; the session mode shows itself by the line
+    // that SingleSession logs on Opened.
+    void RunExecutableInSessionMode(const QStringList& sessionArguments) {
+        QProcessEnvironment environment = DaemonEnvironment();
+        environment.insert("QT_QPA_PLATFORM", "offscreen");
+        environment.insert("QML_DISABLE_DISK_CACHE", "1");
+        QProcess roost;
+        roost.setProcessEnvironment(environment);
+        roost.start(ROOST_PATH, sessionArguments + QStringList{"--smoke"});
+        QVERIFY(roost.waitForFinished(TIMEOUT_MS * 3));
+        QCOMPARE(roost.exitStatus(), QProcess::NormalExit);
+        const QString errors = QString::fromUtf8(roost.readAllStandardError());
+        const QString output = QString::fromUtf8(roost.readAllStandardOutput());
+        QVERIFY2(roost.exitCode() == 0, qPrintable(errors));
+        const QString opened =
+            QStringLiteral("roost: session %1 of claude opened")
+                .arg(SESSION_ID);
+        QVERIFY2(errors.contains(opened) || output.contains(opened),
+                 qPrintable(errors + output));
+    }
+
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<QQuickWindow> Window_;
@@ -247,14 +271,16 @@ private slots:
         Settle();
         const int drawnBefore = DrawnFrames_;
 
-        for (const char key : {'h', 'e', 'l', 'l', 'o'}) {
+        for (const char key : {'w', 'o', 'r', 'l', 'd'}) {
             QTest::keyClick(Window_.get(), key);
+            // Each key in a read of its own: the split a slow runner makes.
+            QTest::qWait(50);
         }
 
         // The TUI shows the bytes of its last read: keys sent one by one may
-        // arrive in several reads, so the tail of "hello" and the total of 5.
+        // arrive in several reads, so the tail of "world" and the total of 5.
         QTRY_VERIFY_WITH_TIMEOUT(
-            Screen(Controller_->Session()).contains(TYPED_HELLO), TIMEOUT_MS);
+            Screen(Controller_->Session()).contains(TYPED_WORLD), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(DrawnFrames_ > drawnBefore, TIMEOUT_MS);
     }
 
@@ -311,15 +337,29 @@ private slots:
     }
 
     void TheExecutableOpensASessionAndExitsAfterTheFirstFrame() {
-        QProcessEnvironment environment = DaemonEnvironment();
-        environment.insert("QT_QPA_PLATFORM", "offscreen");
-        environment.insert("QML_DISABLE_DISK_CACHE", "1");
-        QProcess roost;
-        roost.setProcessEnvironment(environment);
-        roost.start(ROOST_PATH, {"--session", SESSION_ID, "--smoke"});
-        QVERIFY(roost.waitForFinished(TIMEOUT_MS * 3));
-        QCOMPARE(roost.exitStatus(), QProcess::NormalExit);
-        QVERIFY2(roost.exitCode() == 0, roost.readAllStandardError());
+        RunExecutableInSessionMode({"--session", SESSION_ID});
+    }
+
+    // Qt takes the single dash for its own session-manager option.
+    void TheExecutableTakesTheSingleDashSession() {
+        RunExecutableInSessionMode({"-session", SESSION_ID});
+    }
+
+    void TheDaemonDyingFailsTheControllerOnce() {
+        ShowAndStart();
+        QTRY_VERIFY_WITH_TIMEOUT(Controller_->Session() != nullptr, TIMEOUT_MS);
+        Settle();
+
+        Daemon_->kill();
+        QVERIFY(Daemon_->waitForFinished(TIMEOUT_MS));
+
+        QTRY_COMPARE_WITH_TIMEOUT(Failed_->count(), 1, TIMEOUT_MS);
+        QVERIFY(Failed_->first().first().toString().startsWith(
+            "connection to roostd lost"));
+        // Nothing more follows the first end.
+        QTest::qWait(300);
+        QCOMPARE(Failed_->count(), 1);
+        QVERIFY(Ended_->isEmpty());
     }
 
     // roostd opens any id of a known agent, since the fake attach runs for
