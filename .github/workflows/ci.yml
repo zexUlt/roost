@@ -81,8 +81,13 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # The frame budget (tests/bench/frame_budget_test.cpp) is a timing on
+      # real hardware: a shared runner is about twice as slow and noisy, so
+      # here it only prints its numbers.
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
+        env:
+          ROOST_FRAME_BUDGET: report
 
       - name: Qt is linked dynamically
         run: tools/check_qt_dynamic.sh build/${{ matrix.preset }}

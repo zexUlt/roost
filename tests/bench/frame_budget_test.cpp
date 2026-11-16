@@ -538,6 +538,16 @@ private slots:
             "the %.1f ms budget is not checked",
             result.Gui.P95, P95_BUDGET_MS);
 #else
+        if (qEnvironmentVariable("ROOST_FRAME_BUDGET") == "report") {
+            // A shared CI runner is a slower, noisy virtual machine: the time
+            // is printed there, and the budget is checked on a developer's
+            // machine (see ci.yml).
+            qInfo(
+                "frame budget [gated]: ROOST_FRAME_BUDGET=report, p95 %.3f ms "
+                "and busy %.3f ms against the %.1f ms budget are not checked",
+                result.Gui.P95, result.Busy, P95_BUDGET_MS);
+            return;
+        }
         QVERIFY2(result.Busy >= 0,
                  "no GUI-thread CPU time on this platform: the whole-thread "
                  "check cannot run");
