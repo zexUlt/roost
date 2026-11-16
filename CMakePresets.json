@@ -77,8 +77,9 @@
       "inherits": "base",
       "configurePreset": "tsan",
       "environment": {
-        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1",
+        "TSAN_OPTIONS": "halt_on_error=0:second_deadlock_stack=1",
         "QTEST_FUNCTION_TIMEOUT": "300000",
+        "QTEST_DISABLE_STACK_DUMP": "1",
         "QSG_RENDER_LOOP": "threaded"
       },
       "filter": { "include": { "label": "threads" } },
