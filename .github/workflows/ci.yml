@@ -115,7 +115,7 @@ jobs:
       # zig build and the moc files out of the build as well.
       - name: Build
         run: |
-          cmake --preset dev
+          cmake --preset dev "-DGHOSTTY_ZIG_BUILD_FLAGS=-Doptimize=ReleaseSafe;--summary;all"
           cmake --build --preset dev
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
