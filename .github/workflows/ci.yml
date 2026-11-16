@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [dev, asan-ubsan, release]
+        preset: [dev, asan-ubsan, tsan, release]
     steps:
       - uses: actions/checkout@v4
 
