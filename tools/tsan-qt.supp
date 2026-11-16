@@ -1,0 +1,12 @@
+# ThreadSanitizer suppressions for the nightly run against a Qt built with
+# TSan (test preset tsan-qt). Only races whose top frame on both sides is in
+# Qt, each with a link to the Qt source that shows the bug
+# (.claude/rules/threads.md). Always race_top: a plain race: entry matches any
+# frame, and Qt calls roost's items synchronously from these functions.
+
+# Qt 6.8, software scene graph, threaded render loop: on every expose the GUI
+# thread writes QSGSoftwareRenderThread::exposedWindow with no lock, while the
+# running render thread reads it in run().
+# Write: https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L792
+# Read:  https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L345-L352
+race_top:QSGSoftwareThreadedRenderLoop::handleExposure

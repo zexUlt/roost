@@ -98,6 +98,7 @@
       "inherits": "tsan",
       "configurePreset": "tsan-qt",
       "environment": {
+        "TSAN_OPTIONS": "halt_on_error=0:second_deadlock_stack=1:suppressions=${sourceDir}/tools/tsan-qt.supp",
         "QSG_RENDER_LOOP": "threaded"
       },
       "filter": { "include": { "label": "threads" } }
