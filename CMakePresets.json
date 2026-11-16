@@ -77,9 +77,11 @@
       "inherits": "base",
       "configurePreset": "tsan",
       "environment": {
-        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1",
-        "QTEST_FUNCTION_TIMEOUT": "300000"
+        "TSAN_OPTIONS": "halt_on_error=0:second_deadlock_stack=1",
+        "QTEST_FUNCTION_TIMEOUT": "300000",
+        "QTEST_DISABLE_STACK_DUMP": "1"
       },
+      "filter": { "include": { "label": "threads_std" } },
       "execution": { "noTestsAction": "error", "timeout": 900 }
     },
     { "name": "release", "inherits": "base", "configurePreset": "release" }

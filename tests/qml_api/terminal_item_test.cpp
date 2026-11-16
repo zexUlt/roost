@@ -135,11 +135,12 @@ class TerminalItemTest : public QObject {
     Q_OBJECT
 
 private:
-    // One frame, drawn: asks for it and waits for the swap.
+    // One frame: asks for it and waits for its sync, so the render state is
+    // the one this frame read. A swap could be of a frame synced before.
     bool DrawFrame() {
-        QSignalSpy swapped(&Window_, &QQuickWindow::frameSwapped);
+        QSignalSpy synced(&Window_, &QQuickWindow::afterSynchronizing);
         Item_->update();
-        return swapped.wait(FRAME_TIMEOUT_MS);
+        return synced.wait(FRAME_TIMEOUT_MS);
     }
 
     void Show(std::shared_ptr<TerminalSession> session,

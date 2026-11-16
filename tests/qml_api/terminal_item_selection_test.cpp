@@ -137,11 +137,12 @@ private:
         return text == KEPT ? QString() : text;
     }
 
-    // Waits for a frame the item asked for.
+    // Waits for the sync of a frame the item asked for: a swap could be of a
+    // frame synced before, and leave the render state behind.
     bool DrawFrame() {
-        QSignalSpy swapped(&Window_, &QQuickWindow::frameSwapped);
+        QSignalSpy synced(&Window_, &QQuickWindow::afterSynchronizing);
         Item_->update();
-        return swapped.wait(HAPPENS_MS);
+        return synced.wait(HAPPENS_MS);
     }
 
     QString RowText(int row) const {

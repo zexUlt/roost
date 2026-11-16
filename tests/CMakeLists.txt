@@ -149,6 +149,22 @@ target_compile_definitions(single_session_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 
+# The tests whose code runs on more than one thread carry the label
+# `threads`. Those whose threads synchronise only through std primitives also
+# carry `threads_std`: the tsan preset runs them on every change. The rest hand
+# data over through Qt (the event queue, the scene-graph sync), which TSan sees
+# only in a Qt built with it; they run nightly against such a Qt.
+set_tests_properties(terminal_session_test PROPERTIES LABELS "threads;threads_std")
+set_tests_properties(
+    io_thread_test
+    single_session_test
+    terminal_item_test
+    terminal_item_input_test
+    terminal_item_mouse_test
+    terminal_item_selection_test
+    PROPERTIES LABELS threads
+)
+
 # Memory of one terminal in the window (docs/prior-art.md §2.5). Not a test:
 # not registered with ctest, built only where it can read the process memory.
 if(APPLE)

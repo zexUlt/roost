@@ -31,7 +31,7 @@
 - C++23, **только clang** (17+; на macOS — Apple clang из Xcode). Один компилятор — один набор диагностик.
 - Qt 6, только модули под LGPLv3: Core, Gui, Qml, Quick, Quick Controls, Network, Test. Линковка динамическая. Модули только под GPL не подключать — список в `docs/design.md`.
 - libghostty-vt — из исходников через CMake `FetchContent` на теге `vt-1.0.1`. Нужен Zig ≥ 0.17.0.
-- Сборка только через пресеты: `cmake --preset dev`, `ctest --preset dev`. Пресеты: `dev`, `asan-ubsan`, `tsan`, `release`; санитайзеры гоняются в CI.
+- Сборка только через пресеты: `cmake --preset dev`, `ctest --preset dev`. Пресеты: `dev`, `asan-ubsan`, `tsan`, `release`; санитайзеры гоняются в CI. `tsan` в PR гоняет тесты с меткой `threads_std`, ночной прогон с Qt под TSan — с меткой `threads`; правила — `.claude/rules/threads.md`.
 - Форматирование — `.clang-format` (google, 4 пробела) для C++, `qmlformat` для QML. Нейминг — `.clang-tidy`, `readability-identifier-naming`.
 - Тесты: Qt Test для C++, Qt Quick Test для QML, `QT_QPA_PLATFORM=offscreen`. Тесты не трогают настоящий `~/.config/roost` и `~/.config/cc-fleet`.
 
