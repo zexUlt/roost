@@ -15,6 +15,7 @@
 #include "roostd/dump.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
+#include "roostd/session_channels.hpp"
 
 namespace {
 
@@ -108,6 +109,9 @@ int main(int argc, char* argv[]) {
         qWarning("roostd: %s", qUtf8Printable(problem));
     }
     qInfo("roostd: %zu plugins loaded", plugins.Registry().Plugins().size());
+
+    // Gone before the plugins.
+    roost::SessionChannels sessions(server, plugins);
 
     return QCoreApplication::exec();
 }

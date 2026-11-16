@@ -61,6 +61,11 @@ roost_add_qt_test(agents_test roostd/agents_test.cpp roostd_lib)
 target_compile_definitions(agents_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(agents_test fixture_backend)
+roost_add_qt_test(session_channels_test roostd/session_channels_test.cpp roostd_lib)
+target_compile_definitions(session_channels_test PRIVATE
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(session_channels_test fake_tui fixture_backend)
 
 # The real binary, started as a process.
 roost_add_qt_test(roostd_test roostd/roostd_test.cpp)
