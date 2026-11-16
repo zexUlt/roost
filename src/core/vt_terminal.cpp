@@ -209,4 +209,37 @@ std::expected<QByteArray, QString> VtTerminal::Dump() const {
     return dump;
 }
 
+std::expected<QByteArray, QString> VtTerminal::EncodePaste(
+    QStringView text) const {
+    GhosttyTerminalModeConfig mode{.mode = GHOSTTY_MODE_BRACKETED_PASTE,
+                                   .value = false};
+    if (const auto result = ghostty_terminal_get(
+            State_->Terminal, GHOSTTY_TERMINAL_DATA_MODE, &mode);
+        result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot read the paste mode", result));
+    }
+    // The library cleans the buffer in place.
+    QByteArray data = text.toUtf8();
+    std::size_t needed = 0;
+    auto result =
+        ghostty_paste_encode(data.data(), static_cast<std::size_t>(data.size()),
+                             mode.value, nullptr, 0, &needed);
+    if (result == GHOSTTY_SUCCESS) {
+        return QByteArray();
+    }
+    if (result != GHOSTTY_OUT_OF_SPACE) {
+        return std::unexpected(Failed("cannot encode the paste", result));
+    }
+    QByteArray encoded(static_cast<qsizetype>(needed), Qt::Uninitialized);
+    std::size_t written = 0;
+    result = ghostty_paste_encode(
+        data.data(), static_cast<std::size_t>(data.size()), mode.value,
+        reinterpret_cast<uint8_t*>(encoded.data()), needed, &written);
+    if (result != GHOSTTY_SUCCESS) {
+        return std::unexpected(Failed("cannot encode the paste", result));
+    }
+    encoded.truncate(static_cast<qsizetype>(written));
+    return encoded;
+}
+
 }  // namespace roost

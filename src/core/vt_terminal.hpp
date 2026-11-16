@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
+#include <QStringView>
 
 #include <cstddef>
 #include <expected>
@@ -63,13 +64,25 @@ public:
     // them. Snapshots of terminals with equal dumps may still differ in bytes,
     // since those carry ids the library assigns.
     std::expected<QByteArray, QString> Dump() const;
+    // What to write to the program for a paste of this text, by the
+    // terminal's bracketed paste mode (2004): wrapped in ESC[200~ ... ESC[201~
+    // when it is on; with newlines turned into carriage returns when it is
+    // off. Control bytes that could end the bracket or inject commands (ESC,
+    // NUL, DEL, ...) become spaces either way, so the text cannot break out.
+    // It is not ghostty_terminal_paste: that writes through the terminal's
+    // response handler, which the window's copy must not have (it would
+    // answer queries twice), and it refuses unsafe text instead of cleaning
+    // it.
+    std::expected<QByteArray, QString> EncodePaste(QStringView text) const;
 
 private:
+    friend class VtKeyEncoder;
     friend class VtRenderState;
     struct State;
 
     explicit VtTerminal(std::unique_ptr<State> state);
-    // The libghostty-vt handle (a GhosttyTerminal), for VtRenderState only,
+    // The libghostty-vt handle (a GhosttyTerminal), for VtRenderState and
+    // VtKeyEncoder only,
     // so that no library type shows in this header.
     void* NativeHandle() const;
 

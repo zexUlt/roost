@@ -90,6 +90,22 @@ std::expected<QByteArray, QString> TerminalSession::Dump(
     return Terminal_.Dump();
 }
 
+std::expected<void, QString> TerminalSession::SyncKeyEncoder(
+    const Locked& lock, VtKeyEncoder& encoder) const {
+    if (!Check(lock, "SyncKeyEncoder")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return encoder.SyncFrom(Terminal_);
+}
+
+std::expected<QByteArray, QString> TerminalSession::EncodePaste(
+    const Locked& lock, QStringView text) const {
+    if (!Check(lock, "EncodePaste")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.EncodePaste(text);
+}
+
 std::expected<void, QString> TerminalSession::BeginRenderUpdate(
     const Locked& lock) {
     if (!Check(lock, "BeginRenderUpdate")) {

@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/vt_key_encoder.hpp"
 #include "core/vt_render_state.hpp"
 #include "core/vt_terminal.hpp"
 
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
+#include <QStringView>
 
 #include <expected>
 #include <memory>
@@ -90,6 +92,16 @@ public:
                                         quint16 rows);
     // For tests: see VtTerminal::Dump.
     std::expected<QByteArray, QString> Dump(const Locked& lock) const;
+    // Copies the terminal's input modes (cursor keys, keypad, Kitty keyboard
+    // protocol, ...) into the encoder. The GUI thread does it under a short
+    // lock before encoding a key; the encoding itself then needs no lock.
+    std::expected<void, QString> SyncKeyEncoder(const Locked& lock,
+                                                VtKeyEncoder& encoder) const;
+    // What to write to the program for a paste, by the terminal's bracketed
+    // paste mode; see VtTerminal::EncodePaste. Holds the lock for the whole
+    // encoding, which is linear in the text.
+    std::expected<QByteArray, QString> EncodePaste(const Locked& lock,
+                                                   QStringView text) const;
     // The first phase of a render update, for the render thread: the state
     // may be finished and read after the token is gone.
     std::expected<void, QString> BeginRenderUpdate(const Locked& lock);
