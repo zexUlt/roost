@@ -164,6 +164,14 @@ private:
         QCOMPARE(RowText(0), QStringLiteral("L22"));
     }
 
+    void SendWheel(int delta) {
+        QWheelEvent wheel(
+            QPointF(5, 5), QPointF(Window_.mapToGlobal(QPoint(5, 5))), {},
+            QPoint(0, delta), Qt::NoButton, {}, Qt::NoScrollPhase, false);
+        wheel.setAccepted(false);
+        QCoreApplication::sendEvent(&Window_, &wheel);
+    }
+
     void SendKey(Qt::Key key, Qt::KeyboardModifiers mods,
                  const QString& text = {}) {
         QKeyEvent press(QEvent::KeyPress, key, mods, text);
@@ -477,6 +485,90 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return AtBottom(); }, HAPPENS_MS));
         QTest::mouseRelease(&Window_, Qt::LeftButton, {},
                             QPoint(10, ROWS * Cell_.Height + 5));
+    }
+
+    void ALostGrabEndsTheDragAndKeepsTheSelection() {
+        ShowWithScrollback();
+        QTest::mousePress(&Window_, Qt::LeftButton, {}, CellRight(2, 4));
+        QTest::mouseMove(&Window_, CellLeft(0, 1));
+        QTest::mouseMove(&Window_, QPoint(CellLeft(0, 0).x(), -5));
+        QVERIFY(QTest::qWaitFor([&] { return !AtBottom(); }, HAPPENS_MS));
+
+        // The scene takes the grab away, with no release.
+        Item_->ungrabMouse();
+        QVERIFY(DrawFrame());
+        const auto top = RowText(0);
+        QTest::qWait(NOT_HAPPENS_MS * 2);
+        QVERIFY(DrawFrame());
+        QCOMPARE(RowText(0), top);
+        QVERIFY(Item_->hasSelection());
+        QVERIFY(Copied().endsWith(QStringLiteral("L26")));
+        QTest::mouseRelease(&Window_, Qt::LeftButton, {},
+                            QPoint(CellLeft(0, 0).x(), -5));
+    }
+
+    void TheWheelGoingToTheProgramAsReportsClearsTheSelection() {
+        auto session = NewSession();
+        Write(*session, "hello world\x1b[?1000h\x1b[?1006h");
+        Show(session);
+        Drag(CellLeft(0, 0), CellRight(4, 0), Qt::ShiftModifier);
+        QVERIFY(Item_->hasSelection());
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel(NOTCH);
+        QVERIFY(input.count() > 0);
+        QVERIFY(!Item_->hasSelection());
+        QCOMPARE(Copied(), QString());
+    }
+
+    void TheWheelGoingToTheProgramAsArrowsClearsTheSelection() {
+        auto session = NewSession();
+        Write(*session, "\x1b[?1049h\x1b[?1007hhello world");
+        Show(session);
+        Drag(CellLeft(0, 0), CellRight(4, 0));
+        QVERIFY(Item_->hasSelection());
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel(NOTCH);
+        QCOMPARE(input.count(), 1);
+        QVERIFY(!Item_->hasSelection());
+        QCOMPARE(Copied(), QString());
+    }
+
+    void TheWheelOnTheAlternateScreenWithoutArrowsKeepsTheSelection() {
+        auto session = NewSession();
+        Write(*session, "\x1b[?1049h\x1b[?1007lhello world");
+        Show(session);
+        Drag(CellLeft(0, 0), CellRight(4, 0));
+        QSignalSpy input(Item_, &TerminalItem::input);
+
+        SendWheel(NOTCH);
+        QCOMPARE(input.count(), 0);
+        QVERIFY(Item_->hasSelection());
+        QCOMPARE(Copied(), QStringLiteral("hello"));
+    }
+
+    void ASessionSwapEndsTheDrag() {
+        ShowWithScrollback();
+        // The new session tracks the mouse: what the old gesture's button
+        // does next is its to see, not the old selection's.
+        auto next = NewSession();
+        Write(*next, "other text\x1b[?1002h\x1b[?1006h");
+        QTest::mousePress(&Window_, Qt::LeftButton, {}, CellRight(2, 4));
+        QTest::mouseMove(&Window_, CellLeft(0, 1));
+        QTest::mouseMove(&Window_, QPoint(CellLeft(0, 0).x(), -5));
+        QVERIFY(QTest::qWaitFor([&] { return !AtBottom(); }, HAPPENS_MS));
+        QVERIFY(Item_->hasSelection());
+
+        Item_->setSession(next);
+        Session_ = next;
+        QVERIFY(!Item_->hasSelection());
+        QSignalSpy input(Item_, &TerminalItem::input);
+        QTest::mouseMove(&Window_, CellRight(8, 0));
+        QTest::qWait(NOT_HAPPENS_MS);
+        QTest::mouseRelease(&Window_, Qt::LeftButton, {}, CellRight(8, 0));
+        QCOMPARE(input.count(), 2);
+        QVERIFY(!Item_->hasSelection());
     }
 
     void FinishingASelectionCopiesOnlyWhereGhosttyDoes() {

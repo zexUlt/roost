@@ -76,9 +76,9 @@ TerminalItem::TerminalItem(QQuickItem* parent) : QQuickItem(parent) {
 }
 
 void TerminalItem::setSession(std::shared_ptr<TerminalSession> session) {
+    // The old gesture is not the new session's.
+    endDrag();
     Session_ = std::move(session);
-    Selecting_ = false;
-    AutoscrollTimer_.stop();
     syncHasSelection();
     // The old session's rows are still in the scene; a clean session on the
     // same grid would leave them there.
@@ -325,8 +325,7 @@ void TerminalItem::mousePressEvent(QMouseEvent* event) {
     if (mouseTracked() && !event->modifiers().testFlag(Qt::ShiftModifier)) {
         // What the program does with the mouse is its own: no selection
         // stays, as in Ghostty.
-        Selecting_ = false;
-        AutoscrollTimer_.stop();
+        endDrag();
         runSelection([this](const auto& lock) {
             if (const auto reset = Session_->ResetSelectionGesture(lock);
                 !reset) {
@@ -368,6 +367,13 @@ void TerminalItem::mouseMoveEvent(QMouseEvent* event) {
     event->setAccepted(
         reportMouse(EMouseAction::Motion, heldButton(event->buttons()),
                     event->position(), event->buttons(), event->modifiers()));
+}
+
+void TerminalItem::mouseUngrabEvent() { endDrag(); }
+
+void TerminalItem::endDrag() {
+    Selecting_ = false;
+    AutoscrollTimer_.stop();
 }
 
 void TerminalItem::startSelection(QMouseEvent* event) {
@@ -552,9 +558,18 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
                             modes.AlternateScroll;
         std::expected<void, QString> synced;
         if (modes.MouseTracking) {
-            synced = Session_->SyncMouseEncoder(lock, *MouseEncoder_, geometry);
+            // The wheel goes to the program: the selection (made with Shift)
+            // goes, as in Ghostty.
+            synced = Session_->ClearSelection(lock);
+            if (synced) {
+                synced =
+                    Session_->SyncMouseEncoder(lock, *MouseEncoder_, geometry);
+            }
         } else if (arrows) {
-            // Fixed bytes, nothing to sync.
+            // Fixed bytes, nothing to sync; the arrows are typing.
+            if (up != 0) {
+                synced = Session_->ClearSelection(lock);
+            }
         } else if (up != 0) {
             // Nothing is tracking, and the alternate screen does not turn the
             // wheel into keys: the user looks through the scrollback. Only
@@ -567,8 +582,10 @@ void TerminalItem::wheelEvent(QWheelEvent* event) {
             return;
         }
     }
+    // Whatever the wheel did to the selection, QML and the frame hear of it.
+    syncHasSelection();
+    update();
     if (scrolled) {
-        update();
         return;
     }
 

@@ -43,7 +43,10 @@ namespace roost {
 // the terminal's, so it follows the text through output and scrollback.
 // Command+C (macOS) or Ctrl+Shift+C copies it as plain text, with wrapped
 // lines joined, and sends nothing to the program; with no selection they do
-// nothing. A key that sends bytes clears the selection. On Linux, as in
+// nothing. A key that sends bytes clears the selection, and so does a wheel
+// that goes to the program (reports while it tracks the mouse, arrow keys on
+// the alternate screen); scrolling the scrollback keeps it. A drag that loses
+// the mouse grab ends where it is. On Linux, as in
 // Ghostty, a finished selection also goes to the selection clipboard
 // (copy-on-select = primary); on macOS it does not. A click takes the focus.
 //
@@ -102,6 +105,9 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    // The grab is gone (window, popup or scene took it) with no release: the
+    // drag is over, and what it selected stays.
+    void mouseUngrabEvent() override;
     void hoverMoveEvent(QHoverEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void geometryChange(const QRectF& newGeometry,
@@ -119,6 +125,9 @@ private:
     // scroll (the timer follows), and asks for a frame.
     void runSelection(const SelectionStep& step);
     void autoscrollTick();
+    // The drag stops: no more selection steps and no autoscroll. The
+    // selection made so far stays.
+    void endDrag();
     // Reads whether the terminal has a selection and tells QML if it changed.
     void syncHasSelection();
     // The left button press, its drag and its release, as selecting.
