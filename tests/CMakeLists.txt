@@ -97,7 +97,7 @@ target_compile_definitions(claude_adapter_test PRIVATE
 add_dependencies(claude_adapter_test claude-adapter)
 
 # The real roostd with the real Claude plugin, behind a fake `claude`.
-roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp claude_adapter_lib)
+roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp)
 target_compile_definitions(claude_e2e_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"

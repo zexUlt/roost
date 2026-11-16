@@ -16,7 +16,9 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -28,7 +30,6 @@
 #include <memory>
 #include <utility>
 
-#include "claude/backend/agents.hpp"
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
 #include "core/vt_terminal.hpp"
@@ -40,7 +41,28 @@ namespace {
 constexpr int TIMEOUT_MS = 10000;
 // Listing the real claude can take a while.
 constexpr int REAL_TIMEOUT_MS = 30000;
-constexpr const char* ANSWERED_ONCE = "answers da1=1 cpr=1";
+constexpr int REAL_ATTEMPTS = 3;
+// Each query answered once; a digit after the 1 would be more than once.
+const QRegularExpression ANSWERED_ONCE(
+    QStringLiteral(R"(answers da1=1 cpr=1(?!\d))"));
+
+// The sessions of agents.json as roostd lists them: the states mapped
+// (needs_input and blocked to blocked, done with busy to working), a session
+// without a name titled by its id.
+constexpr const char* EXPECTED_SESSIONS = R"json([
+  {"agent": "claude", "id": "bg-0a1b2c3d", "state": "working",
+   "title": "Fix the flaky test", "cwd": "/work/alpha",
+   "startedAt": 1790150000000},
+  {"agent": "claude", "id": "bg-1b2c3d4e", "state": "blocked",
+   "title": "Review the PR", "cwd": "/work/beta",
+   "startedAt": 1790150100000},
+  {"agent": "claude", "id": "bg-2c3d4e5f", "state": "done",
+   "title": "bg-2c3d4e5f", "cwd": "/work/gamma",
+   "startedAt": 1790150200000},
+  {"agent": "claude", "id": "bg-3d4e5f60", "state": "working",
+   "title": "Answer a question", "cwd": "/work/delta",
+   "startedAt": 1790150300000}
+])json";
 
 // A fake `claude`, steered by the files next to it: agents.json is what
 // `agents` prints, and each `attach <id>` adds the id to calls.
@@ -55,11 +77,6 @@ attach)
 *) exit 2 ;;
 esac
 )sh";
-
-QByteArray ReadFixture() {
-    QFile file(QStringLiteral(FIXTURES_DIR "/claude_agents.json"));
-    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
-}
 
 // Whether a roostd, perhaps still starting, answers hello at the path.
 bool Greets(const QString& socketPath) {
@@ -201,6 +218,23 @@ private:
             .split(u'\n', Qt::SkipEmptyParts);
     }
 
+    // The ids of the background sessions `claude agents --json --all` prints.
+    static QSet<QString> RealSessionIds() {
+        QProcess claude;
+        claude.start("claude", {"agents", "--json", "--all"});
+        QSet<QString> ids;
+        if (!claude.waitForFinished(20'000)) {
+            return ids;
+        }
+        for (const QJsonValue& entry :
+             QJsonDocument::fromJson(claude.readAllStandardOutput()).array()) {
+            if (entry.toObject().value("kind") == QJsonValue("background")) {
+                ids.insert(entry.toObject().value("id").toString());
+            }
+        }
+        return ids;
+    }
+
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<Window> Window_;
@@ -228,20 +262,13 @@ private slots:
         QVERIFY(WriteFakeClaude());
         QVERIFY(Launch(true));
 
-        // The sessions as the adapter maps the fixture, with their agent.
-        const auto listing = claude::ParseAgents(ReadFixture());
-        QVERIFY(listing);
-        QJsonArray expected;
-        for (const claude::Session& session : listing->Sessions) {
-            QJsonObject json = claude::ToJson(session);
-            json.insert("agent", "claude");
-            expected.append(json);
-        }
+        const QJsonArray expected =
+            QJsonDocument::fromJson(EXPECTED_SESSIONS).array();
         QCOMPARE(expected.size(), 4);
         const rpc::Result listed =
             Window_->Call("sessions.list", QJsonObject{});
         QVERIFY2(listed, qPrintable(Why(listed)));
-        QCOMPARE(listed->toObject().value("sessions"), QJsonValue(expected));
+        QCOMPARE(listed->toObject().value("sessions").toArray(), expected);
         QCOMPARE(listed->toObject().value("unavailable"),
                  QJsonValue(QJsonArray()));
 
@@ -256,13 +283,15 @@ private slots:
             opened->toObject().value("channel").toInt());
         QVERIFY(channel > 0);
 
-        QTRY_VERIFY_WITH_TIMEOUT(Window_->Dump(channel).contains(ANSWERED_ONCE),
-                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            QString::fromUtf8(Window_->Dump(channel)).contains(ANSWERED_ONCE),
+            TIMEOUT_MS);
         QCOMPARE(Calls(), QStringList{id});
         // Each query got exactly one answer: nothing more comes.
         QTest::qWait(500);
-        QVERIFY2(Window_->Dump(channel).contains(ANSWERED_ONCE),
-                 Window_->Dump(channel).constData());
+        QVERIFY2(
+            QString::fromUtf8(Window_->Dump(channel)).contains(ANSWERED_ONCE),
+            Window_->Dump(channel).constData());
         QCOMPARE(Calls(), QStringList{id});
     }
 
@@ -270,26 +299,32 @@ private slots:
         if (qgetenv("ROOST_REAL_CLAUDE") != "1") {
             QSKIP("set ROOST_REAL_CLAUDE=1 to list the real claude agents");
         }
-        QProcess claude;
-        claude.start("claude", {"agents", "--json", "--all"});
-        QVERIFY(claude.waitForFinished(20'000));
-        QSet<QString> expected;
-        for (const QJsonValue& entry :
-             QJsonDocument::fromJson(claude.readAllStandardOutput()).array()) {
-            if (entry.toObject().value("kind") == QJsonValue("background")) {
-                expected.insert(entry.toObject().value("id").toString());
-            }
+        if (QStandardPaths::findExecutable("claude").isEmpty()) {
+            QSKIP("claude is not on PATH");
         }
-
         QVERIFY(Launch(false));
-        const rpc::Result listed =
-            Window_->Call("sessions.list", QJsonObject{}, REAL_TIMEOUT_MS);
-        QVERIFY2(listed, qPrintable(Why(listed)));
-        QCOMPARE(listed->toObject().value("unavailable").toArray().size(), 0);
+        // The two listings are taken at different moments: retake both when
+        // the sessions changed in between.
+        QSet<QString> expected;
         QSet<QString> found;
-        for (const QJsonValue& session :
-             listed->toObject().value("sessions").toArray()) {
-            found.insert(session.toObject().value("id").toString());
+        for (int attempt = 0; attempt < REAL_ATTEMPTS; ++attempt) {
+            expected = RealSessionIds();
+            if (attempt == 0 && expected.isEmpty()) {
+                QSKIP("the real claude has no background sessions");
+            }
+            const rpc::Result listed =
+                Window_->Call("sessions.list", QJsonObject{}, REAL_TIMEOUT_MS);
+            QVERIFY2(listed, qPrintable(Why(listed)));
+            QCOMPARE(listed->toObject().value("unavailable").toArray().size(),
+                     0);
+            found.clear();
+            for (const QJsonValue& session :
+                 listed->toObject().value("sessions").toArray()) {
+                found.insert(session.toObject().value("id").toString());
+            }
+            if (found == expected) {
+                break;
+            }
         }
         QCOMPARE(found, expected);
         qInfo("real claude: %d sessions", static_cast<int>(found.size()));
