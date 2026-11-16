@@ -17,6 +17,10 @@ namespace {
 
 constexpr quint16 COLUMNS = 10;
 constexpr quint16 ROWS = 5;
+// Palette index 1 (SGR 31) of the default palette: #cc6666.
+constexpr quint8 RED_R = 204;
+constexpr quint8 RED_G = 102;
+constexpr quint8 RED_B = 102;
 
 VtTerminal NewTerminal() {
     auto terminal = VtTerminal::Create(COLUMNS, ROWS);
@@ -121,6 +125,35 @@ private slots:
         QVERIFY(!cells[3].Background.has_value());
     }
 
+    void FaintStrikethroughAndInvisible() {
+        auto terminal = NewTerminal();
+        terminal.Write(
+            "\x1b[2mF\x1b[0m"
+            "\x1b[9mS\x1b[0m"
+            "\x1b[8mH\x1b[0m"
+            "P");
+        VtRenderState state;
+        Update(state, terminal);
+
+        const auto rows = state.Rows();
+        const auto& cells = rows[0].Cells;
+        QVERIFY(cells[0].Faint);
+        QVERIFY(!cells[0].Strikethrough);
+        QVERIFY(!cells[0].Invisible);
+
+        QVERIFY(cells[1].Strikethrough);
+        QVERIFY(!cells[1].Faint);
+        QVERIFY(!cells[1].Invisible);
+
+        QVERIFY(cells[2].Invisible);
+        QVERIFY(!cells[2].Faint);
+        QVERIFY(!cells[2].Strikethrough);
+
+        QVERIFY(!cells[3].Faint);
+        QVERIFY(!cells[3].Strikethrough);
+        QVERIFY(!cells[3].Invisible);
+    }
+
     void PaletteColorComesResolved() {
         auto terminal = NewTerminal();
         terminal.Write("\x1b[31mR");
@@ -129,8 +162,89 @@ private slots:
 
         const auto rows = state.Rows();
         const auto& cell = rows[0].Cells[0];
+        // What libghostty-vt's default palette holds at index 1 (SGR 31),
+        // read once from this very library. A palette change in a library
+        // upgrade shows up here.
+        const VtRenderState::Rgb red{.R = RED_R, .G = RED_G, .B = RED_B};
         QVERIFY(cell.Foreground.has_value());
-        QVERIFY(!(*cell.Foreground == state.DefaultForeground()));
+        QVERIFY(*cell.Foreground == red);
+    }
+
+    void LongGraphemeComesWhole() {
+        auto terminal = NewTerminal();
+        // "e" and 30 combining acute accents: 61 bytes of UTF-8, more than
+        // the 32-byte first buffer, so the read takes the out-of-space path.
+        QByteArray bytes = "e";
+        QString expected = QStringLiteral("e");
+        for (int i = 0; i < 30; ++i) {
+            bytes += "\xcc\x81";
+            expected += QChar(0x0301);
+        }
+        terminal.Write(bytes);
+        VtRenderState state;
+        Update(state, terminal);
+
+        const auto rows = state.Rows();
+        QCOMPARE(rows[0].Cells[0].Text.size(), 31);
+        QCOMPARE(rows[0].Cells[0].Text, expected);
+    }
+
+    void NothingIsReadableBetweenBeginAndEnd() {
+        auto terminal = NewTerminal();
+        terminal.Write("\x1b[31mtext");
+        VtRenderState state;
+        Update(state, terminal);
+        QVERIFY(!state.Rows().isEmpty());
+
+        // The state of the earlier update must not leak out of the next one.
+        QVERIFY(state.BeginUpdate(terminal).has_value());
+        QCOMPARE(state.Columns(), quint16{0});
+        QVERIFY(state.Rows().isEmpty());
+        QCOMPARE(state.Dirty(), VtRenderState::EDirty::None);
+        const auto cursor = state.GetCursor();
+        QVERIFY(!cursor.Visible);
+        QVERIFY(!cursor.InViewport);
+        QVERIFY(state.DefaultForeground() == VtRenderState::Rgb{});
+        QVERIFY(state.DefaultBackground() == VtRenderState::Rgb{});
+
+        state.EndUpdate();
+        QCOMPARE(state.Columns(), COLUMNS);
+        QCOMPARE(state.Rows().size(), ROWS);
+    }
+
+    void TwoStatesOnOneTerminalSplitTheChanges() {
+        // Pins the library's behaviour: BeginUpdate consumes the terminal's
+        // dirty state, which is why a TerminalSession owns one state only.
+        auto terminal = NewTerminal();
+        VtRenderState first;
+        VtRenderState second;
+        Update(first, terminal);
+        first.Clean();
+        Update(second, terminal);
+        second.Clean();
+
+        terminal.Write("x");
+        Update(first, terminal);
+        Update(second, terminal);
+        QCOMPARE(DirtyRows(first), (QList<int>{0}));
+        QCOMPARE(second.Dirty(), VtRenderState::EDirty::None);
+        QVERIFY(DirtyRows(second).isEmpty());
+    }
+
+    // The library sets every row's own flag here as well, so this pins the
+    // result rather than the wrapper's Full branch, which no stream tried so
+    // far reaches; the branch follows render.h's documented invariant.
+    void FullDirtyMarksEveryRow() {
+        auto terminal = NewTerminal();
+        VtRenderState state;
+        Update(state, terminal);
+        state.Clean();
+        QCOMPARE(state.Dirty(), VtRenderState::EDirty::None);
+
+        QVERIFY(terminal.Resize(20, 8));
+        Update(state, terminal);
+        QCOMPARE(state.Dirty(), VtRenderState::EDirty::Full);
+        QCOMPARE(DirtyRows(state).size(), 8);
     }
 
     void CursorFollowsCup() {

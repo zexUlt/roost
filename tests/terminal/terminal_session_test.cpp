@@ -25,7 +25,9 @@ namespace {
 
 constexpr quint16 COLUMNS = 80;
 constexpr quint16 ROWS = 24;
-constexpr qsizetype STREAM_BYTES = 1 << 20;
+constexpr qsizetype STREAM_BYTES = 24 << 20;
+constexpr qsizetype MAX_CHUNK = 256;
+constexpr int MIN_OVERLAPPED_FRAMES = 200;
 
 std::unique_ptr<TerminalSession> NewSession() {
     auto session = TerminalSession::Create(COLUMNS, ROWS);
@@ -37,17 +39,16 @@ std::unique_ptr<TerminalSession> NewSession() {
 
 // Renders the way the render thread does: begin under the lock, the rest
 // without it.
-QList<VtRenderState::Row> Render(TerminalSession& session,
-                                 VtRenderState& state) {
+QList<VtRenderState::Row> Render(TerminalSession& session) {
     {
         const auto lock = session.Lock();
-        const auto begun = session.BeginRenderUpdate(lock, state);
+        const auto begun = session.BeginRenderUpdate(lock);
         if (!begun) {
             qFatal("%s", qPrintable(begun.error()));
         }
     }
-    state.EndUpdate();
-    return state.Rows();
+    session.EndRenderUpdate();
+    return session.RenderState().Rows();
 }
 
 QString RowText(const VtRenderState::Row& row) {
@@ -86,13 +87,16 @@ QByteArray Stream(std::uint32_t seed, qsizetype size) {
     return stream;
 }
 
-std::vector<QByteArray> Chunks(const QByteArray& stream, std::uint32_t seed) {
+// Chunks of 1 to MAX_CHUNK bytes, so that many writes fall between frames.
+std::vector<QByteArray> SmallChunks(const QByteArray& stream,
+                                    std::uint32_t seed) {
     std::mt19937 random(seed);
     std::vector<QByteArray> chunks;
     qsizetype at = 0;
     while (at < stream.size()) {
         const auto length = std::min<qsizetype>(
-            static_cast<qsizetype>(random() % 4096) + 1, stream.size() - at);
+            static_cast<qsizetype>(random() % MAX_CHUNK) + 1,
+            stream.size() - at);
         chunks.push_back(stream.mid(at, length));
         at += length;
     }
@@ -120,8 +124,7 @@ private slots:
             const auto lock = session->Lock();
             session->Write(lock, "hello \xe6\xbc\xa2\r\nsecond");
         }
-        VtRenderState state;
-        const auto texts = Texts(Render(*session, state));
+        const auto texts = Texts(Render(*session));
         QCOMPARE(texts.size(), ROWS);
         QCOMPARE(texts[0], QStringLiteral("hello 漢"));
         QCOMPARE(texts[1], QStringLiteral("second"));
@@ -129,40 +132,60 @@ private slots:
 
     void ResizeIsRendered() {
         const auto session = NewSession();
-        VtRenderState state;
         {
             const auto lock = session->Lock();
             QVERIFY(session->Resize(lock, 20, 8));
         }
-        QCOMPARE(Render(*session, state).size(), 8);
-        QCOMPARE(state.Columns(), quint16{20});
+        QCOMPARE(Render(*session).size(), 8);
+        QCOMPARE(session->RenderState().Columns(), quint16{20});
     }
 
     void RenderingWhileAnotherThreadWrites() {
         const auto session = NewSession();
         const auto stream = Stream(1, STREAM_BYTES);
-        const auto chunks = Chunks(stream, 2);
+        const auto chunks = SmallChunks(stream, 2);
 
+        std::atomic<qsizetype> written = 0;
         std::atomic<bool> done = false;
         std::thread writer([&] {
             for (const auto& chunk : chunks) {
-                const auto lock = session->Lock();
-                session->Write(lock, chunk);
+                {
+                    const auto lock = session->Lock();
+                    session->Write(lock, chunk);
+                }
+                written += chunk.size();
+                std::this_thread::yield();
             }
             done = true;
         });
 
-        VtRenderState state;
+        // No QCOMPARE or QVERIFY while the writer lives: a failed one returns
+        // from the slot and destroys what the thread still uses.
+        QStringList problems;
         int frames = 0;
+        int overlapped = 0;
+        qsizetype seen = 0;
         while (!done) {
-            const auto rows = Render(*session, state);
-            QCOMPARE(rows.size(), ROWS);
-            QCOMPARE(rows[0].Cells.size(), COLUMNS);
-            state.Clean();
+            const auto rows = Render(*session);
+            if (rows.size() != ROWS || rows[0].Cells.size() != COLUMNS) {
+                problems.append(
+                    QStringLiteral("a frame of %1 rows").arg(rows.size()));
+            }
+            session->CleanRenderState();
             ++frames;
+            // The writer wrote between this frame and the previous one.
+            const auto now = written.load();
+            if (now != seen) {
+                ++overlapped;
+                seen = now;
+            }
         }
         writer.join();
-        QVERIFY(frames > 0);
+        QVERIFY2(problems.isEmpty(), qPrintable(problems.join('\n')));
+        QVERIFY2(overlapped >= MIN_OVERLAPPED_FRAMES,
+                 qPrintable(QStringLiteral("%1 of %2 frames overlapped")
+                                .arg(overlapped)
+                                .arg(frames)));
 
         // The same stream fed to a terminal at once ends in the same place.
         auto reference = VtTerminal::Create(COLUMNS, ROWS);
@@ -172,7 +195,7 @@ private slots:
         QVERIFY(expected.BeginUpdate(*reference).has_value());
         expected.EndUpdate();
 
-        QCOMPARE(Texts(Render(*session, state)), Texts(expected.Rows()));
+        QCOMPARE(Texts(Render(*session)), Texts(expected.Rows()));
         const auto lock = session->Lock();
         const auto dump = session->Dump(lock);
         const auto expectedDump = reference->Dump();
@@ -195,10 +218,8 @@ private slots:
             original->Write(
                 lock, "snap \xe6\xbc\xa2\x1b[1;31m red\x1b[0m\r\nline two");
         }
-        VtRenderState restoredState;
-        VtRenderState originalState;
-        const auto texts = Texts(Render(**restored, restoredState));
-        QCOMPARE(texts, Texts(Render(*original, originalState)));
+        const auto texts = Texts(Render(**restored));
+        QCOMPARE(texts, Texts(Render(*original)));
         QCOMPARE(texts[0], QStringLiteral("snap 漢 red"));
         QCOMPARE(texts[1], QStringLiteral("line two"));
     }
@@ -221,8 +242,7 @@ private slots:
             const auto lock = other->Lock();
             mine->Write(lock, "must not land");
             QVERIFY(!mine->Resize(lock, 10, 10).has_value());
-            VtRenderState state;
-            QVERIFY(!mine->BeginRenderUpdate(lock, state).has_value());
+            QVERIFY(!mine->BeginRenderUpdate(lock).has_value());
             QVERIFY(!mine->Dump(lock).has_value());
         }
         QCOMPARE(caught.size(), 4);
@@ -231,8 +251,7 @@ private slots:
                      qPrintable(message));
         }
         // Nothing was written to the session that was given a foreign token.
-        VtRenderState state;
-        QCOMPARE(RowText(Render(*mine, state)[0]), QString());
+        QCOMPARE(RowText(Render(*mine)[0]), QString());
 
         // The right token still works.
         {
@@ -240,7 +259,7 @@ private slots:
             mine->Write(lock, "fine");
         }
         QCOMPARE(caught.size(), 4);
-        QCOMPARE(RowText(Render(*mine, state)[0]), QStringLiteral("fine"));
+        QCOMPARE(RowText(Render(*mine)[0]), QStringLiteral("fine"));
 
         TerminalSession::SetCheckHandler(previous);
 #endif

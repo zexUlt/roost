@@ -59,12 +59,6 @@ bool TerminalSession::Check(const Locked& lock, const char* method) const {
                              .constData());
         return false;
     }
-    if (!lock.Lock_.owns_lock()) {
-        Handler().load()(QByteArray("TerminalSession::" + QByteArray(method) +
-                                    ": the lock token does not hold the mutex")
-                             .constData());
-        return false;
-    }
 #else
     Q_UNUSED(lock)
     Q_UNUSED(method)
@@ -97,11 +91,19 @@ std::expected<QByteArray, QString> TerminalSession::Dump(
 }
 
 std::expected<void, QString> TerminalSession::BeginRenderUpdate(
-    const Locked& lock, VtRenderState& state) {
+    const Locked& lock) {
     if (!Check(lock, "BeginRenderUpdate")) {
         return std::unexpected(QStringLiteral("wrong lock token"));
     }
-    return state.BeginUpdate(Terminal_);
+    return RenderState_.BeginUpdate(Terminal_);
 }
+
+void TerminalSession::EndRenderUpdate() { RenderState_.EndUpdate(); }
+
+const VtRenderState& TerminalSession::RenderState() const {
+    return RenderState_;
+}
+
+void TerminalSession::CleanRenderState() { RenderState_.Clean(); }
 
 }  // namespace roost

@@ -1,5 +1,6 @@
 #include "core/vt_render_state.hpp"
 
+#include "core/ghostty_result.hpp"
 #include "core/vt_terminal.hpp"
 
 #include <ghostty/vt.h>
@@ -11,12 +12,6 @@
 namespace roost {
 
 namespace {
-
-QString Failed(const char* what, GhosttyResult result) {
-    return QStringLiteral("%1: error %2")
-        .arg(QLatin1StringView(what))
-        .arg(static_cast<int>(result));
-}
 
 VtRenderState::Rgb FromLibrary(GhosttyColorRgb color) {
     return {.R = color.r, .G = color.g, .B = color.b};
@@ -100,7 +95,11 @@ struct VtRenderState::State {
             GHOSTTY_SUCCESS) {
             cell.Bold = (style.flags & GHOSTTY_STYLE_FLAG_BOLD) != 0;
             cell.Italic = (style.flags & GHOSTTY_STYLE_FLAG_ITALIC) != 0;
+            cell.Faint = (style.flags & GHOSTTY_STYLE_FLAG_FAINT) != 0;
             cell.Inverse = (style.flags & GHOSTTY_STYLE_FLAG_INVERSE) != 0;
+            cell.Invisible = (style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE) != 0;
+            cell.Strikethrough =
+                (style.flags & GHOSTTY_STYLE_FLAG_STRIKETHROUGH) != 0;
             cell.Underline =
                 GHOSTTY_STYLE_UNDERLINE(style) != GHOSTTY_SGR_UNDERLINE_NONE;
         }
@@ -218,6 +217,8 @@ QList<VtRenderState::Row> VtRenderState::Rows() const {
                                  &State_->Iterator) != GHOSTTY_SUCCESS) {
         return rows;
     }
+    // After a full redraw the per-row flags mean nothing: every row is dirty.
+    const bool all = Dirty() == EDirty::Full;
     while (ghostty_render_state_row_iterator_next(State_->Iterator)) {
         Row row;
         bool dirty = false;
@@ -226,6 +227,7 @@ QList<VtRenderState::Row> VtRenderState::Rows() const {
                                          &dirty) == GHOSTTY_SUCCESS) {
             row.Dirty = dirty;
         }
+        row.Dirty = row.Dirty || all;
         if (ghostty_render_state_row_get(State_->Iterator,
                                          GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                                          &State_->Cells) == GHOSTTY_SUCCESS) {

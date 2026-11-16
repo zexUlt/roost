@@ -21,17 +21,19 @@ namespace roost {
 // Every method that touches the terminal takes a `Locked` token, which only
 // Lock() hands out and which holds the mutex until it is destroyed. Calling
 // such a method without the lock does not compile. In a debug build each
-// method also checks that the token is of this very session and still holds
-// the mutex, which catches what the types cannot: a token of another
-// session. A failed check calls the check handler, which by default is
-// fatal; release builds do not check.
+// method also checks that the token is of this very session, which catches
+// what the types cannot: a token of another session. A failed check calls the
+// check handler, which by default is fatal; release builds do not check.
+//
+// The session also owns the one VtRenderState of its terminal: beginning an
+// update consumes the terminal's dirty state, so a second state would miss
+// the changes the first took. Exactly one thread renders a session. Several
+// panes on one session must share its single dirty state, which a later
+// milestone handles.
 //
 // Threads: the IO thread writes under the lock; the GUI thread takes it
 // briefly to sync; the render thread begins an update under the lock, drops
-// it, and finishes and reads the VtRenderState without it. The render state
-// belongs to the renderer, not to the session: several panes may show one
-// session, each with its own dirty flags, and the render phase needs no
-// terminal, so the session has no reason to hold it.
+// it, and finishes and reads the render state without it.
 //
 // A session cannot be copied or moved: tokens point at it.
 class TerminalSession {
@@ -87,17 +89,28 @@ public:
                                         quint16 rows);
     // For tests: see VtTerminal::Dump.
     std::expected<QByteArray, QString> Dump(const Locked& lock) const;
-    // The first phase of an update: the state may be finished and read after
-    // the token is gone.
-    std::expected<void, QString> BeginRenderUpdate(const Locked& lock,
-                                                   VtRenderState& state);
+    // The first phase of a render update, for the render thread: the state
+    // may be finished and read after the token is gone.
+    std::expected<void, QString> BeginRenderUpdate(const Locked& lock);
+
+    // The rest is for the render thread only and needs no lock: the render
+    // state does not touch the terminal outside BeginRenderUpdate.
+    //
+    // Finishes the update; see VtRenderState::EndUpdate.
+    void EndRenderUpdate();
+    // Rows, cursor, dirty state and colors, valid after EndRenderUpdate.
+    const VtRenderState& RenderState() const;
+    // Marks the frame drawn; see VtRenderState::Clean.
+    void CleanRenderState();
 
 private:
-    // True when the token is this session's and holds the mutex; otherwise
-    // calls the check handler and returns false. Always true in release.
+    // True when the token is this session's; otherwise calls the check
+    // handler and returns false. Always true in release.
     bool Check(const Locked& lock, const char* method) const;
 
     VtTerminal Terminal_;
+    // Begun under Mutex_ and used by the render thread alone otherwise.
+    VtRenderState RenderState_;
     std::mutex Mutex_;
 };
 
