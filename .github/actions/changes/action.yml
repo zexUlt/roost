@@ -1,0 +1,27 @@
+name: Changes
+description: Whether this change needs a build and tests, by tools/ci_changes.sh.
+
+# Needs a checkout with history enough to reach the base: fetch-depth 0.
+# Anything but a pull request (a push to trunk, a dispatch) needs everything.
+
+outputs:
+  code:
+    value: ${{ steps.decide.outputs.code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide
+      id: decide
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+        BASE: ${{ github.event.pull_request.base.sha }}
+      run: |
+        set -euo pipefail
+        if [ "$EVENT" = "pull_request" ]; then
+          tools/ci_changes.sh "$BASE" | tee -a "$GITHUB_OUTPUT"
+        else
+          # Not a pull request: a path that runs everything.
+          echo .github/everything | tools/ci_changes.sh | tee -a "$GITHUB_OUTPUT"
+        fi

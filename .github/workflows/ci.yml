@@ -24,28 +24,60 @@ defaults:
     shell: bash
 
 jobs:
+  # Whether this change needs a build at all (tools/ci_changes.sh): a change
+  # to documentation only does not. A job that is not needed skips rather
+  # than the workflow filtering by path: the jobs below are required checks,
+  # a workflow that never runs leaves them missing and the pull request
+  # unmergeable, and a skipped job counts as passed. Pushes to trunk run
+  # everything. If this job fails, the answer is unknown and every job runs:
+  # the conditions below test for != 'false', and !cancelled() keeps the
+  # jobs from skipping on a failed dependency.
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        uses: ./.github/actions/changes
+
   # macOS only for now; Linux joins once it is decided which Linux roost
   # targets (design.md §14).
   test:
     name: test (${{ matrix.preset }})
-    runs-on: macos-15
+    needs: changes
+    if: ${{ !cancelled() }}
+    # Not skipped at the job level: a skipped matrix job is never expanded,
+    # so the required "test (dev)" and the others would wait for ever. The
+    # job runs and its steps skip instead, on Linux: macOS runners are the
+    # scarce ones.
+    runs-on: ${{ needs.changes.outputs.code != 'false' && 'macos-15' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
         # TSan runs nightly against a Qt built with it (nightly-tsan.yml).
         preset: [dev, asan-ubsan, release]
+    env:
+      NEEDED: ${{ needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@v4
+        if: env.NEEDED == 'true'
 
       - name: Install build tools
+        if: env.NEEDED == 'true'
         run: brew install ninja
 
       - uses: jurplel/install-qt-action@v4
+        if: env.NEEDED == 'true'
         with:
           version: ${{ env.QT_VERSION }}
           cache: true
 
       - uses: mlugg/setup-zig@v2
+        if: env.NEEDED == 'true'
         with:
           version: ${{ env.ZIG_VERSION }}
           use-cache: false
@@ -55,6 +87,7 @@ jobs:
       # changed command and rebuild libghostty-vt in spite of the cache. A
       # wrapper at a fixed path, first in PATH, keeps the command the same.
       - name: Zig at a fixed path
+        if: env.NEEDED == 'true'
         run: |
           real=$(command -v zig)
           mkdir -p "$HOME/zig-bin"
@@ -68,6 +101,7 @@ jobs:
       # _deps holds the sources and the library, .ninja_log tells ninja that
       # the zig build command already ran.
       - name: Restore libghostty-vt
+        if: env.NEEDED == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -77,24 +111,30 @@ jobs:
           key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-${{ matrix.preset }}-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
 
       - name: Configure
+        if: env.NEEDED == 'true'
         run: cmake --preset ${{ matrix.preset }}
 
       - name: Build
+        if: env.NEEDED == 'true'
         run: cmake --build --preset ${{ matrix.preset }}
 
       # The frame budget (tests/bench/frame_budget_test.cpp) is a timing on
       # real hardware: a shared runner is about twice as slow and noisy, so
       # here it only prints its numbers.
       - name: Test
+        if: env.NEEDED == 'true'
         run: ctest --preset ${{ matrix.preset }}
         env:
           ROOST_FRAME_BUDGET: report
 
       - name: Qt is linked dynamically
+        if: env.NEEDED == 'true'
         run: tools/check_qt_dynamic.sh build/${{ matrix.preset }}
 
   format:
     name: format
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +165,8 @@ jobs:
 
   tidy:
     name: tidy
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -192,6 +234,8 @@ jobs:
 
   gates:
     name: gates
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -201,3 +245,6 @@ jobs:
 
       - name: Naming gate catches a violation in each style
         run: tools/check_naming.sh
+
+      - name: The CI change filter answers its table
+        run: tools/ci_changes_test.sh
