@@ -38,6 +38,7 @@ roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_termina
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 
 # A TUI that draws, asks its terminal questions and counts the answers.
 add_executable(fake_tui helpers/fake_tui.cpp)

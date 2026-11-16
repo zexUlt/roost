@@ -128,6 +128,18 @@ struct VtRenderState::State {
         return cell;
     }
 
+    // The selected columns of the row the iterator is on.
+    std::optional<VtRenderState::SelectionRange> ReadSelection() const {
+        auto raw = GHOSTTY_INIT_SIZED(GhosttyRenderStateRowSelection);
+        if (ghostty_render_state_row_get(
+                Iterator, GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION, &raw) !=
+            GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        return VtRenderState::SelectionRange{.Start = raw.start_x,
+                                             .End = raw.end_x};
+    }
+
     GhosttyRenderState Render = nullptr;
     GhosttyRenderStateRowIterator Iterator = nullptr;
     GhosttyRenderStateRowCells Cells = nullptr;
@@ -258,11 +270,17 @@ QList<VtRenderState::Row> VtRenderState::Rows() const {
             row.Dirty = dirty;
         }
         row.Dirty = row.Dirty || all;
+        row.Selection = State_->ReadSelection();
         if (ghostty_render_state_row_get(State_->Iterator,
                                          GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                                          &State_->Cells) == GHOSTTY_SUCCESS) {
             while (ghostty_render_state_row_cells_next(State_->Cells)) {
-                row.Cells.append(State_->ReadCell());
+                auto cell = State_->ReadCell();
+                const auto column = static_cast<quint16>(row.Cells.size());
+                cell.Selected = row.Selection &&
+                                column >= row.Selection->Start &&
+                                column <= row.Selection->End;
+                row.Cells.append(std::move(cell));
             }
         }
         rows.append(std::move(row));
@@ -295,7 +313,11 @@ std::optional<VtRenderState::Cell> VtRenderState::CellAt(quint16 column,
             return std::nullopt;
         }
     }
-    return State_->ReadCell();
+    auto cell = State_->ReadCell();
+    const auto selection = State_->ReadSelection();
+    cell.Selected =
+        selection && column >= selection->Start && column <= selection->End;
+    return cell;
 }
 
 }  // namespace roost

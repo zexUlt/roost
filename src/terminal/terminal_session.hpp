@@ -10,6 +10,7 @@
 #include <QString>
 #include <QStringView>
 
+#include <atomic>
 #include <expected>
 #include <memory>
 #include <mutex>
@@ -121,6 +122,34 @@ public:
     // encoding, which is linear in the text.
     std::expected<QByteArray, QString> EncodePaste(const Locked& lock,
                                                    QStringView text) const;
+    // The selection, kept in the terminal; see VtTerminal for the gestures.
+    // The viewport and the selection change, so the caller asks for a frame
+    // after each of these.
+    std::expected<void, QString> SelectionPress(
+        const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+        const MouseGeometry& geometry, const VtTerminal::SelectionClick& click);
+    std::expected<void, QString> SelectionDrag(
+        const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+        const MouseGeometry& geometry);
+    std::expected<void, QString> SelectionRelease(
+        const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+        const MouseGeometry& geometry);
+    std::expected<void, QString> SelectionAutoscrollTick(
+        const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+        const MouseGeometry& geometry);
+    std::expected<VtTerminal::ESelectionAutoscroll, QString>
+    SelectionAutoscroll(const Locked& lock) const;
+    std::expected<void, QString> ResetSelectionGesture(const Locked& lock);
+    std::expected<void, QString> ClearSelection(const Locked& lock);
+    std::expected<bool, QString> HasSelection(const Locked& lock) const;
+    // The selected text, as plain text for the clipboard; see
+    // VtTerminal::SelectedText. Linear in the size of the selection, under
+    // the lock.
+    std::expected<QString, QString> SelectedText(const Locked& lock) const;
+    // Whether the terminal had a selection at the last BeginRenderUpdate.
+    // The terminal drops it by itself when its text is erased, which the GUI
+    // thread learns of from this. Readable from any thread.
+    bool SelectionAtLastRender() const { return SelectionAtLastRender_; }
     // The first phase of a render update, for the render thread: the state
     // may be finished and read after the token is gone.
     std::expected<void, QString> BeginRenderUpdate(const Locked& lock);
@@ -144,6 +173,7 @@ private:
     // Begun under Mutex_ and used by the render thread alone otherwise.
     VtRenderState RenderState_;
     std::mutex Mutex_;
+    std::atomic<bool> SelectionAtLastRender_ = false;
 };
 
 }  // namespace roost

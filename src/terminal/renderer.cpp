@@ -42,7 +42,9 @@ Resolved Resolve(const VtRenderState::Cell& cell, Rgb defaultForeground,
                  Rgb defaultBackground) {
     auto foreground = cell.Foreground.value_or(defaultForeground);
     auto background = cell.Background.value_or(defaultBackground);
-    if (cell.Inverse) {
+    // A selected cell swaps once more, as Ghostty does when no selection
+    // colors are set: a cell that is inverse and selected looks plain.
+    if (cell.Inverse != cell.Selected) {
         std::swap(foreground, background);
     }
     return {.Foreground = ToColor(foreground, cell.Faint ? FAINT_ALPHA : 255),

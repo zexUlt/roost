@@ -147,11 +147,88 @@ std::expected<QByteArray, QString> TerminalSession::EncodePaste(
     return Terminal_.EncodePaste(text);
 }
 
+std::expected<void, QString> TerminalSession::SelectionPress(
+    const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+    const MouseGeometry& geometry, const VtTerminal::SelectionClick& click) {
+    if (!Check(lock, "SelectionPress")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectionPress(pointer, geometry, click);
+}
+
+std::expected<void, QString> TerminalSession::SelectionDrag(
+    const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+    const MouseGeometry& geometry) {
+    if (!Check(lock, "SelectionDrag")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectionDrag(pointer, geometry);
+}
+
+std::expected<void, QString> TerminalSession::SelectionRelease(
+    const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+    const MouseGeometry& geometry) {
+    if (!Check(lock, "SelectionRelease")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectionRelease(pointer, geometry);
+}
+
+std::expected<void, QString> TerminalSession::SelectionAutoscrollTick(
+    const Locked& lock, const VtTerminal::SelectionPointer& pointer,
+    const MouseGeometry& geometry) {
+    if (!Check(lock, "SelectionAutoscrollTick")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectionAutoscrollTick(pointer, geometry);
+}
+
+std::expected<VtTerminal::ESelectionAutoscroll, QString>
+TerminalSession::SelectionAutoscroll(const Locked& lock) const {
+    if (!Check(lock, "SelectionAutoscroll")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectionAutoscroll();
+}
+
+std::expected<void, QString> TerminalSession::ResetSelectionGesture(
+    const Locked& lock) {
+    if (!Check(lock, "ResetSelectionGesture")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ResetSelectionGesture();
+}
+
+std::expected<void, QString> TerminalSession::ClearSelection(
+    const Locked& lock) {
+    if (!Check(lock, "ClearSelection")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.ClearSelection();
+}
+
+std::expected<bool, QString> TerminalSession::HasSelection(
+    const Locked& lock) const {
+    if (!Check(lock, "HasSelection")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.HasSelection();
+}
+
+std::expected<QString, QString> TerminalSession::SelectedText(
+    const Locked& lock) const {
+    if (!Check(lock, "SelectedText")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    return Terminal_.SelectedText();
+}
+
 std::expected<void, QString> TerminalSession::BeginRenderUpdate(
     const Locked& lock) {
     if (!Check(lock, "BeginRenderUpdate")) {
         return std::unexpected(QStringLiteral("wrong lock token"));
     }
+    SelectionAtLastRender_ = Terminal_.HasSelection().value_or(false);
     return RenderState_.BeginUpdate(Terminal_);
 }
 

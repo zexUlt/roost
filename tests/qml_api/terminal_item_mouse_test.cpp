@@ -163,11 +163,11 @@ private slots:
         QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<0;4;3m"));
 
         // Another button, another cell, a modifier.
-        QTest::mouseClick(&Window_, Qt::RightButton, Qt::ShiftModifier,
+        QTest::mouseClick(&Window_, Qt::RightButton, Qt::AltModifier,
                           CellCenter(10, 5));
         QCOMPARE(input.count(), 4);
-        QCOMPARE(input.at(2).at(0).toByteArray(), QByteArray("\x1b[<6;11;6M"));
-        QCOMPARE(input.at(3).at(0).toByteArray(), QByteArray("\x1b[<6;11;6m"));
+        QCOMPARE(input.at(2).at(0).toByteArray(), QByteArray("\x1b[<10;11;6M"));
+        QCOMPARE(input.at(3).at(0).toByteArray(), QByteArray("\x1b[<10;11;6m"));
     }
 
     void ClickInTheLegacyFormat() {
@@ -466,12 +466,12 @@ private slots:
                 ? Qt::MetaModifier
                 : Qt::ControlModifier;
 
-        QTest::mousePress(&Window_, Qt::LeftButton, Qt::ShiftModifier,
+        QTest::mousePress(&Window_, Qt::LeftButton, Qt::AltModifier,
                           CellCenter(3, 2));
-        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<4;4;3M"));
-        QTest::mouseRelease(&Window_, Qt::LeftButton, Qt::ShiftModifier,
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<8;4;3M"));
+        QTest::mouseRelease(&Window_, Qt::LeftButton, Qt::AltModifier,
                             CellCenter(3, 2));
-        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<4;4;3m"));
+        QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<8;4;3m"));
         QTest::mousePress(&Window_, Qt::LeftButton, ctrl, CellCenter(3, 2));
         QCOMPARE(input.last().at(0).toByteArray(), QByteArray("\x1b[<16;4;3M"));
         QTest::mouseRelease(&Window_, Qt::LeftButton, ctrl, CellCenter(3, 2));

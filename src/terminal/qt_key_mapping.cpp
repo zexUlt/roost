@@ -261,6 +261,18 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
     return event;
 }
 
+bool IsCopyShortcut(int key, Qt::KeyboardModifiers modifiers,
+                    const QtKeyOptions& options) {
+    if (key != Qt::Key_C) {
+        return false;
+    }
+    // The keypad flag rides on some keys on macOS and means nothing here.
+    modifiers &= ~Qt::KeypadModifier;
+    return options.SwapControlAndMeta
+               ? modifiers == Qt::ControlModifier
+               : modifiers == (Qt::ControlModifier | Qt::ShiftModifier);
+}
+
 KeyMods MapQtModifiers(Qt::KeyboardModifiers modifiers,
                        const QtKeyOptions& options) {
     KeyMods mods;

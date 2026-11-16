@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vt_mouse_encoder.hpp"
+
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
@@ -98,6 +100,56 @@ public:
     // Whether the viewport follows the active area (not scrolled into
     // history).
     std::expected<bool, QString> ViewportAtBottom() const;
+
+    // The selection lives in the terminal, so it follows the text through
+    // output and scrollback (design.md §3). The pointer gestures are the
+    // library's: it counts the clicks (cell, word, line), makes the
+    // selection of a drag, and says when a drag at an edge wants the
+    // viewport to scroll. The terminal remembers the gesture; the caller
+    // owns the timer.
+    //
+    // Positions are in pixels from the top-left corner of the character grid
+    // and may lie outside it; the cell under them is the nearest one.
+    struct SelectionPointer {
+        double X = 0;
+        double Y = 0;
+    };
+    // When the press happened, and how soon after the previous one a press
+    // still counts as a repeat (double and triple click). Same cell, by the
+    // pointer's distance of one cell width.
+    struct SelectionClick {
+        quint64 TimeNs = 0;
+        quint64 RepeatIntervalNs = 0;
+    };
+    enum class ESelectionAutoscroll { None, Up, Down };
+
+    // A left button press. A single click without a drag selects nothing and
+    // clears the selection; the second click selects a word, the third a line.
+    std::expected<void, QString> SelectionPress(const SelectionPointer& pointer,
+                                                const MouseGeometry& geometry,
+                                                const SelectionClick& click);
+    // The pointer moved with the left button held since SelectionPress.
+    std::expected<void, QString> SelectionDrag(const SelectionPointer& pointer,
+                                               const MouseGeometry& geometry);
+    // The left button was let go. The selection stays.
+    std::expected<void, QString> SelectionRelease(
+        const SelectionPointer& pointer, const MouseGeometry& geometry);
+    // One step of the timer that runs while SelectionAutoscroll is not None:
+    // scrolls the viewport by one row that way and goes on with the drag.
+    std::expected<void, QString> SelectionAutoscrollTick(
+        const SelectionPointer& pointer, const MouseGeometry& geometry);
+    // Which way a drag at the edge wants the viewport to move.
+    std::expected<ESelectionAutoscroll, QString> SelectionAutoscroll() const;
+    // Forgets a press in progress (clicks and drag), keeping the selection.
+    std::expected<void, QString> ResetSelectionGesture();
+    std::expected<void, QString> ClearSelection();
+    // The terminal clears the selection itself when the text under it is
+    // erased, so this is asked again after output.
+    std::expected<bool, QString> HasSelection() const;
+    // The selected text as plain text, with the lines the terminal wrapped
+    // joined and the spaces at the ends of lines trimmed: what Ghostty
+    // copies. Empty without a selection.
+    std::expected<QString, QString> SelectedText() const;
 
 private:
     friend class VtKeyEncoder;

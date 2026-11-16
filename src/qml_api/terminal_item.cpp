@@ -2,13 +2,17 @@
 
 #include "core/vt_terminal.hpp"
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QQuickWindow>
+#include <QStyleHints>
 #include <QWheelEvent>
 #include <QtLogging>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 
@@ -20,6 +24,9 @@ namespace {
 // a trackpad. Qt reports a notch as 120 units.
 constexpr qreal ROWS_PER_NOTCH = 3;
 constexpr qreal UNITS_PER_NOTCH = 120;
+
+// Ghostty's selection scroll runs on a 15 ms timer.
+constexpr int AUTOSCROLL_INTERVAL_MS = 15;
 
 // The whole units in `pending` plus `delta`; what is left stays in `pending`.
 // Truncates toward zero, so the remainder keeps the sign of the movement.
@@ -63,10 +70,16 @@ TerminalItem::TerminalItem(QQuickItem* parent) : QQuickItem(parent) {
     } else {
         qWarning("TerminalItem: %s", qPrintable(encoder.error()));
     }
+    AutoscrollTimer_.setInterval(AUTOSCROLL_INTERVAL_MS);
+    connect(&AutoscrollTimer_, &QTimer::timeout, this,
+            &TerminalItem::autoscrollTick);
 }
 
 void TerminalItem::setSession(std::shared_ptr<TerminalSession> session) {
     Session_ = std::move(session);
+    Selecting_ = false;
+    AutoscrollTimer_.stop();
+    syncHasSelection();
     // The old session's rows are still in the scene; a clean session on the
     // same grid would leave them there.
     Renderer_.Invalidate();
@@ -134,7 +147,19 @@ void TerminalItem::keyReleaseEvent(QKeyEvent* event) {
 void TerminalItem::handleKey(QKeyEvent* event, EKeyAction action) {
     // Not ours: let the event go on, to shortcuts and to focus handling.
     event->ignore();
-    if (!Session_ || !KeyEncoder_) {
+    if (!Session_) {
+        return;
+    }
+    if (IsCopyShortcut(event->key(), event->modifiers(), KeyOptions_)) {
+        // Taken even when there is nothing to copy, and never sent on: the
+        // key release too, which the kitty protocol could report.
+        if (action != EKeyAction::Release) {
+            copy();
+        }
+        event->accept();
+        return;
+    }
+    if (!KeyEncoder_) {
         return;
     }
     const auto key = MapQtKey(event->key(), event->modifiers(), event->text(),
@@ -161,7 +186,14 @@ void TerminalItem::handleKey(QKeyEvent* event, EKeyAction action) {
         return;
     }
     event->accept();
-    // The program is about to see what was typed: show where it is typed.
+    // The program is about to see what was typed: show where it is typed,
+    // and the selected text is no longer what is there (Ghostty's
+    // selection-clear-on-typing).
+    if (HasSelection_) {
+        runSelection([this](const auto& lock) {
+            return Session_->ClearSelection(lock);
+        });
+    }
     scrollToBottom();
     emit input(*bytes);
 }
@@ -265,24 +297,211 @@ bool TerminalItem::reportMouse(EMouseAction action, EMouseButton button,
     return true;
 }
 
+bool TerminalItem::mouseTracked() const {
+    if (!Session_) {
+        return false;
+    }
+    const auto lock = Session_->Lock();
+    const auto modes = Session_->ReadWheelModes(lock);
+    if (!modes) {
+        qWarning("TerminalItem: %s", qPrintable(modes.error()));
+        return false;
+    }
+    return modes->MouseTracking;
+}
+
 void TerminalItem::mousePressEvent(QMouseEvent* event) {
+    forceActiveFocus(Qt::MouseFocusReason);
+    LastPointer_ = event->position();
     // Taking the press is what gets us the moves and the release of a drag;
     // a press nobody asked for stays with whoever is under us.
-    event->setAccepted(
-        reportMouse(EMouseAction::Press, MapQtMouseButton(event->button()),
-                    event->position(), event->buttons(), event->modifiers()));
+    if (!Session_) {
+        event->ignore();
+        return;
+    }
+    // A program that tracks the mouse owns it, but Shift takes it back for
+    // selecting, and the press is then not reported (Ghostty's
+    // mouse-shift-capture = false).
+    if (mouseTracked() && !event->modifiers().testFlag(Qt::ShiftModifier)) {
+        // What the program does with the mouse is its own: no selection
+        // stays, as in Ghostty.
+        Selecting_ = false;
+        AutoscrollTimer_.stop();
+        runSelection([this](const auto& lock) {
+            if (const auto reset = Session_->ResetSelectionGesture(lock);
+                !reset) {
+                return reset;
+            }
+            return Session_->ClearSelection(lock);
+        });
+        event->setAccepted(reportMouse(
+            EMouseAction::Press, MapQtMouseButton(event->button()),
+            event->position(), event->buttons(), event->modifiers()));
+        return;
+    }
+    if (event->button() == Qt::LeftButton) {
+        startSelection(event);
+    } else {
+        event->ignore();
+    }
 }
 
 void TerminalItem::mouseReleaseEvent(QMouseEvent* event) {
+    LastPointer_ = event->position();
+    // A press that began a selection ends it, and is not reported, as it
+    // never was.
+    if (Selecting_ && event->button() == Qt::LeftButton) {
+        finishSelection(event);
+        return;
+    }
     event->setAccepted(
         reportMouse(EMouseAction::Release, MapQtMouseButton(event->button()),
                     event->position(), event->buttons(), event->modifiers()));
 }
 
 void TerminalItem::mouseMoveEvent(QMouseEvent* event) {
+    LastPointer_ = event->position();
+    if (Selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
+        dragSelection(event);
+        return;
+    }
     event->setAccepted(
         reportMouse(EMouseAction::Motion, heldButton(event->buttons()),
                     event->position(), event->buttons(), event->modifiers()));
+}
+
+void TerminalItem::startSelection(QMouseEvent* event) {
+    const auto geometry = mouseGeometry();
+    const VtTerminal::SelectionPointer pointer{.X = event->position().x(),
+                                               .Y = event->position().y()};
+    // The repeat interval is the platform's double click time.
+    using namespace std::chrono;
+    const VtTerminal::SelectionClick click{
+        .TimeNs = static_cast<quint64>(
+            duration_cast<nanoseconds>(steady_clock::now().time_since_epoch())
+                .count()),
+        .RepeatIntervalNs = static_cast<quint64>(
+            duration_cast<nanoseconds>(
+                milliseconds(
+                    QGuiApplication::styleHints()->mouseDoubleClickInterval()))
+                .count())};
+    Selecting_ = true;
+    runSelection([&](const auto& lock) {
+        return Session_->SelectionPress(lock, pointer, geometry, click);
+    });
+    event->accept();
+}
+
+void TerminalItem::dragSelection(QMouseEvent* event) {
+    const auto geometry = mouseGeometry();
+    const VtTerminal::SelectionPointer pointer{.X = event->position().x(),
+                                               .Y = event->position().y()};
+    runSelection([&](const auto& lock) {
+        return Session_->SelectionDrag(lock, pointer, geometry);
+    });
+    event->accept();
+}
+
+void TerminalItem::finishSelection(QMouseEvent* event) {
+    const auto geometry = mouseGeometry();
+    const VtTerminal::SelectionPointer pointer{.X = event->position().x(),
+                                               .Y = event->position().y()};
+    Selecting_ = false;
+    QString selected;
+    runSelection([&](const auto& lock) -> std::expected<void, QString> {
+        if (const auto released =
+                Session_->SelectionRelease(lock, pointer, geometry);
+            !released) {
+            return released;
+        }
+#ifdef Q_OS_LINUX
+        // Ghostty's copy-on-select defaults to primary on Linux: the finished
+        // selection goes to the selection clipboard, not the system one. On
+        // macOS the default is none.
+        if (QGuiApplication::clipboard()->supportsSelection()) {
+            auto text = Session_->SelectedText(lock);
+            if (!text) {
+                return std::unexpected(text.error());
+            }
+            selected = std::move(*text);
+        }
+#endif
+        return {};
+    });
+    if (!selected.isEmpty()) {
+        QGuiApplication::clipboard()->setText(selected, QClipboard::Selection);
+    }
+    event->accept();
+}
+
+void TerminalItem::runSelection(const SelectionStep& step) {
+    if (!Session_) {
+        return;
+    }
+    bool selected = false;
+    auto autoscroll = VtTerminal::ESelectionAutoscroll::None;
+    {
+        const auto lock = Session_->Lock();
+        if (const auto done = step(lock); !done) {
+            qWarning("TerminalItem: %s", qPrintable(done.error()));
+        }
+        selected = Session_->HasSelection(lock).value_or(false);
+        autoscroll = Session_->SelectionAutoscroll(lock).value_or(
+            VtTerminal::ESelectionAutoscroll::None);
+    }
+    const bool scrolling =
+        Selecting_ && autoscroll != VtTerminal::ESelectionAutoscroll::None;
+    if (scrolling && !AutoscrollTimer_.isActive()) {
+        AutoscrollTimer_.start();
+    } else if (!scrolling) {
+        AutoscrollTimer_.stop();
+    }
+    if (selected != HasSelection_) {
+        HasSelection_ = selected;
+        emit hasSelectionChanged();
+    }
+    update();
+}
+
+void TerminalItem::autoscrollTick() {
+    const auto geometry = mouseGeometry();
+    const VtTerminal::SelectionPointer pointer{.X = LastPointer_.x(),
+                                               .Y = LastPointer_.y()};
+    runSelection([&](const auto& lock) {
+        return Session_->SelectionAutoscrollTick(lock, pointer, geometry);
+    });
+}
+
+void TerminalItem::syncHasSelection() {
+    bool selected = false;
+    if (Session_) {
+        const auto lock = Session_->Lock();
+        selected = Session_->HasSelection(lock).value_or(false);
+    }
+    if (selected != HasSelection_) {
+        HasSelection_ = selected;
+        emit hasSelectionChanged();
+    }
+}
+
+bool TerminalItem::hasSelection() const { return HasSelection_; }
+
+void TerminalItem::copy() {
+    if (!Session_) {
+        return;
+    }
+    std::expected<QString, QString> text;
+    {
+        const auto lock = Session_->Lock();
+        text = Session_->SelectedText(lock);
+    }
+    if (!text) {
+        qWarning("TerminalItem: %s", qPrintable(text.error()));
+        return;
+    }
+    if (!text->isEmpty()) {
+        QGuiApplication::clipboard()->setText(*text);
+    }
 }
 
 void TerminalItem::hoverMoveEvent(QHoverEvent* event) {
@@ -408,7 +627,14 @@ QSGNode* TerminalItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     if (!Session_ || window() == nullptr) {
         return nullptr;
     }
-    return Renderer_.Update(*window(), *Session_, oldNode);
+    auto* node = Renderer_.Update(*window(), *Session_, oldNode);
+    // The terminal drops a selection when its text is erased; the GUI thread
+    // finds out from here.
+    if (Session_->SelectionAtLastRender() != HasSelection_) {
+        QMetaObject::invokeMethod(this, &TerminalItem::syncHasSelection,
+                                  Qt::QueuedConnection);
+    }
+    return node;
 }
 
 }  // namespace roost
