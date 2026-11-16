@@ -19,5 +19,6 @@
 | 13 | План реализации | [design/13-plan.md](design/13-plan.md) |
 | 14 | Открытые вопросы | [design/14-open-questions.md](design/14-open-questions.md) |
 | 15 | ADR | [design/15-adr.md](design/15-adr.md) |
+| 16 | Хоткеи | [design/16-keymap.md](design/16-keymap.md) |
 
 ADR с развёрнутым разбором — в [design/adr/](design/adr/), список всех — §15.
