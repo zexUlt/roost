@@ -15,6 +15,8 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -51,6 +53,8 @@ const QString TERMINAL = "terminal.view";
 const QString FIRST = "bg-1b2c3d4e";
 const QString SECOND = "bg-0a1b2c3d";
 const QString EMPTY_TEXT = "No session. Choose one in the list.";
+// A session that the claude plugin does not list, so that its open is refused.
+const QString UNKNOWN = "bg-deadbeef";
 
 // Each query answered once; a digit after the 1 would be more than once.
 const QRegularExpression ANSWERED_ONCE(
@@ -118,6 +122,11 @@ void FailOnWarnings() {
 QString Greeting(const QString& id) { return "greeting=" + id; }
 
 QVariantMap Ref(const QString& id) { return {{"agent", "claude"}, {"id", id}}; }
+
+QByteArray ReadFile(const QString& path) {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+}
 
 }  // namespace
 
@@ -245,6 +254,18 @@ private:
 
     QString Status() { return Terminal()->status(); }
 
+    QString StatusTextNow() {
+        return StatusText()->property("text").toString();
+    }
+
+    // Records "<status>|<text>" at each change of the terminal's status, from
+    // now on, so that a state that passes quickly is still seen.
+    void Watch() {
+        Changes_.clear();
+        connect(Terminal(), &TerminalItem::statusChanged, this,
+                [this] { Changes_ << Status() + "|" + StatusTextNow(); });
+    }
+
     // What the session in the terminal shows now; empty without one.
     QString ScreenNow() {
         const auto* pane = Terminal()->findChild<SessionPane*>();
@@ -270,10 +291,23 @@ private:
                                  TIMEOUT_MS);
     }
 
+    // A session open, with its queries answered, in the focused terminal, that
+    // then ends by itself.
+    void OpenAndEnd() {
+        Select(Ref(FIRST));
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        Settle();
+        FocusTerminalSlot();
+        QTest::keyClick(Window(), 'x');
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(StatusText()->isVisible(), TIMEOUT_MS);
+    }
+
     QStringList Problems() {
         return Root()->property("problems").toStringList();
     }
 
+    QStringList Changes_;
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<api::Api> Api_;
@@ -397,7 +431,50 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(TYPED_WORLD), TIMEOUT_MS);
     }
 
-    void AnEndedSessionIsSaidSoAndEnterReopensIt() {
+    void AnEndedSessionIsSaidSoWithTheReasonAndEnterReopensIt() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        OpenAndEnd();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        const QString reason = Terminal()->statusMessage();
+        QVERIFY(!reason.isEmpty());
+        QCOMPARE(StatusTextNow(),
+                 "Session ended: " + reason + ". Press Enter to reopen.");
+
+        QTest::keyClick(Window(), Qt::Key_Return);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(FIRST)),
+                                 TIMEOUT_MS);
+        QVERIFY(StatusTextNow().isEmpty());
+    }
+
+    void EnterOfTheKeypadReopensAnEndedSession() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenAndEnd();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTest::keyClick(Window(), Qt::Key_Enter, Qt::KeypadModifier);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(FIRST)),
+                                 TIMEOUT_MS);
+    }
+
+    void EnterInALiveSessionGoesToItsProgram() {
         FailOnWarnings();
         Boot();
         if (QTest::currentTestFailed()) {
@@ -408,20 +485,103 @@ private slots:
         Settle();
         FocusTerminalSlot();
 
-        QTest::keyClick(Window(), 'x');
-
-        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(StatusText()->isVisible(), TIMEOUT_MS);
-        const QString text = StatusText()->property("text").toString();
-        QVERIFY2(text.startsWith("Session ended"), qPrintable(text));
-        QVERIFY2(text.endsWith("Press Enter to reopen."), qPrintable(text));
-
         QTest::keyClick(Window(), Qt::Key_Return);
 
+        // fake_tui shows the one byte it got: carriage return.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ScreenNow().contains(QStringLiteral("input \\x0d total=1")),
+            TIMEOUT_MS);
+        QCOMPARE(Status(), QString("open"));
+    }
+
+    void OpeningIsSaidWithTheNameOfTheSession() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Watch();
+
+        Select(Ref(FIRST));
+
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(FIRST)),
-                                 TIMEOUT_MS);
-        QVERIFY(StatusText()->property("text").toString().isEmpty());
+        QVERIFY2(
+            Changes_.contains("opening|Opening claude/" + FIRST + "\u2026"),
+            qPrintable(Changes_.join(", ")));
+    }
+
+    void ASessionThatCannotBeOpenedIsSaidSoAndEnterTriesAgain() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        Select(Ref(UNKNOWN));
+
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("failed"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(StatusText()->isVisible(), TIMEOUT_MS);
+        const QString reason = Terminal()->statusMessage();
+        QVERIFY(!reason.isEmpty());
+        QCOMPARE(StatusTextNow(), "Could not open the session: " + reason +
+                                      ". Press Enter to try again.");
+
+        FocusTerminalSlot();
+        Watch();
+        QTest::keyClick(Window(), Qt::Key_Return);
+
+        // It went through opening again, and failed again.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::ranges::any_of(Changes_,
+                                [](const QString& change) {
+                                    return change.startsWith("opening|");
+                                }),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("failed"), TIMEOUT_MS);
+    }
+
+    void AChosenSessionNeverReadsNoSessionBeforeTheItemHasASize() {
+        FailOnWarnings();
+        // An API that is not connected: the item gets as far as ensuring its
+        // pane, and waits for a size.
+        api::Api api;
+        QQmlEngine engine;
+        auto* singleton =
+            engine.singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
+        QVERIFY(singleton != nullptr);
+        singleton->setApi(api);
+        QQmlComponent component(
+            &engine, QUrl::fromLocalFile(QStringLiteral(
+                         TERMINAL_PLUGIN_DIR "/qml/TerminalPanel.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        // No window and no size: the item has not started opening.
+        const std::unique_ptr<QObject> panel(component.create());
+        QVERIFY(panel != nullptr);
+        auto* terminal = panel->findChild<TerminalItem*>("terminal");
+        auto* text = panel->findChild<QQuickItem*>("terminalStatus");
+        QVERIFY(terminal != nullptr && text != nullptr);
+
+        QCOMPARE(text->property("text").toString(), EMPTY_TEXT);
+        QVERIFY(panel->setProperty("session", Ref(FIRST)));
+
+        QCOMPARE(terminal->status(), QString("none"));
+        QCOMPARE(text->property("text").toString(), QString());
+        QVERIFY(!text->isVisible());
+    }
+
+    // The build holds copies of the plugin's files (configure_file); a copy
+    // that is older than the source is a panel the window does not show.
+    void TheBuildCopiesOfThePluginAreTheSourceFiles() {
+        for (const QString& file : {QStringLiteral("plugin.json"),
+                                    QStringLiteral("qml/TerminalPanel.qml")}) {
+            const QByteArray source =
+                ReadFile(QStringLiteral(TERMINAL_PLUGIN_DIR "/") + file);
+            const QByteArray copy =
+                ReadFile(QStringLiteral(ROOST_PLUGINS_DIR "/terminal/") + file);
+            QVERIFY2(!source.isEmpty(), qPrintable(file));
+            QVERIFY2(source == copy,
+                     qPrintable(file + ": the build copy is stale"));
+        }
     }
 };
 

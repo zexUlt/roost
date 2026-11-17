@@ -3,7 +3,7 @@ import Roost.Api
 
 // The panel terminal.view: the session chosen in the list, shown in a
 // TerminalItem. The shell writes `session`; the item opens it and reports how
-// it stands. Enter reopens a session that ended.
+// it stands. Enter reopens a session that ended or failed to open.
 FocusScope {
     id: root
 
@@ -18,13 +18,17 @@ FocusScope {
         focus: true
         session: root.session
 
-        Keys.onReturnPressed: event => {
+        // Enter, on the main keys and on the keypad.
+        function handleEnter(event) {
             if (status === "ended" || status === "failed") {
                 reopen();
             } else {
                 event.accepted = false;
             }
         }
+
+        Keys.onReturnPressed: event => handleEnter(event)
+        Keys.onEnterPressed: event => handleEnter(event)
     }
 
     Text {
@@ -39,12 +43,15 @@ FocusScope {
         text: {
             switch (terminal.status) {
             case "none":
-                return "No session. Choose one in the list.";
+                // A session is chosen but the item has no size yet, so it has
+                // not started opening.
+                return root.session ? "" : "No session. Choose one in the list.";
             case "opening":
                 return root.session ? "Opening " + root.session.agent + "/" + root.session.id + "…" : "";
             case "ended":
-            case "failed":
                 return "Session ended: " + terminal.statusMessage + ". Press Enter to reopen.";
+            case "failed":
+                return "Could not open the session: " + terminal.statusMessage + ". Press Enter to try again.";
             default:
                 return "";
             }

@@ -239,7 +239,8 @@ target_compile_definitions(terminal_panel_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
-    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
+    TERMINAL_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/terminal")
 add_dependencies(terminal_panel_test roostd fake_tui claude-adapter)
 
 # The developer mode: the watcher reloads a plugin whose files changed on disk.
