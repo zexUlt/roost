@@ -45,8 +45,9 @@ struct ApiOptions {
 // the connection was lost has failed with ConnectionLost and is not sent
 // again: it may have been done (commands.run, store.set).
 //
-// The session channels of the terminals do not survive a loss: opening them
-// again is not done here yet.
+// The session channels of the terminals do not survive a loss, and the Api
+// does not open them again: whoever holds a channel (TerminalItem, through
+// SessionPane) reopens its session on Connected.
 class Api : public QObject {
     Q_OBJECT
 

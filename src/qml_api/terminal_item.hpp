@@ -4,13 +4,17 @@
 #include "core/vt_mouse_encoder.hpp"
 #include "terminal/qt_key_mapping.hpp"
 #include "terminal/renderer.hpp"
+#include "terminal/session_pane.hpp"
 #include "terminal/terminal_session.hpp"
 
 #include <QtQml/qqmlregistration.h>
 #include <QFont>
 #include <QList>
+#include <QPointer>
 #include <QQuickItem>
+#include <QString>
 #include <QTimer>
+#include <QVariant>
 
 #include <expected>
 #include <functional>
@@ -50,6 +54,19 @@ namespace roost {
 // Ghostty, a finished selection also goes to the selection clipboard
 // (copy-on-select = primary); on macOS it does not. A click takes the focus.
 //
+// The `session` property shows a session of roostd in the item: a SessionRef,
+// {agent, id}, or null. The item opens the channel itself (SessionPane), at its
+// own grid, through the window's API (the singleton Roost), and follows the
+// size, the input and the output. `status` tells how it stands. "none" is no
+// session; "opening" is the open in flight, with the screen cleared; "open";
+// "ended" is a session that ended by itself, its last screen kept, and
+// "failed" is an open that was refused or a `session` that is no SessionRef,
+// each with `statusMessage` for the reason; "disconnected" is a lost
+// connection, the last screen kept, and the item opens the same session
+// again when the window is reconnected. reopen() opens an ended, failed or
+// disconnected session anew. Without the API of a window (no singleton, or no
+// Api set in it) the status is "failed".
+//
 // The item does not resize the session either. It says how many columns and
 // rows fit (`gridSizeChanged`), and the owner sends session.resize, which
 // resizes the local terminal as well.
@@ -64,11 +81,20 @@ class TerminalItem : public QQuickItem {
     Q_PROPERTY(int columns READ columns NOTIFY gridSizeChanged)
     Q_PROPERTY(int rows READ rows NOTIFY gridSizeChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY hasSelectionChanged)
+    // A SessionRef, {agent, id}, or null. Reads back as the ref that was
+    // accepted (null for an invalid one).
+    Q_PROPERTY(QVariant session READ sessionRef WRITE setSessionRef NOTIFY
+                   sessionRefChanged)
+    // "none", "opening", "open", "ended", "failed" or "disconnected".
+    Q_PROPERTY(QString status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusChanged)
 
 public:
     explicit TerminalItem(QQuickItem* parent = nullptr);
 
-    // From C++ only. The item shares the session; null shows nothing.
+    // From C++ only. The item shares the session; null shows nothing. For a
+    // session that C++ owns (SingleSession). Do not mix it with the `session`
+    // property, whose pane sets and clears the shared session on its own.
     void setSession(std::shared_ptr<TerminalSession> session);
 
     QFont font() const;
@@ -83,6 +109,13 @@ public:
     // emitted for an empty text or without a session.
     Q_INVOKABLE void paste(const QString& text);
 
+    QVariant sessionRef() const { return SessionRef_; }
+    void setSessionRef(const QVariant& ref);
+    QString status() const { return Status_; }
+    QString statusMessage() const { return StatusMessage_; }
+    // Opens the session again if it is ended, failed or disconnected.
+    Q_INVOKABLE void reopen();
+
     bool hasSelection() const;
     // Puts the selected text on the system clipboard; nothing is copied, and
     // the clipboard stays as it was, without a selection.
@@ -96,10 +129,14 @@ signals:
     void cellSizeChanged();
     void gridSizeChanged();
     void hasSelectionChanged();
+    void sessionRefChanged();
+    // status or statusMessage changed.
+    void statusChanged();
     // Bytes to write to the program.
     void input(const QByteArray& bytes);
 
 protected:
+    void componentComplete() override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -145,6 +182,12 @@ private:
     // Scrolls the viewport to the bottom if it is not there, and asks for a
     // frame.
     void scrollToBottom();
+    // Shows SessionRef_ in the pane, making the pane on the first session.
+    void applySessionRef();
+    // Makes the pane and wires it to the item and the Api; false (and the
+    // status "failed") if the window has no API.
+    bool ensurePane();
+    void setStatus(const QString& status, const QString& message);
     // Recomputes the grid from the size and the cell; emits gridSizeChanged
     // if it differs.
     void updateGridSize();
@@ -173,6 +216,14 @@ private:
     // Where the pointer was last, for the autoscroll ticks.
     QPointF LastPointer_;
     QTimer AutoscrollTimer_;
+    // The accepted ref: a map with agent and id, or invalid.
+    QVariant SessionRef_;
+    // The last value was not a SessionRef.
+    bool RefInvalid_ = false;
+    // The pane is a child of the item; made when the first session is shown.
+    QPointer<SessionPane> Pane_;
+    QString Status_ = QStringLiteral("none");
+    QString StatusMessage_;
 };
 
 }  // namespace roost

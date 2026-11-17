@@ -1,11 +1,15 @@
 #include "qml_api/terminal_item.hpp"
 
+#include "api/api.hpp"
 #include "core/vt_terminal.hpp"
+#include "qml_api/roost_singleton.hpp"
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QJSValue>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QQmlEngine>
 #include <QQuickWindow>
 #include <QStyleHints>
 #include <QWheelEvent>
@@ -51,6 +55,39 @@ EMouseButton heldButton(Qt::MouseButtons buttons) {
     return EMouseButton::None;
 }
 
+// The text of a status, as QML reads it.
+QString statusName(EPaneStatus status) {
+    switch (status) {
+        case EPaneStatus::None:
+            return QStringLiteral("none");
+        case EPaneStatus::Opening:
+            return QStringLiteral("opening");
+        case EPaneStatus::Open:
+            return QStringLiteral("open");
+        case EPaneStatus::Ended:
+            return QStringLiteral("ended");
+        case EPaneStatus::Failed:
+            return QStringLiteral("failed");
+        case EPaneStatus::Disconnected:
+            return QStringLiteral("disconnected");
+    }
+    return QStringLiteral("none");
+}
+
+// A JS object arrives as a QVariantMap, null and undefined as an invalid or
+// null variant, and a value of type var may come wrapped as a QJSValue.
+bool isNullRef(const QVariant& value) {
+    return !value.isValid() || value.isNull() ||
+           value.metaType() == QMetaType::fromType<std::nullptr_t>();
+}
+
+// The agent or id of a ref: a non-empty string, or empty if it is not.
+QString refField(const QVariantMap& ref, const QString& name) {
+    const QVariant value = ref.value(name);
+    return value.metaType().id() == QMetaType::QString ? value.toString()
+                                                       : QString();
+}
+
 }  // namespace
 
 TerminalItem::TerminalItem(QQuickItem* parent) : QQuickItem(parent) {
@@ -84,6 +121,119 @@ void TerminalItem::setSession(std::shared_ptr<TerminalSession> session) {
     // same grid would leave them there.
     Renderer_.Invalidate();
     update();
+}
+
+void TerminalItem::setSessionRef(const QVariant& ref) {
+    QVariant value = ref;
+    if (value.metaType() == QMetaType::fromType<QJSValue>()) {
+        value = value.value<QJSValue>().toVariant();
+    }
+    QVariant accepted;
+    bool invalid = false;
+    if (!isNullRef(value)) {
+        const QVariantMap map = value.toMap();
+        const QString agent = refField(map, QStringLiteral("agent"));
+        const QString id = refField(map, QStringLiteral("id"));
+        if (agent.isEmpty() || id.isEmpty()) {
+            invalid = true;
+        } else {
+            accepted = QVariantMap{{QStringLiteral("agent"), agent},
+                                   {QStringLiteral("id"), id}};
+        }
+    }
+    const bool changed = accepted != SessionRef_;
+    SessionRef_ = accepted;
+    RefInvalid_ = invalid;
+    if (changed) {
+        emit sessionRefChanged();
+    }
+    applySessionRef();
+}
+
+void TerminalItem::reopen() {
+    if (Pane_) {
+        Pane_->Reopen();
+    }
+}
+
+void TerminalItem::componentComplete() {
+    QQuickItem::componentComplete();
+    // The engine and the size are known now; a ref set during creation waited
+    // for this.
+    applySessionRef();
+}
+
+void TerminalItem::applySessionRef() {
+    if (!isComponentComplete()) {
+        return;
+    }
+    if (RefInvalid_ || !SessionRef_.isValid()) {
+        if (Pane_) {
+            Pane_->Show(std::nullopt);
+        }
+        if (RefInvalid_) {
+            setStatus(QStringLiteral("failed"),
+                      QStringLiteral("not a SessionRef"));
+        } else {
+            setStatus(QStringLiteral("none"), {});
+        }
+        return;
+    }
+    if (!ensurePane()) {
+        return;
+    }
+    const QVariantMap ref = SessionRef_.toMap();
+    Pane_->Show(SessionKey{ref.value(QStringLiteral("agent")).toString(),
+                           ref.value(QStringLiteral("id")).toString()});
+}
+
+bool TerminalItem::ensurePane() {
+    if (Pane_) {
+        return true;
+    }
+    QQmlEngine* const engine = qmlEngine(this);
+    const auto* const singleton =
+        engine != nullptr
+            ? engine->singletonInstance<RoostSingleton*>("Roost.Api", "Roost")
+            : nullptr;
+    api::Api* const windowApi =
+        singleton != nullptr ? singleton->api() : nullptr;
+    if (windowApi == nullptr) {
+        setStatus(QStringLiteral("failed"),
+                  QStringLiteral("no roostd API in this window"));
+        return false;
+    }
+    auto* const pane = new SessionPane(windowApi->Io(), this);
+    Pane_ = pane;
+    connect(this, &TerminalItem::input, pane, &SessionPane::SendInput);
+    connect(this, &TerminalItem::gridSizeChanged, pane, [this, pane] {
+        pane->SetGrid(static_cast<quint16>(Columns_),
+                      static_cast<quint16>(Rows_));
+    });
+    connect(pane, &SessionPane::SessionChanged, this,
+            [this, pane] { setSession(pane->Session()); });
+    connect(pane, &SessionPane::Updated, this, [this] { update(); });
+    connect(pane, &SessionPane::StatusChanged, this, [this, pane] {
+        setStatus(statusName(pane->Status()), pane->Message());
+    });
+    // The channels went with the connection; the same session is opened again
+    // once the window is back.
+    connect(windowApi, &api::Api::Connected, pane, [pane] {
+        if (pane->Status() == EPaneStatus::Disconnected) {
+            pane->Reopen();
+        }
+    });
+    pane->SetGrid(static_cast<quint16>(Columns_), static_cast<quint16>(Rows_));
+    return true;
+}
+
+void TerminalItem::setStatus(const QString& status, const QString& message) {
+    if (status == Status_ && message == StatusMessage_) {
+        return;
+    }
+    Status_ = status;
+    StatusMessage_ = message;
+    emit statusChanged();
 }
 
 QFont TerminalItem::font() const { return Renderer_.Font(); }

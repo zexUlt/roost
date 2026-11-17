@@ -156,6 +156,16 @@ target_compile_definitions(io_thread_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(io_thread_test roostd fake_tui claude-adapter)
 
+# The channel logic of a terminal panel against the real roostd with two
+# fixture plugins whose agents attach to fake_tui.
+roost_add_qt_test(session_pane_test terminal/session_pane_test.cpp
+    roost_terminal roost_test_helpers)
+target_compile_definitions(session_pane_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(session_pane_test roostd fake_tui fixture_backend)
+
 # The developer mode: one TerminalItem wired to a session of the real roostd,
 # and the roost executable started with --session against it.
 roost_add_qt_test(single_session_test roost/single_session_test.cpp roost_app)
@@ -229,6 +239,16 @@ target_compile_definitions(roost_sessions_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(roost_sessions_test roostd fixture_backend)
 
+# The `session` property of TerminalItem: the item opens, draws and feeds a
+# session of the real roostd by itself.
+roost_add_qt_test(terminal_item_session_test qml_api/terminal_item_session_test.cpp
+    roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(terminal_item_session_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(terminal_item_session_test roostd fake_tui fixture_backend)
+
 # The tests whose code runs on more than one thread carry the label
 # `threads`. Those whose threads synchronise only through std primitives also
 # carry `threads_std`: the tsan preset, against a binary Qt, runs only them.
@@ -251,7 +271,9 @@ set_tests_properties(
     roost_sessions_test
     io_thread_test
     single_session_test
+    session_pane_test
     terminal_item_test
+    terminal_item_session_test
     terminal_item_input_test
     terminal_item_mouse_test
     terminal_item_selection_test

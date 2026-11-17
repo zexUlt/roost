@@ -47,6 +47,11 @@ public:
     BusAdapter* bus() const { return Bus_; }
     bool connected() const { return Connected_; }
 
+    // From C++ only. The window's API, or null until setApi (and in a window
+    // that has none, such as the one of `roost --session`). The terminal item
+    // reaches the IO thread through it.
+    api::Api* api() const { return Api_; }
+
     // From C++ only. Returns the owner of the one-shot calls that QML code
     // makes from `context` (or a context below it). The owner belongs to the
     // context: when it is destroyed, their callbacks are not called, and a call

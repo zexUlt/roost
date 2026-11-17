@@ -5,6 +5,7 @@ add_library(roost_terminal STATIC
     io_thread.cpp
     qt_key_mapping.cpp
     renderer.cpp
+    session_pane.cpp
     terminal_session.cpp
 )
 
