@@ -9,6 +9,7 @@ set(ROOST_TEST_ENVIRONMENT
 
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
+    helpers/refusing_server.cpp
     helpers/roostd_process.cpp
     helpers/scoped_env.cpp
 )
@@ -197,6 +198,14 @@ target_compile_definitions(plugin_loader_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(plugin_loader_test roostd fixture_backend)
 
+# The window's shell: Main.qml with its slots, the loader and the real roostd,
+# and a refusing server for the version check.
+roost_add_qt_test(shell_test roost/shell_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(shell_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(shell_test roostd)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
@@ -222,6 +231,7 @@ set_tests_properties(
     roost_calls_test
     roost_call_owner_test
     plugin_loader_test
+    shell_test
     roost_sessions_test
     io_thread_test
     single_session_test

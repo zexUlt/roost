@@ -16,49 +16,11 @@
 #include "api_test_support.hpp"
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
+#include "helpers/refusing_server.hpp"
 #include "helpers/roostd_process.hpp"
 
 using namespace roost;
 using namespace roost::api_test;
-
-namespace {
-
-// A roostd of another build: it answers hello with VersionMismatch, as the
-// real one does for a client of another protocol (src/roostd/server.cpp).
-class MismatchedDaemon : public QObject {
-public:
-    bool Listen(const QString& path) {
-        connect(&Server_, &QLocalServer::newConnection, this, [this] {
-            Socket_ = Server_.nextPendingConnection();
-            connect(Socket_, &QLocalSocket::readyRead, this, [this] {
-                Decoder_.Feed(Socket_->readAll());
-                while (const auto frame = Decoder_.Next()) {
-                    const QJsonObject request =
-                        QJsonDocument::fromJson(frame->Body).object();
-                    const rpc::Error error = protocol::MakeError(
-                        protocol::EErrorCode::VersionMismatch,
-                        "roostd speaks protocol 0");
-                    const QJsonObject answer{
-                        {"jsonrpc", "2.0"},
-                        {"id", request.value("id")},
-                        {"error", QJsonObject{{"code", error.Code},
-                                              {"message", error.Message}}}};
-                    Socket_->write(*EncodeFrame(
-                        EFrameKind::Rpc,
-                        QJsonDocument(answer).toJson(QJsonDocument::Compact)));
-                }
-            });
-        });
-        return Server_.listen(path);
-    }
-
-private:
-    QLocalServer Server_;
-    QLocalSocket* Socket_ = nullptr;
-    FrameDecoder Decoder_;
-};
-
-}  // namespace
 
 class ApiConnectionTest : public QObject {
     Q_OBJECT
@@ -95,7 +57,7 @@ private slots:
     void ADaemonOfAnotherBuildRefuses() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
-        MismatchedDaemon daemon;
+        roost::testing::RefusingServer daemon;
         QVERIFY(daemon.Listen(dir.filePath("old.sock")));
         api::Api api;
         QSignalSpy refused(&api, &api::Api::Refused);
@@ -103,8 +65,12 @@ private slots:
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(dir.filePath("old.sock"));
         QVERIFY(refused.wait(TIMEOUT_MS));
-        QCOMPARE(qvariant_cast<rpc::Error>(refused.at(0).at(0)).Code,
+        const auto error = qvariant_cast<rpc::Error>(refused.at(0).at(0));
+        QCOMPARE(error.Code,
                  static_cast<int>(protocol::EErrorCode::VersionMismatch));
+        QCOMPARE(error.Data.toObject().value("ghosttyVt").toString(),
+                 QString(roost::testing::RefusingServer::GHOSTTY_VT));
+        QCOMPARE(daemon.Hellos(), 1);
         QVERIFY(connected.isEmpty());
         QVERIFY(!api.IsConnected());
     }

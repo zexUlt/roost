@@ -12,8 +12,10 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "api/plugin_service.hpp"
@@ -63,6 +65,15 @@ public:
         QString Message;
     };
 
+    // What a panel type declares: the plugin that has it and its typed inputs
+    // and outputs, name -> type string ("SessionRef"), as the manifest has
+    // them.
+    struct PanelInfo {
+        QString Plugin;
+        QVariantMap Inputs;
+        QVariantMap Outputs;
+    };
+
     PluginLoader(QQmlEngine& engine, api::PluginService& plugins,
                  RoostSingleton& roost, QObject* parent = nullptr);
     ~PluginLoader() override;
@@ -70,6 +81,10 @@ public:
     // The ids of the panel types that can be created, in load order of their
     // plugins, then in the order of the manifest.
     QStringList PanelTypes() const;
+
+    // The declaration of a panel type that can be created (it is in
+    // PanelTypes()), nullopt for any other.
+    std::optional<PanelInfo> Info(const QString& panelId) const;
 
     const QList<PanelProblem>& Problems() const { return Problems_; }
 
@@ -81,6 +96,9 @@ public:
     // has a property `pluginId` (also a `required` one), it is set to the id
     // of the plugin before Component.onCompleted. A plugin that is being
     // unloaded gives nothing: a slot of PanelAboutToBeDestroyed gets nullptr.
+    // Each declared input and output must be a property of the root; a missing
+    // one is a problem (the same one is not recorded twice), and the panel is
+    // still created.
     QQuickItem* CreatePanel(const QString& panelId);
 
     // Tears the instance down: PanelAboutToBeDestroyed (the item is alive, a
@@ -104,6 +122,8 @@ signals:
 private:
     struct PanelType {
         QString Id;
+        QVariantMap Inputs;
+        QVariantMap Outputs;
         // Null when the component could not be made.
         std::unique_ptr<QQmlComponent> Component;
         // The creation failed once; until the plugin is loaded again.
@@ -151,6 +171,9 @@ private:
     void AddProblem(const QString& plugin, const QString& panel,
                     const QString& message);
     void DropProblems(const QString& plugin);
+    // The declared names that the root has no property for.
+    void CheckDeclared(const Plugin& plugin, const PanelType& type,
+                       const QQuickItem& item);
 
     QQmlEngine& Engine_;
     api::PluginService& Plugins_;

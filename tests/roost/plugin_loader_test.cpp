@@ -87,6 +87,15 @@ QtObject {
 const QByteArray SYNTAX_ERROR_PANEL = "import QtQuick\nItem {{\n";
 const QByteArray UNKNOWN_TYPE_PANEL = "import QtQuick\nNoSuchType {}\n";
 
+// A panel with the properties `session` and `selected` only.
+const QByteArray PORTS_PANEL = R"(
+import QtQuick
+Item {
+    property var session: null
+    property var selected: null
+}
+)";
+
 // A panel that counts its lives; and one whose pluginId is required.
 const QByteArray LIFE_PANEL = R"(
 import QtQuick
@@ -152,6 +161,12 @@ QtObject {
 
 QJsonObject Panel(const QString& id, const QString& qml) {
     return {{"id", id}, {"qml", qml}};
+}
+
+QJsonObject PanelWithPorts(const QString& id, const QString& qml,
+                           const QJsonObject& inputs,
+                           const QJsonObject& outputs) {
+    return {{"id", id}, {"qml", qml}, {"inputs", inputs}, {"outputs", outputs}};
 }
 
 }  // namespace
@@ -899,6 +914,74 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(problems.count(), 2, TIMEOUT_MS * 2);
         QVERIFY(Loader_->Problems().isEmpty());
         QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+    }
+
+    void InfoGivesTheDeclaredInputsAndOutputsOfACreatableType() {
+        QVERIFY(AddPlugin(
+            "a-one",
+            {PanelWithPorts("typed", "typed.qml", {{"session", "SessionRef"}},
+                            {{"selected", "SessionRef"}, {"count", "Number"}}),
+             Panel("bare", "plain.qml"), Panel("broken", "broken.qml")},
+            {{"typed.qml", PORTS_PANEL},
+             {"plain.qml", PLAIN_PANEL},
+             {"broken.qml", SYNTAX_ERROR_PANEL}}));
+        QVERIFY(Boot());
+        const auto typed = Loader_->Info("typed");
+        QVERIFY(typed.has_value());
+        QCOMPARE(typed->Plugin, QString("a-one"));
+        QCOMPARE(typed->Inputs, (QVariantMap{{"session", "SessionRef"}}));
+        QCOMPARE(typed->Outputs, (QVariantMap{{"selected", "SessionRef"},
+                                              {"count", "Number"}}));
+        const auto bare = Loader_->Info("bare");
+        QVERIFY(bare.has_value());
+        QVERIFY(bare->Inputs.isEmpty() && bare->Outputs.isEmpty());
+        // A type that cannot be created, and one nobody declared.
+        QVERIFY(!Loader_->Info("broken").has_value());
+        QVERIFY(!Loader_->Info("nothing").has_value());
+        QVERIFY(Loader_->Problems().size() == 1);
+    }
+
+    void ADeclaredNameTheRootLacksIsAProblemAndThePanelIsStillCreated() {
+        QVERIFY(AddPlugin(
+            "a-one",
+            {PanelWithPorts("full", "ports.qml", {{"session", "SessionRef"}},
+                            {{"selected", "SessionRef"}}),
+             PanelWithPorts("short", "ports.qml",
+                            {{"session", "SessionRef"}, {"missingIn", "Text"}},
+                            {{"missingOut", "SessionRef"}})},
+            {{"ports.qml", PORTS_PANEL}}));
+        QVERIFY(Boot());
+        QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
+
+        QQuickItem* full = Loader_->CreatePanel("full");
+        QVERIFY(full != nullptr);
+        QVERIFY(Loader_->Problems().isEmpty());
+        QVERIFY(problems.isEmpty());
+
+        QQuickItem* panel = Loader_->CreatePanel("short");
+        QVERIFY(panel != nullptr);
+        QCOMPARE(Loader_->Problems().size(), 2);
+        QStringList messages;
+        for (const auto& problem : Loader_->Problems()) {
+            QCOMPARE(problem.Plugin, QString("a-one"));
+            QCOMPARE(problem.Panel, QString("short"));
+            messages.append(problem.Message);
+        }
+        messages.sort();
+        QCOMPARE(messages,
+                 (QStringList{"declared input \"missingIn\" is not a property "
+                              "of the root",
+                              "declared output \"missingOut\" is not a "
+                              "property of the root"}));
+        QCOMPARE(problems.count(), 1);
+        // The panel is usable and the type stays on offer.
+        QVERIFY(Loader_->PanelTypes().contains("short"));
+        QVERIFY(Loader_->Info("short").has_value());
+
+        // A second instance reports the same thing once.
+        QVERIFY(Loader_->CreatePanel("short") != nullptr);
+        QCOMPARE(Loader_->Problems().size(), 2);
+        QCOMPARE(problems.count(), 1);
     }
 
     void ADestroyedPanelsFarewellCallIsDroppedBecauseTheOwnerGoesFirst() {

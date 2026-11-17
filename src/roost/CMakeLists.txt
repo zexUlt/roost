@@ -3,25 +3,35 @@
 add_library(roost_app STATIC
     plugin_loader.cpp
     plugin_loader.hpp
+    shell.cpp
+    shell.hpp
     single_session.cpp
     single_session.hpp
 )
 target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick)
 
+# The QML of the window, as a static library so that the tests can load
+# Main.qml too (an executable cannot be linked). Link roost_shell and
+# roost_shellplugin and use Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin).
+#
+# NO_CACHEGEN: qmlcachegen compiles QML bindings to C++ ahead of time, and v1
+# does not use AOT until its licence is settled (design.md §10, §14). QML is
+# compiled at run time instead, as plugin QML is anyway.
+qt_add_library(roost_shell STATIC)
+qt_add_qml_module(roost_shell
+    URI Roost.Shell
+    VERSION 1.0
+    QML_FILES Main.qml PanelSlot.qml SessionMain.qml
+    NO_CACHEGEN
+)
+target_link_libraries(roost_shell PUBLIC Qt6::Quick)
+
 qt_add_executable(roost
     main.cpp
 )
 
-# NO_CACHEGEN: qmlcachegen compiles QML bindings to C++ ahead of time, and v1
-# does not use AOT until its licence is settled (design.md §10, §14). QML is
-# compiled at run time instead, as plugin QML is anyway.
-qt_add_qml_module(roost
-    URI Roost.Shell
-    QML_FILES Main.qml SessionMain.qml
-    NO_CACHEGEN
-)
-
-target_link_libraries(roost PRIVATE roost_core roost_app roost_qml_apiplugin
+target_link_libraries(roost PRIVATE roost_core roost_app
+    roost_shell roost_shellplugin roost_qml_apiplugin
     Qt6::Gui Qt6::Qml Qt6::Quick)
 
 set_target_properties(roost PROPERTIES

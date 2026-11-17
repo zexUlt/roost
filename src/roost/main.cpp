@@ -16,6 +16,8 @@
 #include "core/version.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/plugin_loader.hpp"
+#include "roost/shell.hpp"
 #include "roost/single_session.hpp"
 
 namespace {
@@ -120,8 +122,14 @@ int main(int argc, char* argv[]) {
         api.emplace();
     }
     QQmlApplicationEngine engine;
+    // Declared after the engine, so that they go before it: the panels and
+    // the contexts of the loader belong to the engine. The shell goes before
+    // the loader.
+    std::optional<roost::PluginLoader> loader;
+    std::optional<roost::Shell> shell;
+    roost::RoostSingleton* roostSingleton = nullptr;
     if (!sessionMode) {
-        auto* roostSingleton = engine.singletonInstance<roost::RoostSingleton*>(
+        roostSingleton = engine.singletonInstance<roost::RoostSingleton*>(
             "Roost.Api", "Roost");
         if (roostSingleton == nullptr) {
             qCritical("roost: the singleton Roost.Api.Roost is not registered");
@@ -133,6 +141,12 @@ int main(int argc, char* argv[]) {
     engine.loadFromModule("Roost.Shell", sessionMode ? "SessionMain" : "Main");
     if (engine.rootObjects().isEmpty()) {
         return 1;
+    }
+
+    if (!sessionMode) {
+        loader.emplace(engine, api->Plugins(), *roostSingleton);
+        shell.emplace(*engine.rootObjects().first(), *loader, *api,
+                      roost::protocol::SocketPath());
     }
 
     std::unique_ptr<roost::SingleSession> session;

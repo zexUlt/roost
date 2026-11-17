@@ -72,6 +72,18 @@ QStringList PluginLoader::PanelTypes() const {
     return types;
 }
 
+std::optional<PluginLoader::PanelInfo> PluginLoader::Info(
+    const QString& panelId) const {
+    for (const auto& plugin : Loaded_) {
+        for (const PanelType& type : plugin->Panels) {
+            if (type.Id == panelId && !type.Disabled) {
+                return PanelInfo{plugin->Id, type.Inputs, type.Outputs};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<PluginLoader::Declared> PluginLoader::ReadDeclared() const {
     std::vector<Declared> declared;
     QSet<QString> seen;
@@ -262,6 +274,8 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
     }
     PanelType type;
     type.Id = id;
+    type.Inputs = panel.value("inputs").toObject().toVariantMap();
+    type.Outputs = panel.value("outputs").toObject().toVariantMap();
     type.Component = std::move(component);
     plugin.Panels.push_back(std::move(type));
 }
@@ -310,6 +324,7 @@ QQuickItem* PluginLoader::CreatePanel(const QString& panelId) {
                                    "Item"));
             }
             plugin->Instances.push_back({item, owner, context});
+            CheckDeclared(*plugin, type, *item);
             return item;
         }
     }
@@ -367,6 +382,39 @@ void PluginLoader::AddProblem(const QString& plugin, const QString& panel,
              qPrintable(message));
     Problems_.append({plugin, panel, message});
     ProblemsDirty_ = true;
+}
+
+void PluginLoader::CheckDeclared(const Plugin& plugin, const PanelType& type,
+                                 const QQuickItem& item) {
+    bool added = false;
+    const auto check = [&](const QVariantMap& declared, const char* kind) {
+        for (auto it = declared.begin(); it != declared.end(); ++it) {
+            if (item.metaObject()->indexOfProperty(qPrintable(it.key())) >= 0) {
+                continue;
+            }
+            const QString message =
+                QStringLiteral(
+                    "declared %1 \"%2\" is not a property of the "
+                    "root")
+                    .arg(QLatin1String(kind), it.key());
+            const bool known = std::ranges::any_of(
+                Problems_, [&](const PanelProblem& problem) {
+                    return problem.Plugin == plugin.Id &&
+                           problem.Panel == type.Id &&
+                           problem.Message == message;
+                });
+            if (!known) {
+                AddProblem(plugin.Id, type.Id, message);
+                added = true;
+            }
+        }
+    };
+    check(type.Inputs, "input");
+    check(type.Outputs, "output");
+    if (added) {
+        ProblemsDirty_ = false;
+        emit ProblemsChanged();
+    }
 }
 
 void PluginLoader::DropProblems(const QString& plugin) {
