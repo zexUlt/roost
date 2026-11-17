@@ -22,6 +22,10 @@ public:
 
     bool Listen(const QString& path);
 
+    // Whether the error carries no `data` (no versions), as an older roostd's
+    // does. Off by default.
+    void SetOmitData(bool omit) { OmitData_ = omit; }
+
     // The hellos answered so far, over all connections.
     int Hellos() const { return Hellos_; }
 
@@ -37,6 +41,7 @@ private:
     // One decoder per connection.
     std::map<QLocalSocket*, FrameDecoder> Decoders_;
     int Hellos_ = 0;
+    bool OmitData_ = false;
 };
 
 }  // namespace roost::testing

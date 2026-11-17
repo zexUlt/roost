@@ -44,12 +44,14 @@ void RefusingServer::OnReadyRead(QLocalSocket* socket) {
                 .arg(QLatin1String(GHOSTTY_VT)),
             QJsonObject{{"protocol", PROTOCOL},
                         {"ghosttyVt", QLatin1String(GHOSTTY_VT)}});
-        const QJsonObject answer{
-            {"jsonrpc", "2.0"},
-            {"id", request.value("id")},
-            {"error", QJsonObject{{"code", error.Code},
-                                  {"message", error.Message},
-                                  {"data", error.Data}}}};
+        QJsonObject errorObject{{"code", error.Code},
+                                {"message", error.Message}};
+        if (!OmitData_) {
+            errorObject.insert("data", error.Data);
+        }
+        const QJsonObject answer{{"jsonrpc", "2.0"},
+                                 {"id", request.value("id")},
+                                 {"error", errorObject}};
         socket->write(
             *EncodeFrame(EFrameKind::Rpc,
                          QJsonDocument(answer).toJson(QJsonDocument::Compact)));

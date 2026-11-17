@@ -12,9 +12,12 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -55,6 +58,14 @@ Item {
         .arg(tag)
         .toUtf8();
 }
+
+// A list panel whose output is not initialised: it reads as undefined.
+const QByteArray UNSET_LIST_PANEL = R"(
+import QtQuick
+Item {
+    property var selected
+}
+)";
 
 const QByteArray TERMINAL_PANEL = R"(
 import QtQuick
@@ -227,7 +238,7 @@ private slots:
         QCOMPARE(Connection(), QString("connecting"));
         QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("disconnected"),
                                   TIMEOUT_MS);
-        QVERIFY(Root()->property("connectionMessage").isValid());
+        QVERIFY(!Root()->property("connectionMessage").toString().isEmpty());
         for (const QString& type : {LIST, TERMINAL}) {
             QVERIFY(Slot(type) != nullptr);
             QVERIFY(PanelOf(type) == nullptr);
@@ -295,6 +306,11 @@ private slots:
     }
 
     void ABrokenTerminalShowsItsErrorAndRoostdsProblemsAreInTheStrip() {
+        QTest::failOnWarning();
+        // The loader's own report of the broken file is expected.
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("plugin term-plugin, panel terminal.view: "));
         // A plugin whose manifest is not JSON: roostd reports it.
         QVERIFY(QDir().mkpath(Daemon_->PluginsPath() + "/broken-manifest"));
         QFile manifest(Daemon_->PluginsPath() + "/broken-manifest/plugin.json");
@@ -316,8 +332,13 @@ private slots:
         QVERIFY(!HasProblem("plugin list-plugin"));
         auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
         QVERIFY(strip->isVisible());
-        // Not linked: the terminal has no panel.
+        // Not linked: the terminal has no panel, and the selection warns
+        // about nothing (failOnWarning).
         QVERIFY(PanelOf(LIST)->setProperty("selected", Ref("a", "s1")));
+        QTest::qWait(100);
+        QVERIFY(PanelOf(TERMINAL) == nullptr);
+        QVERIFY(Slot(TERMINAL)->property("panel").value<QQuickItem*>() ==
+                nullptr);
     }
 
     void ATypeNobodyOffersIsNamedInThePlaceholder() {
@@ -432,7 +453,11 @@ private slots:
         QVERIFY(retry != nullptr);
         QVERIFY(retry->isVisible());
         QCOMPARE(PanelOf(LIST), nullptr);
-        QCOMPARE(ErrorOf(LIST), QString("waiting for roostd"));
+        for (const QString& type : {LIST, TERMINAL}) {
+            QCOMPARE(ErrorOf(type), QString("roostd refused the connection"));
+            QCOMPARE(Placeholder(type)->property("text").toString(),
+                     QString("roostd refused the connection"));
+        }
         // The Disconnected that follows a refusal does not hide it.
         QTest::qWait(300);
         QCOMPARE(Connection(), QString("refused"));
@@ -445,6 +470,129 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
         QTRY_COMPARE_WITH_TIMEOUT(server.Hellos(), 3, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("refused"), TIMEOUT_MS);
+    }
+
+    void AnUninitialisedListOutputGivesTheTerminalNullNotUndefined() {
+        QVERIFY(BootPlugins(ListEntry(), UNSET_LIST_PANEL, TerminalEntry(),
+                            TERMINAL_PANEL));
+        QTRY_VERIFY_WITH_TIMEOUT(BothPanelsShown(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Slot(TERMINAL)->property("linkInput").toString(),
+            QString("session"), TIMEOUT_MS);
+        QQuickItem* terminal = PanelOf(TERMINAL);
+        // The list's own value is undefined.
+        QVERIFY(!PanelOf(LIST)->property("selected").isValid() ||
+                PanelOf(LIST)->property("selected").isNull());
+        QQmlExpression strictNull(Engine_->rootContext(), terminal,
+                                  "session === null");
+        QTRY_VERIFY_WITH_TIMEOUT(strictNull.evaluate().toBool(), TIMEOUT_MS);
+        QVERIFY(!strictNull.hasError());
+        // Not the C++ undefined either.
+        const QVariant session = terminal->property("session");
+        QVERIFY(session.isValid());
+    }
+
+    void TheSlotsPanelIsAlreadyNullWhenThePanelIsAboutToBeDestroyed() {
+        QVERIFY(BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
+                            TERMINAL_PANEL));
+        QTRY_VERIFY_WITH_TIMEOUT(BothPanelsShown(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("connected"),
+                                  TIMEOUT_MS);
+        // Connected after the Shell: its slot ran first.
+        int delivered = 0;
+        bool slotPanelWasNull = false;
+        connect(
+            Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, this,
+            [&](QQuickItem* panel) {
+                if (panel->property("tag").isValid()) {
+                    ++delivered;
+                    slotPanelWasNull =
+                        Slot(LIST)->property("panel").value<QQuickItem*>() ==
+                        nullptr;
+                }
+            },
+            Qt::DirectConnection);
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(Daemon_->AddQmlPlugin("list-plugin", {ListEntry()},
+                                      {{"list.qml", ListPanel("v2")}},
+                                      "0.2.0"));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            PanelOf(LIST) != nullptr &&
+                PanelOf(LIST)->property("tag").toString() == "v2",
+            TIMEOUT_MS * 2);
+        QCOMPARE(delivered, 1);
+        QVERIFY(slotPanelWasNull);
+    }
+
+    void ARemovedPluginsSlotGetsThePlaceholderAndItsLinkProblemGoes() {
+        // Two outputs: a link problem in the strip while the plugin lives.
+        QVERIFY(BootPlugins(
+            ListEntry({{"first", "SessionRef"}, {"second", "SessionRef"}}),
+            TWO_OUTPUTS_PANEL, TerminalEntry(), TERMINAL_PANEL));
+        QTRY_VERIFY_WITH_TIMEOUT(BothPanelsShown(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("sessions.list declares 2 output"),
+                                 TIMEOUT_MS);
+
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(
+            QDir(Daemon_->PluginsPath() + "/list-plugin").removeRecursively());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST) == nullptr && Settled(),
+                                 TIMEOUT_MS * 2);
+        QCOMPARE(ErrorOf(LIST), QString("no panel sessions.list"));
+        QVERIFY(Placeholder(LIST)->isVisible());
+        QCOMPARE(Placeholder(LIST)->property("text").toString(),
+                 QString("no panel sessions.list"));
+        QVERIFY(Slot(LIST)->property("linkOutput").toString().isEmpty());
+        QVERIFY(Slot(LIST)->property("linkInput").toString().isEmpty());
+        QVERIFY(!HasProblem("sessions.list declares"));
+        // The terminal stays, and its link is off for want of the list.
+        QVERIFY(PanelOf(TERMINAL) != nullptr);
+    }
+
+    void TheBannerTellsConnectingAndDisconnectedAndRetryIsOnlyForRefused() {
+        QVERIFY(Boot(Daemon_->SocketPath()));
+        auto* banner = Root()->findChild<QQuickItem*>("connectionBanner");
+        auto* text = Root()->findChild<QQuickItem*>("connectionText");
+        auto* retry = Root()->findChild<QQuickItem*>("retryButton");
+        QVERIFY(banner != nullptr && text != nullptr && retry != nullptr);
+        QCOMPARE(Connection(), QString("connecting"));
+        QVERIFY(banner->isVisible());
+        QCOMPARE(text->property("text").toString(),
+                 QString("Connecting to roostd..."));
+        QVERIFY(!retry->isVisible());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("disconnected"),
+                                  TIMEOUT_MS);
+        QVERIFY(banner->isVisible());
+        const QString disconnected = text->property("text").toString();
+        QVERIFY2(
+            disconnected.startsWith("Disconnected from roostd, reconnecting."),
+            qPrintable(disconnected));
+        QVERIFY(disconnected.size() >
+                QString("Disconnected from roostd, reconnecting.").size());
+        QVERIFY(!retry->isVisible());
+    }
+
+    void ARefusalWithoutDataHasNoVersionsAndKeepsTheRestartHint() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        roost::testing::RefusingServer server;
+        server.SetOmitData(true);
+        QVERIFY(server.Listen(dir.filePath("old.sock")));
+        QVERIFY(Boot(dir.filePath("old.sock")));
+        QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("refused"), TIMEOUT_MS);
+        const QString message =
+            Root()->property("connectionMessage").toString();
+        // The versions part is the one Shell appends: "(roostd: protocol ...".
+        QVERIFY2(!message.contains("this window"), qPrintable(message));
+        QVERIFY2(!message.contains("(roostd: protocol"), qPrintable(message));
+        QVERIFY2(message.endsWith(". Restart roostd, then press Retry."),
+                 qPrintable(message));
+        for (const QString& type : {LIST, TERMINAL}) {
+            QCOMPARE(ErrorOf(type), QString("roostd refused the connection"));
+        }
     }
 };
 

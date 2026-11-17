@@ -105,6 +105,11 @@ void Shell::OnPanelAboutToBeDestroyed(QQuickItem* panel) {
             continue;
         }
         // The slot first: its Binding lets go of the item while it lives.
+        // `panel` must be written null before `linkInput` and `linkOutput`
+        // are cleared: an empty `property` on a live target makes the Binding
+        // warn. The Binding does not restore an old property when only its
+        // name changes; Shell never does that, the names change only with the
+        // panel.
         Write(slot, "panel", QVariant::fromValue<QQuickItem*>(nullptr));
         slot.Panel.clear();
         slot.LinkProblem.clear();
@@ -148,6 +153,9 @@ void Shell::Fill(Slot& slot) {
 }
 
 QString Shell::ErrorFor(const QString& type) const {
+    if (Connection_ == QLatin1String("refused")) {
+        return QStringLiteral("roostd refused the connection");
+    }
     if (!Api_.Plugins().IsLoaded()) {
         return QStringLiteral("waiting for roostd");
     }
@@ -190,10 +198,12 @@ void Shell::OnRefused(const rpc::Error& error) {
         message += QStringLiteral(
                        " (roostd: protocol %1, libghostty-vt %2; this window: "
                        "protocol %3, libghostty-vt %4)")
+                       // One arg() call: a "%N" inside a string from roostd is
+                       // not substituted by a later one.
                        .arg(data.value("protocol").toVariant().toString(),
-                            data.value("ghosttyVt").toString())
-                       .arg(protocol::VERSION)
-                       .arg(QString::fromStdString(GhosttyVtVersion()));
+                            data.value("ghosttyVt").toString(),
+                            QString::number(protocol::VERSION),
+                            QString::fromStdString(GhosttyVtVersion()));
     }
     message += QStringLiteral(". Restart roostd, then press Retry.");
     SetConnection(QStringLiteral("refused"), message);
@@ -208,6 +218,12 @@ void Shell::SetConnection(const QString& state, const QString& message) {
     Connection_ = state;
     Root_.setProperty("connection", state);
     Root_.setProperty("connectionMessage", message);
+    // The placeholders of the empty slots tell the state of the connection.
+    for (const Slot& slot : Slots_) {
+        if (slot.Item && slot.Panel.isNull()) {
+            Write(slot, "error", ErrorFor(slot.Type));
+        }
+    }
 }
 
 void Shell::UpdateProblems() {

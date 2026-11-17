@@ -122,11 +122,12 @@ Window {
     }
 
     // The one link of the layout: the output of the list panel to the input
-    // of the terminal panel. Off until both panels and both names exist.
+    // of the terminal panel. Off while a panel or a name is missing; an output
+    // that is undefined (an uninitialised `property var`) is written as null.
     Binding {
         target: terminalSlot.panel
         property: terminalSlot.linkInput
-        value: listSlot.panel && listSlot.linkOutput !== "" ? listSlot.panel[listSlot.linkOutput] : undefined
+        value: listSlot.panel && listSlot.linkOutput !== "" ? (listSlot.panel[listSlot.linkOutput] ?? null) : null
         when: terminalSlot.panel !== null && listSlot.panel !== null && terminalSlot.linkInput !== "" && listSlot.linkOutput !== ""
     }
 }
