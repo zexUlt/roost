@@ -3,6 +3,7 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -76,6 +77,32 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
            manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
            answersFile.open(QIODevice::WriteOnly) &&
            answersFile.write(QJsonDocument(answers).toJson()) > 0;
+}
+
+bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,
+                                 const QMap<QString, QByteArray>& files,
+                                 const QString& version) {
+    const QDir directory(PluginsPath() + u'/' + id);
+    if (!directory.mkpath(".")) {
+        return false;
+    }
+    for (auto it = files.begin(); it != files.end(); ++it) {
+        QFile file(directory.filePath(it.key()));
+        if (!QDir().mkpath(QFileInfo(file).absolutePath()) ||
+            !file.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            file.write(it.value()) != it.value().size()) {
+            return false;
+        }
+    }
+    const QJsonObject manifest{
+        {"id", id},
+        {"version", version},
+        {"api", "0"},
+        {"contributes", QJsonObject{{"panels", panels}}},
+    };
+    QFile manifestFile(directory.filePath("plugin.json"));
+    return manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+           manifestFile.write(QJsonDocument(manifest).toJson()) > 0;
 }
 
 bool RoostdProcess::Start(const QString& roostdPath) {

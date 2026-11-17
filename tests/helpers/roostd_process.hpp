@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QJsonArray>
+#include <QMap>
 #include <QProcess>
 #include <QString>
 #include <QTemporaryDir>
@@ -32,6 +34,15 @@ public:
     // agent
     // "<id>-agent", which has one session, "s1", in state idle.
     bool AddFixturePlugin(const QString& id, const QString& fixtureBackendPath);
+
+    // A plugin for the next Start with QML panels and no backend: plugin.json
+    // with the panels as `contributes.panels` entries, written as given, and
+    // the files (path relative to the plugin directory -> content). Called
+    // again for the same id it rewrites them, which is how a test edits a
+    // plugin between two Starts.
+    bool AddQmlPlugin(const QString& id, const QJsonArray& panels,
+                      const QMap<QString, QByteArray>& files,
+                      const QString& version = "0.1.0");
 
     // Starts roostd and waits until it answers hello. After Stop it starts
     // again on the same socket and directories, and what is on disk stays.
