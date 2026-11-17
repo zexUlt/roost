@@ -111,8 +111,9 @@ void SessionPane::OnOpened(std::uint64_t generation, const OpenResult& result) {
     Session_ = result->Session;
     // Open leaves the channel silent until this first acknowledgement.
     Io_.AcknowledgeUpdate(Channel_);
-    SetStatus(EPaneStatus::Open);
+    // The session first, so a status handler that sees Open already has it.
     emit SessionChanged();
+    SetStatus(EPaneStatus::Open);
     emit Updated();
     // The grid may have changed while the open was in flight.
     PumpResize();

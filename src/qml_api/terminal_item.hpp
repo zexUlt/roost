@@ -57,15 +57,17 @@ namespace roost {
 // The `session` property shows a session of roostd in the item: a SessionRef,
 // {agent, id}, or null. The item opens the channel itself (SessionPane), at its
 // own grid, through the window's API (the singleton Roost), and follows the
-// size, the input and the output. `status` tells how it stands. "none" is no
-// session; "opening" is the open in flight, with the screen cleared; "open";
-// "ended" is a session that ended by itself, its last screen kept, and
-// "failed" is an open that was refused or a `session` that is no SessionRef,
-// each with `statusMessage` for the reason; "disconnected" is a lost
-// connection, the last screen kept, and the item opens the same session
-// again when the window is reconnected. reopen() opens an ended, failed or
-// disconnected session anew. Without the API of a window (no singleton, or no
-// Api set in it) the status is "failed".
+// size, the input and the output. It does not open before the item has a size
+// (status "none" until then), so the program never sees a 1x1 terminal. The
+// same ref again does nothing; reopen() is the way to open an ended session.
+// `status` tells how it stands. "none" is no session; "opening" is the open in
+// flight, with the screen cleared; "open"; "ended" is a session that ended by
+// itself, its last screen kept, and "failed" is an open that was refused or a
+// `session` that is no SessionRef, each with `statusMessage` for the reason;
+// "disconnected" is a lost connection, the last screen kept, and the item opens
+// the same session again when the window is reconnected. reopen() opens an
+// ended, failed or disconnected session anew. Without the API of a window (no
+// singleton, or no Api set in it) the status is "failed".
 //
 // The item does not resize the session either. It says how many columns and
 // rows fit (`gridSizeChanged`), and the owner sends session.resize, which
@@ -109,7 +111,7 @@ public:
     // emitted for an empty text or without a session.
     Q_INVOKABLE void paste(const QString& text);
 
-    QVariant sessionRef() const { return SessionRef_; }
+    QVariant sessionRef() const;
     void setSessionRef(const QVariant& ref);
     QString status() const { return Status_; }
     QString statusMessage() const { return StatusMessage_; }
@@ -220,6 +222,9 @@ private:
     QVariant SessionRef_;
     // The last value was not a SessionRef.
     bool RefInvalid_ = false;
+    // The item has had a real size; a session is not opened before, or the
+    // PTY would start at 1x1.
+    bool GridKnown_ = false;
     // The pane is a child of the item; made when the first session is shown.
     QPointer<SessionPane> Pane_;
     QString Status_ = QStringLiteral("none");

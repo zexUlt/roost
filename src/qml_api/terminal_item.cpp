@@ -142,12 +142,21 @@ void TerminalItem::setSessionRef(const QVariant& ref) {
         }
     }
     const bool changed = accepted != SessionRef_;
+    const bool invalidChanged = invalid != RefInvalid_;
     SessionRef_ = accepted;
     RefInvalid_ = invalid;
     if (changed) {
         emit sessionRefChanged();
     }
-    applySessionRef();
+    // The same ref again does not reopen an ended or failed session; reopen()
+    // does.
+    if (changed || invalidChanged) {
+        applySessionRef();
+    }
+}
+
+QVariant TerminalItem::sessionRef() const {
+    return SessionRef_.isValid() ? SessionRef_ : QVariant::fromValue(nullptr);
 }
 
 void TerminalItem::reopen() {
@@ -182,6 +191,12 @@ void TerminalItem::applySessionRef() {
     if (!ensurePane()) {
         return;
     }
+    if (!GridKnown_) {
+        // Opening now would size the PTY 1x1 and the program would see it;
+        // updateGridSize applies the ref once the item has a size.
+        setStatus(QStringLiteral("none"), {});
+        return;
+    }
     const QVariantMap ref = SessionRef_.toMap();
     Pane_->Show(SessionKey{ref.value(QStringLiteral("agent")).toString(),
                            ref.value(QStringLiteral("id")).toString()});
@@ -214,10 +229,17 @@ bool TerminalItem::ensurePane() {
             [this, pane] { setSession(pane->Session()); });
     connect(pane, &SessionPane::Updated, this, [this] { update(); });
     connect(pane, &SessionPane::StatusChanged, this, [this, pane] {
+        // An invalid ref owns the status ("failed"): the pane's "none" from
+        // closing its session must not show in between.
+        if (RefInvalid_) {
+            return;
+        }
         setStatus(statusName(pane->Status()), pane->Message());
     });
     // The channels went with the connection; the same session is opened again
-    // once the window is back.
+    // once the window is back. The pane has already seen the IoThread's
+    // Disconnected by then: Api::Connected comes from a hello on a new
+    // connection, made after that signal was queued to this thread.
     connect(windowApi, &api::Api::Connected, pane, [pane] {
         if (pane->Status() == EPaneStatus::Disconnected) {
             pane->Reopen();
@@ -271,12 +293,15 @@ void TerminalItem::updateGridSize() {
     };
     const int columns = fit(width(), cell.Width);
     const int rows = fit(height(), cell.Height);
-    if (columns == Columns_ && rows == Rows_) {
-        return;
+    if (columns != Columns_ || rows != Rows_) {
+        Columns_ = columns;
+        Rows_ = rows;
+        emit gridSizeChanged();
     }
-    Columns_ = columns;
-    Rows_ = rows;
-    emit gridSizeChanged();
+    if (!GridKnown_ && width() > 0 && height() > 0) {
+        GridKnown_ = true;
+        applySessionRef();
+    }
 }
 
 void TerminalItem::geometryChange(const QRectF& newGeometry,

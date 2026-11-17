@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "api/api.hpp"
+#include "helpers/channels_left.hpp"
 #include "helpers/roostd_process.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
@@ -28,6 +29,7 @@
 #include "terminal/session_pane.hpp"
 
 using namespace roost;
+using roost::testing::ChannelsLeft;
 using roost::testing::RoostdProcess;
 
 // The static plugin of module Roost.Api, linked into this executable.
@@ -40,7 +42,6 @@ constexpr int COLUMNS = 80;
 constexpr int ROWS = 24;
 // How long the slow plugin holds back its answer to agent.attachCommand.
 constexpr int SLOW_DELAY_MS = 300;
-constexpr int QUIET_MS = 500;
 // Each query answered once; a digit after the 1 would be more than once.
 const QRegularExpression ANSWERED_ONCE(
     QStringLiteral(R"(answers da1=1 cpr=1(?!\d))"));
@@ -55,6 +56,8 @@ import Roost.Api
 Item {
     property var ref: null
     property alias terminal: terminal
+    // What QML reads from `session`: null, not undefined.
+    property bool sessionIsNull: terminal.session === null
 
     TerminalItem {
         id: terminal
@@ -156,9 +159,10 @@ private:
         return connected.wait(TIMEOUT_MS) || Api_->IsConnected();
     }
 
-    // The page in the window, sized to a grid. Qt Quick frames are counted as
-    // drawn when the item rebuilt a row in them.
-    bool ShowPage(const char* qml) {
+    // The page in the window, sized to a grid unless `sized` is false; then
+    // the window is not shown either, and ShowWindow does it after ResizeGrid.
+    // Qt Quick frames are counted as drawn when the item rebuilt a row in them.
+    bool ShowPage(const char* qml, bool sized = true) {
         Window_ = std::make_unique<QQuickWindow>();
         QQmlComponent component(Engine_.get());
         component.setData(qml, QUrl());
@@ -172,15 +176,25 @@ private:
             return false;
         }
         Page_->setParentItem(Window_->contentItem());
-        ResizeGrid(COLUMNS, ROWS);
+        // In the render thread, right after the sync that rebuilt the rows,
+        // while the GUI thread waits: the item may be read then. The pointer
+        // is copied; the window is gone before the item.
         connect(
-            Window_.get(), &QQuickWindow::frameSwapped, Window_.get(),
-            [this] {
-                if (Item_->rowsRebuilt() > 0) {
+            Window_.get(), &QQuickWindow::afterSynchronizing, Window_.get(),
+            [this, item = Item_] {
+                if (item->rowsRebuilt() > 0) {
                     ++DrawnFrames_;
                 }
             },
             Qt::DirectConnection);
+        if (!sized) {
+            return true;
+        }
+        ResizeGrid(COLUMNS, ROWS);
+        return ShowWindow();
+    }
+
+    bool ShowWindow() {
         Window_->show();
         return QTest::qWaitForWindowExposed(Window_.get()) &&
                QTest::qWaitForWindowActive(Window_.get());
@@ -255,6 +269,93 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Screen(SessionOf()).contains("fake tui"),
                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(DrawnFrames_ > 0, TIMEOUT_MS);
+    }
+
+    // The item has no size when it is created from QML; the session opens
+    // once it has one, and the TUI never sees another.
+    void ASessionGivenBeforeTheItemHasASizeOpensAtTheRealSize() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML_LITERAL, false));
+        auto* const pane = Item_->findChild<SessionPane*>();
+        QVERIFY(pane != nullptr);
+        QObject scope;
+        QString firstSize;
+        connect(pane, &SessionPane::Updated, &scope, [&] {
+            const auto match =
+                QRegularExpression(QStringLiteral(R"(size \d+x\d+)"))
+                    .match(Screen(pane->Session()));
+            if (firstSize.isEmpty() && match.hasMatch()) {
+                firstSize = match.captured();
+            }
+        });
+        QCOMPARE(Item_->status(), QStringLiteral("none"));
+        QCOMPARE(Item_->sessionRef(), QVariant(Ref("fast-agent", "s1")));
+
+        ResizeGrid(COLUMNS, ROWS);
+        QVERIFY(ShowWindow());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Item_->status(), QStringLiteral("open"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!firstSize.isEmpty(), TIMEOUT_MS);
+        QCOMPARE(firstSize, SizeLine(COLUMNS, ROWS));
+    }
+
+    void SessionReadsNullInQmlUntilThereIsARef() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML));
+        QVERIFY(Item_->sessionRef().isNull());
+        QVERIFY(Page_->property("sessionIsNull").toBool());
+
+        Page_->setProperty("ref", Ref("fast-agent", "s1"));
+
+        QVERIFY(!Page_->property("sessionIsNull").toBool());
+
+        // An invalid value reads back as null as well.
+        Page_->setProperty("ref", QStringLiteral("fast-agent/s1"));
+
+        QCOMPARE(Item_->status(), QStringLiteral("failed"));
+        QVERIFY(Item_->sessionRef().isNull());
+        QVERIFY(Page_->property("sessionIsNull").toBool());
+    }
+
+    void TheSameRefAgainDoesNotReopenAnEndedSession() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML));
+        Page_->setProperty("ref", Ref("fast-agent", "s1"));
+        SettleOpen();
+        Item_->forceActiveFocus();
+        QVERIFY(QTest::qWaitFor([&] { return Item_->hasActiveFocus(); }));
+        QTest::keyClick(Window_.get(), 'x');
+        QTRY_COMPARE_WITH_TIMEOUT(Item_->status(), QStringLiteral("ended"),
+                                  TIMEOUT_MS);
+        const auto session = SessionOf();
+        QSignalSpy refChanged(Item_, &TerminalItem::sessionRefChanged);
+
+        Item_->setSessionRef(Ref("fast-agent", "s1"));
+
+        QCOMPARE(Item_->status(), QStringLiteral("ended"));
+        QCOMPARE(SessionOf(), session);
+        QCOMPARE(refChanged.count(), 0);
+        // Only reopen() opens it again.
+        QMetaObject::invokeMethod(Item_, "reopen");
+        QCOMPARE(Item_->status(), QStringLiteral("opening"));
+    }
+
+    // Not through "none" on the way: a binding on the status would show it.
+    void AnInvalidRefGoesStraightToFailed() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML));
+        Page_->setProperty("ref", Ref("fast-agent", "s1"));
+        SettleOpen();
+        QObject scope;
+        QStringList statuses;
+        connect(Item_, &TerminalItem::statusChanged, &scope,
+                [&] { statuses.push_back(Item_->status()); });
+
+        Page_->setProperty("ref", QStringLiteral("fast-agent/s1"));
+
+        QCOMPARE(statuses, QStringList{QStringLiteral("failed")});
+        QVERIFY(!SessionOf());
     }
 
     void TheStatusFollowsTheSessionThroughOpeningToNone() {
@@ -352,7 +453,7 @@ private slots:
             QCOMPARE(Item_->status(), QStringLiteral("failed"));
             QCOMPARE(Item_->statusMessage(),
                      QStringLiteral("not a SessionRef"));
-            QVERIFY(!Item_->sessionRef().isValid());
+            QVERIFY(Item_->sessionRef().isNull());
         }
     }
 
@@ -413,7 +514,10 @@ private slots:
         QCOMPARE(Item_->status(), QStringLiteral("opening"));
 
         DropPage();
-        QTest::qWait(SLOW_DELAY_MS + QUIET_MS);
+
+        // The item's open was asked first, so its answer has been dealt with
+        // when this one is answered; roostd must have no channel left.
+        QCOMPARE(ChannelsLeft(Api_->Io(), "slow-agent", "s1", TIMEOUT_MS), 0);
 
         // The window still serves a new item.
         QVERIFY(ShowPage(QML));

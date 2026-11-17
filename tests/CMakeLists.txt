@@ -17,6 +17,12 @@ target_include_directories(roost_test_helpers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(roost_test_helpers PUBLIC
     roost::compile_options roost_core Qt6::Core Qt6::Test)
 
+# Helpers for the tests of terminal channels; apart, so the others do not link
+# roost_terminal.
+add_library(roost_test_terminal_helpers STATIC helpers/channels_left.cpp)
+target_link_libraries(roost_test_terminal_helpers PUBLIC
+    roost_test_helpers roost_terminal)
+
 # One executable per test file, so a crash in one does not hide the others.
 function(roost_add_qt_test name source)
     qt_add_executable(${name} ${source})
@@ -159,7 +165,7 @@ add_dependencies(io_thread_test roostd fake_tui claude-adapter)
 # The channel logic of a terminal panel against the real roostd with two
 # fixture plugins whose agents attach to fake_tui.
 roost_add_qt_test(session_pane_test terminal/session_pane_test.cpp
-    roost_terminal roost_test_helpers)
+    roost_terminal roost_test_terminal_helpers)
 target_compile_definitions(session_pane_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
@@ -242,7 +248,7 @@ add_dependencies(roost_sessions_test roostd fixture_backend)
 # The `session` property of TerminalItem: the item opens, draws and feeds a
 # session of the real roostd by itself.
 roost_add_qt_test(terminal_item_session_test qml_api/terminal_item_session_test.cpp
-    roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml Qt6::Quick)
+    roost_qml_api roost_qml_apiplugin roost_test_terminal_helpers Qt6::Qml Qt6::Quick)
 target_compile_definitions(terminal_item_session_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
