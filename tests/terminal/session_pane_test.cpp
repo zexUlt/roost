@@ -409,7 +409,9 @@ private slots:
         Pane_->SendInput("q");
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(Pane_->Session()).contains(ANSWERED_TWICE), TIMEOUT_MS);
-        QVERIFY(!Channels_.empty());
+        // The screen is parsed on the IO thread; Updated reaches this thread
+        // later.
+        QTRY_VERIFY_WITH_TIMEOUT(!Channels_.empty(), TIMEOUT_MS);
         const std::uint32_t channel = Channels_.back();
         const auto old = Pane_->Session();
         QSignalSpy sessionChanged(Pane_.get(), &SessionPane::SessionChanged);
