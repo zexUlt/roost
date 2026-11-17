@@ -25,7 +25,10 @@ target_link_libraries(roost_test_terminal_helpers PUBLIC
 
 # One executable per test file, so a crash in one does not hide the others.
 function(roost_add_qt_test name source)
-    qt_add_executable(${name} ${source})
+    # test_environment.cpp is a source, not a library member: the linker may drop
+    # an unreferenced object of a static library.
+    qt_add_executable(${name} ${source}
+        ${CMAKE_CURRENT_SOURCE_DIR}/helpers/test_environment.cpp)
     target_link_libraries(${name} PRIVATE roost_core Qt6::Test ${ARGN})
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "${ROOST_TEST_ENVIRONMENT}")
@@ -33,6 +36,11 @@ endfunction()
 
 roost_add_qt_test(ghostty_formatter_test core/ghostty_formatter_test.cpp ghostty-vt-static)
 roost_add_qt_test(bus_test core/bus_test.cpp)
+roost_add_qt_test(test_environment_test core/test_environment_test.cpp Qt6::Gui)
+# The same binary with the variables removed: the guard alone must set them.
+add_test(NAME test_environment_unset
+    COMMAND ${CMAKE_COMMAND} -E env --unset=QT_QPA_PLATFORM --unset=QML_DISABLE_DISK_CACHE
+        $<TARGET_FILE:test_environment_test>)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)

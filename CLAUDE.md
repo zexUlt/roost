@@ -33,7 +33,7 @@
 - libghostty-vt — из исходников через CMake `FetchContent` на теге `vt-1.0.1`. Нужен Zig ≥ 0.17.0.
 - Сборка только через пресеты: `cmake --preset dev`, `ctest --preset dev`. Пресеты: `dev`, `asan-ubsan`, `tsan`, `release`; санитайзеры гоняются в CI. TSan гоняется только ночью: `nightly-tsan.yml`, пресет `tsan-qt` с Qt под TSan, тесты с меткой `threads`; правила — `.claude/rules/threads.md`.
 - Форматирование — `.clang-format` (google, 4 пробела) для C++, `qmlformat` для QML. Нейминг — `.clang-tidy`, `readability-identifier-naming`.
-- Тесты: Qt Test для C++, Qt Quick Test для QML, `QT_QPA_PLATFORM=offscreen`. Тесты не трогают настоящий `~/.config/roost` и `~/.config/cc-fleet`.
+- Тесты: Qt Test для C++, Qt Quick Test для QML, `QT_QPA_PLATFORM=offscreen` (тестовые бинарники сами ставят его, если он не задан, так что прямой запуск тоже без окон). Тесты не трогают настоящий `~/.config/roost` и `~/.config/cc-fleet`.
 
 ## Нейминг
 
