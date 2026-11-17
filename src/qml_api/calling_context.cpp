@@ -29,9 +29,10 @@ QObject* CallOwners::add(QQmlContext* context) {
         return nullptr;
     }
     if (!Owners_.contains(context)) {
-        connect(context, &QObject::destroyed, this, [this](QObject* destroyed) {
-            Owners_.remove(static_cast<QQmlContext*>(destroyed));
-        });
+        // The key only: by the time `destroyed` fires the object is no longer
+        // a QQmlContext, so it is not cast back to one.
+        connect(context, &QObject::destroyed, this,
+                [this, context] { Owners_.remove(context); });
     }
     auto* owner = new QObject(context);
     Owners_.insert(context, owner);
