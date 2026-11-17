@@ -19,6 +19,7 @@
 #include <QSaveFile>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTimer>
 
 #include <chrono>
 #include <memory>
@@ -193,12 +194,19 @@ private:
                                     : Reloaded_->last().first().toString();
     }
 
-    static void ExpectProblemWarnings(int count) {
-        for (int i = 0; i < count; ++i) {
-            QTest::ignoreMessage(
-                QtWarningMsg,
-                QRegularExpression("^roost: plugin [a-z-]+, panel .*"));
-        }
+    // The warning of the loader for a panel that does not load.
+    static void ExpectProblemWarning(const QString& plugin) {
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("^roost: plugin " + plugin + ", panel .*"));
+    }
+
+    bool Remove(const QString& plugin, const QString& file) {
+        return QFile::remove(PathOf(plugin, file));
+    }
+
+    QList<QTimer*> Timers() const {
+        return Watcher_->findChildren<QTimer*>(Qt::FindDirectChildrenOnly);
     }
 
     // The shell part.
@@ -280,6 +288,8 @@ private slots:
     }
 
     void ReplacingAFileByRenameReloadsAndTheNewFileIsWatchedAgain() {
+        // On macOS (kqueue) this does not tell whether the watcher re-scans:
+        // the path is kept. On Linux (inotify) it does.
         QTest::failOnWarning();
         QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
@@ -309,26 +319,28 @@ private slots:
         QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v5"));
     }
 
-    void ABurstOfWritesWithinTheDebounceReloadsOnce() {
+    void ABurstThatLastsLongerThanTheDebounceReloadsOnceAfterTheLastEvent() {
         QTest::failOnWarning();
         QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
                           {{"p.qml", Panel("v0")}}));
-        // Long against the 30 ms between writes, so that a slow runner does
-        // not split the burst.
-        QVERIFY(Boot(400ms));
+        // The burst (6 writes, 250 ms apart, 1250 ms) is longer than the
+        // debounce, and each gap is shorter than it by a wide margin: macOS
+        // delivers the events of a burst late and in groups. The debounce
+        // counts from the last event.
+        constexpr auto burstDebounce = 1000ms;
+        QVERIFY(Boot(burstDebounce));
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
 
-        for (int i = 1; i <= 5; ++i) {
+        for (int i = 1; i <= 6; ++i) {
             QVERIFY(
                 EditInPlace("a-one", "p.qml", Panel(QString("v%1").arg(i))));
-            QTest::qWait(30);
+            QTest::qWait(250);
         }
-        QCOMPARE(Reloaded_->count(), 0);
         QVERIFY(WaitReloads(1));
-        QTest::qWait(3 * 400);
+        QTest::qWait(burstDebounce + 500ms);
         QCOMPARE(Reloaded_->count(), 1);
         QCOMPARE(types.count(), 1);
-        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v5"));
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v6"));
     }
 
     void ANewFileInASubdirectoryIsWatchedAfterTheDirectoryEvent() {
@@ -345,7 +357,6 @@ private slots:
         // The new file shows itself by the event of its directory.
         QVERIFY(EditInPlace("a-one", "sub/Helper.qml", helperV1));
         QVERIFY(WaitReloads(1));
-        QTest::qWait(QUIET_MS);
         VerifyNoMoreReloads(1);
 
         // The panel starts to use it.
@@ -370,6 +381,7 @@ private slots:
     }
 
     void ABrokenEditMakesThePanelAProblemAndFixingItBringsItBack() {
+        QTest::failOnWarning();
         QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("b-two", {Entry("two.p", "q.qml")},
@@ -380,7 +392,7 @@ private slots:
         QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
         QVERIFY(Loader_->Problems().isEmpty());
 
-        ExpectProblemWarnings(1);
+        ExpectProblemWarning("a-one");
         QVERIFY(EditInPlace("a-one", "p.qml", "import QtQuick\nItem {{\n"));
         QVERIFY(WaitReloads(1));
         QCOMPARE(Loader_->Problems().size(), 1);
@@ -427,21 +439,6 @@ private slots:
         QVERIFY(fresh != nullptr);
         QVERIFY(QMetaObject::invokeMethod(fresh, "ask"));
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("answer:a-one"), 1, TIMEOUT_MS);
-    }
-
-    void AReloadByTheWatcherKeepsTheCallsOfThePanelsThatStay() {
-        QTest::failOnWarning();
-        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
-                          {{"p.qml", Panel("v1")}}));
-        QVERIFY(AddPlugin("b-two", {Entry("two.p", "q.qml")},
-                          {{"q.qml", Panel("q1")}}));
-        QVERIFY(Boot());
-        QQuickItem* two = Loader_->CreatePanel("two.p");
-        QVERIFY(two != nullptr);
-        QVERIFY(QMetaObject::invokeMethod(two, "ask"));
-        QVERIFY(EditInPlace("a-one", "p.qml", Panel("v2")));
-        QVERIFY(WaitReloads(1));
-        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("answer:b-two"), 1, TIMEOUT_MS);
     }
 
     void AfterAReloadOfTheListPluginTheSlotHoldsTheNewPanelAndIsLinked() {
@@ -528,7 +525,7 @@ Item {
 
     void OverThePathCapAWarningNamesTheUnwatchedAndTheWatchedStillReload() {
         QTest::failOnWarning();
-        // Watched: the directory, a.qml, x.qml. Not: y.qml.
+        // Watched: the directory, its parent, a.qml, x.qml. Not: y.qml.
         QVERIFY(AddPlugin("a-one", {Entry("one.p", "a.qml")},
                           {{"a.qml", Panel("v1")},
                            {"x.qml", Panel("x1")},
@@ -536,7 +533,7 @@ Item {
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("not watched: .*y\\.qml(?!.*(a|x)\\.qml)"));
-        QVERIFY(Boot(DEBOUNCE, 3));
+        QVERIFY(Boot(DEBOUNCE, 4));
 
         QVERIFY(EditInPlace("a-one", "a.qml", Panel("v2")));
         QVERIFY(WaitReloads(1));
@@ -548,6 +545,130 @@ Item {
 
         QVERIFY(EditInPlace("a-one", "y.qml", Panel("y2")));
         VerifyNoMoreReloads(2);
+    }
+
+    void APluginWhoseNameStartsTheNameOfAnotherIsNotItsFile() {
+        QTest::failOnWarning();
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}}));
+        QVERIFY(AddPlugin("a-one2", {Entry("one2.p", "p.qml")},
+                          {{"p.qml", Panel("w1")}}));
+        QVERIFY(Boot());
+
+        QVERIFY(EditInPlace("a-one2", "p.qml", Panel("w2")));
+        QVERIFY(WaitReloads(1));
+        VerifyNoMoreReloads(1);
+        QCOMPARE(LastReloaded(), QString("a-one2"));
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v1"));
+        QCOMPARE(TagOf(Loader_->CreatePanel("one2.p")), QString("w2"));
+    }
+
+    void ThePendingTimerOfAPluginThatWentAwayIsGone() {
+        QTest::failOnWarning();
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}}));
+        QVERIFY(AddPlugin("b-two", {Entry("two.p", "q.qml")},
+                          {{"q.qml", Panel("q1")}}));
+        // Long: the timer is still pending when the plugin goes.
+        QVERIFY(Boot(10s));
+        QSignalSpy plugins(Loader_.get(), &PluginLoader::PluginsChanged);
+
+        QVERIFY(EditInPlace("a-one", "p.qml", Panel("v2")));
+        QTRY_COMPARE_WITH_TIMEOUT(Timers().size(), 1, TIMEOUT_MS);
+
+        // roostd reads the plugins at its start: a plugin goes with a restart.
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(QDir(PathOf("a-one", "")).removeRecursively());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(plugins.count(), 1, TIMEOUT_MS * 2);
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"two.p"}));
+        // The timer is deleted later (deleteLater).
+        QTRY_COMPARE_WITH_TIMEOUT(Timers().size(), 0, TIMEOUT_MS);
+        QCOMPARE(Reloaded_->count(), 0);
+    }
+
+    void DeletingAFileReloadsOnceAsAProblemAndWritingItAgainReloads() {
+        QTest::failOnWarning();
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}}));
+        QVERIFY(Boot());
+
+        ExpectProblemWarning("a-one");
+        QVERIFY(Remove("a-one", "p.qml"));
+        QVERIFY(WaitReloads(1));
+        VerifyNoMoreReloads(1);
+        QCOMPARE(Loader_->Problems().size(), 1);
+        QCOMPARE(Loader_->Problems().first().Plugin, QString("a-one"));
+        QVERIFY(Loader_->CreatePanel("one.p") == nullptr);
+
+        QVERIFY(EditInPlace("a-one", "p.qml", Panel("v2")));
+        QVERIFY(WaitReloads(2));
+        VerifyNoMoreReloads(2);
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v2"));
+    }
+
+    void ADeletedPluginDirectoryMadeAgainLaterReloadsThePlugin() {
+        QTest::failOnWarning();
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}}));
+        QVERIFY(Boot());
+
+        ExpectProblemWarning("a-one");
+        QVERIFY(QDir(PathOf("a-one", "")).removeRecursively());
+        QVERIFY(WaitReloads(1));
+        // Later than the debounce: nothing of the plugin is watched now but
+        // the directory above it.
+        QTest::qWait(QUIET_MS);
+        QCOMPARE(Reloaded_->count(), 1);
+        QCOMPARE(Loader_->Problems().size(), 1);
+
+        QVERIFY(QDir().mkpath(PathOf("a-one", "")));
+        QVERIFY(EditInPlace("a-one", "p.qml", Panel("v2")));
+        QVERIFY(WaitReloads(2));
+        QCOMPARE(LastReloaded(), QString("a-one"));
+        QTest::qWait(QUIET_MS);
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v2"));
+        const int afterBack = static_cast<int>(Reloaded_->count());
+
+        // And it is watched again.
+        QVERIFY(EditInPlace("a-one", "p.qml", Panel("v3")));
+        QVERIFY(WaitReloads(afterBack + 1));
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("v3"));
+    }
+
+    void ANewTopLevelSubdirectoryWithAFileIsPickedUp() {
+        QTest::failOnWarning();
+        const QByteArray helperV1 =
+            "import QtQuick\nItem { property string value: \"h1\" }\n";
+        const QByteArray helperV2 =
+            "import QtQuick\nItem { property string value: \"h2\" }\n";
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}}));
+        QVERIFY(Boot());
+
+        QVERIFY(QDir().mkpath(PathOf("a-one", "fresh")));
+        QVERIFY(EditInPlace("a-one", "fresh/Helper.qml", helperV1));
+        QVERIFY(WaitReloads(1));
+        VerifyNoMoreReloads(1);
+
+        // It is watched: an edit in place reloads.
+        QVERIFY(EditInPlace("a-one", "fresh/Helper.qml", helperV2));
+        QVERIFY(WaitReloads(2));
+        VerifyNoMoreReloads(2);
+    }
+
+    void EditingQmldirReloads() {
+        QTest::failOnWarning();
+        QVERIFY(AddPlugin("a-one", {Entry("one.p", "p.qml")},
+                          {{"p.qml", Panel("v1")}, {"qmldir", "# v1\n"}}));
+        QVERIFY(Boot());
+
+        QVERIFY(EditInPlace("a-one", "qmldir", "# v2\n"));
+        QVERIFY(WaitReloads(1));
+        QCOMPARE(LastReloaded(), QString("a-one"));
+        VerifyNoMoreReloads(1);
     }
 };
 

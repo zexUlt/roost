@@ -14,14 +14,33 @@ namespace {
 
 constexpr int NAMED_UNWATCHED = 10;
 
-// The directories and the `*.qml` and `*.js` files under `directory`
-// (itself included among the directories), sorted.
+// The directory as the watcher compares paths with it: clean and absolute.
+// Empty for a directory that cannot be watched (empty, relative, the root):
+// its prefix would match every path.
+QString CleanDirectory(const QString& directory) {
+    if (!QDir::isAbsolutePath(directory)) {
+        return {};
+    }
+    const QString clean = QDir::cleanPath(directory);
+    return clean == u"/" ? QString() : clean;
+}
+
+bool Within(const QString& path, const QString& directory) {
+    return path == directory || path.startsWith(directory + u'/');
+}
+
+QString ParentOf(const QString& directory) {
+    return QDir::cleanPath(directory + u"/..");
+}
+
+// The directories and the `*.qml`, `*.js` and `qmldir` files under
+// `directory` (itself included among the directories), sorted.
 void Collect(const QString& directory, QStringList& directories,
              QStringList& files) {
     if (!QFileInfo(directory).isDir()) {
         return;
     }
-    directories.append(QDir::cleanPath(directory));
+    directories.append(directory);
     QDirIterator it(directory, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
     QStringList foundDirectories;
@@ -31,7 +50,8 @@ void Collect(const QString& directory, QStringList& directories,
         const QFileInfo info = it.fileInfo();
         if (info.isDir()) {
             foundDirectories.append(it.filePath());
-        } else if (info.suffix() == u"qml" || info.suffix() == u"js") {
+        } else if (info.suffix() == u"qml" || info.suffix() == u"js" ||
+                   info.fileName() == u"qmldir") {
             foundFiles.append(it.filePath());
         }
     }
@@ -73,15 +93,39 @@ void PluginWatcher::Sync() {
 
     QStringList directories;
     QStringList files;
-    for (const QString& directory : plugins) {
+    QStringList parents;
+    QSet<QString> pluginDirectories;
+    for (const QString& declared : plugins) {
+        const QString directory = CleanDirectory(declared);
+        if (directory.isEmpty()) {
+            continue;
+        }
+        pluginDirectories.insert(directory);
+        Present_.insert(directory, QFileInfo(directory).isDir());
         Collect(directory, directories, files);
+        // The parent shows a plugin directory that is deleted and made again.
+        const QString parent = ParentOf(directory);
+        if (QFileInfo(parent).isDir()) {
+            parents.append(parent);
+        }
     }
     // Directories first: they catch new and replaced files.
-    QStringList wanted = directories + files;
+    QStringList all = directories + parents + files;
+    QStringList wanted;
+    QSet<QString> wantedSet;
+    for (const QString& path : all) {
+        if (!wantedSet.contains(path)) {
+            wantedSet.insert(path);
+            wanted.append(path);
+        }
+    }
     QStringList unwatched;
     if (wanted.size() > MaxPaths_) {
         unwatched = wanted.mid(MaxPaths_);
         wanted = wanted.first(MaxPaths_);
+        for (const QString& path : unwatched) {
+            wantedSet.remove(path);
+        }
     }
     const QSet<QString> unwatchedSet(unwatched.begin(), unwatched.end());
     if (!unwatchedSet.isEmpty() && unwatchedSet != Unwatched_) {
@@ -97,9 +141,22 @@ void PluginWatcher::Sync() {
     }
     Unwatched_ = unwatchedSet;
 
+    for (auto it = Present_.begin(); it != Present_.end();) {
+        it = pluginDirectories.contains(it.key()) ? std::next(it)
+                                                  : Present_.erase(it);
+    }
+    for (auto it = Timers_.begin(); it != Timers_.end();) {
+        if (plugins.contains(it.key())) {
+            ++it;
+        } else {
+            it.value()->stop();
+            it.value()->deleteLater();
+            it = Timers_.erase(it);
+        }
+    }
+
     // What Qt watches now is what it has kept: a file replaced by rename is
     // gone from it.
-    const QSet<QString> wantedSet(wanted.begin(), wanted.end());
     QStringList stale;
     QSet<QString> have;
     for (const QStringList& list : {Watcher_.files(), Watcher_.directories()}) {
@@ -129,22 +186,66 @@ void PluginWatcher::Sync() {
     for (auto it = Seen_.begin(); it != Seen_.end();) {
         it = wantedSet.contains(it.key()) ? std::next(it) : Seen_.erase(it);
     }
-    if (!missing.isEmpty()) {
-        const QStringList failed = Watcher_.addPaths(missing);
-        if (!failed.isEmpty()) {
-            qWarning("roost --dev: cannot watch: %s",
-                     qPrintable(failed.join(u", ")));
+    if (missing.isEmpty()) {
+        return;
+    }
+    const QStringList failed = Watcher_.addPaths(missing);
+    if (!failed.isEmpty()) {
+        qWarning("roost --dev: cannot watch: %s",
+                 qPrintable(failed.join(u", ")));
+    }
+    // A change between the signature and addPaths has no event: look again.
+    for (const QString& path : missing) {
+        const auto seen = Seen_.find(path);
+        if (failed.contains(path) || seen == Seen_.end()) {
+            continue;
+        }
+        const Signature now = SignatureOf(path);
+        if (seen.value() != now) {
+            seen.value() = now;
+            for (const QString& id : AffectedBy(path, plugins)) {
+                StartTimer(id);
+            }
         }
     }
+}
 
-    for (auto it = Timers_.begin(); it != Timers_.end();) {
-        if (plugins.contains(it.key())) {
-            ++it;
-        } else {
-            it.value()->deleteLater();
-            it = Timers_.erase(it);
+QStringList PluginWatcher::AffectedBy(const QString& path,
+                                      const QMap<QString, QString>& plugins) {
+    QStringList ids;
+    for (auto it = plugins.begin(); it != plugins.end(); ++it) {
+        const QString directory = CleanDirectory(it.value());
+        if (directory.isEmpty()) {
+            continue;
+        }
+        if (Within(path, directory)) {
+            if (path == directory) {
+                Present_.insert(directory, QFileInfo(directory).isDir());
+            }
+            ids.append(it.key());
+        } else if (path == ParentOf(directory)) {
+            // A plugin directory that appeared or went away.
+            const bool present = QFileInfo(directory).isDir();
+            const auto known = Present_.find(directory);
+            if (known == Present_.end() || known.value() != present) {
+                Present_.insert(directory, present);
+                ids.append(it.key());
+            }
         }
     }
+    return ids;
+}
+
+void PluginWatcher::StartTimer(const QString& pluginId) {
+    QTimer*& timer = Timers_[pluginId];
+    if (timer == nullptr) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        timer->setInterval(Debounce_);
+        connect(timer, &QTimer::timeout, this,
+                [this, pluginId] { OnQuiet(pluginId); });
+    }
+    timer->start();
 }
 
 void PluginWatcher::OnPathChanged(const QString& path) {
@@ -152,44 +253,38 @@ void PluginWatcher::OnPathChanged(const QString& path) {
     const auto seen = Seen_.find(path);
     if (seen != Seen_.end()) {
         if (seen.value() == now) {
+            // Qt may have dropped the path (inotify does on rename and
+            // delete) with nothing else to show for it: bring it back.
+            if (!Watcher_.files().contains(path) &&
+                !Watcher_.directories().contains(path)) {
+                Sync();
+            }
             return;
         }
         seen.value() = now;
     }
-    const QMap<QString, QString> plugins = Loader_.PluginDirectories();
-    // Before the timers: a file that was replaced is watched again for the
-    // next edit.
-    Sync();
-    for (auto it = plugins.begin(); it != plugins.end(); ++it) {
-        const QString directory = QDir::cleanPath(it.value());
-        if (path != directory && !path.startsWith(directory + u'/')) {
-            continue;
-        }
-        QTimer*& timer = Timers_[it.key()];
-        if (timer == nullptr) {
-            timer = new QTimer(this);
-            timer->setSingleShot(true);
-            timer->setInterval(Debounce_);
-            connect(timer, &QTimer::timeout, this,
-                    [this, id = it.key()] { OnQuiet(id); });
-        }
-        timer->start();
+    for (const QString& id : AffectedBy(path, Loader_.PluginDirectories())) {
+        StartTimer(id);
     }
 }
 
 void PluginWatcher::OnQuiet(const QString& pluginId) {
-    // A file that appeared since the last event.
+    // Files that appeared since the last event, a directory that came back.
     Sync();
-    if (!Loader_.PluginDirectories().contains(pluginId)) {
+    const QString directory =
+        CleanDirectory(Loader_.PluginDirectories().value(pluginId));
+    if (directory.isEmpty()) {
         return;
+    }
+    // The reload below reads what Sync may have found changed.
+    if (QTimer* timer = Timers_.value(pluginId)) {
+        timer->stop();
     }
     // What was written since the last event of a path is taken as seen: the
     // access time that the reload changes must not look like an edit, and a
     // write whose event was merged with an earlier one has been read.
-    const QString directory =
-        QDir::cleanPath(Loader_.PluginDirectories().value(pluginId));
     for (auto it = Seen_.begin(); it != Seen_.end(); ++it) {
-        if (it.key() == directory || it.key().startsWith(directory + u'/')) {
+        if (Within(it.key(), directory)) {
             it.value() = SignatureOf(it.key());
         }
     }
