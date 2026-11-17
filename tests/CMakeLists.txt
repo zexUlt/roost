@@ -237,6 +237,20 @@ roost_add_qt_test(shell_test roost/shell_test.cpp
 target_compile_definitions(shell_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(shell_test roostd)
 
+# The plugin terminal: its panel terminal.view in the window of the shell, with
+# a fixture list, against the real roostd with the real Claude plugin behind a
+# fake claude.
+roost_add_qt_test(terminal_panel_test roost/terminal_panel_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(terminal_panel_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
+    TERMINAL_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/terminal")
+add_dependencies(terminal_panel_test roostd fake_tui claude-adapter)
+
 # The developer mode: the watcher reloads a plugin whose files changed on disk.
 roost_add_qt_test(plugin_reload_test roost/plugin_reload_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_apiplugin
@@ -282,6 +296,7 @@ set_tests_properties(
     plugin_loader_test
     plugin_reload_test
     shell_test
+    terminal_panel_test
     roost_sessions_test
     io_thread_test
     single_session_test

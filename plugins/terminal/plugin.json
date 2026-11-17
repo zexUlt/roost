@@ -1,0 +1,15 @@
+{
+  "id": "terminal",
+  "version": "0.1.0",
+  "api": "0",
+  "contributes": {
+    "panels": [
+      {
+        "id": "terminal.view",
+        "qml": "qml/TerminalPanel.qml",
+        "inputs": { "session": "SessionRef" },
+        "outputs": {}
+      }
+    ]
+  }
+}

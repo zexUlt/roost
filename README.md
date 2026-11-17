@@ -25,6 +25,22 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 `tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
 `ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
 
+## Run
+
+Start the daemon with the built-in plugins, then the window:
+
+```sh
+ROOST_PLUGINS_PATH=$PWD/build/dev/roost-plugins build/dev/bin/roostd
+build/dev/bin/roost [--dev]
+```
+
+roostd looks for plugins in `ROOST_PLUGINS_PATH` (absolute paths, separated by
+`:`), then in `<ROOST_CONFIG or ~/.config/roost>/plugins`. With `--dev` the
+window reloads a plugin when its files change. It watches the copy under
+`build/dev/roost-plugins`, so after editing `plugins/terminal/qml/*.qml` run
+`cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
+roostd reads manifests at start.
+
 ## License
 
 Apache-2.0, see `LICENSE`. Third-party components and their licences are listed
