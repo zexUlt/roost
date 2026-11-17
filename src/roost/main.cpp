@@ -17,6 +17,7 @@
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "roost/plugin_loader.hpp"
+#include "roost/plugin_watcher.hpp"
 #include "roost/shell.hpp"
 #include "roost/single_session.hpp"
 
@@ -111,6 +112,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("The agent of --session (default: claude)."),
         QStringLiteral("name"), QStringLiteral("claude"));
     parser.addOption(agentOption);
+    const QCommandLineOption devOption(
+        QStringLiteral("dev"),
+        QStringLiteral("Developer mode: reload a plugin's QML when its files "
+                       "change."));
+    parser.addOption(devOption);
     parser.process(app);
 
     const bool sessionMode = parser.isSet(sessionOption);
@@ -124,9 +130,10 @@ int main(int argc, char* argv[]) {
     QQmlApplicationEngine engine;
     // Declared after the engine, so that they go before it: the panels and
     // the contexts of the loader belong to the engine. The shell goes before
-    // the loader.
+    // the loader. The watcher goes first of all.
     std::optional<roost::PluginLoader> loader;
     std::optional<roost::Shell> shell;
+    std::optional<roost::PluginWatcher> watcher;
     roost::RoostSingleton* roostSingleton = nullptr;
     if (!sessionMode) {
         roostSingleton = engine.singletonInstance<roost::RoostSingleton*>(
@@ -147,6 +154,9 @@ int main(int argc, char* argv[]) {
         loader.emplace(engine, api->Plugins(), *roostSingleton);
         shell.emplace(*engine.rootObjects().first(), *loader, *api,
                       roost::protocol::SocketPath());
+        if (parser.isSet(devOption)) {
+            watcher.emplace(*loader);
+        }
     }
 
     std::unique_ptr<roost::SingleSession> session;

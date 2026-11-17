@@ -115,6 +115,13 @@ set_tests_properties(roost_smoke PROPERTIES
     TIMEOUT 30
 )
 
+# The developer mode starts too, with no roostd to find.
+add_test(NAME roost_smoke_dev COMMAND roost --dev --smoke)
+set_tests_properties(roost_smoke_dev PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};ROOST_SOCKET=${CMAKE_CURRENT_BINARY_DIR}/roost_smoke_dev.sock"
+    TIMEOUT 30
+)
+
 # --version names the libghostty-vt the binary actually links, read from the
 # library rather than its headers.
 string(REPLACE "." "\\." _ghostty_vt_version_regex "${ROOST_GHOSTTY_VT_VERSION}")
@@ -206,6 +213,14 @@ roost_add_qt_test(shell_test roost/shell_test.cpp
 target_compile_definitions(shell_test PRIVATE ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(shell_test roostd)
 
+# The developer mode: the watcher reloads a plugin whose files changed on disk.
+roost_add_qt_test(plugin_reload_test roost/plugin_reload_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(plugin_reload_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(plugin_reload_test roostd)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
@@ -231,6 +246,7 @@ set_tests_properties(
     roost_calls_test
     roost_call_owner_test
     plugin_loader_test
+    plugin_reload_test
     shell_test
     roost_sessions_test
     io_thread_test

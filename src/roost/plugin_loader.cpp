@@ -186,6 +186,42 @@ void PluginLoader::OnPluginsChanged() {
     if (reloaded || PanelTypes() != typesBefore) {
         emit PanelTypesChanged();
     }
+    if (!doomed.empty() || !fresh.empty()) {
+        emit PluginsChanged();
+    }
+}
+
+void PluginLoader::Reload(const QString& pluginId) {
+    const auto found = std::ranges::find_if(
+        Loaded_, [&](const auto& plugin) { return plugin->Id == pluginId; });
+    if (found == Loaded_.end() || (*found)->Unloading) {
+        return;
+    }
+    Plugin& old = **found;
+    const Declared declared{old.Id, old.Version, old.Directory, old.Contributes,
+                            old.Rejected};
+    // Unload leaves the plugin in Loaded_, empty: a slot of the signal that
+    // calls CreatePanel gets nothing, and the place in the order stays.
+    Unload(old);
+    EverUnloaded_ = true;
+    Engine_.clearComponentCache();
+    *found = Load(declared);
+
+    if (ProblemsDirty_) {
+        ProblemsDirty_ = false;
+        emit ProblemsChanged();
+    }
+    emit PanelTypesChanged();
+}
+
+QMap<QString, QString> PluginLoader::PluginDirectories() const {
+    QMap<QString, QString> directories;
+    for (const auto& plugin : Loaded_) {
+        if (!plugin->Unloading) {
+            directories.insert(plugin->Id, plugin->Directory);
+        }
+    }
+    return directories;
 }
 
 std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(

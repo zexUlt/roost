@@ -51,6 +51,10 @@ namespace roost {
 // QML is read from disk again. Qt clears only what nothing references: the
 // components of the plugins that stay keep their cache entries.
 //
+// Reload(id) does for one plugin what the diff does for a changed one, from
+// the data it was loaded with, and always clears the component cache: it is
+// for the developer mode, where the files of the plugin changed on disk.
+//
 // It must be destroyed before the engine: its contexts and components belong
 // to the engine, and deleting them after it is undefined.
 class PluginLoader : public QObject {
@@ -109,7 +113,25 @@ public:
     // would run on a deleted object); a handler of the shell may.
     void DestroyPanel(QQuickItem* panel);
 
+    // Unloads the plugin as the diff does for a changed one (its instances
+    // with PanelAboutToBeDestroyed, the components, the context, its
+    // problems), clears the component cache and loads it again from the same
+    // declared data, in the same place of the load order. ProblemsChanged if
+    // the problems were touched, PanelTypesChanged once. Nothing for an
+    // unknown id. The caller must not call it from inside a JS call or an
+    // event handler of a panel of the plugin: it destroys the panels (the
+    // watcher calls it from a timer).
+    void Reload(const QString& pluginId);
+
+    // The id -> directory of the plugins that are loaded, as roostd gave them.
+    QMap<QString, QString> PluginDirectories() const;
+
 signals:
+    // The set of loaded plugins changed: one was loaded, unloaded or loaded
+    // again because its declaration changed (not by Reload). Once per list
+    // that PluginService gave, after PanelTypesChanged, and also for a plugin
+    // with no panel.
+    void PluginsChanged();
     // The set of types that can be created changed, or a plugin was loaded
     // again (its instances are gone). Once per list that PluginService gave,
     // after all loads.

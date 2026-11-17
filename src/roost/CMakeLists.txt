@@ -3,6 +3,8 @@
 add_library(roost_app STATIC
     plugin_loader.cpp
     plugin_loader.hpp
+    plugin_watcher.cpp
+    plugin_watcher.hpp
     shell.cpp
     shell.hpp
     single_session.cpp
