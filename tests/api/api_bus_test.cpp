@@ -46,7 +46,7 @@ void CountSubscribeWarnings(QtMsgType type, const QMessageLogContext& context,
     PREVIOUS_HANDLER(type, context, message);
 }
 
-// session.stateChanged, subscribed by SessionService after hello.
+// session.*, subscribed by SessionService after hello.
 constexpr int STANDING_SUBSCRIPTIONS = 1;
 
 }  // namespace

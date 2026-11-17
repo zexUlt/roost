@@ -45,6 +45,12 @@ SessionsModel::SessionsModel(api::Api& api, QJSEngine& engine,
         ++Count_;
         endInsertRows();
     });
+    connect(sessions, &api::SessionService::RowAboutToBeRemoved, this,
+            [this](int row) { beginRemoveRows({}, row, row); });
+    connect(sessions, &api::SessionService::RowRemoved, this, [this](int) {
+        --Count_;
+        endRemoveRows();
+    });
     connect(sessions, &api::SessionService::RowChanged, this, [this](int row) {
         const QModelIndex changed = index(row);
         emit dataChanged(changed, changed);

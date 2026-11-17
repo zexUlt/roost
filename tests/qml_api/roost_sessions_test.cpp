@@ -56,6 +56,12 @@ QJsonObject Answers(const QJsonArray& sessions) {
              QJsonObject{{AGENT, QJsonObject{{"result", sessions}}}}}};
 }
 
+QJsonObject Removed(const QString& id) {
+    return {{"jsonrpc", "2.0"},
+            {"method", "session.removed"},
+            {"params", QJsonObject{{"agent", AGENT}, {"session", id}}}};
+}
+
 QJsonObject StateChanged(const QJsonObject& session) {
     return {{"jsonrpc", "2.0"},
             {"method", "session.stateChanged"},
@@ -291,6 +297,37 @@ private slots:
         QCOMPARE(changed.size(), 1);
     }
 
+    void ARemovalIsARowRemoval() {
+        QVERIFY(Prepare());
+        QVERIFY(ConnectApi());
+        QStringList told;
+        QObject scope;
+        // The model still has the row, and the count that the views were told,
+        // when it is about to go; the tester checks the rest.
+        connect(Model_, &QAbstractItemModel::rowsAboutToBeRemoved, &scope,
+                [&](const QModelIndex&, int first, int last) {
+                    told.append(QStringLiteral("about %1-%2 %3 of %4")
+                                    .arg(first)
+                                    .arg(last)
+                                    .arg(Role(first, "id").toString())
+                                    .arg(Model_->rowCount()));
+                });
+        connect(Model_, &QAbstractItemModel::rowsRemoved, &scope,
+                [&](const QModelIndex&, int first, int last) {
+                    told.append(QStringLiteral("removed %1-%2 of %3")
+                                    .arg(first)
+                                    .arg(last)
+                                    .arg(Model_->rowCount()));
+                });
+        QSignalSpy reset(Model_, &QAbstractItemModel::modelReset);
+        QVERIFY(Notify({Removed("s1")}));
+        QTRY_COMPARE_WITH_TIMEOUT(told.size(), 2, TIMEOUT_MS);
+        QCOMPARE(told, (QStringList{"about 0-0 s1 of 2", "removed 0-0 of 1"}));
+        QCOMPARE(Model_->rowCount(), 1);
+        QCOMPARE(Role(0, "id"), QVariant("s2"));
+        QVERIFY(reset.isEmpty());
+    }
+
     void AnAdapterThatCrashedIsUnavailable() {
         QVERIFY(
             Prepare({{"agent.listSessions", QJsonObject{{AGENT, "crash"}}}}));
@@ -380,6 +417,12 @@ private slots:
                                   TIMEOUT_MS);
         QCOMPARE(Call("keys").toStringList(),
                  (QStringList{AGENT + "/s1", AGENT + "/s2", AGENT + "/s3"}));
+        // A removal takes the row out of the view.
+        QVERIFY(Notify({Removed("s2")}));
+        QTRY_COMPARE_WITH_TIMEOUT(Call("states").toStringList(),
+                                  (QStringList{"done", "idle"}), TIMEOUT_MS);
+        QCOMPARE(Call("keys").toStringList(),
+                 (QStringList{AGENT + "/s1", AGENT + "/s3"}));
     }
 };
 

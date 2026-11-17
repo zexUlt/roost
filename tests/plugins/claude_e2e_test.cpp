@@ -17,7 +17,9 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -293,6 +295,57 @@ private slots:
             QString::fromUtf8(Window_->Dump(channel)).contains(ANSWERED_ONCE),
             Window_->Dump(channel).constData());
         QCOMPARE(Calls(), QStringList{id});
+    }
+
+    void ARemovedClaudeSessionReachesTheWindow() {
+        QVERIFY(WriteFakeClaude());
+        QVERIFY(Launch(true));
+        // The first list is in, so the adapter has its first run behind it.
+        const rpc::Result listed =
+            Window_->Call("sessions.list", QJsonObject{});
+        QVERIFY2(listed, qPrintable(Why(listed)));
+        QCOMPARE(listed->toObject().value("sessions").toArray().size(), 4);
+        const rpc::Result subscribed = Window_->Call(
+            "bus.subscribe", QJsonObject{{"pattern", "session.removed"}});
+        QVERIFY2(subscribed, qPrintable(Why(subscribed)));
+        QSignalSpy notified(&Window_->Rpc, &RpcClient::NotificationReceived);
+
+        // claude no longer lists the session; the file is replaced whole, so
+        // that no run reads half of it.
+        const QString gone = "bg-2c3d4e5f";
+        QJsonArray left;
+        QFile source(Dir_->filePath("bin/agents.json"));
+        QVERIFY(source.open(QIODevice::ReadOnly));
+        for (const QJsonValue& entry :
+             QJsonDocument::fromJson(source.readAll()).array()) {
+            if (entry.toObject().value("id").toString() != gone) {
+                left.append(entry);
+            }
+        }
+        QSaveFile agents(Dir_->filePath("bin/agents.json"));
+        QVERIFY(agents.open(QIODevice::WriteOnly));
+        agents.write(QJsonDocument(left).toJson(QJsonDocument::Compact));
+        QVERIFY(agents.commit());
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            [&] {
+                for (const QList<QVariant>& arguments : notified) {
+                    const QJsonObject event =
+                        arguments.at(1).value<QJsonValue>().toObject();
+                    if (arguments.at(0).toString() == "bus.event" &&
+                        event.value("name").toString() == "session.removed" &&
+                        event.value("payload") ==
+                            QJsonValue(QJsonObject{{"agent", "claude"},
+                                                   {"id", gone}})) {
+                        return true;
+                    }
+                }
+                return false;
+            }(),
+            TIMEOUT_MS);
+        const rpc::Result after = Window_->Call("sessions.list", QJsonObject{});
+        QVERIFY2(after, qPrintable(Why(after)));
+        QCOMPARE(after->toObject().value("sessions").toArray().size(), 3);
     }
 
     void ListsTheSessionsOfTheRealClaude() {

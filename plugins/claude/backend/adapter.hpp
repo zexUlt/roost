@@ -8,6 +8,7 @@
 #include <QPromise>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include <chrono>
@@ -19,6 +20,7 @@
 #include "claude/backend/agents.hpp"
 #include "claude/backend/json_rpc.hpp"
 
+class QJsonObject;
 class QProcess;
 
 namespace roost::claude {
@@ -44,7 +46,11 @@ struct AdapterOptions {
 // Requests wait for the first run. While the last run failed, both fail with
 // its reason. After every successful run but the first one, each session
 // that is new or changed its state since the previous successful run is sent
-// as session.stateChanged {agent, session}.
+// as session.stateChanged {agent, session}. Each session of the previous
+// successful run that the new one does not list is sent after them as
+// session.removed {agent, session: <id>}, in the order of the previous
+// listing. A failed run sends nothing: a removal during failed runs is sent
+// after the next successful one.
 class Adapter : public QObject {
     Q_OBJECT
 
@@ -76,6 +82,8 @@ private:
 
     void Poll();
     void OnPolled(std::expected<Listing, QString> listing);
+    // Sends one JSON-RPC notification to roostd.
+    void Notify(const QString& method, const QJsonObject& params);
     // The answer now if a run has finished, else once the first one does.
     QFuture<jsonrpc::Result> WhenPolled(
         std::function<jsonrpc::Result()> answer);
@@ -94,6 +102,8 @@ private:
     std::optional<std::expected<std::vector<Session>, QString>> Last_;
     // States from the last run that succeeded, to tell what changed.
     std::optional<QHash<QString, QString>> Known_;
+    // The ids of that run in its order, to send removals deterministically.
+    QStringList KnownIds_;
     std::vector<Waiting> Waiting_;
     // Warnings already logged: the same one comes with every run.
     QSet<QString> Warned_;

@@ -25,15 +25,15 @@ namespace roost::api {
 // (FIELDS). A row is identified by (agent, id); the rows keep the order of
 // roostd's answer, and a session that is new is appended.
 //
-// Kept fresh by the session.stateChanged events, which carry a whole row.
-// Nobody announces a session that is gone, so only Refresh drops rows: there
-// is no polling. Use it from the GUI thread; the signals are emitted there.
+// Kept fresh by the session.stateChanged events, which carry a whole row, and
+// the session.removed events {agent, id}, which drop one. Refresh replaces all
+// the rows; there is no polling. Use it from the GUI thread; the signals are
+// emitted there.
 //
 // An event that comes while a list is being asked for is put on the rows again
-// when the answer has replaced them: roostd answers when every agent has, and
-// the list may be older than the event. The price: a session that changed and
-// then went away before its agent was listed comes back with that event, and
-// stays until the next Refresh, like any session that is gone.
+// when the answer has replaced them, in the order it came: roostd answers when
+// every agent has, and the list may be older than the event. So a session that
+// changed and then went away is gone from the list that answers, too.
 //
 // A cache of roostd: Api calls Start once the connection is up, and the rows
 // and the bus subscription are dropped when it is lost; Start makes them
@@ -77,9 +77,20 @@ signals:
     void Reset();
     void RowChanged(int index);
     void RowInserted(int index);
+    // The row is still there when the first is emitted, and gone when the
+    // second is; the rows after it have moved up by one.
+    void RowAboutToBeRemoved(int index);
+    void RowRemoved(int index);
 
 private:
     using Key = std::pair<QString, QString>;
+
+    // An event kept for the list that answers: the row of a change, or the
+    // {agent, id} of a removal.
+    struct KeptEvent {
+        bool Removed = false;
+        QJsonObject Row;
+    };
 
     void OnEvent(const QString& name, const QJsonValue& payload);
     // The answer of the request that was the order-th asked: replaces the rows
@@ -89,6 +100,8 @@ private:
     void OnAnswer(const QJsonValue& answer);
     // Puts a row of an event in its place and tells of it.
     void ApplyRow(const QJsonObject& row);
+    // Takes a row away and tells of it; nothing for a session not in the rows.
+    void RemoveRow(const Key& key);
     // The connection is lost: the rows were a copy of what is gone.
     void OnDisconnected();
 
@@ -100,13 +113,13 @@ private:
     bool Loaded_ = false;
     bool Started_ = false;
     // The requests of the list that are out, the number asked and the order of
-    // the newest answer applied. The rows of the events that came while any is
-    // out are kept in Kept_, in the order they came, to be put on the list
-    // that answers: it may be older than they are.
+    // the newest answer applied. The events that came while any is out are
+    // kept in Kept_, in the order they came, to be put on the list that
+    // answers: it may be older than they are.
     int InFlight_ = 0;
     std::uint64_t Issued_ = 0;
     std::uint64_t Applied_ = 0;
-    QList<QJsonObject> Kept_;
+    QList<KeptEvent> Kept_;
     // Counts the connections lost; an answer of an older one is not ours.
     std::uint64_t Epoch_ = 0;
     BusService::LocalId Subscription_ = 0;
