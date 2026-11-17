@@ -40,7 +40,14 @@ namespace roost {
 // panel id keeps it, whether or not its panel loads.
 //
 // The loader owns the instances it creates (C++ ownership); the caller only
-// shows the item (setParentItem) and gives it back with DestroyPanel.
+// shows the item (setParentItem) and gives it back with DestroyPanel. The
+// caller must not delete a panel item itself, and must not call DestroyPanel
+// from inside a JS call or an event handler of the panel being destroyed.
+//
+// When a diff loads a plugin after anything was unloaded in the life of the
+// loader, the component cache of the engine is cleared once, so that edited
+// QML is read from disk again. Qt clears only what nothing references: the
+// components of the plugins that stay keep their cache entries.
 //
 // It must be destroyed before the engine: its contexts and components belong
 // to the engine, and deleting them after it is undefined.
@@ -71,16 +78,17 @@ public:
     // component could not make it). A failure is a problem and disables the
     // type until its plugin is loaded again. The panel gets its own
     // QQmlContext, registered as the owner of its one-shot calls; if the root
-    // has a property `pluginId`, it is set to the id of the plugin before
-    // Component.onCompleted.
+    // has a property `pluginId` (also a `required` one), it is set to the id
+    // of the plugin before Component.onCompleted. A plugin that is being
+    // unloaded gives nothing: a slot of PanelAboutToBeDestroyed gets nullptr.
     QQuickItem* CreatePanel(const QString& panelId);
 
     // Tears the instance down: PanelAboutToBeDestroyed (the item is alive, a
     // slot drops it and its bindings), then the owner of its calls, the item,
     // its context. Not through deleteLater. Does nothing for an item that is
-    // not an instance of this loader. Must not be called from inside a JS call
-    // of the panel being destroyed (its JS frames would run on a deleted
-    // object); a handler of the shell may call it.
+    // not an instance of this loader. The caller must not call it from inside
+    // a JS call or an event handler of the panel being destroyed (its frames
+    // would run on a deleted object); a handler of the shell may.
     void DestroyPanel(QQuickItem* panel);
 
 signals:
@@ -120,7 +128,8 @@ private:
         std::vector<Instance> Instances;
         // The ids this plugin has taken so far while loading.
         QSet<QString> Claimed;
-        bool Unloaded = false;
+        // Being torn down: CreatePanel skips the plugin.
+        bool Unloading = false;
     };
 
     struct Declared {
@@ -136,6 +145,7 @@ private:
     std::unique_ptr<Plugin> Load(const Declared& declared);
     void LoadPanel(Plugin& plugin, const QJsonValue& entry);
     // Destroys the instances, the components, the context and the problems.
+    // Marks the plugin Unloading first.
     void Unload(Plugin& plugin);
     void DestroyInstance(Instance& instance);
     void AddProblem(const QString& plugin, const QString& panel,
@@ -149,6 +159,8 @@ private:
     std::vector<std::unique_ptr<Plugin>> Loaded_;
     QList<PanelProblem> Problems_;
     bool ProblemsDirty_ = false;
+    // Something was unloaded earlier: a load clears the component cache.
+    bool EverUnloaded_ = false;
 };
 
 }  // namespace roost

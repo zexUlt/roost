@@ -10,6 +10,7 @@
 #include <QtLogging>
 
 #include <algorithm>
+#include <map>
 
 namespace roost {
 
@@ -28,6 +29,9 @@ QString PanelIdOf(const QJsonValue& entry) {
 // directory. The same rule as roostd's check of backend paths: on the text,
 // symlinks are not followed.
 QString InsidePlugin(const QString& directory, const QString& path) {
+    if (directory.isEmpty() || !QDir::isAbsolutePath(directory)) {
+        return {};
+    }
     const QString resolved = QDir::cleanPath(directory + u'/' + path);
     if (QDir::isAbsolutePath(path) || !resolved.startsWith(directory + u'/')) {
         return {};
@@ -48,7 +52,10 @@ PluginLoader::PluginLoader(QQmlEngine& engine, api::PluginService& plugins,
 }
 
 PluginLoader::~PluginLoader() {
-    for (auto& plugin : Loaded_) {
+    for (const auto& plugin : Loaded_) {
+        plugin->Unloading = true;
+    }
+    for (const auto& plugin : Loaded_) {
         Unload(*plugin);
     }
 }
@@ -107,10 +114,9 @@ void PluginLoader::OnPluginsChanged() {
     const QStringList typesBefore = PanelTypes();
     bool reloaded = false;
 
-    // Unload what is gone or changed. An unloaded plugin stays in Loaded_,
-    // empty, until the list is rebuilt: a slot of PanelAboutToBeDestroyed may
-    // call back.
-    bool anyUnloaded = false;
+    // Mark what is gone or changed before tearing anything down: a slot of
+    // PanelAboutToBeDestroyed may call CreatePanel.
+    std::vector<Plugin*> doomed;
     for (const auto& plugin : Loaded_) {
         const auto same = std::ranges::find_if(
             declared, [&](const Declared& d) { return d.Id == plugin->Id; });
@@ -121,25 +127,43 @@ void PluginLoader::OnPluginsChanged() {
             continue;
         }
         reloaded = reloaded || same != declared.end();
+        plugin->Unloading = true;
+        doomed.push_back(plugin.get());
+    }
+    // An unloaded plugin stays in Loaded_, empty, until the list is rebuilt.
+    for (Plugin* plugin : doomed) {
         Unload(*plugin);
-        plugin->Unloaded = true;
-        anyUnloaded = true;
     }
-    if (anyUnloaded) {
-        std::erase_if(Loaded_,
-                      [](const auto& plugin) { return plugin->Unloaded; });
+    EverUnloaded_ = EverUnloaded_ || !doomed.empty();
+    std::erase_if(Loaded_,
+                  [](const auto& plugin) { return plugin->Unloading; });
+
+    // Loaded_ holds only the plugins that stay, none moved from, while Load
+    // runs. The new ones wait here until the list is put together.
+    QSet<QString> kept;
+    for (const auto& plugin : Loaded_) {
+        kept.insert(plugin->Id);
     }
-    // So that edited QML is read from disk again.
-    if (reloaded) {
-        Engine_.clearComponentCache();
+    std::map<QString, std::unique_ptr<Plugin>> fresh;
+    for (const Declared& d : declared) {
+        if (kept.contains(d.Id)) {
+            continue;
+        }
+        // Once per diff, so that edited QML is read from disk again.
+        if (EverUnloaded_ && fresh.empty()) {
+            Engine_.clearComponentCache();
+        }
+        fresh[d.Id] = Load(d);
     }
 
     std::vector<std::unique_ptr<Plugin>> ordered;
     for (const Declared& d : declared) {
+        // Nothing runs from here on, so the moved-from entries are harmless.
         const auto old = std::ranges::find_if(Loaded_, [&](const auto& plugin) {
             return plugin && plugin->Id == d.Id;
         });
-        ordered.push_back(old != Loaded_.end() ? std::move(*old) : Load(d));
+        ordered.push_back(old != Loaded_.end() ? std::move(*old)
+                                               : std::move(fresh.at(d.Id)));
     }
     Loaded_ = std::move(ordered);
 
@@ -244,6 +268,9 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
 
 QQuickItem* PluginLoader::CreatePanel(const QString& panelId) {
     for (const auto& plugin : Loaded_) {
+        if (plugin->Unloading) {
+            continue;
+        }
         for (PanelType& type : plugin->Panels) {
             if (type.Id != panelId || type.Disabled) {
                 continue;
@@ -269,7 +296,9 @@ QQuickItem* PluginLoader::CreatePanel(const QString& panelId) {
             }
             QJSEngine::setObjectOwnership(object, QJSEngine::CppOwnership);
             if (object->metaObject()->indexOfProperty("pluginId") >= 0) {
-                object->setProperty("pluginId", plugin->Id);
+                // An initial property, so that `required` is satisfied.
+                type.Component->setInitialProperties(
+                    object, {{QStringLiteral("pluginId"), plugin->Id}});
             }
             type.Component->completeCreate();
             auto* item = qobject_cast<QQuickItem*>(object);
@@ -316,10 +345,15 @@ void PluginLoader::DestroyInstance(Instance& instance) {
 }
 
 void PluginLoader::Unload(Plugin& plugin) {
-    std::vector<Instance> instances = std::move(plugin.Instances);
-    plugin.Instances.clear();
-    for (Instance& instance : instances) {
-        DestroyInstance(instance);
+    plugin.Unloading = true;
+    // A slot of the signal may come back; CreatePanel skips the plugin, so the
+    // loop ends, but nothing is left in Instances when the context goes.
+    while (!plugin.Instances.empty()) {
+        std::vector<Instance> instances = std::move(plugin.Instances);
+        plugin.Instances.clear();
+        for (Instance& instance : instances) {
+            DestroyInstance(instance);
+        }
     }
     plugin.Panels.clear();
     plugin.Context.reset();

@@ -87,6 +87,36 @@ QtObject {
 const QByteArray SYNTAX_ERROR_PANEL = "import QtQuick\nItem {{\n";
 const QByteArray UNKNOWN_TYPE_PANEL = "import QtQuick\nNoSuchType {}\n";
 
+// A panel that counts its lives; and one whose pluginId is required.
+const QByteArray LIFE_PANEL = R"(
+import QtQuick
+Item {
+    property string content: "life"
+    Component.onCompleted: roostProbe.Hit("completed:life", "")
+    Component.onDestruction: roostProbe.Hit("destroyed:life", "")
+}
+)";
+
+const QByteArray REQUIRED_PANEL = R"(
+import QtQuick
+Item {
+    required property string pluginId
+    Component.onCompleted: roostProbe.Hit("completed:required", pluginId)
+}
+)";
+
+// A panel that writes to the store of its plugin while it is destroyed: the
+// call is the panel's own, so it must be dropped if the owner of the calls is
+// deleted before the item.
+const QByteArray FAREWELL_PANEL = R"(
+import QtQuick
+import Roost.Api
+Item {
+    function save() { Roost.store.set("a-one", {live: 1}) }
+    Component.onDestruction: Roost.store.set("a-one", {farewell: 1})
+}
+)";
+
 // A panel that calls into Roost and subscribes, with the callbacks given.
 const QByteArray CALLS_PANEL = R"(
 import QtQuick
@@ -95,8 +125,8 @@ Item {
     id: root
     property string content: "calls"
     function run(kind, cb) {
-        if (kind === "hang") {
-            Roost.commands.run("fixture.hang", undefined, cb)
+        if (kind === "echo") {
+            Roost.commands.run("fixture.echo", {a: 1}, cb)
         } else if (kind === "get") {
             Roost.store.get("fixture", cb)
         }
@@ -113,6 +143,7 @@ QtObject {
     function callbackFor(t) {
         return function (e, r) { roostProbe.Hit(t, JSON.stringify(r)) }
     }
+    function getDoc(t) { Roost.store.get("a-one", callbackFor(t)) }
     function publish() {
         Roost.bus.publish("fixture.event", {a: 1}, callbackFor("published"))
     }
@@ -131,7 +162,9 @@ class PluginLoaderTest : public QObject {
 private:
     // Plugins first (Daemon_->AddQmlPlugin), then this.
     // The loader is made after the list of plugins is loaded (its constructor
-    // reads it) or, with `listLoaded` false, before (it waits for Changed).
+    // reads it) or, with `listLoaded` false, before the connection is even
+    // asked for, and Boot returns without running the event loop after that:
+    // the list has not arrived and cannot arrive before the test looks.
     bool Boot(bool listLoaded = true) {
         if (!Daemon_->IsValid() ||
             !Daemon_->AddFixturePlugin("fixture", FIXTURE_BACKEND_PATH) ||
@@ -139,11 +172,6 @@ private:
             return false;
         }
         Api_ = std::make_unique<api::Api>();
-        QSignalSpy connected(Api_.get(), &api::Api::Connected);
-        Api_->Connect(Daemon_->SocketPath());
-        if (!connected.wait(TIMEOUT_MS)) {
-            return false;
-        }
         Engine_ = std::make_unique<QQmlEngine>();
         Engine_->globalObject().setProperty("roostProbe",
                                             Engine_->newQObject(&Probe_));
@@ -162,12 +190,17 @@ private:
             return false;
         }
         QJSEngine::setObjectOwnership(Shell_, QJSEngine::CppOwnership);
-        if (listLoaded) {
-            if (!QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
-                                 TIMEOUT_MS)) {
-                return false;
-            }
-        } else if (Api_->Plugins().IsLoaded()) {
+        QSignalSpy connected(Api_.get(), &api::Api::Connected);
+        if (!listLoaded) {
+            Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
+                                                     *Singleton_);
+            Api_->Connect(Daemon_->SocketPath());
+            return !Api_->Plugins().IsLoaded();
+        }
+        Api_->Connect(Daemon_->SocketPath());
+        if (!connected.wait(TIMEOUT_MS) ||
+            !QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
+                             TIMEOUT_MS)) {
             return false;
         }
         Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
@@ -190,6 +223,27 @@ private:
             return false;
         }
         return changed.wait(TIMEOUT_MS * 2) || changed.count() > 0;
+    }
+
+    // roostd stopped, `edit` run on the plugin directories, roostd started
+    // again.
+    template <typename TEdit>
+    bool RestartWith(TEdit&& edit) {
+        return Daemon_->Stop() && edit() && Daemon_->Start(ROOSTD_PATH);
+    }
+
+    // The document of plugin a-one as roostd gives it, asked of the shell.
+    QString ReadDoc() {
+        const int before = Probe_.Count("doc");
+        if (!QMetaObject::invokeMethod(Shell_, "getDoc",
+                                       Q_ARG(QVariant, QString("doc")))) {
+            return "no getDoc";
+        }
+        if (!QTest::qWaitFor([&] { return Probe_.Count("doc") > before; },
+                             TIMEOUT_MS)) {
+            return "no answer";
+        }
+        return Probe_.Last.value("doc");
     }
 
     QVariant CallbackOf(const char* tag) {
@@ -458,7 +512,11 @@ private slots:
             }
             QVERIFY(RestartRoostd());
         }
-        Settle();
+        // The fetch is answered when Changed arrives, and the loader has
+        // processed it; after a restart a late second list may still come.
+        if (how != "fetch") {
+            Settle();
+        }
         QCOMPARE(destroyed.count(), 0);
         QCOMPARE(types.count(), 0);
         QCOMPARE(problems.count(), 0);
@@ -515,7 +573,6 @@ private slots:
             AddPlugin("a-one", panels, {{"p.qml", ItemPanel("v2")}}, version));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
-        Settle();
 
         QCOMPARE(types.count(), 1);
         QCOMPARE(torn.size(), 1);
@@ -557,7 +614,6 @@ private slots:
         QVERIFY(QDir(Daemon_->PluginsPath() + "/b-two").removeRecursively());
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
-        Settle();
 
         QCOMPARE(destroyed.count(), 2);
         QVERIFY(goneGuard.isNull() && gone2Guard.isNull());
@@ -659,7 +715,7 @@ private slots:
 
     void ACallOfADestroyedPanelNeverAnswers_data() {
         QTest::addColumn<QString>("kind");
-        QTest::newRow("hang") << "hang";
+        QTest::newRow("echo") << "echo";
         QTest::newRow("get") << "get";
     }
 
@@ -676,6 +732,191 @@ private slots:
         Loader_->DestroyPanel(panel);
         Settle();
         QCOMPARE(Probe_.Count("panel"), 0);
+    }
+
+    void ASlotOfPanelAboutToBeDestroyedCannotCreateInTheUnloadingPlugin() {
+        QVERIFY(
+            AddPlugin("a-one", {Panel("p", "p.qml")}, {{"p.qml", LIFE_PANEL}}));
+        QVERIFY(
+            AddPlugin("b-two", {Panel("q", "q.qml")}, {{"q.qml", LIFE_PANEL}}));
+        QVERIFY(Boot());
+        QQuickItem* first = Loader_->CreatePanel("p");
+        QQuickItem* second = Loader_->CreatePanel("p");
+        QVERIFY(first != nullptr && second != nullptr);
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+        QObject scope;
+        int slotCalls = 0;
+        QList<QQuickItem*> offered;
+        QList<QQuickItem*> bystanders;
+        connect(
+            Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, &scope,
+            [&](QQuickItem*) {
+                ++slotCalls;
+                offered.append(Loader_->CreatePanel("p"));
+                bystanders.append(Loader_->CreatePanel("q"));
+            },
+            Qt::DirectConnection);
+
+        QVERIFY(RestartWith([&] {
+            return QDir(Daemon_->PluginsPath() + "/a-one").removeRecursively();
+        }));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+
+        QCOMPARE(slotCalls, 2);
+        for (QQuickItem* item : offered) {
+            QVERIFY(item == nullptr);
+        }
+        // Another plugin is not unloading: its types still work.
+        for (QQuickItem* item : bystanders) {
+            QVERIFY(item != nullptr);
+        }
+        QCOMPARE(Probe_.Count("completed:life"), 2 + 2);
+        QCOMPARE(Probe_.Count("destroyed:life"), 2);
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"q"}));
+    }
+
+    void ADestroyedLoaderTearsItsPanelsDownWithTheItemAlive() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          {{"p.qml", ItemPanel("v1")}}));
+        QVERIFY(Boot());
+        QQuickItem* item = Loader_->CreatePanel("p");
+        QVERIFY(item != nullptr);
+        QPointer<QQuickItem> guard = item;
+        QObject scope;
+        int emitted = 0;
+        QString contentSeen;
+        QQuickItem* seen = nullptr;
+        connect(
+            Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, &scope,
+            [&](QQuickItem* panel) {
+                ++emitted;
+                seen = panel;
+                contentSeen = panel->property("content").toString();
+            },
+            Qt::DirectConnection);
+        Loader_.reset();
+        QCOMPARE(emitted, 1);
+        QCOMPARE(seen, item);
+        QCOMPARE(contentSeen, QString("v1"));
+        QVERIFY(guard.isNull());
+    }
+
+    void APanelWithARequiredPluginIdIsCreated() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          {{"p.qml", REQUIRED_PANEL}}));
+        QVERIFY(Boot());
+        QQuickItem* item = Loader_->CreatePanel("p");
+        QVERIFY2(item != nullptr, "the required pluginId was not satisfied");
+        QCOMPARE(item->property("pluginId").toString(), QString("a-one"));
+        QCOMPARE(Probe_.Last.value("completed:required"), QString("a-one"));
+        QVERIFY(Loader_->Problems().isEmpty());
+    }
+
+    void APluginThatIsRemovedAndComesBackIsReadFromDisk() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          {{"p.qml", ItemPanel("v1")}}));
+        QVERIFY(Boot());
+        QQuickItem* old = Loader_->CreatePanel("p");
+        QVERIFY(old != nullptr);
+        QCOMPARE(old->property("content").toString(), QString("v1"));
+        Loader_->DestroyPanel(old);
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+
+        // One list without the plugin.
+        QVERIFY(RestartWith([&] {
+            return QDir(Daemon_->PluginsPath() + "/a-one").removeRecursively();
+        }));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+        QVERIFY(Loader_->PanelTypes().isEmpty());
+
+        // A later one with it again, edited and in a new version.
+        QVERIFY(RestartWith([&] {
+            return AddPlugin("a-one", {Panel("p", "p.qml")},
+                             {{"p.qml", ItemPanel("v2")}}, "0.2.0");
+        }));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 2, TIMEOUT_MS * 2);
+        QQuickItem* fresh = Loader_->CreatePanel("p");
+        QVERIFY(fresh != nullptr);
+        QCOMPARE(fresh->property("content").toString(), QString("v2"));
+    }
+
+    void AnEarlierPluginWithABrokenPanelStillHoldsTheId() {
+        QVERIFY(AddPlugin("a-first", {Panel("dup", "missing.qml")}, {}));
+        QVERIFY(AddPlugin("b-second", {Panel("dup", "dup.qml")},
+                          {{"dup.qml", ItemPanel("second")}}));
+        ExpectWarnings(2);
+        QVERIFY(Boot());
+        QVERIFY(Loader_->PanelTypes().isEmpty());
+        QVERIFY(Loader_->CreatePanel("dup") == nullptr);
+        QCOMPARE(Loader_->Problems().size(), 2);
+        QCOMPARE(Loader_->Problems().at(0).Plugin, QString("a-first"));
+        QVERIFY2(Loader_->Problems().at(0).Message.contains("does not exist"),
+                 qPrintable(Loader_->Problems().at(0).Message));
+        QCOMPARE(Loader_->Problems().at(1).Plugin, QString("b-second"));
+        QVERIFY2(Loader_->Problems().at(1).Message.contains("a-first"),
+                 qPrintable(Loader_->Problems().at(1).Message));
+    }
+
+    void ALaterPluginGetsThePanelWhenTheEarlierOneStopsDeclaringTheId() {
+        QVERIFY(AddPlugin(
+            "a-first", {Panel("x", "x.qml"), Panel("dup", "dup.qml")},
+            {{"x.qml", ItemPanel("x")}, {"dup.qml", ItemPanel("first")}}));
+        QVERIFY(AddPlugin("b-second", {Panel("dup", "dup.qml")},
+                          {{"dup.qml", ItemPanel("second")}}));
+        ExpectWarnings(1);
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"x", "dup"}));
+        QCOMPARE(Loader_->Problems().size(), 1);
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+        QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
+
+        QVERIFY(RestartWith([&] {
+            return AddPlugin("a-first", {Panel("x", "x.qml")},
+                             {{"x.qml", ItemPanel("x")}});
+        }));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(problems.count(), 1);
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"x", "dup"}));
+        QQuickItem* item = Loader_->CreatePanel("dup");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("content").toString(), QString("second"));
+        QCOMPARE(item->property("pluginId").toString(), QString("b-second"));
+    }
+
+    void ProblemsChangedFiresOnTheFirstLoadAndWhenAReloadClearsThem() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "missing.qml")}, {}));
+        ExpectWarnings(1);
+        QVERIFY(Boot(false));
+        QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(problems.count(), 1, TIMEOUT_MS);
+        QCOMPARE(Loader_->Problems().size(), 1);
+
+        QVERIFY(RestartWith([&] {
+            return AddPlugin("a-one", {Panel("p", "p.qml")},
+                             {{"p.qml", ItemPanel("p")}}, "0.2.0");
+        }));
+        QTRY_COMPARE_WITH_TIMEOUT(problems.count(), 2, TIMEOUT_MS * 2);
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+    }
+
+    void ADestroyedPanelsFarewellCallIsDroppedBecauseTheOwnerGoesFirst() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          {{"p.qml", FAREWELL_PANEL}}));
+        QVERIFY(Boot());
+        QQuickItem* panel = Loader_->CreatePanel("p");
+        QVERIFY(panel != nullptr);
+        // The control: a call of the live panel reaches roostd.
+        QVERIFY(QMetaObject::invokeMethod(panel, "save"));
+        QTRY_VERIFY_WITH_TIMEOUT(ReadDoc().contains("live"), TIMEOUT_MS);
+
+        Loader_->DestroyPanel(panel);
+        // A late call would reach roostd after a while.
+        Settle();
+        const QString doc = ReadDoc();
+        QVERIFY2(doc.contains("live") && !doc.contains("farewell"),
+                 qPrintable(doc));
     }
 
     void ACallOfALivePanelIsAnswered() {
