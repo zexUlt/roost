@@ -1,6 +1,7 @@
 // The session cache of the window against the real roostd, with a plugin
 // whose backend is the fixture backend: the rows of sessions.list, the
-// session.stateChanged events that change and add rows, the agents that did
+// session.stateChanged events that change and add rows, the session.removed
+// events that drop them, the agents that did
 // not answer, Refresh, and what the cache does when the connection is lost.
 
 #include <QFile>
@@ -49,6 +50,12 @@ QJsonObject StateChanged(const QJsonObject& session) {
     return {{"jsonrpc", "2.0"},
             {"method", "session.stateChanged"},
             {"params", QJsonObject{{"agent", AGENT}, {"session", session}}}};
+}
+
+QJsonObject Removed(const QString& id) {
+    return {{"jsonrpc", "2.0"},
+            {"method", "session.removed"},
+            {"params", QJsonObject{{"agent", AGENT}, {"session", id}}}};
 }
 
 }  // namespace
@@ -128,6 +135,10 @@ private:
         connect(sessions, &api::SessionService::RowChanged, this,
                 [this](int) { Threads_.push_back(QThread::currentThread()); });
         connect(sessions, &api::SessionService::RowInserted, this,
+                [this](int) { Threads_.push_back(QThread::currentThread()); });
+        connect(sessions, &api::SessionService::RowAboutToBeRemoved, this,
+                [this](int) { Threads_.push_back(QThread::currentThread()); });
+        connect(sessions, &api::SessionService::RowRemoved, this,
                 [this](int) { Threads_.push_back(QThread::currentThread()); });
     }
 
@@ -209,6 +220,62 @@ private slots:
         QCOMPARE(Api_->Sessions().Rows().size(), 3);
     }
 
+    void ARemovedSessionIsDropped() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        const auto& sessions = Api_->Sessions();
+        // What the rows were when each signal came: the row is still there
+        // when it is about to go, and gone when it has.
+        QStringList told;
+        QObject scope;
+        connect(
+            &sessions, &api::SessionService::RowAboutToBeRemoved, &scope,
+            [&](int index) {
+                told.append(
+                    QStringLiteral("about %1 of %2 (%3)")
+                        .arg(index)
+                        .arg(sessions.Rows().size())
+                        .arg(sessions.Rows()[index].value("id").toString()));
+            });
+        connect(&sessions, &api::SessionService::RowRemoved, &scope,
+                [&](int index) {
+                    told.append(QStringLiteral("removed %1 of %2")
+                                    .arg(index)
+                                    .arg(sessions.Rows().size()));
+                });
+        QVERIFY(Notify({Removed("s1")}));
+        QTRY_COMPARE_WITH_TIMEOUT(told.size(), 2, TIMEOUT_MS);
+        QCOMPARE(told, (QStringList{"about 0 of 2 (s1)", "removed 0 of 1"}));
+        QCOMPARE(sessions.Rows().size(), 1);
+        QCOMPARE(sessions.Rows()[0].value("id"), QJsonValue("s2"));
+        // The rows after it moved up.
+        QCOMPARE(sessions.IndexOf(AGENT, "s2"), 0);
+        QCOMPARE(sessions.IndexOf(AGENT, "s1"), -1);
+        for (QThread* thread : Threads_) {
+            QCOMPARE(thread, QThread::currentThread());
+        }
+
+        // A session that is not in the rows is no signal, and takes no row
+        // with it: checked while a second row is there to be taken. A bounded
+        // wait, as there is nothing to wait for; the removal of a known
+        // session after it shows the first was handled.
+        QVERIFY(Notify({StateChanged(Row("s1", "idle"))}));
+        QTRY_COMPARE_WITH_TIMEOUT(sessions.Rows().size(), 2, TIMEOUT_MS);
+        told.clear();
+        QVERIFY(Notify({Removed("s9")}));
+        QTest::qWait(200);
+        QVERIFY(told.isEmpty());
+        QCOMPARE(sessions.Rows().size(), 2);
+        QVERIFY(sessions.IndexOf(AGENT, "s1") >= 0);
+        QVERIFY(sessions.IndexOf(AGENT, "s2") >= 0);
+
+        QVERIFY(Notify({Removed("s1"), Removed("s2")}));
+        QTRY_COMPARE_WITH_TIMEOUT(told.size(), 4, TIMEOUT_MS);
+        QCOMPARE(told, (QStringList{"about 1 of 2 (s1)", "removed 1 of 1",
+                                    "about 0 of 1 (s2)", "removed 0 of 0"}));
+        QVERIFY(sessions.Rows().isEmpty());
+    }
+
     // roostd answers sessions.list when every agent has: the fast agent's part
     // is taken at once, and the slow agent holds the answer back. Its session
     // is said to be done meanwhile, and the answer still has it working.
@@ -240,6 +307,50 @@ private slots:
         // change, after the reset.
         QCOMPARE(changed.size(), 2);
         QCOMPARE(changed[1][0].toInt(), index);
+    }
+
+    // The answer still lists s1, which the fast agent has said is gone.
+    void ARemovalDuringARefreshSurvivesAnOlderAnswer() {
+        QVERIFY(StartDaemonWithASlowAgent());
+        QVERIFY(ConnectApi());
+        QVERIFY(Api_->Sessions().IndexOf(AGENT, "s1") >= 0);
+        QVERIFY(SetSlowListing(3000));
+        QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
+        QSignalSpy removed(&Api_->Sessions(), &api::SessionService::RowRemoved);
+        const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
+        QVERIFY(Notify({Removed("s1")}));
+        QTRY_COMPARE_WITH_TIMEOUT(removed.size(), 1, TIMEOUT_MS);
+        QVERIFY(!refreshed.isFinished());
+        QVERIFY(WaitFor(refreshed));
+        QVERIFY2(refreshed.result(), qPrintable(Why(refreshed.result())));
+        QCOMPARE(reset.size(), 1);
+        // The answer brought s1 back, and the kept removal took it away.
+        QCOMPARE(removed.size(), 2);
+        QCOMPARE(Api_->Sessions().IndexOf(AGENT, "s1"), -1);
+        QCOMPARE(Api_->Sessions().Rows().size(), 1);
+        QCOMPARE(Api_->Sessions().IndexOf(AGENT, "s2"), 0);
+    }
+
+    // A session new to the list that answers, seen and then gone meanwhile:
+    // the answer does not have it, and the events must leave no row.
+    void AChangeThenARemovalDuringARefreshLeaveNoRow() {
+        QVERIFY(StartDaemonWithASlowAgent());
+        QVERIFY(ConnectApi());
+        QVERIFY(SetSlowListing(3000));
+        QSignalSpy inserted(&Api_->Sessions(),
+                            &api::SessionService::RowInserted);
+        QSignalSpy removed(&Api_->Sessions(), &api::SessionService::RowRemoved);
+        const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
+        QVERIFY(Notify({StateChanged(Row("s3", "working")), Removed("s3")}));
+        QTRY_COMPARE_WITH_TIMEOUT(removed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(inserted.size(), 1);
+        QVERIFY(WaitFor(refreshed));
+        QVERIFY2(refreshed.result(), qPrintable(Why(refreshed.result())));
+        // Replayed after the answer: inserted and removed again, in order.
+        QCOMPARE(inserted.size(), 2);
+        QCOMPARE(removed.size(), 2);
+        QCOMPARE(Api_->Sessions().IndexOf(AGENT, "s3"), -1);
+        QCOMPARE(Api_->Sessions().Rows().size(), 2);
     }
 
     void AnAdapterThatCrashedIsUnavailable() {
@@ -335,6 +446,31 @@ private slots:
         QVERIFY(WaitFor(published));
         QVERIFY(!changed.wait(300));
         QVERIFY(inserted.isEmpty());
+        QCOMPARE(Api_->Sessions().Rows().size(), 2);
+    }
+
+    void ARemovalWithoutAnAgentOrAnIdIsIgnored() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        QSignalSpy removed(&Api_->Sessions(), &api::SessionService::RowRemoved);
+        // Other session.* events are not for the cache, and not worth a
+        // warning.
+        QTest::failOnWarning();
+        QFuture<rpc::Result> published =
+            Api_->Bus().Publish("session.other", QJsonObject{{"id", "s1"}});
+        QVERIFY(WaitFor(published));
+        QVERIFY(!removed.wait(300));
+        for (int i = 0; i < 2; ++i) {
+            QTest::ignoreMessage(QtWarningMsg,
+                                 "session.removed without an agent or an id");
+        }
+        published =
+            Api_->Bus().Publish("session.removed", QJsonObject{{"id", "s1"}});
+        QVERIFY(WaitFor(published));
+        published = Api_->Bus().Publish("session.removed",
+                                        QJsonObject{{"agent", AGENT}});
+        QVERIFY(WaitFor(published));
+        QVERIFY(!removed.wait(300));
         QCOMPARE(Api_->Sessions().Rows().size(), 2);
     }
 

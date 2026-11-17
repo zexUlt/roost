@@ -17,8 +17,9 @@ namespace roost {
 
 // Roost.sessions: the rows of api::SessionService as a list model. The roles
 // are the fields of sessions.list, api::SessionService::FIELDS, in that order
-// from Qt::UserRole; a field that a row lacks reads as undefined. The rows
-// only grow between resets: nobody announces a session that is gone.
+// from Qt::UserRole; a field that a row lacks reads as undefined. A new
+// session is a row inserted at the end, a session that is gone is a row
+// removed, and a list that answers a refresh is a reset.
 class SessionsModel : public QAbstractListModel {
     Q_OBJECT
     QML_ANONYMOUS

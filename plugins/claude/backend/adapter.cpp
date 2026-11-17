@@ -180,24 +180,31 @@ void Adapter::OnPolled(std::expected<Listing, QString> listing) {
             }
         }
         QHash<QString, QString> states;
+        QStringList ids;
         for (const Session& session : listing->Sessions) {
             states.insert(session.Id, session.State);
+            ids.append(session.Id);
             if (Known_ && Known_->value(session.Id) != session.State) {
-                Send_(
-                    QJsonDocument(
-                        QJsonObject{
-                            {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-                            {QStringLiteral("method"),
-                             QStringLiteral("session.stateChanged")},
-                            {QStringLiteral("params"),
-                             QJsonObject{
-                                 {QStringLiteral("agent"), AGENT},
-                                 {QStringLiteral("session"), ToJson(session)},
-                             }},
-                        })
-                        .toJson(QJsonDocument::Compact));
+                Notify(QStringLiteral("session.stateChanged"),
+                       QJsonObject{
+                           {QStringLiteral("agent"), AGENT},
+                           {QStringLiteral("session"), ToJson(session)},
+                       });
             }
         }
+        if (Known_) {
+            // After the changes of this run, in the order of the last listing.
+            for (const QString& id : std::as_const(KnownIds_)) {
+                if (!states.contains(id)) {
+                    Notify(QStringLiteral("session.removed"),
+                           QJsonObject{
+                               {QStringLiteral("agent"), AGENT},
+                               {QStringLiteral("session"), id},
+                           });
+                }
+            }
+        }
+        KnownIds_ = std::move(ids);
         Known_ = std::move(states);
         Last_ = std::move(listing->Sessions);
     }
@@ -205,6 +212,15 @@ void Adapter::OnPolled(std::expected<Listing, QString> listing) {
     for (Waiting& one : waiting) {
         Settle(one.Promise, one.Answer());
     }
+}
+
+void Adapter::Notify(const QString& method, const QJsonObject& params) {
+    Send_(QJsonDocument(QJsonObject{
+                            {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                            {QStringLiteral("method"), method},
+                            {QStringLiteral("params"), params},
+                        })
+              .toJson(QJsonDocument::Compact));
 }
 
 QFuture<jsonrpc::Result> Adapter::WhenPolled(

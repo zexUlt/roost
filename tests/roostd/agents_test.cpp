@@ -695,6 +695,87 @@ private slots:
                             }));
     }
 
+    void ARemovalIsPublished() {
+        AddPlugin("one", {"claude"});
+        AddPlugin("two", {"codex"});
+        QVERIFY(Start());
+        QList<QJsonValue> events;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue& payload) {
+                events.append(
+                    QJsonObject{{"name", name}, {"payload", payload}});
+            }));
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            "roostd: the backend of one told the removal of a session of "
+            "agent \"codex\", which it does not serve");
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            "roostd: the backend of one told the removal of a session of "
+            "agent \"\", which it does not serve");
+        for (int i = 0; i < 3; ++i) {
+            QTest::ignoreMessage(QtWarningMsg,
+                                 "roostd: the backend of one told a removal "
+                                 "without a session id");
+        }
+        Notify(
+            "one",
+            {
+                Notification("session.removed", QJsonObject{{"agent", "claude"},
+                                                            {"session", "s1"}}),
+                // Not its agent.
+                Notification("session.removed", QJsonObject{{"agent", "codex"},
+                                                            {"session", "c1"}}),
+                Notification("session.removed", QJsonObject{{"session", "s1"}}),
+                // The session must be a non-empty string.
+                Notification("session.removed",
+                             QJsonObject{{"agent", "claude"}, {"session", ""}}),
+                Notification("session.removed",
+                             QJsonObject{{"agent", "claude"}}),
+                Notification(
+                    "session.removed",
+                    QJsonObject{{"agent", "claude"},
+                                {"session", QJsonObject{{"id", "s1"}}}}),
+            });
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            "roostd: the backend of one told a removal too big for a frame");
+        // The event is {agent, id} in a frame with the longest request id; the
+        // backend's line is {jsonrpc, method, params: {agent, session}}, a
+        // little shorter. Bisection on the server's own check finds the
+        // shortest id the event does not fit with; the backend's line must
+        // still fit its limit at that length.
+        const auto eventOf = [](qsizetype length) {
+            return QJsonObject{{"agent", "claude"},
+                               {"id", QString(length, u'x')}};
+        };
+        qsizetype fits = 0;
+        qsizetype tooBig = qsizetype{MAX_FRAME_LENGTH};
+        QVERIFY(Server::EventFitsAFrame("session.removed", eventOf(fits)));
+        QVERIFY(!Server::EventFitsAFrame("session.removed", eventOf(tooBig)));
+        while (tooBig - fits > 1) {
+            const qsizetype middle = fits + (tooBig - fits) / 2;
+            if (Server::EventFitsAFrame("session.removed", eventOf(middle))) {
+                fits = middle;
+            } else {
+                tooBig = middle;
+            }
+        }
+        const QJsonObject huge{{"agent", "claude"},
+                               {"session", QString(tooBig, u'x')}};
+        QVERIFY(QJsonDocument(Notification("session.removed", huge))
+                    .toJson(QJsonDocument::Compact)
+                    .size() < Backend::MAX_LINE_LENGTH);
+        Notify("one", {Notification("session.removed", huge)});
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(
+            events[0],
+            QJsonValue(QJsonObject{
+                {"name", "session.removed"},
+                {"payload", QJsonObject{{"agent", "claude"}, {"id", "s1"}}},
+            }));
+    }
+
     void AHangingAdapterHoldsTheListUntilItsBackendStops() {
         AddPlugin("one", {"claude"});
         SetAnswers("one",

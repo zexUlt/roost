@@ -27,9 +27,11 @@ void SessionService::Start() {
         return;
     }
     // Before the first list is asked for, so that no change is missed between
-    // the answer and the subscription.
+    // the answer and the subscription. One subscription for both events: the
+    // bus keeps no order across patterns, and a change then a removal of one
+    // session must arrive in that order.
     const auto subscription =
-        Bus_.Subscribe(QStringLiteral("session.stateChanged"), this,
+        Bus_.Subscribe(QStringLiteral("session.*"), this,
                        [this](const QString& name, const QJsonValue& payload) {
                            OnEvent(name, payload);
                        });
@@ -82,7 +84,7 @@ QFuture<rpc::Result> SessionService::Refresh() {
 void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
     // An answer older than the one applied is stale, though it came later.
     const bool apply = answer && order > Applied_;
-    QList<QJsonObject> replay;
+    QList<KeptEvent> replay;
     if (apply) {
         replay = Kept_;
     }
@@ -97,9 +99,17 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
     OnAnswer(*answer);
     // Each event carries a whole row, so one that the answer already knows of
     // changes nothing, and one that is newer than the answer's row wins. The
-    // rows are told one by one, as they are for an event that is live.
-    for (const QJsonObject& row : replay) {
-        ApplyRow(row);
+    // rows are told one by one, as they are for an event that is live; a
+    // removal that came after a row takes it away again. This assumes that a
+    // session which came back is announced by its own stateChanged: if roostd
+    // dropped it, the replayed removal stays in force until the next refresh.
+    for (const KeptEvent& event : replay) {
+        if (event.Removed) {
+            RemoveRow(Key{event.Row.value(AGENT).toString(),
+                          event.Row.value(ID).toString()});
+        } else {
+            ApplyRow(event.Row);
+        }
     }
 }
 
@@ -125,23 +135,48 @@ void SessionService::OnAnswer(const QJsonValue& answer) {
     emit Reset();
 }
 
-void SessionService::OnEvent(const QString& /*name*/,
-                             const QJsonValue& payload) {
+void SessionService::OnEvent(const QString& name, const QJsonValue& payload) {
+    const bool removed = name == QStringLiteral("session.removed");
+    if (!removed && name != QStringLiteral("session.stateChanged")) {
+        return;
+    }
     const QJsonObject row = payload.toObject();
     if (row.value(AGENT).toString().isEmpty() ||
         row.value(ID).toString().isEmpty()) {
-        qWarning("session.stateChanged without an agent or an id");
+        qWarning("%s without an agent or an id", qUtf8Printable(name));
         return;
     }
     if (InFlight_ > 0) {
-        Kept_.append(row);
+        Kept_.append({removed, row});
     }
     // Until the first list has come, the list that comes replaces whatever an
     // event would have said; but it is kept above, as the list may be older.
     if (!Loaded_) {
         return;
     }
-    ApplyRow(row);
+    if (removed) {
+        RemoveRow(Key{row.value(AGENT).toString(), row.value(ID).toString()});
+    } else {
+        ApplyRow(row);
+    }
+}
+
+void SessionService::RemoveRow(const Key& key) {
+    const auto known = Index_.constFind(key);
+    if (known == Index_.cend()) {
+        return;
+    }
+    const int index = *known;
+    // The model must hear of it before the row is gone.
+    emit RowAboutToBeRemoved(index);
+    Rows_.removeAt(index);
+    Index_.remove(key);
+    for (int i = index; i < Rows_.size(); ++i) {
+        Index_.insert(Key{Rows_[i].value(AGENT).toString(),
+                          Rows_[i].value(ID).toString()},
+                      i);
+    }
+    emit RowRemoved(index);
 }
 
 void SessionService::ApplyRow(const QJsonObject& row) {

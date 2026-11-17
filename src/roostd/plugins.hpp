@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -40,6 +41,9 @@ class Server;
 //   session.stateChanged  session, as a backend notifies it with
 //                         session.stateChanged {agent, session} about an
 //                         agent of its own plugin
+//   session.removed       {agent, id}, as a backend notifies it with
+//                         session.removed {agent, session: <id>} about an
+//                         agent of its own plugin
 //
 // The server must outlive it; after it is gone, commands.run fails with
 // BackendUnavailable.
@@ -72,6 +76,10 @@ private:
     void StartBackend(const PluginManifest& plugin);
     void OnNotified(const QString& pluginId, const QString& method,
                     const QJsonValue& params);
+    void OnStateChanged(const QString& pluginId, const QJsonObject& params);
+    void OnRemoved(const QString& pluginId, const QJsonObject& params);
+    // Whether the plugin is the one that serves the agent.
+    bool ServesAgent(const QString& pluginId, const QString& agent) const;
 
     Server& Server_;
     BackendOptions Options_;

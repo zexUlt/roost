@@ -204,21 +204,31 @@ AdapterBridge* PluginHost::BridgeOf(const QString& agentId) const {
 
 void PluginHost::OnNotified(const QString& pluginId, const QString& method,
                             const QJsonValue& params) {
-    if (method != QStringLiteral("session.stateChanged")) {
-        return;
+    if (method == QStringLiteral("session.stateChanged")) {
+        OnStateChanged(pluginId, params.toObject());
+    } else if (method == QStringLiteral("session.removed")) {
+        OnRemoved(pluginId, params.toObject());
     }
-    const QString agent =
-        params.toObject().value(QStringLiteral("agent")).toString();
+}
+
+bool PluginHost::ServesAgent(const QString& pluginId,
+                             const QString& agent) const {
     const PluginManifest* owner = Registry_.AgentOwner(agent);
-    if (owner == nullptr || owner->Id != pluginId) {
+    return owner != nullptr && owner->Id == pluginId;
+}
+
+void PluginHost::OnStateChanged(const QString& pluginId,
+                                const QJsonObject& params) {
+    const QString agent = params.value(QStringLiteral("agent")).toString();
+    if (!ServesAgent(pluginId, agent)) {
         qWarning(
             "roostd: the backend of %s told the state of agent \"%s\", "
             "which it does not serve",
             qUtf8Printable(pluginId), qUtf8Printable(agent));
         return;
     }
-    const auto session = SessionFromJson(
-        agent, params.toObject().value(QStringLiteral("session")));
+    const auto session =
+        SessionFromJson(agent, params.value(QStringLiteral("session")));
     if (!session) {
         qWarning("roostd: the backend of %s told a bad session state: %s",
                  qUtf8Printable(pluginId), qUtf8Printable(session.error()));
@@ -231,6 +241,35 @@ void PluginHost::OnNotified(const QString& pluginId, const QString& method,
             "roostd: the backend of %s told a session state too big for "
             "a frame",
             qUtf8Printable(pluginId));
+        return;
+    }
+    Server_.Bus().Publish(event, payload);
+}
+
+void PluginHost::OnRemoved(const QString& pluginId, const QJsonObject& params) {
+    const QString agent = params.value(QStringLiteral("agent")).toString();
+    if (!ServesAgent(pluginId, agent)) {
+        qWarning(
+            "roostd: the backend of %s told the removal of a session of "
+            "agent \"%s\", which it does not serve",
+            qUtf8Printable(pluginId), qUtf8Printable(agent));
+        return;
+    }
+    const QString id = params.value(QStringLiteral("session")).toString();
+    if (id.isEmpty()) {
+        qWarning(
+            "roostd: the backend of %s told a removal without a session id",
+            qUtf8Printable(pluginId));
+        return;
+    }
+    const QString event = QStringLiteral("session.removed");
+    const QJsonObject payload{
+        {QStringLiteral("agent"), agent},
+        {QStringLiteral("id"), id},
+    };
+    if (!Server::EventFitsAFrame(event, payload)) {
+        qWarning("roostd: the backend of %s told a removal too big for a frame",
+                 qUtf8Printable(pluginId));
         return;
     }
     Server_.Bus().Publish(event, payload);

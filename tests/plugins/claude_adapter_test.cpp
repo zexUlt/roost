@@ -172,6 +172,19 @@ private:
         return found;
     }
 
+    // The removals among the notifications, as {agent, session} lines.
+    static QStringList Removals(const QList<QJsonObject>& sent) {
+        QStringList removed;
+        for (const QJsonObject& message : sent) {
+            if (message.value("method") == QJsonValue("session.removed")) {
+                const QJsonObject params = message.value("params").toObject();
+                removed.append(params.value("agent").toString() + u'/' +
+                               params.value("session").toString());
+            }
+        }
+        return removed;
+    }
+
     // Waits until the fake has finished this many runs since the call.
     bool WaitForRuns(int runs) {
         const qsizetype before = Calls().count("end");
@@ -570,6 +583,111 @@ private slots:
                      .toObject()
                      .value("state"),
                  QJsonValue("done"));
+    }
+
+    void ASessionNoLongerListedIsSentAsRemoved() {
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working"),
+                    Entry("s3", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 0);
+
+        Put("agents.json", Agents({Entry("s2", "working")}));
+        QVERIFY(WaitForRuns(3));
+        // In the order of the previous listing.
+        QList<QJsonObject> sent = Notifications();
+        QCOMPARE(sent.size(), 2);
+        QCOMPARE(
+            sent[0],
+            (QJsonObject{
+                {"jsonrpc", "2.0"},
+                {"method", "session.removed"},
+                {"params", QJsonObject{{"agent", "claude"}, {"session", "s1"}}},
+            }));
+        QCOMPARE(Removals(sent), (QStringList{"claude/s1", "claude/s3"}));
+
+        // Said once: more runs of the same listing add nothing.
+        QVERIFY(WaitForRuns(3));
+        QCOMPARE(Notifications().size(), 2);
+
+        // A session that comes back is a change, not a removal.
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working")}));
+        QVERIFY(WaitForRuns(3));
+        sent = Notifications();
+        QCOMPARE(sent.size(), 3);
+        QCOMPARE(sent[2].value("method"), QJsonValue("session.stateChanged"));
+        QCOMPARE(sent[2]
+                     .value("params")
+                     .toObject()
+                     .value("session")
+                     .toObject()
+                     .value("id"),
+                 QJsonValue("s1"));
+    }
+
+    void ARemovalDuringFailedRunsIsSentOnce() {
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        Put("exit", "1");
+        QVERIFY(WaitForRuns(2));
+        QVERIFY(ListSessions().isObject());
+        // A failed run is no empty listing: nothing is removed by it.
+        QCOMPARE(Notifications().size(), 0);
+        Put("agents.json", Agents({Entry("s2", "working")}));
+        QVERIFY(QFile::remove(FakePath("exit")));
+        QVERIFY(WaitForRuns(3));
+        QCOMPARE(Removals(Notifications()), (QStringList{"claude/s1"}));
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 1);
+    }
+
+    // One run with a change and a removal: the change goes first.
+    void AChangeIsSentBeforeARemovalOfTheSameRun() {
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 0);
+
+        Put("agents.json", Agents({Entry("s1", "done")}));
+        QVERIFY(WaitForRuns(3));
+        const QList<QJsonObject> sent = Notifications();
+        QCOMPARE(sent.size(), 2);
+        QCOMPARE(sent[0].value("method"), QJsonValue("session.stateChanged"));
+        QCOMPARE(sent[0]
+                     .value("params")
+                     .toObject()
+                     .value("session")
+                     .toObject()
+                     .value("id"),
+                 QJsonValue("s1"));
+        QCOMPARE(sent[1].value("method"), QJsonValue("session.removed"));
+        QCOMPARE(Removals(sent), (QStringList{"claude/s2"}));
+    }
+
+    // An empty list that the run printed is an answer: all of them are gone,
+    // in the order of the last listing (not sorted).
+    void AnEmptyListingAfterANonEmptyOneRemovesAll() {
+        Put("agents.json",
+            Agents({Entry("s3", "working"), Entry("s1", "working"),
+                    Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 0);
+
+        Put("agents.json", Agents({}));
+        QVERIFY(WaitForRuns(3));
+        QCOMPARE(Removals(Notifications()),
+                 (QStringList{"claude/s3", "claude/s1", "claude/s2"}));
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 3);
     }
 
     void BlankLinesAreSkipped() {
