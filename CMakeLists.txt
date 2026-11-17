@@ -39,10 +39,12 @@ option(ROOST_WERROR "Treat warnings as errors" ON)
 # Only modules available under LGPLv3, linked dynamically (design.md §10).
 # 6.8 is the floor for QQuickWindow::createTextNode() and the CMake API used
 # here; CI builds against one pinned version.
-# QmlPrivate: src/qml_api/calling_context.cpp only. The tie to one Qt build
-# that Qt warns about is accepted there; CI pins the version.
+# QmlPrivate: used only by src/qml_api/calling_context.cpp. Qt warns that a
+# private module ties the build to one Qt version; that is accepted there, CI
+# pins the version. The warning is silenced for this call only.
 set(QT_NO_PRIVATE_MODULE_WARNING ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QmlPrivate)
+unset(QT_NO_PRIVATE_MODULE_WARNING)
 qt_standard_project_setup(REQUIRES 6.8)
 
 include(cmake/CompileOptions.cmake)

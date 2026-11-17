@@ -23,17 +23,19 @@ QQmlContext* callingContext(QJSEngine& engine) {
 
 CallOwners::CallOwners(QObject* parent) : QObject(parent) {}
 
-void CallOwners::add(QQmlContext* context, QObject* owner) {
-    if (context == nullptr || owner == nullptr) {
-        qWarning("roost: registerCallOwner needs a context and an owner");
-        return;
+QObject* CallOwners::add(QQmlContext* context) {
+    if (context == nullptr) {
+        qWarning("roost: registerCallOwner needs a context");
+        return nullptr;
     }
     if (!Owners_.contains(context)) {
         connect(context, &QObject::destroyed, this, [this](QObject* destroyed) {
             Owners_.remove(static_cast<QQmlContext*>(destroyed));
         });
     }
+    auto* owner = new QObject(context);
     Owners_.insert(context, owner);
+    return owner;
 }
 
 QObject* CallOwners::contextFor(QJSEngine& engine, QObject* fallback,

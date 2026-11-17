@@ -47,13 +47,15 @@ public:
     BusAdapter* bus() const { return Bus_; }
     bool connected() const { return Connected_; }
 
-    // From C++ only. The one-shot calls that QML code makes from `context` (or
-    // a context below it) belong to `owner`: when the owner is destroyed their
-    // callbacks are not called, and a call made after that is dropped. A call
-    // from a context with no registered one above it belongs to the singleton.
-    // The entry goes when the context is destroyed. GUI thread.
-    void registerCallOwner(QQmlContext* context, QObject* owner) {
-        Owners_.add(context, owner);
+    // From C++ only. Returns the owner of the one-shot calls that QML code
+    // makes from `context` (or a context below it). The owner belongs to the
+    // context: when it is destroyed, their callbacks are not called, and a call
+    // made after that is dropped. The loader may delete the owner first to
+    // start unloading; deleting the context alone is also enough. A call from
+    // a context with no registered one above it belongs to the singleton.
+    // GUI thread.
+    QObject* registerCallOwner(QQmlContext* context) {
+        return Owners_.add(context);
     }
 
     // Any method of the dispatcher by name, as host->call of the C SDK does.

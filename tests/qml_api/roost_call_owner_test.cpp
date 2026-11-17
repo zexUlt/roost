@@ -3,6 +3,7 @@
 // is registered with registerCallOwner, belongs to the panel's owner object, so
 // that no callback runs after the panel is gone. A call from the shell, whose
 // context is not registered, belongs to the window and is answered as always.
+// The owner is a child of the context.
 // Against the real roostd and the fixture backend.
 
 #include <QJSEngine>
@@ -63,6 +64,7 @@ QtObject {
             Roost.sessions.refresh(cb)
         }
     }
+    function setPins(n) { Roost.store.set("fixture", {pins: n}, callbackFor(tag)) }
     function hang(cb) { Roost.commands.run("fixture.hang", undefined, cb) }
     // A call from an object created inside the panel.
     function nested(cb) {
@@ -77,6 +79,41 @@ QtObject {
         Roost.store.changed.connect(function (plugin, document) {
             probe.Hit(t + ":changed", JSON.stringify(document))
         })
+    }
+}
+)";
+
+// A panel that subscribes to Roost.store.changed in one of three ways (the
+// plain "connect" is kept only so that the QML is complete). The
+// handlers report to roostProbe, a global of the engine, which does not depend
+// on the context of the panel: after unloading, a handler that still runs
+// cannot fail on a name that is gone and be taken for one that did not run.
+const char* const SIGNAL_QML = R"(
+import QtQml
+import Roost.Api
+
+QtObject {
+    id: root
+    property string form
+
+    property Connections connections: Connections {
+        target: Roost.store
+        enabled: root.form === "connections"
+        function onChanged(plugin, document) {
+            roostProbe.Hit("panel:connections", JSON.stringify(document))
+        }
+    }
+
+    Component.onCompleted: {
+        if (form === "connect") {
+            Roost.store.changed.connect(function (plugin, document) {
+                roostProbe.Hit("panel:connect", JSON.stringify(document))
+            })
+        } else if (form === "connect-target") {
+            Roost.store.changed.connect(root, function (plugin, document) {
+                roostProbe.Hit("panel:connect-target", JSON.stringify(document))
+            })
+        }
     }
 }
 )";
@@ -117,6 +154,9 @@ private:
         }
         Engine_ = std::make_unique<QQmlEngine>();
         Engine_->rootContext()->setContextProperty("probe", &Probe_);
+        QJSEngine::setObjectOwnership(&Probe_, QJSEngine::CppOwnership);
+        Engine_->globalObject().setProperty("roostProbe",
+                                            Engine_->newQObject(&Probe_));
         Singleton_ =
             Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
         if (Singleton_ == nullptr) {
@@ -144,8 +184,7 @@ private:
     // owner, and the QML in it.
     bool MakePanel() {
         Context_ = new QQmlContext(Engine_->rootContext(), Engine_.get());
-        Owner_ = new QObject;
-        Singleton_->registerCallOwner(Context_, Owner_);
+        Owner_ = Singleton_->registerCallOwner(Context_);
         Panel_ = Create(Context_, "panel");
         return Panel_ != nullptr;
     }
@@ -317,24 +356,75 @@ private slots:
         QCOMPARE(got.value("document"), QJsonValue(QJsonObject{}));
     }
 
-    // A probe, not a requirement: whether a handler that a panel connected to
-    // Roost.store.changed still runs after the panel is unloaded.
-    void AStoreChangedHandlerOfAnUnloadedPanel() {
+    void ACallOfAPanelWhoseContextIsDeletedNeverAnswers_data() {
+        QTest::addColumn<QString>("kind");
+        for (const char* kind :
+             {"call", "run", "get", "set", "publish", "refresh"}) {
+            QTest::newRow(kind) << kind;
+        }
+    }
+
+    // The owner is never deleted by hand: it goes with the context, in the
+    // same call stack, whatever the order of unloading.
+    void ACallOfAPanelWhoseContextIsDeletedNeverAnswers() {
+        QFETCH(QString, kind);
         QVERIFY(Setup());
         QVERIFY(MakePanel());
+        QVERIFY(Owner_ != nullptr);
+        ActKind(Panel_, kind, CallbackOf(Shell_, "panel"));
+        Act(Shell_, "act", kind);
+        DestroyPanelAndContext();
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell"), 1, TIMEOUT_MS);
+        Settle();
+        QCOMPARE(Probe_.Count("panel"), 0);
+        QVERIFY(Owner_.isNull());
+    }
+
+    void ADeletedContextTakesItsOwnerWithIt() {
+        QVERIFY(Setup());
+        QVERIFY(MakePanel());
+        QCOMPARE(Owner_->parent(), Context_.data());
+        delete Context_.data();
+        QVERIFY(Owner_.isNull());
+    }
+
+    void AStoreChangedHandlerOfAnUnloadedPanel_data() {
+        QTest::addColumn<QString>("form");
+        QTest::newRow("connections") << "connections";
+        // Not here: a plain Roost.store.changed.connect(fn) outlives the panel
+        // until an explicit disconnect.
+        QTest::newRow("connect-target") << "connect-target";
+    }
+
+    void AStoreChangedHandlerOfAnUnloadedPanel() {
+        QFETCH(QString, form);
+        QVERIFY(Setup());
+        Context_ = new QQmlContext(Engine_->rootContext(), Engine_.get());
+        Owner_ = Singleton_->registerCallOwner(Context_);
+        QQmlComponent component(Engine_.get());
+        component.setData(SIGNAL_QML, QUrl());
+        Panel_ = component.beginCreate(Context_);
+        QVERIFY2(Panel_ != nullptr, qPrintable(component.errorString()));
+        QJSEngine::setObjectOwnership(Panel_, QJSEngine::CppOwnership);
+        Panel_->setProperty("form", form);
+        component.completeCreate();
         // `changed` follows only the documents that have been read.
         Act(Shell_, "act", "get");
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell"), 1, TIMEOUT_MS);
-        Act(Panel_, "watch");
-        Act(Shell_, "watch");
+        Shell_->setProperty("tag", "shell-set");
+        QVERIFY(
+            QMetaObject::invokeMethod(Shell_, "setPins", Q_ARG(QVariant, 1)));
+        // The control: before unloading the handler runs.
+        const QString tag = "panel:" + form;
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count(tag), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell-set"), 1, TIMEOUT_MS);
         DestroyOwner();
         DestroyPanelAndContext();
-        Act(Shell_, "act", "set");
-        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell:changed"), 1, TIMEOUT_MS);
+        QVERIFY(
+            QMetaObject::invokeMethod(Shell_, "setPins", Q_ARG(QVariant, 2)));
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell-set"), 2, TIMEOUT_MS);
         Settle();
-        qInfo("store.changed handler of the unloaded panel ran %d time(s)",
-              Probe_.Count("panel:changed"));
-        QCOMPARE(Probe_.Count("panel:changed"), 0);
+        QCOMPARE(Probe_.Count(tag), 1);
     }
 };
 
