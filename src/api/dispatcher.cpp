@@ -6,6 +6,8 @@
 
 #include "api/command_service.hpp"
 #include "api/plugin_service.hpp"
+#include "api/session_service.hpp"
+#include "api/store_service.hpp"
 #include "api/thread_check.hpp"
 
 namespace roost::api {
@@ -19,24 +21,42 @@ rpc::Result InvalidParams(const QString& message) {
 
 }  // namespace
 
-Dispatcher::Dispatcher(IoThread& io, BusService& bus, CommandService& commands,
-                       PluginService& plugins, QObject* parent)
+Dispatcher::Dispatcher(BusService& bus, CommandService& commands,
+                       PluginService& plugins, SessionService& sessions,
+                       StoreService& store, QObject* parent)
     : QObject(parent), Bus_(bus) {
-    RegisterBuiltins(io, commands, plugins);
+    RegisterBuiltins(commands, plugins, sessions, store);
 }
 
-void Dispatcher::RegisterBuiltins(IoThread& io, CommandService& commands,
-                                  PluginService& plugins) {
-    // Straight to roostd: no cache yet.
-    for (const char* name : {"sessions.list", "store.get", "store.set"}) {
-        const QString method = QString::fromLatin1(name);
-        const bool registered =
-            Register(method, [&io, method](const rpc::Call& call) {
-                return io.Request(method, call.Params);
-            });
-        Q_ASSERT(registered);
-        Q_UNUSED(registered)
-    }
+void Dispatcher::RegisterBuiltins(CommandService& commands,
+                                  PluginService& plugins,
+                                  SessionService& sessions,
+                                  StoreService& store) {
+    const bool listingSessions = Register(
+        QStringLiteral("sessions.list"),
+        [&sessions](const rpc::Call& /*call*/) { return sessions.Refresh(); });
+    const bool getting =
+        Register(QStringLiteral("store.get"), [&store](const rpc::Call& call) {
+            const QJsonValue plugin =
+                call.Params.toObject().value(QStringLiteral("plugin"));
+            if (!plugin.isString()) {
+                return rpc::Ready(InvalidParams(QStringLiteral(
+                    "store.get takes {plugin}: the id of a loaded plugin")));
+            }
+            return store.Get(plugin.toString());
+        });
+    const bool setting =
+        Register(QStringLiteral("store.set"), [&store](const rpc::Call& call) {
+            const QJsonObject params = call.Params.toObject();
+            const QJsonValue plugin = params.value(QStringLiteral("plugin"));
+            if (!plugin.isString()) {
+                return rpc::Ready(InvalidParams(
+                    QStringLiteral("store.set takes {plugin, document}: the "
+                                   "id of a loaded plugin and a JSON object")));
+            }
+            return store.Set(plugin.toString(),
+                             params.value(QStringLiteral("document")));
+        });
     const bool listing = Register(
         QStringLiteral("plugins.list"),
         [&plugins](const rpc::Call& /*call*/) { return plugins.List(); });
@@ -64,7 +84,11 @@ void Dispatcher::RegisterBuiltins(IoThread& io, CommandService& commands,
             return Bus_.Publish(name.toString(),
                                 params.value(QStringLiteral("payload")));
         });
-    Q_ASSERT(listing && running && publishing);
+    Q_ASSERT(listingSessions && getting && setting && listing && running &&
+             publishing);
+    Q_UNUSED(listingSessions)
+    Q_UNUSED(getting)
+    Q_UNUSED(setting)
     Q_UNUSED(listing)
     Q_UNUSED(running)
     Q_UNUSED(publishing)

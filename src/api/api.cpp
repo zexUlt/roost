@@ -14,7 +14,9 @@ Api::Api(QObject* parent)
       Bus_(Io_),
       Commands_(Io_),
       Plugins_(Io_),
-      Dispatch_(Io_, Bus_, Commands_, Plugins_) {
+      Sessions_(Io_, Bus_),
+      Store_(Io_, Bus_),
+      Dispatch_(Bus_, Commands_, Plugins_, Sessions_, Store_) {
     connect(&Io_, &IoThread::Disconnected, this, [this](const QString& reason) {
         Connected_ = false;
         emit Disconnected(reason);
@@ -41,6 +43,8 @@ void Api::Connect(const QString& socketPath) {
         }
         Connected_ = true;
         Plugins_.Fetch();
+        Sessions_.Start();
+        Store_.Start();
         emit Connected();
     });
 }

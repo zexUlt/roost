@@ -7,6 +7,8 @@
 #include "api/command_service.hpp"
 #include "api/dispatcher.hpp"
 #include "api/plugin_service.hpp"
+#include "api/session_service.hpp"
+#include "api/store_service.hpp"
 #include "core/rpc.hpp"
 #include "terminal/io_thread.hpp"
 
@@ -41,10 +43,12 @@ public:
     BusService& Bus() { return Bus_; }
     CommandService& Commands() { return Commands_; }
     PluginService& Plugins() { return Plugins_; }
+    SessionService& Sessions() { return Sessions_; }
+    StoreService& Store() { return Store_; }
     Dispatcher& Dispatch() { return Dispatch_; }
 
 signals:
-    // After hello succeeded; the plugin list is being fetched.
+    // After hello succeeded; the plugin and session lists are being fetched.
     void Connected();
     // The connection is lost or could not be made. Pending calls have failed
     // with ConnectionLost.
@@ -59,6 +63,8 @@ private:
     BusService Bus_;
     CommandService Commands_;
     PluginService Plugins_;
+    SessionService Sessions_;
+    StoreService Store_;
     Dispatcher Dispatch_;
     bool Started_ = false;
     bool Connected_ = false;

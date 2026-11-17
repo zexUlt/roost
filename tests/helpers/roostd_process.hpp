@@ -28,7 +28,8 @@ public:
 
     // A plugin for the next Start: its backend is the fixture backend of
     // tests/helpers/fixture_backend.cpp. It declares the commands fixture.echo,
-    // fixture.pid, fixture.crash and fixture.hang, and the agent
+    // fixture.pid, fixture.crash, fixture.hang and fixture.notify, and the
+    // agent
     // "<id>-agent", which has one session, "s1", in state idle.
     bool AddFixturePlugin(const QString& id, const QString& fixtureBackendPath);
 

@@ -46,8 +46,8 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
         return false;
     }
     QJsonArray commands;
-    for (const char* command :
-         {"fixture.echo", "fixture.pid", "fixture.crash", "fixture.hang"}) {
+    for (const char* command : {"fixture.echo", "fixture.pid", "fixture.crash",
+                                "fixture.hang", "fixture.notify"}) {
         commands.append(QJsonObject{{"id", command}, {"title", command}});
     }
     const QJsonObject manifest{

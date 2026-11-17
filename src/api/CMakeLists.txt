@@ -7,6 +7,8 @@ add_library(roost_api STATIC
     command_service.cpp
     dispatcher.cpp
     plugin_service.cpp
+    session_service.cpp
+    store_service.cpp
     thread_check.cpp
 )
 

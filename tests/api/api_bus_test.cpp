@@ -46,6 +46,9 @@ void CountSubscribeWarnings(QtMsgType type, const QMessageLogContext& context,
     PREVIOUS_HANDLER(type, context, message);
 }
 
+// session.stateChanged, subscribed by SessionService after hello.
+constexpr int STANDING_SUBSCRIPTIONS = 1;
+
 }  // namespace
 
 class ApiBusTest : public QObject {
@@ -84,8 +87,9 @@ private:
         Api_->Bus().Unsubscribe(id);
     }
 
-    // How many subscriptions roostd holds for the connection. Takes them: it
-    // unsubscribes every id it finds, so it ends a test.
+    // How many subscriptions roostd holds for the connection, less the one
+    // the sessions cache keeps for as long as the connection lives. Takes
+    // them: it unsubscribes every id it finds, so it ends a test.
     int SubscriptionsAtRoostd() {
         int found = 0;
         for (int id = 1; id <= 32; ++id) {
@@ -95,7 +99,7 @@ private:
                 ++found;
             }
         }
-        return found;
+        return found - STANDING_SUBSCRIPTIONS;
     }
 
     std::unique_ptr<roost::testing::RoostdProcess> Daemon_;

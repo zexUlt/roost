@@ -21,7 +21,8 @@
 //   {"<method>": {"<agent>": {"result": ...} | {"error": {...}} | "crash" |
 //                            "hang"}}
 // An answer under "<agent>/<session>" comes first for a request with a
-// session.
+// session. A "result" or an "error" may come with "delayMs": N, and then it is
+// sent after N milliseconds, the backend answering nothing else meanwhile.
 // With --crash-on-start it exits with code 3 at once. It exits with code 0 when
 // its stdin closes, or after --linger-ms N more milliseconds.
 
@@ -140,6 +141,11 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
     }
 }
 
+void Delay(const QJsonObject& answer) {
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(answer.value("delayMs").toInt()));
+}
+
 void AnswerAgent(const QJsonValue& id, const QString& method,
                  const QJsonObject& params) {
     QFile file("agent.json");
@@ -158,10 +164,12 @@ void AnswerAgent(const QJsonValue& id, const QString& method,
     } else if (answer == QJsonValue("hang")) {
         // No answer.
     } else if (answer.toObject().contains("error")) {
+        Delay(answer.toObject());
         Send({{"jsonrpc", "2.0"},
               {"id", id},
               {"error", answer.toObject().value("error")}});
     } else if (answer.toObject().contains("result")) {
+        Delay(answer.toObject());
         Answer(id, answer.toObject().value("result"));
     } else {
         Fail(id, -32602, QString("agent.json has no answer to %1").arg(method));

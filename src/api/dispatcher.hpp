@@ -16,6 +16,8 @@ namespace roost::api {
 
 class CommandService;
 class PluginService;
+class SessionService;
+class StoreService;
 
 // The methods of design.md §4 that a plugin may call, by name: the one table
 // that the QML singletons and the host of the C SDK are adapters over. It is
@@ -27,13 +29,18 @@ class PluginService;
 // session.close, which belong to the window itself. Subscribing takes a
 // callback, so it is a pair of methods here and not a by-name call.
 //
+// The methods that have a cache go through its service: sessions.list always
+// asks roostd and refreshes the rows, store.get answers from the documents
+// that are warm, store.set leaves the cache to the event that follows it.
+//
 // Use it from the GUI thread.
 class Dispatcher : public QObject {
     Q_OBJECT
 
 public:
-    Dispatcher(IoThread& io, BusService& bus, CommandService& commands,
-               PluginService& plugins, QObject* parent = nullptr);
+    Dispatcher(BusService& bus, CommandService& commands,
+               PluginService& plugins, SessionService& sessions,
+               StoreService& store, QObject* parent = nullptr);
 
     // As rpc::Dispatcher::Register: false if the method is taken, or the name
     // is reserved by JSON-RPC (starts with "rpc.").
@@ -56,8 +63,8 @@ public:
     void Unsubscribe(BusService::LocalId id);
 
 private:
-    void RegisterBuiltins(IoThread& io, CommandService& commands,
-                          PluginService& plugins);
+    void RegisterBuiltins(CommandService& commands, PluginService& plugins,
+                          SessionService& sessions, StoreService& store);
 
     BusService& Bus_;
     std::map<QString, rpc::Handler> Handlers_;
