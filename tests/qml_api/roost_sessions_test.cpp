@@ -144,7 +144,11 @@ private:
             !Daemon_->Start(ROOSTD_PATH)) {
             return false;
         }
-        Api_ = std::make_unique<api::Api>();
+        // Short retry delays: a restart of roostd under load must not push
+        // the next attempt past the test's timeout.
+        Api_ = std::make_unique<api::Api>(api::ApiOptions{
+            .FirstReconnectDelay = std::chrono::milliseconds{20},
+            .MaxReconnectDelay = std::chrono::milliseconds{80}});
         Engine_ = std::make_unique<QQmlEngine>();
         Singleton_ =
             Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
@@ -308,6 +312,9 @@ private slots:
         QVERIFY(Prepare());
         QVERIFY(ConnectApi());
         QSignalSpy reset(Model_, &QAbstractItemModel::modelReset);
+        QSignalSpy loadedChanged(Model_, &SessionsModel::loadedChanged);
+        QSignalSpy unavailableChanged(Model_,
+                                      &SessionsModel::unavailableChanged);
         QVERIFY(SetAnswers(Answers({Row("s9", "done"), Row("s1", "failed")})));
         QVERIFY(!Call("refreshRunsInside").toBool());
         QTRY_COMPARE_WITH_TIMEOUT(Page_->property("got").toList().size(), 1,
@@ -324,6 +331,10 @@ private slots:
         QCOMPARE(Role(0, "id"), QVariant("s9"));
         QCOMPARE(Role(1, "id"), QVariant("s1"));
         QCOMPARE(Role(1, "state"), QVariant("failed"));
+        // Loaded before and after, nobody unavailable: nothing to tell, so a
+        // handler that refreshes on loadedChanged would not loop.
+        QCOMPARE(loadedChanged.size(), 0);
+        QCOMPARE(unavailableChanged.size(), 0);
     }
 
     void ALostConnectionEmptiesTheModelAndTheReconnectFillsIt() {

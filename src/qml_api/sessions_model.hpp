@@ -51,6 +51,10 @@ private:
     // SessionService changes its rows before it says so, so the count the
     // views were told is kept here.
     int Count_ = 0;
+    // What was told last: the change signals go out only when these differ,
+    // so a handler that refreshes on loadedChanged does not loop.
+    bool Loaded_ = false;
+    QVariantList Unavailable_;
 };
 
 }  // namespace roost

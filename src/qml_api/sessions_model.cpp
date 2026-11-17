@@ -2,6 +2,8 @@
 
 #include <QJsonObject>
 
+#include <utility>
+
 #include "qml_api/js_callback.hpp"
 
 namespace roost {
@@ -16,14 +18,25 @@ SessionsModel::SessionsModel(api::Api& api, QJSEngine& engine, QObject* parent)
     : QAbstractListModel(parent),
       Api_(api),
       Engine_(engine),
-      Count_(static_cast<int>(api.Sessions().Rows().size())) {
+      Count_(static_cast<int>(api.Sessions().Rows().size())),
+      Loaded_(api.Sessions().IsLoaded()),
+      Unavailable_(api.Sessions().Unavailable().toVariantList()) {
     const api::SessionService* sessions = &api.Sessions();
     connect(sessions, &api::SessionService::Reset, this, [this] {
         beginResetModel();
         Count_ = static_cast<int>(Api_.Sessions().Rows().size());
         endResetModel();
-        emit unavailableChanged();
-        emit loadedChanged();
+        QVariantList unavailable =
+            Api_.Sessions().Unavailable().toVariantList();
+        if (unavailable != Unavailable_) {
+            Unavailable_ = std::move(unavailable);
+            emit unavailableChanged();
+        }
+        const bool loaded = Api_.Sessions().IsLoaded();
+        if (loaded != Loaded_) {
+            Loaded_ = loaded;
+            emit loadedChanged();
+        }
     });
     connect(sessions, &api::SessionService::RowInserted, this, [this](int row) {
         beginInsertRows({}, row, row);
@@ -60,11 +73,9 @@ QHash<int, QByteArray> SessionsModel::roleNames() const {
     return names;
 }
 
-QVariantList SessionsModel::unavailable() const {
-    return Api_.Sessions().Unavailable().toVariantList();
-}
+QVariantList SessionsModel::unavailable() const { return Unavailable_; }
 
-bool SessionsModel::loaded() const { return Api_.Sessions().IsLoaded(); }
+bool SessionsModel::loaded() const { return Loaded_; }
 
 void SessionsModel::refresh(const QJSValue& callback) {
     callMethod(Api_, Engine_, this, QStringLiteral("sessions.list"),
