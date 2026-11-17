@@ -18,7 +18,9 @@ base_url=https://download.qt.io/official_releases/qt/$series/$version/submodules
 modules=(qtbase qtshadertools qtdeclarative)
 jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc)
 
-work=$(mktemp -d)
+# Qt refuses a build directory whose path goes through a symlink, and on
+# macOS mktemp answers under /var, a link to /private/var.
+work=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 
 fetch() {
@@ -63,10 +65,25 @@ for module in qtshadertools qtdeclarative; do
     mkdir "$work/build-$module"
     (
         cd "$work/build-$module"
+        # qt-configure-module takes no -nomake: the CMake variables that
+        # -nomake sets for qtbase go after --.
         "$prefix/bin/qt-configure-module" \
             "$work/$module-everywhere-src-$version" \
-            -nomake examples -nomake tests
+            -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
         cmake --build . --parallel "$jobs"
         cmake --install .
     )
+done
+
+# A module that did not pick up -sanitize thread from qtbase would bring back
+# the false races this build exists to remove.
+for lib in QtCore QtQml QtQuick; do
+    binary=$prefix/lib/$lib.framework/$lib
+    # Into a variable first: under pipefail, grep -q leaving early could
+    # fail nm with SIGPIPE and the pipeline with it.
+    symbols=$(nm -u "$binary")
+    if ! grep -q '__tsan_func_entry' <<<"$symbols"; then
+        echo "FAIL: $binary is not built with TSan" >&2
+        exit 1
+    fi
 done

@@ -246,5 +246,8 @@ jobs:
       - name: Naming gate catches a violation in each style
         run: tools/check_naming.sh
 
+      - name: Plugin link gate catches each violation
+        run: tools/check_plugin_links.sh
+
       - name: The CI change filter answers its table
         run: tools/ci_changes_test.sh

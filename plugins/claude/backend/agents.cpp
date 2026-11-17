@@ -7,7 +7,7 @@
 
 #include <optional>
 
-#include "core/rpc.hpp"
+#include "claude/backend/json_rpc.hpp"
 
 namespace roost::claude {
 
@@ -89,7 +89,7 @@ std::expected<Listing, QString> ParseAgents(QByteArrayView output) {
         session.WorkingDirectory =
             entry.value(QStringLiteral("cwd")).toString();
         const std::optional<qint64> startedAt =
-            rpc::ToInteger(entry.value(QStringLiteral("startedAt")));
+            jsonrpc::ToInteger(entry.value(QStringLiteral("startedAt")));
         session.StartedAt = startedAt.value_or(0) > 0 ? *startedAt : 0;
         listing.Sessions.push_back(session);
     }

@@ -44,6 +44,7 @@ qt_standard_project_setup(REQUIRES 6.8)
 
 include(cmake/CompileOptions.cmake)
 include(cmake/ghostty.cmake)
+include(cmake/PluginGate.cmake)
 
 add_subdirectory(src)
 add_subdirectory(plugins)

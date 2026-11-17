@@ -61,6 +61,7 @@ private slots:
     void ValidPluginIds();
     void InvalidPluginIds_data();
     void InvalidPluginIds();
+    void ReservedPluginIdIsRefused();
     void ConfigDirectoryFromRoostConfig();
     void ConfigDirectoryFromXdg();
     void ConfigDirectoryIgnoresRelativeXdg();
@@ -208,6 +209,17 @@ void StoreTest::InvalidPluginIds() {
     QTemporaryDir root;
     const Store store(root.filePath(QStringLiteral("roost")));
     QVERIFY(!Store::IsValidPluginId(id));
+    QVERIFY(!store.Save(id, {}));
+    QVERIFY(!store.Load(id));
+    QVERIFY(FilesIn(root.path()).isEmpty());
+}
+
+void StoreTest::ReservedPluginIdIsRefused() {
+    QTemporaryDir root;
+    const Store store(root.filePath(QStringLiteral("roost")));
+    const QString id = QStringLiteral("keymap");
+    QVERIFY(Store::IsReservedPluginId(id));
+    QVERIFY(!Store::IsReservedPluginId(QStringLiteral("keymaps")));
     QVERIFY(!store.Save(id, {}));
     QVERIFY(!store.Load(id));
     QVERIFY(FilesIn(root.path()).isEmpty());

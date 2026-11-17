@@ -14,19 +14,19 @@ namespace roost::claude {
 
 namespace {
 
-void Settle(QPromise<rpc::Result>& promise, rpc::Result result) {
+void Settle(QPromise<jsonrpc::Result>& promise, jsonrpc::Result result) {
     promise.addResult(std::move(result));
     promise.finish();
 }
 
-rpc::Result InvalidParams(const QString& message) {
+jsonrpc::Result InvalidParams(const QString& message) {
     return std::unexpected(
-        rpc::Error::FromCode(rpc::EErrorCode::InvalidParams, message));
+        jsonrpc::Error::FromCode(jsonrpc::EErrorCode::InvalidParams, message));
 }
 
-rpc::Result Failed(const QString& message) {
+jsonrpc::Result Failed(const QString& message) {
     return std::unexpected(
-        rpc::Error::FromCode(rpc::EErrorCode::InternalError, message));
+        jsonrpc::Error::FromCode(jsonrpc::EErrorCode::InternalError, message));
 }
 
 bool IsOurs(const QJsonObject& params) {
@@ -61,9 +61,9 @@ Adapter::Adapter(AdapterOptions options, Send send, QObject* parent)
     const bool registered =
         Dispatcher_.Register(
             QStringLiteral("agent.listSessions"),
-            [this](const rpc::Call& call) {
+            [this](const jsonrpc::Call& call) {
                 if (!IsOurs(call.Params.toObject())) {
-                    return rpc::Ready(InvalidParams(
+                    return jsonrpc::Ready(InvalidParams(
                         QStringLiteral("agent.listSessions takes {agent: "
                                        "\"claude\"}")));
                 }
@@ -71,12 +71,12 @@ Adapter::Adapter(AdapterOptions options, Send send, QObject* parent)
             }) &&
         Dispatcher_.Register(
             QStringLiteral("agent.attachCommand"),
-            [this](const rpc::Call& call) {
+            [this](const jsonrpc::Call& call) {
                 const QJsonObject params = call.Params.toObject();
                 const QString session =
                     params.value(QStringLiteral("session")).toString();
                 if (!IsOurs(params) || session.isEmpty()) {
-                    return rpc::Ready(InvalidParams(
+                    return jsonrpc::Ready(InvalidParams(
                         QStringLiteral("agent.attachCommand takes {agent: "
                                        "\"claude\", session}")));
                 }
@@ -102,7 +102,7 @@ Adapter::~Adapter() {
 void Adapter::Start() { Poll(); }
 
 QFuture<QByteArray> Adapter::Handle(QByteArrayView message) {
-    return Dispatcher_.Handle(message, nullptr);
+    return Dispatcher_.Handle(message);
 }
 
 void Adapter::Poll() {
@@ -207,18 +207,19 @@ void Adapter::OnPolled(std::expected<Listing, QString> listing) {
     }
 }
 
-QFuture<rpc::Result> Adapter::WhenPolled(std::function<rpc::Result()> answer) {
+QFuture<jsonrpc::Result> Adapter::WhenPolled(
+    std::function<jsonrpc::Result()> answer) {
     if (Last_) {
-        return rpc::Ready(answer());
+        return jsonrpc::Ready(answer());
     }
-    QPromise<rpc::Result> promise;
-    QFuture<rpc::Result> future = promise.future();
+    QPromise<jsonrpc::Result> promise;
+    QFuture<jsonrpc::Result> future = promise.future();
     promise.start();
     Waiting_.push_back({std::move(answer), std::move(promise)});
     return future;
 }
 
-rpc::Result Adapter::ListSessions() const {
+jsonrpc::Result Adapter::ListSessions() const {
     if (!*Last_) {
         return Failed(Last_->error());
     }
@@ -229,7 +230,7 @@ rpc::Result Adapter::ListSessions() const {
     return sessions;
 }
 
-rpc::Result Adapter::AttachCommand(const QString& sessionId) const {
+jsonrpc::Result Adapter::AttachCommand(const QString& sessionId) const {
     if (!*Last_) {
         return Failed(Last_->error());
     }

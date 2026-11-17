@@ -31,6 +31,11 @@ public:
     // system "Claude" and "claude" would be one file.
     static bool IsValidPluginId(const QString& id);
 
+    // Ids that name a file of the state directory other than a plugin's
+    // document: "keymap" is the user's keymap.json (design.md §8). Store
+    // refuses them, and the manifest loader does not accept them as ids.
+    static bool IsReservedPluginId(const QString& id);
+
     const QString& Directory() const { return Directory_; }
 
     // The plugin's document; an empty object if it has none yet.

@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "claude/backend/agents.hpp"
-#include "core/rpc.hpp"
+#include "claude/backend/json_rpc.hpp"
 
 class QProcess;
 
@@ -70,20 +70,21 @@ public:
 
 private:
     struct Waiting {
-        std::function<rpc::Result()> Answer;
-        QPromise<rpc::Result> Promise;
+        std::function<jsonrpc::Result()> Answer;
+        QPromise<jsonrpc::Result> Promise;
     };
 
     void Poll();
     void OnPolled(std::expected<Listing, QString> listing);
     // The answer now if a run has finished, else once the first one does.
-    QFuture<rpc::Result> WhenPolled(std::function<rpc::Result()> answer);
-    rpc::Result ListSessions() const;
-    rpc::Result AttachCommand(const QString& sessionId) const;
+    QFuture<jsonrpc::Result> WhenPolled(
+        std::function<jsonrpc::Result()> answer);
+    jsonrpc::Result ListSessions() const;
+    jsonrpc::Result AttachCommand(const QString& sessionId) const;
 
     AdapterOptions Options_;
     Send Send_;
-    rpc::Dispatcher Dispatcher_;
+    jsonrpc::Dispatcher Dispatcher_;
 
     QProcess* Process_ = nullptr;
     QTimer PollTimer_;
