@@ -30,7 +30,9 @@ namespace roost::api {
 //
 // An event that comes while a list is being asked for is put on the rows again
 // when the answer has replaced them: roostd answers when every agent has, and
-// the list may be older than the event.
+// the list may be older than the event. The price: a session that changed and
+// then went away before its agent was listed comes back with that event, and
+// stays until the next Refresh, like any session that is gone.
 //
 // A cache of roostd: Api calls Start once the connection is up, and the rows
 // are dropped when it is lost.

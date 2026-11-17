@@ -219,7 +219,7 @@ private slots:
         QVERIFY(before >= 0);
         QCOMPARE(Api_->Sessions().Rows()[before].value("state"),
                  QJsonValue("working"));
-        QVERIFY(SetSlowListing(1500));
+        QVERIFY(SetSlowListing(3000));
         QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
         QSignalSpy changed(&Api_->Sessions(), &api::SessionService::RowChanged);
         const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
