@@ -501,8 +501,11 @@ private slots:
         // Connected after the Shell: its slot ran first.
         int delivered = 0;
         bool slotPanelWasNull = false;
+        // The context dies with this function: the teardown in cleanup emits
+        // the signal again, after these locals are gone.
+        QObject scope;
         connect(
-            Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, this,
+            Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, &scope,
             [&](QQuickItem* panel) {
                 if (panel->property("tag").isValid()) {
                     ++delivered;
