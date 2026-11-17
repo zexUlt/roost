@@ -140,9 +140,11 @@ private slots:
         QVERIFY(WriteBehindRoostd("fixture", Doc(99)));
         QCOMPARE(*Get(*second, "fixture"), QJsonValue(Wrapped(Doc(5))));
         QCOMPARE(*Get(*first, "fixture"), QJsonValue(Wrapped(Doc(5))));
-        // Whole documents replace: the last writer wins.
+        // Whole documents replace: the last writer wins. The first window
+        // hears it on its own connection, which may lag the writer's.
+        QSignalSpy firstChanged(&first->Store(), &api::StoreService::Changed);
         QVERIFY(Set(*second, "fixture", QJsonObject{{"other", true}}));
-        QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 2, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 1, TIMEOUT_MS);
         QCOMPARE(*Get(*first, "fixture"),
                  QJsonValue(Wrapped({{"other", true}})));
     }
