@@ -24,6 +24,8 @@ FocusScope {
         }
         panel.parent = root;
         panel.anchors.fill = root;
+        // Focusing the slot focuses the panel.
+        panel.focus = true;
     }
 
     Text {
