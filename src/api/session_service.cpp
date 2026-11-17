@@ -100,7 +100,9 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
     // Each event carries a whole row, so one that the answer already knows of
     // changes nothing, and one that is newer than the answer's row wins. The
     // rows are told one by one, as they are for an event that is live; a
-    // removal that came after a row takes it away again.
+    // removal that came after a row takes it away again. This assumes that a
+    // session which came back is announced by its own stateChanged: if roostd
+    // dropped it, the replayed removal stays in force until the next refresh.
     for (const KeptEvent& event : replay) {
         if (event.Removed) {
             RemoveRow(Key{event.Row.value(AGENT).toString(),

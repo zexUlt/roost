@@ -646,6 +646,50 @@ private slots:
         QCOMPARE(Notifications().size(), 1);
     }
 
+    // One run with a change and a removal: the change goes first.
+    void AChangeIsSentBeforeARemovalOfTheSameRun() {
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 0);
+
+        Put("agents.json", Agents({Entry("s1", "done")}));
+        QVERIFY(WaitForRuns(3));
+        const QList<QJsonObject> sent = Notifications();
+        QCOMPARE(sent.size(), 2);
+        QCOMPARE(sent[0].value("method"), QJsonValue("session.stateChanged"));
+        QCOMPARE(sent[0]
+                     .value("params")
+                     .toObject()
+                     .value("session")
+                     .toObject()
+                     .value("id"),
+                 QJsonValue("s1"));
+        QCOMPARE(sent[1].value("method"), QJsonValue("session.removed"));
+        QCOMPARE(Removals(sent), (QStringList{"claude/s2"}));
+    }
+
+    // An empty list that the run printed is an answer: all of them are gone,
+    // in the order of the last listing (not sorted).
+    void AnEmptyListingAfterANonEmptyOneRemovesAll() {
+        Put("agents.json",
+            Agents({Entry("s3", "working"), Entry("s1", "working"),
+                    Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 0);
+
+        Put("agents.json", Agents({}));
+        QVERIFY(WaitForRuns(3));
+        QCOMPARE(Removals(Notifications()),
+                 (QStringList{"claude/s3", "claude/s1", "claude/s2"}));
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Notifications().size(), 3);
+    }
+
     void BlankLinesAreSkipped() {
         Put("agents.json", Agents({}));
         StartAdapter();

@@ -246,7 +246,7 @@ private slots:
         QVERIFY(Notify({Removed("s1")}));
         QTRY_COMPARE_WITH_TIMEOUT(told.size(), 2, TIMEOUT_MS);
         QCOMPARE(told, (QStringList{"about 0 of 2 (s1)", "removed 0 of 1"}));
-        QCOMPARE(sessions.Rows(), (QList<QJsonObject>{sessions.Rows()[0]}));
+        QCOMPARE(sessions.Rows().size(), 1);
         QCOMPARE(sessions.Rows()[0].value("id"), QJsonValue("s2"));
         // The rows after it moved up.
         QCOMPARE(sessions.IndexOf(AGENT, "s2"), 0);
@@ -255,12 +255,24 @@ private slots:
             QCOMPARE(thread, QThread::currentThread());
         }
 
-        // A session that is not in the rows is no signal; the removal of a
-        // known one after it shows the first was handled.
+        // A session that is not in the rows is no signal, and takes no row
+        // with it: checked while a second row is there to be taken. A bounded
+        // wait, as there is nothing to wait for; the removal of a known
+        // session after it shows the first was handled.
+        QVERIFY(Notify({StateChanged(Row("s1", "idle"))}));
+        QTRY_COMPARE_WITH_TIMEOUT(sessions.Rows().size(), 2, TIMEOUT_MS);
         told.clear();
-        QVERIFY(Notify({Removed("s9"), Removed("s2")}));
-        QTRY_COMPARE_WITH_TIMEOUT(told.size(), 2, TIMEOUT_MS);
-        QCOMPARE(told, (QStringList{"about 0 of 1 (s2)", "removed 0 of 0"}));
+        QVERIFY(Notify({Removed("s9")}));
+        QTest::qWait(200);
+        QVERIFY(told.isEmpty());
+        QCOMPARE(sessions.Rows().size(), 2);
+        QVERIFY(sessions.IndexOf(AGENT, "s1") >= 0);
+        QVERIFY(sessions.IndexOf(AGENT, "s2") >= 0);
+
+        QVERIFY(Notify({Removed("s1"), Removed("s2")}));
+        QTRY_COMPARE_WITH_TIMEOUT(told.size(), 4, TIMEOUT_MS);
+        QCOMPARE(told, (QStringList{"about 1 of 2 (s1)", "removed 1 of 1",
+                                    "about 0 of 1 (s2)", "removed 0 of 0"}));
         QVERIFY(sessions.Rows().isEmpty());
     }
 

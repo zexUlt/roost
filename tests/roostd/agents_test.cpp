@@ -740,11 +740,29 @@ private slots:
         QTest::ignoreMessage(
             QtWarningMsg,
             "roostd: the backend of one told a removal too big for a frame");
-        // The line from the backend fits; the event, a little longer, does
-        // not.
-        const QJsonObject huge{
-            {"agent", "claude"},
-            {"session", QString(MAX_FRAME_LENGTH - 110, u'x')}};
+        // The event is {agent, id} in a frame with the longest request id; the
+        // backend's line is {jsonrpc, method, params: {agent, session}}, a
+        // little shorter. Bisection on the server's own check finds the
+        // shortest id the event does not fit with; the backend's line must
+        // still fit its limit at that length.
+        const auto eventOf = [](qsizetype length) {
+            return QJsonObject{{"agent", "claude"},
+                               {"id", QString(length, u'x')}};
+        };
+        qsizetype fits = 0;
+        qsizetype tooBig = qsizetype{MAX_FRAME_LENGTH};
+        QVERIFY(Server::EventFitsAFrame("session.removed", eventOf(fits)));
+        QVERIFY(!Server::EventFitsAFrame("session.removed", eventOf(tooBig)));
+        while (tooBig - fits > 1) {
+            const qsizetype middle = fits + (tooBig - fits) / 2;
+            if (Server::EventFitsAFrame("session.removed", eventOf(middle))) {
+                fits = middle;
+            } else {
+                tooBig = middle;
+            }
+        }
+        const QJsonObject huge{{"agent", "claude"},
+                               {"session", QString(tooBig, u'x')}};
         QVERIFY(QJsonDocument(Notification("session.removed", huge))
                     .toJson(QJsonDocument::Compact)
                     .size() < Backend::MAX_LINE_LENGTH);
