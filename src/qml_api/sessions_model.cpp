@@ -14,10 +14,12 @@ constexpr int FIRST_ROLE = Qt::UserRole;
 
 }  // namespace
 
-SessionsModel::SessionsModel(api::Api& api, QJSEngine& engine, QObject* parent)
+SessionsModel::SessionsModel(api::Api& api, QJSEngine& engine,
+                             const CallOwners& owners, QObject* parent)
     : QAbstractListModel(parent),
       Api_(api),
       Engine_(engine),
+      Owners_(owners),
       Count_(static_cast<int>(api.Sessions().Rows().size())),
       Loaded_(api.Sessions().IsLoaded()),
       Unavailable_(api.Sessions().Unavailable().toVariantList()) {
@@ -78,7 +80,12 @@ QVariantList SessionsModel::unavailable() const { return Unavailable_; }
 bool SessionsModel::loaded() const { return Loaded_; }
 
 void SessionsModel::refresh(const QJSValue& callback) {
-    callMethod(Api_, Engine_, this, QStringLiteral("sessions.list"),
+    QObject* const context =
+        Owners_.contextFor(Engine_, this, QStringLiteral("sessions.list"));
+    if (context == nullptr) {
+        return;
+    }
+    callMethod(Api_, Engine_, context, QStringLiteral("sessions.list"),
                QJsonValue(QJsonValue::Undefined), callback);
 }
 

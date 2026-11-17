@@ -4,11 +4,13 @@
 #include <QJSEngine>
 #include <QJSValue>
 #include <QObject>
+#include <QQmlContext>
 #include <QQmlEngine>
 #include <QString>
 
 #include "api/api.hpp"
 #include "qml_api/bus_adapter.hpp"
+#include "qml_api/calling_context.hpp"
 #include "qml_api/commands_adapter.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "qml_api/store_adapter.hpp"
@@ -45,6 +47,15 @@ public:
     BusAdapter* bus() const { return Bus_; }
     bool connected() const { return Connected_; }
 
+    // From C++ only. The one-shot calls that QML code makes from `context` (or
+    // a context below it) belong to `owner`: when the owner is destroyed their
+    // callbacks are not called, and a call made after that is dropped. A call
+    // from a context with no registered one above it belongs to the singleton.
+    // The entry goes when the context is destroyed. GUI thread.
+    void registerCallOwner(QQmlContext* context, QObject* owner) {
+        Owners_.add(context, owner);
+    }
+
     // Any method of the dispatcher by name, as host->call of the C SDK does.
     // callback(error, result).
     Q_INVOKABLE void call(const QString& method,
@@ -59,6 +70,7 @@ private:
     void setConnected(bool connected);
 
     QJSEngine& Engine_;
+    CallOwners Owners_;
     api::Api* Api_ = nullptr;
     CommandsAdapter* Commands_ = nullptr;
     SessionsModel* Sessions_ = nullptr;

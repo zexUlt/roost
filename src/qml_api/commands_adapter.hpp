@@ -7,6 +7,7 @@
 #include <QString>
 
 #include "api/api.hpp"
+#include "qml_api/calling_context.hpp"
 
 namespace roost {
 
@@ -16,7 +17,8 @@ class CommandsAdapter : public QObject {
     QML_ANONYMOUS
 
 public:
-    CommandsAdapter(api::Api& api, QJSEngine& engine, QObject* parent);
+    CommandsAdapter(api::Api& api, QJSEngine& engine, const CallOwners& owners,
+                    QObject* parent);
 
     // callback(error, result): the answer of the backend of the command's
     // plugin. args is any JSON value, or absent.
@@ -27,6 +29,7 @@ public:
 private:
     api::Api& Api_;
     QJSEngine& Engine_;
+    const CallOwners& Owners_;
 };
 
 }  // namespace roost

@@ -180,6 +180,14 @@ target_compile_definitions(roost_calls_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(roost_calls_test roostd fixture_backend)
 
+# The owner of the calls from QML: a panel's calls end with the panel.
+roost_add_qt_test(roost_call_owner_test qml_api/roost_call_owner_test.cpp
+    roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
+target_compile_definitions(roost_call_owner_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(roost_call_owner_test roostd fixture_backend)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
@@ -203,6 +211,7 @@ set_tests_properties(
     api_store_test
     api_thread_check_test
     roost_calls_test
+    roost_call_owner_test
     roost_sessions_test
     io_thread_test
     single_session_test

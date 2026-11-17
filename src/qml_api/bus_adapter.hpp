@@ -7,6 +7,7 @@
 #include <QString>
 
 #include "api/api.hpp"
+#include "qml_api/calling_context.hpp"
 
 namespace roost {
 
@@ -17,7 +18,8 @@ class BusAdapter : public QObject {
     QML_ANONYMOUS
 
 public:
-    BusAdapter(api::Api& api, QJSEngine& engine, QObject* parent);
+    BusAdapter(api::Api& api, QJSEngine& engine, const CallOwners& owners,
+               QObject* parent);
 
     // The id for unsubscribe. callback(name, payload) runs in the GUI thread
     // for each event of the pattern (a name, "prefix.*" or "*"), until
@@ -34,6 +36,7 @@ public:
 private:
     api::Api& Api_;
     QJSEngine& Engine_;
+    const CallOwners& Owners_;
 };
 
 }  // namespace roost

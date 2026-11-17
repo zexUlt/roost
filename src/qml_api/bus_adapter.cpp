@@ -9,8 +9,9 @@
 
 namespace roost {
 
-BusAdapter::BusAdapter(api::Api& api, QJSEngine& engine, QObject* parent)
-    : QObject(parent), Api_(api), Engine_(engine) {}
+BusAdapter::BusAdapter(api::Api& api, QJSEngine& engine,
+                       const CallOwners& owners, QObject* parent)
+    : QObject(parent), Api_(api), Engine_(engine), Owners_(owners) {}
 
 qulonglong BusAdapter::subscribe(const QString& pattern, QObject* owner,
                                  const QJSValue& callback) {
@@ -51,11 +52,16 @@ void BusAdapter::unsubscribe(qulonglong id) { Api_.Dispatch().Unsubscribe(id); }
 
 void BusAdapter::publish(const QString& name, const QJSValue& payload,
                          const QJSValue& callback) {
+    QObject* const context =
+        Owners_.contextFor(Engine_, this, QStringLiteral("bus.publish"));
+    if (context == nullptr) {
+        return;
+    }
     QJsonObject params{{QStringLiteral("name"), name}};
     if (!payload.isUndefined()) {
         params.insert(QStringLiteral("payload"), toJson(Engine_, payload));
     }
-    callMethod(Api_, Engine_, this, QStringLiteral("bus.publish"), params,
+    callMethod(Api_, Engine_, context, QStringLiteral("bus.publish"), params,
                callback);
 }
 

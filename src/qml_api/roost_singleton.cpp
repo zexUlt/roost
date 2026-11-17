@@ -19,10 +19,10 @@ void RoostSingleton::setApi(api::Api& api) {
         return;
     }
     Api_ = &api;
-    Commands_ = new CommandsAdapter(api, Engine_, this);
-    Sessions_ = new SessionsModel(api, Engine_, this);
-    Store_ = new StoreAdapter(api, Engine_, this);
-    Bus_ = new BusAdapter(api, Engine_, this);
+    Commands_ = new CommandsAdapter(api, Engine_, Owners_, this);
+    Sessions_ = new SessionsModel(api, Engine_, Owners_, this);
+    Store_ = new StoreAdapter(api, Engine_, Owners_, this);
+    Bus_ = new BusAdapter(api, Engine_, Owners_, this);
     Connected_ = api.IsConnected();
     connect(&api, &api::Api::Connected, this, [this] { setConnected(true); });
     connect(&api, &api::Api::Disconnected, this,
@@ -31,14 +31,19 @@ void RoostSingleton::setApi(api::Api& api) {
 
 void RoostSingleton::call(const QString& method, const QJSValue& params,
                           const QJSValue& callback) {
+    QObject* const context = Owners_.contextFor(Engine_, this, method);
+    if (context == nullptr) {
+        return;
+    }
     if (Api_ == nullptr) {
-        answerLater(Engine_, this, callback, method,
+        answerLater(Engine_, context, callback, method,
                     std::unexpected(rpc::Error::FromCode(
                         rpc::EErrorCode::InternalError,
                         QStringLiteral("the API of the window is not set"))));
         return;
     }
-    callMethod(*Api_, Engine_, this, method, toJson(Engine_, params), callback);
+    callMethod(*Api_, Engine_, context, method, toJson(Engine_, params),
+               callback);
 }
 
 void RoostSingleton::setConnected(bool connected) {

@@ -11,6 +11,7 @@
 #include <QVariantList>
 
 #include "api/api.hpp"
+#include "qml_api/calling_context.hpp"
 
 namespace roost {
 
@@ -28,7 +29,8 @@ class SessionsModel : public QAbstractListModel {
     Q_PROPERTY(bool loaded READ loaded NOTIFY loadedChanged)
 
 public:
-    SessionsModel(api::Api& api, QJSEngine& engine, QObject* parent);
+    SessionsModel(api::Api& api, QJSEngine& engine, const CallOwners& owners,
+                  QObject* parent);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role) const override;
@@ -48,6 +50,7 @@ signals:
 private:
     api::Api& Api_;
     QJSEngine& Engine_;
+    const CallOwners& Owners_;
     // SessionService changes its rows before it says so, so the count the
     // views were told is kept here.
     int Count_ = 0;

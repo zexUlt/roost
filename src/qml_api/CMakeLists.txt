@@ -10,6 +10,8 @@ qt_add_qml_module(roost_qml_api
     SOURCES
         bus_adapter.cpp
         bus_adapter.hpp
+        calling_context.cpp
+        calling_context.hpp
         commands_adapter.cpp
         commands_adapter.hpp
         js_callback.cpp
@@ -26,3 +28,5 @@ qt_add_qml_module(roost_qml_api
 )
 
 target_link_libraries(roost_qml_api PUBLIC roost_api roost_terminal Qt6::Quick)
+# calling_context.cpp only: the private API of QtQml (see the file).
+target_link_libraries(roost_qml_api PRIVATE Qt6::QmlPrivate)

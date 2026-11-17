@@ -8,6 +8,7 @@
 #include <QString>
 
 #include "api/api.hpp"
+#include "qml_api/calling_context.hpp"
 
 namespace roost {
 
@@ -18,7 +19,8 @@ class StoreAdapter : public QObject {
     QML_ANONYMOUS
 
 public:
-    StoreAdapter(api::Api& api, QJSEngine& engine, QObject* parent);
+    StoreAdapter(api::Api& api, QJSEngine& engine, const CallOwners& owners,
+                 QObject* parent);
 
     // callback(error, {document}).
     Q_INVOKABLE void get(const QString& plugin, const QJSValue& callback);
@@ -35,6 +37,7 @@ signals:
 private:
     api::Api& Api_;
     QJSEngine& Engine_;
+    const CallOwners& Owners_;
 };
 
 }  // namespace roost
