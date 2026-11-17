@@ -8,6 +8,7 @@
 
 #include "api/thread_check.hpp"
 #include "core/bus.hpp"
+#include "core/protocol.hpp"
 
 namespace roost::api {
 
@@ -51,20 +52,15 @@ std::expected<BusService::LocalId, rpc::Error> BusService::Subscribe(
                               [this, id] { Drop(id); });
     }
     Locals_.emplace(id, std::move(local));
-    const auto [remote, created] = Remotes_.try_emplace(pattern);
-    remote->second.Locals.push_back(id);
-    if (created) {
-        // A pattern that is already pending takes this listener along: its
-        // answer finds it in the list.
-        ++Pending_;
-        Io_.Request(QStringLiteral("bus.subscribe"),
-                    QJsonObject{{QStringLiteral("pattern"), pattern}})
-            .then(this,
-                  [this, pattern, epoch = Epoch_](const rpc::Result& answer) {
-                      if (epoch == Epoch_) {
-                          OnSubscribed(pattern, answer);
-                      }
-                  });
+    // Without a connection there is no Remote: Resubscribe makes them.
+    if (Up_) {
+        const auto [remote, created] = Remotes_.try_emplace(pattern);
+        remote->second.Locals.push_back(id);
+        if (created) {
+            // A pattern that is already pending takes this listener along:
+            // its answer finds it in the list.
+            Ask(pattern);
+        }
     }
     return id;
 }
@@ -84,6 +80,35 @@ QFuture<rpc::Result> BusService::Publish(const QString& name,
     return Io_.Request(QStringLiteral("bus.publish"),
                        QJsonObject{{QStringLiteral("name"), name},
                                    {QStringLiteral("payload"), payload}});
+}
+
+void BusService::Resubscribe() {
+    if (!CheckThread(*this, "BusService::Resubscribe")) {
+        return;
+    }
+    if (std::exchange(Up_, true)) {
+        return;
+    }
+    // Locals_ is ordered by id, so the listeners of a pattern keep their
+    // order.
+    for (const auto& [id, local] : Locals_) {
+        const auto [remote, created] = Remotes_.try_emplace(local.Pattern);
+        remote->second.Locals.push_back(id);
+        if (created) {
+            Ask(local.Pattern);
+        }
+    }
+}
+
+void BusService::Ask(const QString& pattern) {
+    ++Pending_;
+    Io_.Request(QStringLiteral("bus.subscribe"),
+                QJsonObject{{QStringLiteral("pattern"), pattern}})
+        .then(this, [this, pattern, epoch = Epoch_](const rpc::Result& answer) {
+            if (epoch == Epoch_) {
+                OnSubscribed(pattern, answer);
+            }
+        });
 }
 
 void BusService::OnNotified(const QString& method, const QJsonValue& params) {
@@ -117,6 +142,12 @@ void BusService::OnSubscribed(const QString& pattern,
                               const rpc::Result& answer) {
     const auto remote = Remotes_.find(pattern);
     if (remote == Remotes_.end()) {
+        return;
+    }
+    // The connection broke under the request; OnDisconnected, which is on its
+    // way, keeps the listeners for the next one.
+    if (!answer && answer.error().Code ==
+                       static_cast<int>(protocol::EErrorCode::ConnectionLost)) {
         return;
     }
     --Pending_;
@@ -159,6 +190,7 @@ void BusService::OnSubscribed(const QString& pattern,
 
 void BusService::OnDisconnected() {
     ++Epoch_;
+    Up_ = false;
     Remotes_.clear();
     Routes_.clear();
     Parked_.clear();
@@ -200,8 +232,8 @@ void BusService::Drop(LocalId id) {
     }
     const auto remote = Remotes_.find(local->second.Pattern);
     Forget(id);
-    // No Remote, or one of a later connection that does not know the id: the
-    // listener was left over from a lost connection.
+    // No Remote while there is no connection, or before Resubscribe has
+    // reached the listener: nothing at roostd to take back.
     if (remote == Remotes_.end() ||
         std::erase(remote->second.Locals, id) == 0) {
         return;

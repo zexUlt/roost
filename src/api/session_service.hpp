@@ -35,7 +35,8 @@ namespace roost::api {
 // stays until the next Refresh, like any session that is gone.
 //
 // A cache of roostd: Api calls Start once the connection is up, and the rows
-// are dropped when it is lost.
+// and the bus subscription are dropped when it is lost; Start makes them
+// again after the reconnect, so there is one subscription at a time.
 class SessionService : public QObject {
     Q_OBJECT
 
@@ -43,7 +44,8 @@ public:
     SessionService(IoThread& io, BusService& bus, QObject* parent = nullptr);
 
     // The connection is up: subscribes to the events and fetches the list.
-    // Api calls it once; a second call does nothing.
+    // Api calls it after each hello; a second call with no loss in between
+    // does nothing.
     void Start();
 
     bool IsLoaded() const;

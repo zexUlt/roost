@@ -2,6 +2,9 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
+
+#include <chrono>
 
 #include "api/bus_service.hpp"
 #include "api/command_service.hpp"
@@ -16,6 +19,15 @@ Q_DECLARE_METATYPE(roost::rpc::Error)
 
 namespace roost::api {
 
+// The delays of the reconnect, as BackendOptions has them for a backend's
+// restart.
+struct ApiOptions {
+    // The wait after the first failed attempt or lost connection; it doubles
+    // with each failed attempt, and a successful hello puts it back.
+    std::chrono::milliseconds FirstReconnectDelay{500};
+    std::chrono::milliseconds MaxReconnectDelay{30'000};
+};
+
 // The root of the window's API (design.md §5, "Один API"): one connection to
 // roostd, the IO thread that serves it, the services over it and the
 // dispatcher of methods by name. The QML singletons Roost.* and the host of
@@ -25,15 +37,25 @@ namespace roost::api {
 // it): a call from another thread calls the check handler in a debug build
 // (thread_check.hpp). The signals are emitted in that thread too.
 //
-// One connection, made once: there is no reconnect yet.
+// One connection at a time, kept up: when it is lost, or an attempt fails, the
+// Api tries again on the same socket after FirstReconnectDelay, doubling the
+// wait up to MaxReconnectDelay, and never gives up. After a successful hello
+// it re-subscribes the listeners of the bus under their own ids, has the
+// caches fetched anew and then says Connected. A call that was pending when
+// the connection was lost has failed with ConnectionLost and is not sent
+// again: it may have been done (commands.run, store.set).
+//
+// The session channels of the terminals do not survive a loss: opening them
+// again is not done here yet.
 class Api : public QObject {
     Q_OBJECT
 
 public:
-    explicit Api(QObject* parent = nullptr);
+    explicit Api(ApiOptions options = {}, QObject* parent = nullptr);
 
-    // Connects and says hello; the outcome is one of the signals below. Only
-    // the first call does it: a later one logs a warning and changes nothing.
+    // Connects and says hello; the outcome is one of the signals below. A
+    // later call logs a warning and changes nothing, unless roostd refused
+    // hello: then it tries again, from the first delay.
     void Connect(const QString& socketPath);
     bool IsConnected() const;
 
@@ -48,16 +70,26 @@ public:
     Dispatcher& Dispatch() { return Dispatch_; }
 
 signals:
-    // After hello succeeded; the plugin and session lists are being fetched.
+    // After hello succeeded, on the first connection and on each one after a
+    // loss; the listeners are subscribed again and the caches are being
+    // fetched.
     void Connected();
-    // The connection is lost or could not be made. Pending calls have failed
-    // with ConnectionLost.
+    // A live connection is lost (once for the loss), or the first attempt
+    // failed. Pending calls have failed with ConnectionLost. The attempts that
+    // follow are silent until one succeeds.
     void Disconnected(const QString& reason);
     // roostd answered hello with an error: VersionMismatch, or anything else
-    // but a lost connection. Disconnected follows.
+    // but a lost connection. The attempts stop; Disconnected follows if it
+    // has not been said. Connect starts them again.
     void Refused(const roost::rpc::Error& error);
 
 private:
+    // One attempt: connect and say hello.
+    void Attempt();
+    void OnHello(const rpc::Result& hello);
+    void OnDisconnected(const QString& reason);
+
+    const ApiOptions Options_;
     // Declared first, so that it goes last: the services hold a reference.
     IoThread Io_;
     BusService Bus_;
@@ -66,8 +98,19 @@ private:
     SessionService Sessions_;
     StoreService Store_;
     Dispatcher Dispatch_;
+    QTimer RetryTimer_;
+    QString SocketPath_;
+    // The wait before the next attempt.
+    std::chrono::milliseconds Delay_;
     bool Started_ = false;
     bool Connected_ = false;
+    // Refused: no attempts until Connect is called.
+    bool Refused_ = false;
+    // A refused hello is always followed by the Disconnected of its client;
+    // that one schedules nothing, even if Connect was called in between.
+    bool RefusalTail_ = false;
+    // Disconnected has been said since the last Connect or hello.
+    bool Reported_ = false;
 };
 
 }  // namespace roost::api

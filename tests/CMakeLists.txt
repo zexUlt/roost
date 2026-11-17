@@ -160,7 +160,7 @@ add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 # The window's API against the real roostd with a plugin whose backend is the
 # fixture: the services and the dispatcher, the thread check.
 foreach(_api_test api_dispatcher_test api_bus_test api_connection_test
-        api_sessions_test api_store_test)
+        api_sessions_test api_store_test api_reconnect_test)
     roost_add_qt_test(${_api_test} api/${_api_test}.cpp roost_api roost_test_helpers)
     target_compile_definitions(${_api_test} PRIVATE
         ROOSTD_PATH="$<TARGET_FILE:roostd>"
@@ -179,6 +179,7 @@ set_tests_properties(
     api_dispatcher_test
     api_bus_test
     api_connection_test
+    api_reconnect_test
     api_sessions_test
     api_store_test
     api_thread_check_test

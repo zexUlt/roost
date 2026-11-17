@@ -79,7 +79,7 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
 }
 
 bool RoostdProcess::Start(const QString& roostdPath) {
-    if (!IsValid() || Process_) {
+    if (!IsValid() || IsRunning()) {
         return false;
     }
     Process_ = std::make_unique<QProcess>();

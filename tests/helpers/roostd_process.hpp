@@ -33,7 +33,8 @@ public:
     // "<id>-agent", which has one session, "s1", in state idle.
     bool AddFixturePlugin(const QString& id, const QString& fixtureBackendPath);
 
-    // Starts roostd and waits until it answers hello.
+    // Starts roostd and waits until it answers hello. After Stop it starts
+    // again on the same socket and directories, and what is on disk stays.
     bool Start(const QString& roostdPath);
     // SIGTERM, then SIGKILL if roostd does not leave in time. True if it left
     // by itself.

@@ -394,37 +394,37 @@ private slots:
         QCOMPARE(heard, (Events{{"x.a", 1}}));
     }
 
-    void AfterTheDaemonIsGoneASubscribeIsRefusedAndItsListenersDropped() {
+    void AfterTheDaemonIsGoneASubscribeWaitsForTheNextHello() {
         Events before;
         Events known;
         Events fresh;
-        const auto old = Subscribe("x.a", this, Record(before));
+        Subscribe("x.a", this, Record(before));
         Flush();
+        QSignalSpy connected(Api_.get(), &api::Api::Connected);
         QSignalSpy disconnected(Api_.get(), &api::Api::Disconnected);
         Daemon_->Stop();
         QVERIFY(disconnected.wait(TIMEOUT_MS));
 
+        // No connection: nothing is asked of roostd, so nothing fails. A
+        // pattern that was active before the loss, and a new one.
         SUBSCRIBE_WARNINGS = 0;
         PREVIOUS_HANDLER = qInstallMessageHandler(&CountSubscribeWarnings);
-        // A pattern that was active before the loss, and a new one.
-        const auto again = Subscribe("x.a", this, Record(known));
-        const auto other = Subscribe("x.b", this, Record(fresh));
-        QVERIFY(again && other);
-        QTRY_COMPARE_WITH_TIMEOUT(SUBSCRIBE_WARNINGS.load(), 2, TIMEOUT_MS);
-        // The failure left no stale state: the same pattern fails again.
-        const auto third = Subscribe("x.b", this, Record(fresh));
-        QTRY_COMPARE_WITH_TIMEOUT(SUBSCRIBE_WARNINGS.load(), 3, TIMEOUT_MS);
-        Api_->Bus().Unsubscribe(third);
+        QVERIFY(Subscribe("x.a", this, Record(known)));
+        QVERIFY(Subscribe("x.b", this, Record(fresh)));
+        QTest::qWait(100);
         qInstallMessageHandler(PREVIOUS_HANDLER);
+        QCOMPARE(SUBSCRIBE_WARNINGS.load(), 0);
 
-        // Dropped: nothing to unsubscribe, nothing was or will be called.
-        Api_->Bus().Unsubscribe(again);
-        Api_->Bus().Unsubscribe(other);
-        // The listener from before the loss is still there, and silent.
-        Api_->Bus().Unsubscribe(old);
-        QVERIFY(before.empty());
-        QVERIFY(known.empty());
-        QVERIFY(fresh.empty());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(connected.wait(TIMEOUT_MS));
+        Publish("x.a", 1);
+        Publish("x.b", 2);
+        Flush();
+        QCOMPARE(before, (Events{{"x.a", 1}}));
+        QCOMPARE(known, (Events{{"x.a", 1}}));
+        QCOMPARE(fresh, (Events{{"x.b", 2}}));
+        // One subscription for each pattern, not for each listener.
+        QCOMPARE(SubscriptionsAtRoostd(), 2);
     }
 
     void StoreChangedArrivesThroughTheBus() {

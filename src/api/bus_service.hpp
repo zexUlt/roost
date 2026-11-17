@@ -29,10 +29,11 @@ namespace roost::api {
 // patterns there is no promised order. A callback may subscribe and
 // unsubscribe.
 //
-// No reconnect yet: after the connection is lost the listeners stay but hear
-// nothing (Unsubscribe still works), and a new subscription makes a fresh
-// bus.subscribe, which fails: a warning is logged and its listeners are
-// dropped.
+// Across a lost connection the listeners stay, silent: the subscriptions at
+// roostd went with the connection, and BusService::Resubscribe, which Api calls
+// after the next hello, asks for each pattern that still has a listener, so
+// that the listeners keep their ids and notice nothing but the gap. A Subscribe
+// made while there is no connection succeeds and waits for that.
 class BusService : public QObject {
     Q_OBJECT
 
@@ -59,6 +60,11 @@ public:
     // again, even for events already on their way. The last listener of a
     // pattern takes the bus.subscribe of roostd with it.
     void Unsubscribe(LocalId id);
+
+    // The connection is up (hello is answered): subscribes at roostd every
+    // pattern that has a listener, and does the same for those that come
+    // later. Api calls it after each hello, before anything else asks.
+    void Resubscribe();
 
     // bus.publish; roostd's answer or error. The future finishes in the IO
     // thread, so attach a continuation with a context.
@@ -87,6 +93,8 @@ private:
 
     void OnNotified(const QString& method, const QJsonValue& params);
     void OnSubscribed(const QString& pattern, const rpc::Result& answer);
+    // Asks roostd for the pattern, whose Remote is already in place.
+    void Ask(const QString& pattern);
     // Forgets all that is roostd's: the connection is gone and its
     // subscriptions with it. The local listeners stay, silent.
     void OnDisconnected();
@@ -97,6 +105,9 @@ private:
     void SendUnsubscribe(qint64 subscription);
 
     IoThread& Io_;
+    // Between a hello and the loss of the connection: only then is roostd
+    // asked.
+    bool Up_ = false;
     LocalId NextId_ = 1;
     // Ordered, so that the listeners of a pattern hear in the order they
     // subscribed (across patterns the order is not promised).

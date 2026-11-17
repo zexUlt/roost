@@ -34,7 +34,8 @@ namespace roost::api {
 // last is what roostd did last.
 //
 // A cache of roostd: Api calls Start once the connection is up, and the
-// documents are dropped when it is lost.
+// documents and the bus subscription are dropped when it is lost, and Start
+// begins again after the reconnect: a document is read anew, not kept stale.
 class StoreService : public QObject {
     Q_OBJECT
 
@@ -42,7 +43,7 @@ public:
     StoreService(IoThread& io, BusService& bus, QObject* parent = nullptr);
 
     // The connection is up: from now on what Get reads is cached. Api calls
-    // it once; a second call does nothing.
+    // it after each hello; a second call with no loss in between does nothing.
     void Start();
 
     // {document} as roostd answers, from the cache if the plugin is warm;
