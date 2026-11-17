@@ -93,7 +93,7 @@ void StoreService::OnChanged(const QJsonValue& payload) {
         return;
     }
     *warm = document.toObject();
-    emit Changed(plugin);
+    emit Changed(plugin, *warm);
 }
 
 void StoreService::OnDisconnected() {

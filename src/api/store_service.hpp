@@ -61,8 +61,9 @@ public:
     bool IsWarm(const QString& plugin) const;
 
 signals:
-    // The event of roostd replaced the cached document of the plugin.
-    void Changed(const QString& plugin);
+    // The event of roostd replaced the cached document of the plugin; the
+    // document is the new one.
+    void Changed(const QString& plugin, const QJsonObject& document);
 
 private:
     void Subscribe();

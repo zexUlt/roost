@@ -116,6 +116,7 @@ private slots:
         QCOMPARE(*saved, QJsonValue());
         QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, TIMEOUT_MS);
         QCOMPARE(changed[0][0].toString(), QString("fixture"));
+        QCOMPARE(changed[0][1].toJsonObject(), Doc(1));
 
         // The file now says something else: an answer that still says 1 did
         // not come from roostd.

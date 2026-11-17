@@ -74,7 +74,7 @@ CI требует репозиторий на GitHub; до его появлен
 
 1. `roostd`: `plugins.list`, `store.get`, `store.set` и событие `store.changed` (§4).
 2. `src/api/`: сервисы сессий, команд, хранилища, шины и плагинов и диспетчер методов по именам из §4; вызовы только из GUI-потока, с проверкой в отладке (§5).
-3. `src/qml_api/`: синглтоны `Roost.sessions` (`QAbstractListModel`), `Roost.commands`, `Roost.store`, `Roost.bus` — адаптеры над `src/api/` без своей логики.
+3. `src/qml_api/`: один синглтон `Roost` со свойствами `sessions` (`QAbstractListModel`), `commands`, `store`, `bus`, `connected` и методом `call` — адаптеры над `src/api/` без своей логики.
 4. Гейт: цели в `plugins/` линкуют только Qt и свои цели и не смотрят в `src/`; проверяется на фикстурах-нарушителях. Не зависит от шагов 1–3.
 5. Загрузка QML плагинов через `QQmlComponent` по `plugins.list`, перезагрузка при изменении файла в режиме разработки; оболочка с фиксированной раскладкой «список | терминал» (свободная — M5).
 6. `plugins/terminal/` — панель над `TerminalItem`.

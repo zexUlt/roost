@@ -108,7 +108,9 @@ add_dependencies(roostd_store_test roostd)
 # The window comes up and renders a frame under the offscreen platform.
 add_test(NAME roost_smoke COMMAND roost --smoke)
 set_tests_properties(roost_smoke PROPERTIES
-    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT}"
+    # No roostd to find: the window waits for one, and the real socket of the
+    # user is left alone.
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};ROOST_SOCKET=${CMAKE_CURRENT_BINARY_DIR}/roost_smoke.sock"
     TIMEOUT 30
 )
 
@@ -169,6 +171,15 @@ foreach(_api_test api_dispatcher_test api_bus_test api_connection_test
 endforeach()
 roost_add_qt_test(api_thread_check_test api/api_thread_check_test.cpp roost_api)
 
+# The singleton Roost of module Roost.Api, as QML calls it, against the real
+# roostd and the fixture backend.
+roost_add_qt_test(roost_calls_test qml_api/roost_calls_test.cpp
+    roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
+target_compile_definitions(roost_calls_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(roost_calls_test roostd fixture_backend)
+
 # The tests whose code runs on more than one thread carry the label
 # `threads`. Those whose threads synchronise only through std primitives also
 # carry `threads_std`: the tsan preset, against a binary Qt, runs only them.
@@ -183,6 +194,7 @@ set_tests_properties(
     api_sessions_test
     api_store_test
     api_thread_check_test
+    roost_calls_test
     io_thread_test
     single_session_test
     terminal_item_test

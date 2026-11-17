@@ -6,12 +6,15 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "api/api.hpp"
 #include "core/protocol.hpp"
 #include "core/version.hpp"
+#include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "roost/single_session.hpp"
 
@@ -109,7 +112,24 @@ int main(int argc, char* argv[]) {
     parser.process(app);
 
     const bool sessionMode = parser.isSet(sessionOption);
+    // Declared before the engine, so that it outlives the singleton Roost,
+    // which the engine owns. Only the window of the shell has one: --session
+    // mode has no use of its IO thread.
+    std::optional<roost::api::Api> api;
+    if (!sessionMode) {
+        api.emplace();
+    }
     QQmlApplicationEngine engine;
+    if (!sessionMode) {
+        auto* roostSingleton = engine.singletonInstance<roost::RoostSingleton*>(
+            "Roost.Api", "Roost");
+        if (roostSingleton == nullptr) {
+            qCritical("roost: the singleton Roost.Api.Roost is not registered");
+            return 1;
+        }
+        roostSingleton->setApi(*api);
+        api->Connect(roost::protocol::SocketPath());
+    }
     engine.loadFromModule("Roost.Shell", sessionMode ? "SessionMain" : "Main");
     if (engine.rootObjects().isEmpty()) {
         return 1;
