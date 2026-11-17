@@ -8,6 +8,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <utility>
@@ -20,8 +21,8 @@ namespace roost::api {
 
 // The sessions of all agents (sessions.list, design.md §4), kept as rows: one
 // QJsonObject per session with the fields roostd gives it, {agent, id, title,
-// cwd, state, startedAt?}. The model roles of Roost.sessions will be these
-// keys. A row is identified by (agent, id); the rows keep the order of
+// cwd, state, startedAt?}. The model roles of Roost.sessions are these keys
+// (FIELDS). A row is identified by (agent, id); the rows keep the order of
 // roostd's answer, and a session that is new is appended.
 //
 // Kept fresh by the session.stateChanged events, which carry a whole row.
@@ -41,6 +42,12 @@ class SessionService : public QObject {
     Q_OBJECT
 
 public:
+    // The keys of a row, startedAt being the one that may be absent.
+    static inline const QStringList FIELDS = {
+        QStringLiteral("agent"), QStringLiteral("id"),
+        QStringLiteral("title"), QStringLiteral("cwd"),
+        QStringLiteral("state"), QStringLiteral("startedAt")};
+
     SessionService(IoThread& io, BusService& bus, QObject* parent = nullptr);
 
     // The connection is up: subscribes to the events and fetches the list.

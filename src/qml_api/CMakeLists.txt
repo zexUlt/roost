@@ -16,6 +16,8 @@ qt_add_qml_module(roost_qml_api
         js_callback.hpp
         roost_singleton.cpp
         roost_singleton.hpp
+        sessions_model.cpp
+        sessions_model.hpp
         store_adapter.cpp
         store_adapter.hpp
         terminal_item.cpp

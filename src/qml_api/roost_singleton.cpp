@@ -20,6 +20,7 @@ void RoostSingleton::setApi(api::Api& api) {
     }
     Api_ = &api;
     Commands_ = new CommandsAdapter(api, Engine_, this);
+    Sessions_ = new SessionsModel(api, Engine_, this);
     Store_ = new StoreAdapter(api, Engine_, this);
     Bus_ = new BusAdapter(api, Engine_, this);
     Connected_ = api.IsConnected();
