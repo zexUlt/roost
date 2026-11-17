@@ -231,15 +231,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The x64 mirror sometimes serves the packages below (~38 MB) at a few
+      # hundred kB/s, minutes in all; their .deb files are cached. A new
+      # runner image starts from the last entry and saves its own.
+      - name: Runner image
+        id: image
+        run: echo "version=$ImageVersion" >> "$GITHUB_OUTPUT"
+
+      - name: Restore apt packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-tidy-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}
+          restore-keys: apt-tidy-${{ runner.os }}-${{ runner.arch }}-
+
       # clang 20 for the same reason as in the test job; it is also the
-      # version of clang-tidy.
+      # version of clang-tidy. apt keeps what it downloads in ~/apt-archives,
+      # handed back to the runner user so the cache can save it.
       - name: Install build tools
         run: |
+          mkdir -p "$HOME/apt-archives/partial"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::Archives="$HOME/apt-archives" \
             ninja-build clang-20 \
             libgl-dev libegl1 libxkbcommon0 libfontconfig1 libglib2.0-0t64 \
             libdbus-1-3
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
           sudo ln -sf "$(command -v clang-20)" /usr/local/bin/clang
           sudo ln -sf "$(command -v clang++-20)" /usr/local/bin/clang++
 
