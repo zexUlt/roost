@@ -279,6 +279,19 @@ target_compile_definitions(sessions_panel_test PRIVATE
     SESSIONS_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/sessions")
 add_dependencies(sessions_panel_test roostd fake_tui claude-adapter)
 
+# Warm terminals in the window: a switch to a warm session is one frame, and a
+# window that restarts finds its session warm in roostd. Same setup as
+# terminal_panel_test, with a proxy that counts the opens.
+roost_add_qt_test(warm_switch_test roost/warm_switch_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_terminal_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(warm_switch_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(warm_switch_test roostd fake_tui claude-adapter)
+
 # The developer mode: the watcher reloads a plugin whose files changed on disk.
 roost_add_qt_test(plugin_reload_test roost/plugin_reload_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_apiplugin
@@ -326,6 +339,7 @@ set_tests_properties(
     shell_test
     terminal_panel_test
     sessions_panel_test
+    warm_switch_test
     roost_sessions_test
     io_thread_test
     single_session_test
