@@ -671,6 +671,24 @@ private slots:
         QVERIFY(!Channels_->Pool().Find(Key("s1"))->IsClosed());
     }
 
+    void ARemovalAfterTheChannelsAreGoneIsIgnored() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        QVERIFY(window->Open("s1"));
+        const std::size_t subscriptions = Server_->Bus().SubscriptionCount();
+
+        // The Server and its bus outlive the channels: the subscription to
+        // session.removed must not.
+        Channels_.reset();
+        QCOMPARE(Server_->Bus().SubscriptionCount(), subscriptions - 1);
+
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", "fake"}, {"id", "s1"}}));
+        QTest::qWait(NOTHING_HAPPENS_MS);
+        QVERIFY(window->Closed.isEmpty());
+    }
+
     void AClosedConnectionTakesItsChannelsAndLeavesTheSessionWarm() {
         QVERIFY(Start());
         Window* gone = Connect();
