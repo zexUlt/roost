@@ -12,8 +12,8 @@
 // model; the list model and the store document build on it.
 namespace roost::sessions {
 
-// One session as the list sees it. Unread, Category, Name and Archived come
-// from the list's own state; the rest from `sessions.list`.
+// One session as the list sees it. Unread, Ranked, Category, Name and Archived
+// come from the list's own state; the rest from `sessions.list`.
 struct SessionEntry {
     QString Agent;
     QString Id;
@@ -26,8 +26,14 @@ struct SessionEntry {
     qint64 StartedAt = 0;
     // "" is uncategorized.
     QString Category;
-    // Shown as unread: already not working and not opened.
+    // Shown as unread: already not working and not opened. Drives the Unread
+    // tab, the counts and the display, never the order.
     bool Unread = false;
+    // Ranks the session as unread for the order only: it moves the group up
+    // and the session to the top of its group. The caller keeps it frozen
+    // (renewed only when a new unread appears), so that a session just read
+    // does not jump under the cursor. Not computed here.
+    bool Ranked = false;
     bool Archived = false;
 };
 
@@ -98,10 +104,12 @@ QString SessionKey(const QString& agent, const QString& id);
 // word is a substring of "title state category", the category being
 // "uncategorized" for ""), groups by category and flattens.
 //
-// Groups: pinned first in pin order; then by unread count, descending;
-// the uncategorized last among equals; then by name. A group with no
-// session left has no header. Inside a group the unread come first and the
-// rest keep the order of `sessions`. A folded category is its header only.
+// Groups: pinned first in pin order (a category pinned twice takes its last
+// place); then by the count of Ranked sessions, descending; the uncategorized
+// last among equals; then by name. A group with no session left has no
+// header. Inside a group the Ranked come first and the rest keep the order of
+// `sessions`. The Unread tab and the counts use Unread, not Ranked. A folded
+// category is its header only.
 RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
                      const ViewState& view);
 

@@ -23,8 +23,10 @@ SessionEntry Make(const QString& id, const QString& category = {},
     return entry;
 }
 
+// Unread and ranked, as a session that has just become unread.
 SessionEntry Unread(SessionEntry entry) {
     entry.Unread = true;
+    entry.Ranked = true;
     return entry;
 }
 
@@ -64,6 +66,11 @@ private slots:
     void TheUnreadTabKeepsTheUnreadAndTheOpened();
     void SearchNeedsEveryWordAnywhereIgnoringCase();
     void SearchFindsTheGivenNameTheStateAndUncategorized();
+    void TheOrderFollowsRankedNotUnread();
+    void ARepeatedPinTakesItsLastPlace();
+    void SearchSplitsOnUnicodeWhitespace();
+    void CountsIgnoreTheTabAndTheQuery();
+    void AnOpenedArchivedSessionIsHiddenOutsideTheArchive();
 };
 
 void SessionsRowsTest::PinnedGoFirstInPinOrderAboveUnread() {
@@ -214,6 +221,81 @@ void SessionsRowsTest::SearchFindsTheGivenNameTheStateAndUncategorized() {
              QStringList{QStringLiteral("bg-1")});
     QCOMPARE(BuildRows({named}, view).Rows.back().Title,
              QStringLiteral("adapter title"));
+}
+
+void SessionsRowsTest::TheOrderFollowsRankedNotUnread() {
+    SessionEntry justRead = Make("read", "x");
+    justRead.Ranked = true;  // was unread when the order was taken
+    SessionEntry fresh = Make("fresh", "x");
+    fresh.Unread = true;  // not ranked yet
+    const std::vector<SessionEntry> sessions = {Make("a", "x"), fresh,
+                                                justRead};
+    QCOMPARE(Ids(BuildRows(sessions, {})),
+             (QStringList{QStringLiteral("read"), QStringLiteral("a"),
+                          QStringLiteral("fresh")}));
+    // The Unread tab and the counts take the live flag.
+    ViewState view;
+    view.Tab = ETab::Unread;
+    const RowsResult result = BuildRows(sessions, view);
+    QCOMPARE(Ids(result), QStringList{QStringLiteral("fresh")});
+    QCOMPARE(result.Counts.Unread, 1);
+    // Ranked moves a group up, too.
+    SessionEntry other = Make("o", "y");
+    other.Ranked = true;
+    QCOMPARE(Headers(BuildRows({Make("a", "x"), other}, {})),
+             (QStringList{QStringLiteral("y"), QStringLiteral("x")}));
+}
+
+void SessionsRowsTest::ARepeatedPinTakesItsLastPlace() {
+    // As cc-fleet's {cat: i for i, cat in enumerate(pins)}.
+    const std::vector<SessionEntry> sessions = {Make("a", "x"), Make("b", "y")};
+    ViewState view;
+    view.Pinned = {QStringLiteral("x"), QStringLiteral("y"),
+                   QStringLiteral("x")};
+    QCOMPARE(Headers(BuildRows(sessions, view)),
+             (QStringList{QStringLiteral("y"), QStringLiteral("x")}));
+}
+
+void SessionsRowsTest::SearchSplitsOnUnicodeWhitespace() {
+    SessionEntry one = Make("one");
+    one.Name = QStringLiteral("fix parser");
+    const std::vector<SessionEntry> sessions = {one, Make("two")};
+    ViewState view;
+    for (const QChar space : {QChar(0x00A0), QChar(0x3000)}) {
+        view.Query = QStringLiteral("fix") + space + QStringLiteral("parser");
+        QCOMPARE(Ids(BuildRows(sessions, view)),
+                 QStringList{QStringLiteral("one")});
+    }
+}
+
+void SessionsRowsTest::CountsIgnoreTheTabAndTheQuery() {
+    const std::vector<SessionEntry> sessions = {
+        Unread(Make("run", {}, "working")), Unread(Make("fin", {}, "done")),
+        Make("idle"), Make("old", {}, "done")};
+    const TabCounts all{4, 2, 2};
+    QCOMPARE(BuildRows(sessions, {}).Counts, all);
+    ViewState view;
+    view.Tab = ETab::Unread;
+    QCOMPARE(BuildRows(sessions, view).Counts, all);
+    view.Query = QStringLiteral("run");
+    QCOMPARE(Ids(BuildRows(sessions, view)),
+             QStringList{QStringLiteral("run")});
+    QCOMPARE(BuildRows(sessions, view).Counts, all);
+    view.Tab = ETab::Active;
+    QCOMPARE(BuildRows(sessions, view).Counts, all);
+}
+
+void SessionsRowsTest::AnOpenedArchivedSessionIsHiddenOutsideTheArchive() {
+    SessionEntry archived = Make("old");
+    archived.Archived = true;
+    ViewState view;
+    view.Opened = QStringLiteral("claude/old");
+    QVERIFY(BuildRows({archived, Make("new")}, view).Rows.size() == 2);
+    QCOMPARE(Ids(BuildRows({archived, Make("new")}, view)),
+             QStringList{QStringLiteral("new")});
+    view.Tab = ETab::Active;
+    QCOMPARE(Ids(BuildRows({archived, Make("new")}, view)),
+             QStringList{QStringLiteral("new")});
 }
 
 QTEST_GUILESS_MAIN(SessionsRowsTest)

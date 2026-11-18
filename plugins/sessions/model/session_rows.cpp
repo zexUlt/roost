@@ -50,6 +50,7 @@ Row SessionRow(const SessionEntry& session, const QString& key,
 struct Group {
     std::vector<const SessionEntry*> Members;
     int Unread = 0;
+    int Ranked = 0;
 };
 
 }  // namespace
@@ -62,7 +63,9 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
                      const ViewState& view) {
     RowsResult result;
     const QStringList words = view.Query.toLower().split(
-        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        QRegularExpression(QStringLiteral("\\s+"),
+                           QRegularExpression::UseUnicodePropertiesOption),
+        Qt::SkipEmptyParts);
 
     std::map<QString, Group> groups;
     for (const SessionEntry& session : sessions) {
@@ -89,11 +92,13 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
         Group& group = groups[session.Category];
         group.Members.push_back(&session);
         group.Unread += session.Unread ? 1 : 0;
+        group.Ranked += session.Ranked ? 1 : 0;
     }
 
+    // As a dict built from enumerate: a repeated category takes its last place.
     std::map<QString, int> pins;
-    for (const QString& category : view.Pinned) {
-        pins.emplace(category, static_cast<int>(pins.size()));
+    for (int i = 0; i < view.Pinned.size(); ++i) {
+        pins.insert_or_assign(view.Pinned[i], i);
     }
     const int unpinned = static_cast<int>(pins.size());
 
@@ -105,7 +110,7 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
         const auto pin = pins.find(group->first);
         const bool pinned = pin != pins.end();
         return std::make_tuple(pinned ? pin->second : unpinned,
-                               pinned ? 0 : -group->second.Unread,
+                               pinned ? 0 : -group->second.Ranked,
                                group->first.isEmpty(), group->first);
     };
     std::ranges::stable_sort(order, [&](const auto* a, const auto* b) {
@@ -130,10 +135,10 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
         if (folded) {
             continue;
         }
-        // Stable: the unread first, the rest in the order given.
+        // Stable: the ranked first, the rest in the order given.
         std::vector<const SessionEntry*> members = group.Members;
         std::ranges::stable_partition(
-            members, [](const SessionEntry* s) { return s->Unread; });
+            members, [](const SessionEntry* s) { return s->Ranked; });
         for (const SessionEntry* session : members) {
             result.Rows.push_back(
                 SessionRow(*session, SessionKey(session->Agent, session->Id),
