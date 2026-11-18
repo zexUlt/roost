@@ -76,6 +76,14 @@ private:
         return Item_->property("got").toInt();
     }
 
+    // A release with the codes of both platforms; no handler sees it.
+    void Release(int key, Qt::KeyboardModifiers modifiers, quint32 xkb,
+                 quint32 mac, quint32 nativeModifiers, const QString& text) {
+        QKeyEvent event(QEvent::KeyRelease, key, modifiers, xkb, mac,
+                        nativeModifiers, text);
+        QCoreApplication::sendEvent(&Window_, &event);
+    }
+
 private slots:
     void init() {
         // QML creates a singleton at its first use, which would be this very
@@ -142,6 +150,34 @@ private slots:
             Press(CYR_YA, Qt::NoModifier, 0, 0, 0x100, QStringLiteral("ф")),
             CYR_YA);
 #endif
+    }
+
+    void ReleaseThenPressOfAnotherKey() {
+        // The release of the previous key ("о" at J) was the last event seen;
+        // the press of the next key brings its own codes.
+        QCOMPARE(Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, 0x100,
+                       QStringLiteral("о")),
+                 static_cast<int>(Qt::Key_J));
+        Release(CYR_O, Qt::NoModifier, XKB_J, MAC_J, 0x100,
+                QStringLiteral("о"));
+        QCOMPARE(Press(CYR_BE, Qt::NoModifier, XKB_COMMA, MAC_COMMA, 0x100,
+                       QStringLiteral("б")),
+                 static_cast<int>(Qt::Key_Comma));
+    }
+
+    void RecordedReleaseDoesNotLeakToAnotherKey() {
+        Release(CYR_O, Qt::NoModifier, XKB_J, MAC_J, 0x100,
+                QStringLiteral("о"));
+        // The recorded release is of the key "о"; an event of another key
+        // keeps its Qt key.
+        QObject otherKey;
+        otherKey.setProperty("key", CYR_BE);
+        otherKey.setProperty("modifiers", 0);
+        QCOMPARE(Singleton_->bindingKey(&otherKey), CYR_BE);
+        // A QML press of a Latin key after the release of "о" is not J.
+        QCOMPARE(Press(Qt::Key_Z, Qt::NoModifier, XKB_SLASH, MAC_SLASH, 0x100,
+                       QStringLiteral("z")),
+                 static_cast<int>(Qt::Key_Z));
     }
 
     void CodesOfAnotherEventAreNotUsed() {
