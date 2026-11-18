@@ -25,6 +25,9 @@ Api::Api(ApiOptions options, QObject* parent)
     connect(&RetryTimer_, &QTimer::timeout, this, &Api::Attempt);
     connect(&Io_, &IoThread::Disconnected, this, &Api::OnDisconnected);
     connect(this, &Api::Connected, &Terminals_, &WarmTerminals::ReopenShown);
+    // After ReopenShown: what the window shows is opened first, and the
+    // prefetch skips it.
+    connect(this, &Api::Connected, &Terminals_, &WarmTerminals::Prefetch);
 }
 
 void Api::Connect(const QString& socketPath) {

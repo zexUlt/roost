@@ -69,7 +69,11 @@ enum class EPaneStatus {
 //   - an open still in flight when the session is hidden completes into a
 //     hidden warm entry, as roostd holds the session either way;
 //   - an entry that is Release'd while Ended, Failed or Disconnected is
-//     dropped.
+//     dropped;
+//   - Prefetch opens the sessions roostd keeps warm as hidden entries, so
+//     that the first show after a restart of the window is warm as well. It
+//     opens them without a size, so as not to resize what a panel may be
+//     showing elsewhere: the one resize is sent when the entry is first shown.
 //
 // At most one owner shows a key (a session has one render state): the entry
 // records who Acquired it. A second Acquire of a shown key from another owner
@@ -114,6 +118,11 @@ public:
     // Reopen of every shown session that is Disconnected; for when the window
     // is connected again. Hidden sessions are not opened.
     void ReopenShown();
+    // Opens, hidden, the sessions roostd keeps warm that have no entry yet,
+    // for when the window is connected. They are opened oldest first, so that
+    // roostd's order of recent use is the same after as before. An error
+    // answer or a lost connection leaves things as they are.
+    void Prefetch();
 
     // None, and a null terminal, for a session the pool has no entry for.
     EPaneStatus Status(const SessionKey& key) const;
@@ -166,9 +175,11 @@ private:
     Entry* FindByChannel(std::uint32_t channel) const;
     void Erase(const Entry* entry);
 
-    // Opens the entry at its grid; the screen of an earlier open goes. Emits,
-    // so it works from the key and stops if the entry is gone or opened again.
-    void StartOpen(const SessionKey& key);
+    // Opens the entry at its grid, or without a size if not Sized (then
+    // SentSize stays empty, and the first show sends the resize); the screen
+    // of an earlier open goes. Emits, so it works from the key and stops if
+    // the entry is gone or opened again.
+    void StartOpen(const SessionKey& key, bool sized = true);
     void OnOpened(const SessionKey& key, std::uint64_t generation,
                   const OpenResult& result);
     void OnUpdated(std::uint32_t channel);

@@ -13,7 +13,9 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 
 #include "core/rpc.hpp"
 #include "terminal/terminal_session.hpp"
@@ -69,6 +71,9 @@ public:
     // opener calls before its first read of the session.
     QFuture<OpenResult> Open(const QString& agent, const QString& session,
                              quint16 columns, quint16 rows);
+    // The same without a size: roostd leaves a warm session at the size it
+    // has and starts a cold one at its default, so nothing is resized.
+    QFuture<OpenResult> Open(const QString& agent, const QString& session);
 
     // Input for a channel; dropped if the channel is not connected.
     void SendInput(std::uint32_t channel, const QByteArray& bytes);
@@ -119,6 +124,11 @@ signals:
 
 private:
     class Worker;
+
+    using OpenSize = std::pair<quint16, quint16>;
+
+    QFuture<OpenResult> OpenWith(const QString& agent, const QString& session,
+                                 std::optional<OpenSize> size);
 
     // Runs fn(Worker&) in the IO thread. False if the thread is stopped.
     template <typename TFn>
