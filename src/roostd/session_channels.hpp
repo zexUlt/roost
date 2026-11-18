@@ -37,6 +37,10 @@ class PluginHost;
 //     session or its PTY cannot be resized.
 //   session.close {channel}                         null
 //     The channel only: the session stays warm and nothing is notified.
+//   session.view {channel}                          null
+//     Marks the session of the channel as viewed now, for the pool's
+//     eviction order; InvalidParams for an unknown channel. Nobody is
+//     notified and the size does not change.
 //
 // and, as notification session.closed {channel, reason}, tells the client of
 // a channel that its session has closed: the program exited, or the pool
@@ -89,6 +93,7 @@ private:
     QFuture<rpc::Result> Open(const rpc::Call& call);
     QFuture<rpc::Result> Resize(const rpc::Call& call);
     QFuture<rpc::Result> Close(const rpc::Call& call);
+    QFuture<rpc::Result> View(const rpc::Call& call);
 
     // The last step of Open, always from the event loop: the answer reaches
     // the client only once the dispatcher is waiting for it.

@@ -111,6 +111,7 @@ SessionChannels::SessionChannels(Server& server, PluginHost& plugins,
     add(QStringLiteral("session.open"), &SessionChannels::Open);
     add(QStringLiteral("session.resize"), &SessionChannels::Resize);
     add(QStringLiteral("session.close"), &SessionChannels::Close);
+    add(QStringLiteral("session.view"), &SessionChannels::View);
 
     connect(&Server_, &Server::InputReceived, this, &SessionChannels::OnInput);
     connect(&Server_, &Server::ConnectionClosed, this,
@@ -355,6 +356,24 @@ QFuture<rpc::Result> SessionChannels::Close(const rpc::Call& call) {
         return rpc::Ready(
             InvalidParams(QStringLiteral("no channel %1").arg(*number)));
     }
+    return rpc::Ready(QJsonValue());
+}
+
+QFuture<rpc::Result> SessionChannels::View(const rpc::Call& call) {
+    const auto number =
+        ToChannel(call.Params.toObject().value(QStringLiteral("channel")));
+    if (!number) {
+        return rpc::Ready(InvalidParams(
+            QStringLiteral("session.view takes {channel}: a channel number")));
+    }
+    const auto connection = Server_.ConnectionOf(call.Peer);
+    WarmSession* session =
+        connection ? SessionOf(*connection, *number) : nullptr;
+    if (session == nullptr) {
+        return rpc::Ready(
+            InvalidParams(QStringLiteral("no channel %1").arg(*number)));
+    }
+    Pool_.Touch(session);
     return rpc::Ready(QJsonValue());
 }
 

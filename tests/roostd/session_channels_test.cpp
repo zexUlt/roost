@@ -923,6 +923,50 @@ private slots:
         QVERIFY(Channels_->Pool().Find(Key("s3")));
     }
 
+    void AViewKeepsASessionFromEviction() {
+        QVERIFY(Start({.Capacity = 2, .Pty = {}}));
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t first = window->Open("s1");
+        const std::uint32_t second = window->Open("s2");
+        QVERIFY(first && second);
+
+        const rpc::Result viewed = window->Call(
+            "session.view", QJsonObject{{"channel", static_cast<int>(first)}});
+        QVERIFY(viewed);
+        QVERIFY(viewed->isNull());
+
+        // s2 was viewed the longest ago.
+        QVERIFY(window->Open("s3"));
+        QTRY_COMPARE_WITH_TIMEOUT(window->Closed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Closed.at(0),
+                 (QJsonObject{{"channel", static_cast<int>(second)},
+                              {"reason", "evicted"}}));
+        QVERIFY(Channels_->Pool().Find(Key("s1")));
+        QCOMPARE(Channels_->Pool().Find(Key("s2")), nullptr);
+        QVERIFY(Channels_->Pool().Find(Key("s3")));
+    }
+
+    void AViewOfAnUnknownChannelIsInvalidParams() {
+        QVERIFY(Start());
+        Window* owner = Connect();
+        Window* stranger = Connect();
+        QVERIFY(owner && stranger);
+        QCOMPARE(owner->Open("s1"), 1U);
+
+        const auto expectInvalid = [](Window* window,
+                                      const QJsonValue& params) {
+            const rpc::Result result = window->Call("session.view", params);
+            QVERIFY(!result);
+            QCOMPARE(result.error().Code, INVALID_PARAMS);
+        };
+        expectInvalid(owner, QJsonObject{{"channel", 99}});
+        expectInvalid(stranger, QJsonObject{{"channel", 1}});
+        expectInvalid(owner, QJsonObject{});
+        expectInvalid(owner, QJsonObject{{"channel", "1"}});
+        QCOMPARE(Channels_->ChannelCount(), 1);
+    }
+
     void OutputDuringAnOpenIsNeitherLostNorRepeated() {
         QVERIFY(Start());
         Window* first = Connect();
