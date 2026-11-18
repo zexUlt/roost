@@ -14,8 +14,8 @@ FocusScope {
     // The session the cursor was on last, {agent, id}, kept while the list is
     // empty or being replaced, to put the cursor back.
     property var cursorKey: null
-    // Between the start of a reset of the model and its reconcile: the cursor
-    // that ListView resets to is not where the user had it.
+    // Between the start of a reset of the model and its reconcile: the list is
+    // not settled, so Enter does nothing and no row is put under the cursor.
     property bool resetting: false
 
     // The ref of a row; the roles of Roost.sessions are the fields of
@@ -47,15 +47,25 @@ FocusScope {
     }
 
     function trackCursor() {
-        if (!resetting && Roost.sessions.rowCount() > 0 && list.currentIndex >= 0) {
+        if (Roost.sessions.rowCount() > 0 && list.currentIndex >= 0) {
             cursorKey = refAt(list.currentIndex);
         }
     }
 
+    // After rows were inserted: ListView leaves the cursor at -1 when the
+    // first rows come into an empty list, so put it on row 0.
+    function afterInsert() {
+        if (!resetting && list.currentIndex < 0 && Roost.sessions.rowCount() > 0) {
+            list.currentIndex = 0;
+        }
+        trackCursor();
+    }
+
     // Enter: the session under the cursor becomes `selected`, unless it is
-    // already, so that a session that is open is not opened again.
+    // already, so that a session that is open is not opened again. Not while
+    // the model is being replaced: the cursor is then ListView's, not the user's.
     function openCurrent() {
-        if (list.currentIndex < 0 || list.currentIndex >= Roost.sessions.rowCount()) {
+        if (resetting || list.currentIndex < 0 || list.currentIndex >= Roost.sessions.rowCount()) {
             return;
         }
         const ref = refAt(list.currentIndex);
@@ -99,6 +109,8 @@ FocusScope {
             root.resetting = true;
         }
 
+        // SessionsModel emits modelReset before it updates `loaded`: reconcile
+        // after the emit has returned.
         function onModelReset() {
             Qt.callLater(root.reconcile);
         }
@@ -111,7 +123,7 @@ FocusScope {
         }
 
         function onRowsInserted() {
-            Qt.callLater(root.trackCursor);
+            Qt.callLater(root.afterInsert);
         }
     }
 
@@ -119,7 +131,11 @@ FocusScope {
         id: list
 
         objectName: "sessionList"
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        // The list ends above the list of unavailable agents.
+        anchors.bottom: unavailable.visible ? unavailable.top : parent.bottom
         focus: true
         clip: true
         model: Roost.sessions
@@ -213,7 +229,7 @@ FocusScope {
 
     Text {
         objectName: "sessionsStatus"
-        anchors.fill: parent
+        anchors.fill: list
         anchors.margins: 12
         visible: text !== ""
         color: "#808080"
@@ -224,13 +240,19 @@ FocusScope {
             if (!Roost.sessions.loaded) {
                 return "Loading sessions…";
             }
-            return list.count === 0 ? "No sessions." : "";
+            // With an agent that did not answer, an empty list is not "No
+            // sessions": the text below says why.
+            const none = list.count === 0 && Roost.sessions.unavailable.length === 0;
+            return none ? "No sessions." : "";
         }
     }
 
-    // An agent whose adapter did not answer with a list: without this a
-    // missing `claude` would look like "No sessions".
+    // An agent whose adapter did not answer with a list: the status above does
+    // not say "No sessions." while there is such an agent, so a missing
+    // `claude` does not look like an empty list.
     Text {
+        id: unavailable
+
         objectName: "sessionsUnavailable"
         anchors.left: parent.left
         anchors.right: parent.right

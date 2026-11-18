@@ -198,9 +198,14 @@ private:
 
     // The window of the shell, connected to the daemon, with the panels
     // loaded; waits until both slots hold theirs and the list has its rows
-    // (`rows`, none when the sessions cannot be listed).
-    void Boot(int rows = 4, const char* claude = FAKE_CLAUDE) {
+    // (`rows`, none when the sessions cannot be listed or `empty` says the
+    // list starts without any).
+    void Boot(int rows = 4, const char* claude = FAKE_CLAUDE,
+              bool empty = false) {
         QVERIFY(WriteFakeClaude(claude));
+        if (empty) {
+            QVERIFY(ListWithout(ORDER));
+        }
         QVERIFY(StartDaemon());
         Api_ = std::make_unique<api::Api>();
         Engine_ = std::make_unique<QQmlApplicationEngine>();
@@ -347,6 +352,16 @@ private:
     void Settle() {
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(ANSWERED_ONCE),
                                  TIMEOUT_MS);
+    }
+
+    // A tap at the centre of the row's delegate, through the window.
+    void TapRow(int row) {
+        QQuickItem* item = RowItem(row);
+        QVERIFY(item != nullptr);
+        QTest::mouseClick(
+            Window(), Qt::LeftButton, Qt::NoModifier,
+            item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
+                .toPoint());
     }
 
     void Press(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
@@ -502,6 +517,46 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(ALPHA)),
                                  TIMEOUT_MS);
         QVERIFY(!ScreenNow().contains(Greeting(BETA)));
+        QCOMPARE(Status(), QString("open"));
+    }
+
+    void ATapOnARowOpensItLikeReturn() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(Cursor(), 0);
+
+        TapRow(2);
+
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), GAMMA, TIMEOUT_MS);
+        QCOMPARE(Cursor(), 2);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(GAMMA)),
+                                 TIMEOUT_MS);
+    }
+
+    void ReturnOnTheOpenRowNeitherReopensNorRewritesTheSelection() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Watch();
+        QSignalSpy changed(PanelOf(LIST), SIGNAL(selectedChanged()));
+
+        Press(Qt::Key_Return);
+        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        QTest::qWait(300);
+
+        QCOMPARE(changed.count(), 0);
+        QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
+        QCOMPARE(SelectedId(), BETA);
         QCOMPARE(Status(), QString("open"));
     }
 
@@ -681,6 +736,113 @@ private slots:
         QCOMPARE(Cursor(), 0);
     }
 
+    void ARestartedRoostdThatLacksTheCursorsSessionPutsTheCursorOnTheOpenRow() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_Down);
+        QCOMPARE(CursorId(), GAMMA);
+
+        StopDaemon();
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("disconnected"),
+                                  TIMEOUT_MS);
+        QVERIFY(ListWithout({GAMMA}));
+        QVERIFY(StartDaemon());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 3, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 1, TIMEOUT_MS);
+        QCOMPARE(CursorId(), BETA);
+        QCOMPARE(SelectedId(), BETA);
+    }
+
+    void AReturnBetweenTheResetAndTheReconcileOpensNothing() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_Down);
+        QCOMPARE(CursorId(), BETA);
+        // Connected after the panel's own, so it runs once the panel has seen
+        // the reset and before the panel's reconcile, which waits for the
+        // event loop.
+        int pressed = 0;
+        connect(Singleton_->sessions(), &QAbstractItemModel::modelReset, this,
+                [this, &pressed] {
+                    ++pressed;
+                    Press(Qt::Key_Return);
+                });
+
+        QQmlExpression refresh(QQmlEngine::contextForObject(PanelOf(LIST)),
+                               PanelOf(LIST), "Roost.sessions.refresh()");
+        refresh.evaluate();
+        QVERIFY2(!refresh.hasError(), qPrintable(refresh.error().toString()));
+        QTRY_COMPARE_WITH_TIMEOUT(pressed, 1, TIMEOUT_MS);
+        QTest::qWait(300);
+
+        QVERIFY(SelectedId().isEmpty());
+        QCOMPARE(Status(), QString("none"));
+        // The cursor is where the user left it, and Return works again.
+        QCOMPARE(CursorId(), BETA);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), BETA, TIMEOUT_MS);
+    }
+
+    void ACursorMovedByARemovalIsRememberedAcrossAReset() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_Down);
+        Press(Qt::Key_Down);
+        QCOMPARE(CursorId(), GAMMA);
+
+        QVERIFY(ListWithout({GAMMA}));
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 3, TIMEOUT_MS);
+        QCOMPARE(Cursor(), 2);
+        QCOMPARE(CursorId(), DELTA);
+
+        // The panel remembers the session the cursor is on now.
+        QSignalSpy reset(Singleton_->sessions(),
+                         &QAbstractItemModel::modelReset);
+        QQmlExpression refresh(QQmlEngine::contextForObject(PanelOf(LIST)),
+                               PanelOf(LIST), "Roost.sessions.refresh()");
+        refresh.evaluate();
+        QVERIFY2(!refresh.hasError(), qPrintable(refresh.error().toString()));
+        QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, TIMEOUT_MS);
+        QTest::qWait(100);
+
+        QCOMPARE(Cursor(), 2);
+        QCOMPARE(CursorId(), DELTA);
+    }
+
+    void SessionsThatAppearInAnEmptyListPutTheCursorOnTheFirstRow() {
+        FailOnWarnings();
+        Boot(0, FAKE_CLAUDE, true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(ListStatusNow(), QString("No sessions."));
+
+        QVERIFY(ListWithout({}));
+
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
+        QVERIFY(ListStatusNow().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(ALPHA)),
+                                 TIMEOUT_MS);
+    }
+
     void BeforeTheFirstListThePanelSaysItIsLoading() {
         FailOnWarnings();
         // An API that is not connected: the model never loads.
@@ -717,7 +879,14 @@ private slots:
             TIMEOUT_MS);
         QVERIFY2(UnavailableNow().contains("claude is broken"),
                  qPrintable(UnavailableNow()));
-        QCOMPARE(ListStatusNow(), QString("No sessions."));
+        // Not "No sessions.": the list is empty because claude cannot list.
+        QVERIFY(ListStatusNow().isEmpty());
+        QVERIFY(!ListStatus()->isVisible());
+        // The rows end above the text, so that it hides none of them.
+        auto* unavailable =
+            PanelOf(LIST)->findChild<QQuickItem*>("sessionsUnavailable");
+        QVERIFY(unavailable->isVisible());
+        QVERIFY(ListView()->y() + ListView()->height() <= unavailable->y());
     }
 
     // The build holds copies of the plugin's files (configure_file); a copy
