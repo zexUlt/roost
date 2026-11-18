@@ -5,6 +5,7 @@
 #include <QList>
 #include <QPointer>
 
+#include <memory>
 #include <utility>
 
 #include "core/protocol.hpp"
@@ -323,11 +324,15 @@ void PluginHost::StartBackend(const PluginManifest& plugin) {
         }
     }
     if (!agents.isEmpty()) {
-        // Backend::Start is called only here, so the first start is the only
-        // one that is not a restart.
+        // A start that follows a stop is a restart, whether the process ran
+        // before or failed to start (then QProcess::started never fired for
+        // it). The very first successful start, with nothing before it, is not.
+        const auto stopped = std::make_shared<bool>(false);
+        connect(backend.get(), &Backend::Crashed, this,
+                [stopped](const QString&, qint64) { *stopped = true; });
         connect(backend.get(), &Backend::Started, this,
-                [this, id, agents, restarted = false]() mutable {
-                    if (!std::exchange(restarted, true)) {
+                [this, id, agents, stopped]() {
+                    if (!std::exchange(*stopped, false)) {
                         return;
                     }
                     qInfo("roostd: the backend of %s is running again",

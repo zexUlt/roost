@@ -45,8 +45,8 @@ class Server;
 //                         session.removed {agent, session: <id>} about an
 //                         agent of its own plugin
 //   session.adapterStarted {plugin, agents}, when the backend of a plugin
-//                         that serves agents is started again after the
-//                         first start: agents are the ones it serves. Its
+//                         that serves agents started again after it stopped
+//                         or failed to start: agents are the ones it owns. Its
 //                         sessions may have changed while it was down, with
 //                         no event to tell of it, so a listener lists them
 //                         again. Under session.* to come after the last
