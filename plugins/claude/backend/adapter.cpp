@@ -5,10 +5,13 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QProcess>
+#include <QRegularExpression>
 
-#include <signal.h>
-
+#include <algorithm>
+#include <array>
 #include <utility>
+
+#include "claude/backend/claude_run.hpp"
 
 namespace roost::claude {
 
@@ -33,21 +36,48 @@ bool IsOurs(const QJsonObject& params) {
     return params.value(QStringLiteral("agent")).toString() == Adapter::AGENT;
 }
 
-// A run that timed out, or one still going when the adapter stops: its
-// process group too, so what claude started does not outlive it. The group is
-// killed only while its leader runs: until then its id cannot be reused.
-void StopRun(QProcess& process) {
-    if (process.state() != QProcess::NotRunning) {
-        ::killpg(static_cast<pid_t>(process.processId()), SIGKILL);
-        process.kill();
-        process.waitForFinished();
-    }
-}
-
 // ": <the first line of stderr>", or nothing if it is empty.
 QString StderrSuffix(const QByteArray& text) {
     const QString line = QString::fromUtf8(text.trimmed()).section(u'\n', 0, 0);
     return line.isEmpty() ? QString() : QStringLiteral(": ") + line;
+}
+
+// A command of the plugin and the `claude` run behind it.
+struct CommandSpec {
+    QLatin1StringView Id;
+    // The first argument of claude.
+    QLatin1StringView Verb;
+    // The session id follows the verb; else `--all` does.
+    bool TakesSession;
+    std::chrono::milliseconds AdapterOptions::CommandTimeouts::* Timeout;
+};
+
+constexpr std::array<CommandSpec, 4> COMMANDS{{
+    {QLatin1StringView("claude.stop"), QLatin1StringView("stop"), true,
+     &AdapterOptions::CommandTimeouts::Stop},
+    {QLatin1StringView("claude.remove"), QLatin1StringView("rm"), true,
+     &AdapterOptions::CommandTimeouts::Remove},
+    {QLatin1StringView("claude.respawn"), QLatin1StringView("respawn"), true,
+     &AdapterOptions::CommandTimeouts::Respawn},
+    {QLatin1StringView("claude.respawnAll"), QLatin1StringView("respawn"),
+     false, &AdapterOptions::CommandTimeouts::RespawnAll},
+}};
+
+// The longest stdout or stderr that goes into an error.
+constexpr qsizetype MAX_ERROR_TEXT = 4096;
+
+QString ErrorText(const QByteArray& text) {
+    const QByteArray trimmed = text.trimmed();
+    return QString::fromUtf8(
+        trimmed.first(qMin<qsizetype>(trimmed.size(), MAX_ERROR_TEXT)));
+}
+
+// An id of letters, digits, `_` and `-` that does not start with `-`: claude
+// would take such an id for an option, and `respawn --all` for every session.
+bool IsSessionId(const QString& text) {
+    static const QRegularExpression PATTERN(
+        QStringLiteral(R"(\A[0-9A-Za-z_][0-9A-Za-z_-]*\z)"));
+    return PATTERN.match(text).hasMatch();
 }
 
 }  // namespace
@@ -82,12 +112,22 @@ Adapter::Adapter(AdapterOptions options, Send send, QObject* parent)
                 }
                 return WhenPolled(
                     [this, session] { return AttachCommand(session); });
-            });
+            }) &&
+        Dispatcher_.Register(QStringLiteral("commands.run"),
+                             [this](const jsonrpc::Call& call) {
+                                 return RunCommand(call.Params.toObject());
+                             });
     Q_ASSERT(registered);
     Q_UNUSED(registered);
 }
 
 Adapter::~Adapter() {
+    Stopping_ = true;
+    // Kills the commands still running and fails their requests.
+    for (ClaudeRun* run :
+         findChildren<ClaudeRun*>(Qt::FindDirectChildrenOnly)) {
+        delete run;
+    }
     if (Process_ != nullptr) {
         Process_->disconnect(this);
         StopRun(*Process_);
@@ -131,7 +171,9 @@ void Adapter::Poll() {
         StopRun(*process);
         process->deleteLater();
         OnPolled(std::move(result));
-        PollTimer_.start(Options_.PollInterval);
+        PollTimer_.start(std::exchange(PollAgain_, false)
+                             ? std::chrono::milliseconds::zero()
+                             : Options_.PollInterval);
     };
     connect(process, &QProcess::errorOccurred, this,
             [process, finish](QProcess::ProcessError error) {
@@ -163,6 +205,74 @@ void Adapter::Poll() {
     });
     TimeoutTimer_.start(Options_.PollTimeout);
     process->start();
+}
+
+void Adapter::PollSoon() {
+    if (Process_ != nullptr) {
+        PollAgain_ = true;
+        return;
+    }
+    PollTimer_.stop();
+    Poll();
+}
+
+QFuture<jsonrpc::Result> Adapter::RunCommand(const QJsonObject& params) {
+    const QString id = params.value(QStringLiteral("command")).toString();
+    const auto spec = std::ranges::find(
+        COMMANDS, id, [](const CommandSpec& c) { return QString(c.Id); });
+    if (spec == COMMANDS.end()) {
+        return jsonrpc::Ready(
+            InvalidParams(QStringLiteral("unknown command %1").arg(id)));
+    }
+    // Absent, null or an object: respawnAll takes no arguments but does not
+    // mind {}.
+    const QJsonValue args = params.value(QStringLiteral("args"));
+    QStringList argv{QString(spec->Verb)};
+    if (spec->TakesSession) {
+        const QString session =
+            args.toObject().value(QStringLiteral("session")).toString();
+        if (!args.isObject() || !IsSessionId(session)) {
+            return jsonrpc::Ready(InvalidParams(
+                QStringLiteral("%1 takes {session}: a session id").arg(id)));
+        }
+        argv.append(session);
+    } else {
+        if (!args.isUndefined() && !args.isNull() && !args.isObject()) {
+            return jsonrpc::Ready(
+                InvalidParams(QStringLiteral("%1 takes no arguments").arg(id)));
+        }
+        argv.append(QStringLiteral("--all"));
+    }
+
+    const QString verb(spec->Verb);
+    auto* run = new ClaudeRun({.Program = Options_.Program,
+                               .Args = argv,
+                               .Timeout = Options_.Timeouts.*(spec->Timeout)},
+                              this);
+    return run->Start().then(
+        QtFuture::Launch::Sync,
+        [this, verb](RunResult result) -> jsonrpc::Result {
+            // Success or not, the list may have changed.
+            if (!Stopping_) {
+                PollSoon();
+            }
+            if (!result) {
+                return Failed(result.error());
+            }
+            if (result->ExitCode != 0) {
+                return std::unexpected(jsonrpc::Error::FromCode(
+                    jsonrpc::EErrorCode::InternalError,
+                    FailureReason(*result, verb),
+                    QJsonObject{
+                        {QStringLiteral("exitCode"), result->ExitCode},
+                        {QStringLiteral("stdout"),
+                         ErrorText(result->StandardOutput)},
+                        {QStringLiteral("stderr"),
+                         ErrorText(result->StandardError)},
+                    }));
+            }
+            return QJsonValue();
+        });
 }
 
 void Adapter::OnPolled(std::expected<Listing, QString> listing) {

@@ -22,7 +22,11 @@ plugins/claude/
     "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }],
     "panels": [{ "id": "transcript", "qml": "qml/Transcript.qml",
                  "inputs": { "session": "SessionRef" }, "outputs": {} }],
-    "commands": [{ "id": "claude.newSession", "title": "New Claude session" }],
+    "commands": [{ "id": "claude.newSession", "title": "New Claude session" },
+                 { "id": "claude.stop", "title": "Stop Claude session" },
+                 { "id": "claude.remove", "title": "Remove Claude session" },
+                 { "id": "claude.respawn", "title": "Respawn Claude session" },
+                 { "id": "claude.respawnAll", "title": "Respawn all Claude sessions" }],
     "keybindings": [{ "command": "claude.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }],
     "settings": "qml/Settings.qml"
   }
@@ -83,6 +87,13 @@ Qt 6 совместим назад внутри major-версии: «Minor rele
 | `qmlImportPath` | есть QML-модуль | каталог, который окно добавляет в import path движка |
 
 Пути `library` и `qmlImportPath` проверяются, как путь бэкенда: внутри каталога плагина, по тексту пути.
+
+QML-модуль плагина, без библиотеки на C ABI:
+
+- Работают `qt` и `qmlImportPath`. `qt` — `"MAJOR.MINOR"` без патча, такой же major, как у Qt в roost, и minor не выше. Оба ключа необязательны. `library` и `sdk` пока отказывают весь плагин с причиной в проблемах (до SDK 0.1, M5).
+- `roostd` отдаёт `native` в `plugins.list`, только если плагин его объявил; окно не различает отсутствующий ключ и пустой объект: в обоих случаях добавлять нечего. Окно добавляет `<каталог плагина>/<qmlImportPath>` в import path движка после путей, которые там уже были: плагин не подменяет модуль roost, а модуль с одним URI у двух плагинов принадлежит тому, кто раньше в порядке загрузки. Пути стоят до загрузки панелей, поэтому панель делает `import <URI>`.
+- Изменение `native` перезагружает плагин, как изменение `contributes`; выгруженный плагин убирает свой каталог из import path. Модуль, который движок уже импортировал, остаётся в нём до выхода: библиотеку модуля Qt держит загруженной, изменённую подхватывает перезапуск окна.
+- Рецепт для модуля на чистом QML: `native: {"qmlImportPath": "qml"}`, в `qml/<URI, точки как каталоги>/` лежат `qmldir` (`module <URI>`, строка `Тип 1.0 Тип.qml` на тип) и файлы типов, панель начинается с `import <URI>`. URI не из пространства `Roost.*`: оно у roost.
 
 Загрузка и рукопожатие:
 
