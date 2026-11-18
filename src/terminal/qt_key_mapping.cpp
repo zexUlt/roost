@@ -1,62 +1,15 @@
 #include "terminal/qt_key_mapping.hpp"
 
+#include "terminal/physical_keys.hpp"
+
 #include <QChar>
 #include <QList>
 
-#include <array>
-#include <utility>
+#include <optional>
 
 namespace roost {
 
 namespace {
-
-struct Shifted {
-    int QtKey;
-    EKey Key;
-    char32_t Unshifted;
-};
-
-// Qt names a shifted symbol by the symbol: Shift+1 is Qt::Key_Exclam. The
-// physical key and its unshifted character are those of a US layout; other
-// layouts get the key of the symbol they would type on a US one, which only
-// the Kitty protocol's reports can notice.
-constexpr std::array<Shifted, 21> SHIFTED_SYMBOLS = {{
-    {Qt::Key_Exclam, EKey::Digit1, U'1'},
-    {Qt::Key_At, EKey::Digit2, U'2'},
-    {Qt::Key_NumberSign, EKey::Digit3, U'3'},
-    {Qt::Key_Dollar, EKey::Digit4, U'4'},
-    {Qt::Key_Percent, EKey::Digit5, U'5'},
-    {Qt::Key_AsciiCircum, EKey::Digit6, U'6'},
-    {Qt::Key_Ampersand, EKey::Digit7, U'7'},
-    {Qt::Key_Asterisk, EKey::Digit8, U'8'},
-    {Qt::Key_ParenLeft, EKey::Digit9, U'9'},
-    {Qt::Key_ParenRight, EKey::Digit0, U'0'},
-    {Qt::Key_Underscore, EKey::Minus, U'-'},
-    {Qt::Key_Plus, EKey::Equal, U'='},
-    {Qt::Key_BraceLeft, EKey::BracketLeft, U'['},
-    {Qt::Key_BraceRight, EKey::BracketRight, U']'},
-    {Qt::Key_Bar, EKey::Backslash, U'\\'},
-    {Qt::Key_Colon, EKey::Semicolon, U';'},
-    {Qt::Key_QuoteDbl, EKey::Quote, U'\''},
-    {Qt::Key_Less, EKey::Comma, U','},
-    {Qt::Key_Greater, EKey::Period, U'.'},
-    {Qt::Key_Question, EKey::Slash, U'/'},
-    {Qt::Key_AsciiTilde, EKey::Backquote, U'`'},
-}};
-
-constexpr std::array<std::pair<int, EKey>, 11> UNSHIFTED_SYMBOLS = {{
-    {Qt::Key_QuoteLeft, EKey::Backquote},
-    {Qt::Key_Backslash, EKey::Backslash},
-    {Qt::Key_BracketLeft, EKey::BracketLeft},
-    {Qt::Key_BracketRight, EKey::BracketRight},
-    {Qt::Key_Comma, EKey::Comma},
-    {Qt::Key_Equal, EKey::Equal},
-    {Qt::Key_Minus, EKey::Minus},
-    {Qt::Key_Period, EKey::Period},
-    {Qt::Key_Apostrophe, EKey::Quote},
-    {Qt::Key_Semicolon, EKey::Semicolon},
-    {Qt::Key_Slash, EKey::Slash},
-}};
 
 struct Mapped {
     EKey Key = EKey::Unidentified;
@@ -178,14 +131,13 @@ Mapped MapKey(int key, bool keypad, const QtKeyOptions& options) {
                 static_cast<char32_t>(U'0' +
                                       static_cast<char32_t>(key - Qt::Key_0))};
     }
-    for (const auto& [qtKey, mapped] : UNSHIFTED_SYMBOLS) {
-        if (qtKey == key) {
-            return {mapped, static_cast<char32_t>(key)};
-        }
-    }
-    for (const auto& symbol : SHIFTED_SYMBOLS) {
-        if (symbol.QtKey == key) {
-            return {symbol.Key, symbol.Unshifted};
+    // Qt names a shifted symbol by the symbol: Shift+1 is Qt::Key_Exclam. The
+    // physical key and its unshifted character are those of a US layout; other
+    // layouts get the key of the symbol they would type on a US one, which
+    // only the Kitty protocol's reports can notice.
+    for (const SymbolKey& symbol : SymbolKeys()) {
+        if (key == symbol.Unshifted || key == symbol.Shifted) {
+            return {symbol.Key, static_cast<char32_t>(symbol.Unshifted)};
         }
     }
     return {};
@@ -219,17 +171,29 @@ QString CtrlText(int key, bool shift) {
 
 QtKeyOptions QtKeyOptions::ForThisPlatform() {
 #ifdef Q_OS_MACOS
-    return {.SwapControlAndMeta = true, .OptionAsAlt = true};
+    return {.SwapControlAndMeta = true,
+            .OptionAsAlt = true,
+            .NativeKeys = ENativeKeyCodes::MacVirtualKey};
 #else
-    return {};
+    return {.NativeKeys = ENativeKeyCodes::XkbKeycode};
 #endif
 }
 
 std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
-                                 const QString& text, EKeyAction action,
+                                 const QString& text,
+                                 std::optional<quint32> nativeKey,
+                                 EKeyAction action,
                                  const QtKeyOptions& options) {
     const bool keypad = modifiers.testFlag(Qt::KeypadModifier);
-    const auto mapped = MapKey(key, keypad, options);
+    auto mapped = MapKey(key, keypad, options);
+    if (mapped.Key == EKey::Unidentified && IsNonLatinLetter(key)) {
+        // A letter of a non-Latin layout is the key at its position on the US
+        // one; what the layout typed stays in the text.
+        const EKey physical = PhysicalKey(options.NativeKeys, nativeKey);
+        if (physical >= EKey::A && physical <= EKey::Z) {
+            mapped = {physical, QChar::toLower(static_cast<char32_t>(key))};
+        }
+    }
 
     KeyEvent event;
     event.Action = action;
@@ -278,8 +242,10 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
 }
 
 bool IsCopyShortcut(int key, Qt::KeyboardModifiers modifiers,
+                    std::optional<quint32> nativeKey,
                     const QtKeyOptions& options) {
-    if (key != Qt::Key_C) {
+    const EKey physical = PhysicalKey(options.NativeKeys, nativeKey);
+    if (BindingKey(key, modifiers, physical) != Qt::Key_C) {
         return false;
     }
     // The keypad flag rides on some keys on macOS and means nothing here.

@@ -1,6 +1,6 @@
 // What the sessions list remembers and derives: the store document v1,
-// colours, names, forgetting, unread and its ranking. The cases are those of
-// cc-fleet's app.py (colours, names, seen) and test_title.py.
+// colours, names, forgetting, unread and its ranking. The cases are ported from
+// the predecessor: its colours, names and seen state, and its title tests.
 
 #include <QJsonArray>
 #include <QJsonDocument>

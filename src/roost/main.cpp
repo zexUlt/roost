@@ -136,6 +136,9 @@ int main(int argc, char* argv[]) {
     std::optional<roost::PluginWatcher> watcher;
     roost::RoostSingleton* roostSingleton = nullptr;
     if (!sessionMode) {
+        // Created here, before any QML: the singleton installs the key filter
+        // that Roost.bindingKey needs in `create`, so the first key press must
+        // not be the one that creates it.
         roostSingleton = engine.singletonInstance<roost::RoostSingleton*>(
             "Roost.Api", "Roost");
         if (roostSingleton == nullptr) {

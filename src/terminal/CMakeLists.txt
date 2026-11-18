@@ -3,6 +3,7 @@
 # in src/qml_api.
 add_library(roost_terminal STATIC
     io_thread.cpp
+    physical_keys.cpp
     qt_key_mapping.cpp
     renderer.cpp
     session_pane.cpp

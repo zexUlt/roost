@@ -1,7 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
-# Tests never touch the real ~/.config/roost or ~/.config/cc-fleet, and leave
-# no QML disk cache behind in the user's cache directory.
+# Tests never touch the real ~/.config/roost or another program's config, and
+# leave no QML disk cache behind in the user's cache directory.
 set(ROOST_TEST_ENVIRONMENT
     QT_QPA_PLATFORM=offscreen
     QML_DISABLE_DISK_CACHE=1
@@ -54,9 +54,14 @@ roost_add_qt_test(vt_mouse_encoder_test core/vt_mouse_encoder_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
 roost_add_qt_test(renderer_runs_test terminal/renderer_runs_test.cpp roost_terminal)
 roost_add_qt_test(qt_key_mapping_test terminal/qt_key_mapping_test.cpp roost_terminal)
+roost_add_qt_test(physical_keys_test terminal/physical_keys_test.cpp roost_terminal)
+roost_add_qt_test(qt_key_layout_test terminal/qt_key_layout_test.cpp roost_terminal)
 roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_terminal)
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_layout_test qml_api/terminal_item_layout_test.cpp roost_qml_api)
+roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
+    roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 

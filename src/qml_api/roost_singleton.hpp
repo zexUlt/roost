@@ -7,6 +7,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QString>
+#include <Qt>
 
 #include "api/api.hpp"
 #include "qml_api/bus_adapter.hpp"
@@ -37,6 +38,7 @@ class RoostSingleton : public QObject {
 
 public:
     static RoostSingleton* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
+    ~RoostSingleton() override;
 
     // From C++ only, once. Creates the parts that QML reaches by property.
     void setApi(api::Api& api);
@@ -69,14 +71,39 @@ public:
                           const QJSValue& params = QJSValue(),
                           const QJSValue& callback = QJSValue());
 
+    // The Qt key a binding matches for a QML KeyEvent: event.key on a Latin
+    // layout, else the key the US layout types at the physical position of the
+    // key (the letter j for the Russian "о", Qt.Key_Less for Shift+"б"). A
+    // window-local helper, not a dispatcher method: it has no twin in
+    // host->call. QQuickKeyEvent does not expose nativeVirtualKey, which macOS
+    // needs, so the singleton records the native codes of the last key event
+    // in an application event filter and uses them when the recorded key and
+    // modifiers equal the KeyEvent's; otherwise event.key is returned. Call
+    // it from a key handler, while the event is being delivered.
+    Q_INVOKABLE int bindingKey(QObject* event) const;
+
 signals:
     void connectedChanged();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     explicit RoostSingleton(QJSEngine& engine);
     void setConnected(bool connected);
 
+    // The last key event the application filter saw.
+    struct RecordedKey {
+        int Key = 0;
+        Qt::KeyboardModifiers Modifiers;
+        quint32 NativeScanCode = 0;
+        quint32 NativeVirtualKey = 0;
+        quint32 NativeModifiers = 0;
+        bool Valid = false;
+    };
+
     QJSEngine& Engine_;
+    RecordedKey Recorded_;
     CallOwners Owners_;
     api::Api* Api_ = nullptr;
     CommandsAdapter* Commands_ = nullptr;

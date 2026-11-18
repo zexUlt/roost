@@ -520,6 +520,16 @@ private:
         QTest::keyClick(Window(), key, modifiers);
     }
 
+    // A press of a physical key on another layout: the Qt key and the text are
+    // the letter typed, and the event carries the native codes of both
+    // platforms (the macOS virtual key, the xkb keycode).
+    void PressNative(int key, const QString& text, quint32 mac, quint32 xkb) {
+        QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier, xkb, mac, 0x100,
+                        text);
+        event.setAccepted(false);
+        QCoreApplication::sendEvent(Window(), &event);
+    }
+
     // Moves the cursor to the row and opens it with Return; waits until the
     // session is open in the terminal.
     void OpenRow(int row) {
@@ -681,6 +691,28 @@ private slots:
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(Status(), QString("none"));
         QCOMPARE(StatusText()->property("text").toString(), EMPTY_TEXT);
+    }
+
+    void JAndKMoveTheCursorOnTheRussianLayout() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(ListView()->hasActiveFocus());
+
+        // Cyrillic "о" and "к" sit on the J and K keys: kVK_ANSI_J 0x26 and
+        // KEY_J + 8, kVK_ANSI_K 0x28 and KEY_K + 8.
+        PressNative(0x041E, QStringLiteral("о"), 0x26, 44);
+        QCOMPARE(Cursor(), 1);
+        PressNative(0x041E, QStringLiteral("о"), 0x26, 44);
+        QCOMPARE(Cursor(), 2);
+        PressNative(0x041A, QStringLiteral("к"), 0x28, 45);
+        QCOMPARE(Cursor(), 1);
+        // A Cyrillic letter that is not on J or K moves nothing.
+        PressNative(0x0424, QStringLiteral("ф"), 0x00, 38);
+        QCOMPARE(Cursor(), 1);
+        QVERIFY(SelectedId().isEmpty());
     }
 
     void ReturnOpensTheSessionUnderTheCursorInTheTerminal() {

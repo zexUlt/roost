@@ -218,12 +218,15 @@ FocusScope {
         onCurrentIndexChanged: Qt.callLater(root.syncCursor)
         onCountChanged: Qt.callLater(root.syncCursor)
 
-        // Up and Down, and j and k with no modifier.
+        // Up and Down, and j and k with no modifier on any layout: bindingKey
+        // is the key the US layout has at the physical position.
         Keys.onPressed: event => {
-            if (event.key === Qt.Key_Down || (event.key === Qt.Key_J && event.modifiers === Qt.NoModifier)) {
+            const key = Roost.bindingKey(event);
+            const plain = event.modifiers === Qt.NoModifier;
+            if (event.key === Qt.Key_Down || (key === Qt.Key_J && plain)) {
                 sessionsList.move(1);
                 event.accepted = true;
-            } else if (event.key === Qt.Key_Up || (event.key === Qt.Key_K && event.modifiers === Qt.NoModifier)) {
+            } else if (event.key === Qt.Key_Up || (key === Qt.Key_K && plain)) {
                 sessionsList.move(-1);
                 event.accepted = true;
             }

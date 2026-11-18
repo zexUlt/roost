@@ -2,6 +2,7 @@
 
 #include "core/vt_key_encoder.hpp"
 #include "core/vt_mouse_encoder.hpp"
+#include "terminal/physical_keys.hpp"
 
 #include <QString>
 #include <Qt>
@@ -33,6 +34,10 @@ struct QtKeyOptions {
     // with SwapControlAndMeta (macOS), where Option composes; on other
     // platforms Alt already acts as Alt.
     bool OptionAsAlt = false;
+    // Which platform's native key codes the events carry, to find the
+    // physical key of a letter typed on a non-Latin layout. None: no key is
+    // known, and such a letter is text only.
+    ENativeKeyCodes NativeKeys = ENativeKeyCodes::None;
 
     // The conventions of the platform the program runs on; on macOS Option is
     // Alt, since a terminal has more use for Alt+B than for a composed "∫".
@@ -50,25 +55,34 @@ struct QtKeyOptions {
 // text is rebuilt from the key as what it types without Ctrl ("_" for
 // Ctrl+Shift+-, "[" for Ctrl+[), which is what the library's Ctrl rules read.
 //
-// A key outside the mapped set that does type text, such as a letter of a
-// non-Latin layout, is Unidentified with that text, and is encoded by the text
-// alone: so Ctrl with such a key sends nothing useful. Mapping by the native
-// scan code would fix that; it is not done here.
+// A letter of a non-Latin layout (Qt names it by its own capital, U+041E for
+// the Russian "о") is the key at its position on the US layout: with the
+// native key code of the event and options.NativeKeys it is mapped to A..Z,
+// so Ctrl+С sends the code of the C key. The text stays what the layout
+// typed, and the unshifted codepoint is the lowercase of that letter. Without
+// a code (nullopt, or NativeKeys None) such a letter is Unidentified with its
+// text, and is encoded by the text alone.
 //
-// Known limit: a symbol key is mapped as the key of a US layout. With the
-// Kitty "report all keys as escape codes" flag, a symbol typed through
-// another layout (AltGr+Q gives "@" on a German one) is reported as the US
-// key of that symbol. The fix is to map native scan codes to physical keys;
-// that is a later change.
+// A key outside the mapped set that does type text is Unidentified with that
+// text, and is encoded by the text alone.
+//
+// Known limit: a symbol key is mapped as the key of a US layout, and a symbol
+// of a non-Latin layout is text only. With the Kitty "report all keys as
+// escape codes" flag, a symbol typed through another layout (AltGr+Q gives
+// "@" on a German one) is reported as the US key of that symbol.
 std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
-                                 const QString& text, EKeyAction action,
+                                 const QString& text,
+                                 std::optional<quint32> nativeKey,
+                                 EKeyAction action,
                                  const QtKeyOptions& options);
 
 // Whether the key is the platform's copy shortcut, as Ghostty binds it:
 // Command+C on macOS (Qt's Control there), Ctrl+Shift+C elsewhere. Plain
 // Ctrl+C stays the interrupt, and so does anything with another modifier
-// besides these.
+// besides these. The key is the one a binding matches (BindingKey), so
+// Command+С copies on the Russian layout of macOS, and Ctrl+Shift+С on Linux.
 bool IsCopyShortcut(int key, Qt::KeyboardModifiers modifiers,
+                    std::optional<quint32> nativeKey,
                     const QtKeyOptions& options);
 
 // The modifiers of a mouse event, with the platform's names for Control and
