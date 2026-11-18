@@ -298,6 +298,9 @@ private slots:
         const QStringList kinds = Kinds();
         QCOMPARE(Cursor(), 0);
         QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), LIST_WIDTH, TIMEOUT_MS);
+        // The slot changes its width on the next polish, so the signal is the
+        // check, the width only a second one.
+        QSignalSpy widthSteps(PanelOf(LIST), SIGNAL(widthStepRequested(int)));
 
         // The category prompt, so that the typed text is not a query that
         // hides the rows.
@@ -325,6 +328,9 @@ private slots:
         QCOMPARE(Title(), QString("Sessions"));
         QVERIFY(!HelpOpen());
         QCOMPARE(Kinds(), kinds);
+        QCOMPARE(widthSteps.count(), 0);
+        QTest::qWait(100);
+        QCOMPARE(widthSteps.count(), 0);
         QCOMPARE(ListWidth(), LIST_WIDTH);
         QCOMPARE(PromptKind(), QString("category"));
         QVERIFY(Field()->hasActiveFocus());
@@ -495,9 +501,11 @@ private slots:
         Press(Qt::Key_E);
         VerifyPromptClosed();
 
-        // The keys were taken, not left to a field: j still moves nothing, and
-        // the list is as it was.
+        // The keys were taken, not left to a field: the list is as it was and
+        // a list key still works.
         QCOMPARE(Kinds(), (QStringList{"header"}));
+        Press(Qt::Key_Z);
+        QTRY_VERIFY_WITH_TIMEOUT(Kinds().size() > 1, TIMEOUT_MS);
         QVERIFY(StoredSection("categories").isEmpty());
         QVERIFY(StoredSection("names").isEmpty());
     }
@@ -609,6 +617,71 @@ private slots:
                  qPrintable(help));
         QVERIFY2(help.contains(QRegularExpression("\ne {3}rename")),
                  qPrintable(help));
+    }
+
+    void TabInTheFieldDoesNothing() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_C);
+        Type("Ops");
+
+        QVERIFY(PressAccepted(Qt::Key_Tab));
+        QVERIFY(PressAccepted(Qt::Key_Backtab, Qt::ShiftModifier));
+        QTest::qWait(100);
+
+        QCOMPARE(PromptKind(), QString("category"));
+        QVERIFY(Field()->hasActiveFocus());
+        QCOMPARE(Typed(), QString("Ops"));
+
+        Press(Qt::Key_Return);
+        VerifyPromptClosed();
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredSection("categories").value(KeyOf(ALPHA)).toString(),
+            QString("Ops"), TIMEOUT_MS);
+    }
+
+    void CAndEOpenOnTheRussianLayout() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // с and у sit on the C and E keys: mac 0x08 / xkb 54 and 0x0E / 26.
+        PressNative(0x0421, QStringLiteral("с"), 0x08, 54);
+        QCOMPARE(PromptKind(), QString("category"));
+        QVERIFY(Field()->hasActiveFocus());
+        Press(Qt::Key_Escape);
+        VerifyPromptClosed();
+
+        PressNative(0x0423, QStringLiteral("у"), 0x0E, 26);
+        QCOMPARE(PromptKind(), QString("rename"));
+        QVERIFY(Field()->hasActiveFocus());
+        QCOMPARE(Typed(), ALPHA_TITLE);
+    }
+
+    void ACyrillicNameStaysCyrillic() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        PressNative(0x0423, QStringLiteral("у"), 0x0E, 26);
+        QCOMPARE(PromptKind(), QString("rename"));
+        ClearField();
+        TypeRussianFYa();
+        Press(Qt::Key_Return);
+
+        VerifyPromptClosed();
+        const QString name = QStringLiteral("фя");
+        QTRY_COMPARE_WITH_TIMEOUT(SessionRole(0, "title").toString(), name,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredSection("names").value(KeyOf(ALPHA)).toString(), name,
+            TIMEOUT_MS);
     }
 
     void ATapOnTheListEndsThePrompt() {

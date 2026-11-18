@@ -197,10 +197,16 @@ FocusScope {
         list.forceActiveFocus();
     }
 
-    // The title of the row under the cursor, as the list shows it.
+    // The title of the row under the cursor, as the list shows it. Read from
+    // the model: the delegate of the row may not exist yet. The title is the
+    // fifth role of sessionsList from Qt.UserRole (kind, key, agent, id,
+    // title); a header has none.
     function cursorTitle() {
-        const item = list.itemAtIndex(sessionsList.cursorRow);
-        return item !== null && item.model.kind === "session" ? item.model.title : "";
+        const row = sessionsList.cursorRow;
+        if (row < 0) {
+            return "";
+        }
+        return sessionsList.data(sessionsList.index(row, 0), Qt.UserRole + 4) ?? "";
     }
 
     // Opens the prompt of the footer with its text. The keys then go to the
@@ -824,6 +830,10 @@ FocusScope {
                     }
 
                     Keys.onEscapePressed: root.cancelPrompt()
+                    // Tab does not leave the field: it would take the
+                    // keyboard to the list and drop what was typed.
+                    Keys.onTabPressed: event => event.accepted = true
+                    Keys.onBacktabPressed: event => event.accepted = true
                     // A digit 1-9 in an empty category prompt picks the
                     // category with that number.
                     Keys.onPressed: event => {
