@@ -54,6 +54,7 @@ roost_add_qt_test(vt_mouse_encoder_test core/vt_mouse_encoder_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
 roost_add_qt_test(renderer_runs_test terminal/renderer_runs_test.cpp roost_terminal)
 roost_add_qt_test(qt_key_mapping_test terminal/qt_key_mapping_test.cpp roost_terminal)
+roost_add_qt_test(physical_keys_test terminal/physical_keys_test.cpp roost_terminal)
 roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_terminal)
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
@@ -320,6 +321,17 @@ target_compile_definitions(plugin_reload_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(plugin_reload_test roostd)
 
+# The template templates/plugin-qml: a copy of it with another id, loaded by the
+# real roostd, its panel opened in the window. The template is read from the
+# source tree; the build does not install it.
+roost_add_qt_test(plugin_template_test roost/plugin_template_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(plugin_template_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    PLUGIN_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates/plugin-qml")
+add_dependencies(plugin_template_test roostd)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
@@ -386,3 +398,12 @@ roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_lis
 # What the sessions list remembers and derives: the store document, colours,
 # names, unread.
 roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_list_lib)
+
+# SessionsList, the QML-facing model of the sessions list, over a fake source,
+# and the module RoostSessions loaded from the plugin directory as the window
+# does.
+roost_add_qt_test(sessions_list_test plugins/sessions_list_test.cpp
+    sessions_list_lib roost_qml_api roost_qml_apiplugin Qt6::Qml)
+target_compile_definitions(sessions_list_test PRIVATE
+    SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
+add_dependencies(sessions_list_test sessions_qml)
