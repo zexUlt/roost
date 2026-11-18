@@ -83,8 +83,8 @@ struct WarmPoolOptions {
 
 // The warm sessions of the daemon (design.md §3), at most Capacity of them.
 // When one more is opened, the one viewed least recently is evicted: its
-// program is hung up and its session closed. A session
-// can also be evicted by its key (Evict).
+// program is hung up and its session closed. A session can also be evicted
+// by its key (Evict).
 //
 // An evicted session leaves the pool at once and does not count in Capacity,
 // but its program lives until it exits on SIGHUP, at most a hang-up timeout:
