@@ -68,7 +68,11 @@ constexpr const char* EXPECTED_SESSIONS = R"json([
 ])json";
 
 // A fake `claude`, steered by the files next to it: agents.json is what
-// `agents` prints, and each `attach <id>` adds the id to calls.
+// `agents` prints, and each `attach <id>` adds the id to calls and leaves its
+// pid. `stop`, `rm` and `respawn` add "<verb> <id>" to commands, fail with the
+// exit code in <verb>.exit and the words "No job matching" when that file is
+// there, and otherwise end the attach of the id, as the real claude does.
+// `rm` also puts rm.agents, when it is there, in place of agents.json.
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 case "$1" in
@@ -78,7 +82,22 @@ agents)
   ;;
 attach)
   echo "$2" >> "$dir/calls"
+  echo $$ > "$dir/attach-$2.pid"
   exec "$dir/fake_tui"
+  ;;
+stop|rm|respawn)
+  echo "$1 $2" >> "$dir/commands"
+  if [ -f "$dir/$1.exit" ]; then
+    echo "No job matching '$2'" >&2
+    exit $(cat "$dir/$1.exit")
+  fi
+  if [ -f "$dir/attach-$2.pid" ]; then
+    kill $(cat "$dir/attach-$2.pid") 2>/dev/null
+    rm -f "$dir/attach-$2.pid"
+  fi
+  if [ "$1" = rm ] && [ -f "$dir/rm.agents" ]; then
+    mv "$dir/rm.agents" "$dir/agents.json"
+  fi
   ;;
 *) exit 2 ;;
 esac
@@ -179,7 +198,6 @@ class ClaudeE2eTest : public QObject {
 
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
-    QString CallsPath() const { return Dir_->filePath("bin/calls"); }
 
     // The fake claude with the fixture and fake_tui next to it.
     bool WriteFakeClaude() const {
@@ -215,8 +233,12 @@ private:
                Window_->Connect(SocketPath());
     }
 
-    QStringList Calls() const {
-        QFile file(CallsPath());
+    QStringList Calls() const { return Lines("bin/calls"); }
+    // The commands the fake claude was asked to run: "<verb> <id>".
+    QStringList Commands() const { return Lines("bin/commands"); }
+
+    QStringList Lines(const QString& name) const {
+        QFile file(Dir_->filePath(name));
         if (!file.open(QIODevice::ReadOnly)) {
             return {};
         }
@@ -256,6 +278,61 @@ private:
                file.write(
                    QJsonDocument(agents).toJson(QJsonDocument::Compact)) > 0 &&
                file.commit();
+    }
+
+    // The window API, connected, with the sessions loaded.
+    bool ConnectApi() {
+        Api_ = std::make_unique<api::Api>();
+        QSignalSpy connected(Api_.get(), &api::Api::Connected);
+        Api_->Connect(SocketPath());
+        return connected.wait(TIMEOUT_MS) &&
+               QTest::qWaitFor([&] { return Api_->Sessions().IsLoaded(); },
+                               TIMEOUT_MS);
+    }
+
+    // A command through the window API: Roost.commands.run.
+    rpc::Result RunCommand(const QString& command, const QJsonObject& args) {
+        const QFuture<rpc::Result> answer = Api_->Commands().Run(command, args);
+        if (!WaitFor(answer, TIMEOUT_MS)) {
+            return std::unexpected(rpc::Error{.Message = "timed out"});
+        }
+        return answer.result();
+    }
+
+    // Opens the session on the window's connection; the channel, or 0.
+    std::uint32_t OpenSession(const QString& id) {
+        const rpc::Result opened =
+            Window_->Call("session.open", QJsonObject{{"agent", "claude"},
+                                                      {"session", id},
+                                                      {"columns", 100},
+                                                      {"rows", 30}});
+        if (!opened) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(
+            opened->toObject().value("channel").toInt());
+    }
+
+    // The window has been told that the session of the channel ended.
+    static bool HasClosed(const QSignalSpy& notified, std::uint32_t channel) {
+        for (const QList<QVariant>& arguments : notified) {
+            if (arguments.at(0).toString() == "session.closed" &&
+                arguments.at(1)
+                        .value<QJsonValue>()
+                        .toObject()
+                        .value("channel")
+                        .toInt() == static_cast<int>(channel)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Replaces the file of the fake claude whole.
+    bool Put(const QString& name, const QByteArray& content) const {
+        QSaveFile file(Dir_->filePath("bin/" + name));
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(content) == content.size() && file.commit();
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
@@ -425,6 +502,87 @@ private slots:
         QVERIFY(index >= 0);
         QCOMPARE(Api_->Sessions().Rows()[index].value("state"),
                  QJsonValue("done"));
+    }
+
+    // Window -> Api -> roostd -> adapter -> claude rm. The adapter lists at
+    // once after the command; the poll of the built plugin, 3 s, is too late.
+    void RemoveThroughTheWindow() {
+        QVERIFY(WriteFakeClaude());
+        QVERIFY(Launch(true));
+        QVERIFY(ConnectApi());
+        const QString gone = "bg-2c3d4e5f";
+        QCOMPARE(Api_->Sessions().Rows().size(), 4);
+        const std::uint32_t channel = OpenSession(gone);
+        QVERIFY(channel > 0);
+        QSignalSpy notified(&Window_->Rpc, &RpcClient::NotificationReceived);
+
+        // What claude lists after rm: agents.json without the session.
+        QJsonArray left;
+        QFile source(Dir_->filePath("bin/agents.json"));
+        QVERIFY(source.open(QIODevice::ReadOnly));
+        for (const QJsonValue& entry :
+             QJsonDocument::fromJson(source.readAll()).array()) {
+            if (entry.toObject().value("id").toString() != gone) {
+                left.append(entry);
+            }
+        }
+        QVERIFY(Put("rm.agents",
+                    QJsonDocument(left).toJson(QJsonDocument::Compact)));
+
+        const rpc::Result removed =
+            RunCommand("claude.remove", QJsonObject{{"session", gone}});
+        QVERIFY2(removed, qPrintable(Why(removed)));
+        QVERIFY(removed->isNull());
+        QCOMPARE(Commands(), QStringList{"rm " + gone});
+        QTRY_VERIFY_WITH_TIMEOUT(HasClosed(notified, channel), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().IndexOf("claude", gone), -1,
+                                  1000);
+        QCOMPARE(Api_->Sessions().Rows().size(), 3);
+    }
+
+    // roostd and the window API hand the error of the backend on whole.
+    void AFailedRemoveReachesTheWindowWithItsData() {
+        QVERIFY(WriteFakeClaude());
+        QVERIFY(Launch(true));
+        QVERIFY(ConnectApi());
+        QVERIFY(Put("rm.exit", "1"));
+
+        const rpc::Result removed = RunCommand(
+            "claude.remove", QJsonObject{{"session", "bg-2c3d4e5f"}});
+        QVERIFY(!removed);
+        QCOMPARE(removed.error().Code, -32603);
+        QCOMPARE(removed.error().Message, "No job matching 'bg-2c3d4e5f'");
+        const QJsonObject data = removed.error().Data.toObject();
+        QCOMPARE(data.value("exitCode").toInt(), 1);
+        QVERIFY(data.value("stderr").toString().contains("No job matching"));
+        QCOMPARE(Api_->Sessions().Rows().size(), 4);
+    }
+
+    // The recipe of the window after claude.respawn: the old attach ends, and
+    // opening the session again starts a new one.
+    void RespawnThenReopenGetsANewAttach() {
+        QVERIFY(WriteFakeClaude());
+        QVERIFY(Launch(true));
+        QVERIFY(ConnectApi());
+        const QString id = "bg-1b2c3d4e";
+        const std::uint32_t first = OpenSession(id);
+        QVERIFY(first > 0);
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{id}, TIMEOUT_MS);
+        QSignalSpy notified(&Window_->Rpc, &RpcClient::NotificationReceived);
+
+        const rpc::Result respawned =
+            RunCommand("claude.respawn", QJsonObject{{"session", id}});
+        QVERIFY2(respawned, qPrintable(Why(respawned)));
+        QCOMPARE(Commands(), QStringList{"respawn " + id});
+        QTRY_VERIFY_WITH_TIMEOUT(HasClosed(notified, first), TIMEOUT_MS);
+
+        const std::uint32_t second = OpenSession(id);
+        QVERIFY(second > 0);
+        QVERIFY(second != first);
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), (QStringList{id, id}), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            QString::fromUtf8(Window_->Dump(second)).contains(ANSWERED_ONCE),
+            TIMEOUT_MS);
     }
 
     void ListsTheSessionsOfTheRealClaude() {
