@@ -565,6 +565,31 @@ private:
     std::unique_ptr<PluginLoader> Loader_;
     std::unique_ptr<Shell> Shell_;
 
+    // Until the panel has nothing left to write: it writes the document by
+    // itself after it is ready (the first read, then the open session once the
+    // list is in), one write at a time, the next one sent when the answer to
+    // the last comes. A write of a plugin made before that is stored between
+    // the panel's own, and the stale one that follows it comes back as a
+    // foreign change that replaces what the plugin wrote. `restored` is the
+    // last event that makes the panel write, so at most one write is in flight
+    // and one follows it. The answer to a request comes after those of the
+    // requests sent before it, on the one connection and in one order of
+    // delivery: so after the first round trip the follow-up is sent, and after
+    // the second its answer is in too.
+    void WaitForThePanelToStopWriting() {
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->property("restored").toBool(),
+                                 TIMEOUT_MS);
+        for (int round = 0; round < 2; ++round) {
+            auto answered = std::make_shared<bool>(false);
+            Api_->Io()
+                .Request(QStringLiteral("store.get"),
+                         QJsonObject{{QStringLiteral("plugin"),
+                                      QStringLiteral("sessions")}})
+                .then(this, [answered](rpc::Result) { *answered = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(*answered, TIMEOUT_MS);
+        }
+    }
+
 private slots:
     void init() {
         Dir_ = std::make_unique<QTemporaryDir>();
@@ -1257,6 +1282,10 @@ private slots:
             return;
         }
 
+        WaitForThePanelToStopWriting();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         StoreSet(
             QStringLiteral(R"({version: 1, categories: {"claude/%1": "work"}})")
                 .arg(BETA));
