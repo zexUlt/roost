@@ -308,6 +308,17 @@ target_compile_definitions(plugin_reload_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(plugin_reload_test roostd)
 
+# The template templates/plugin-qml: a copy of it with another id, loaded by the
+# real roostd, its panel opened in the window. The template is read from the
+# source tree; the build does not install it.
+roost_add_qt_test(plugin_template_test roost/plugin_template_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(plugin_template_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    PLUGIN_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates/plugin-qml")
+add_dependencies(plugin_template_test roostd)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
