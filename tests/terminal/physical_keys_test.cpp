@@ -7,6 +7,8 @@
 
 #include <QTest>
 
+#include <optional>
+
 using roost::BindingKey;
 using roost::EKey;
 using roost::ENativeKeyCodes;
@@ -145,14 +147,99 @@ private slots:
     }
 
     void NativeKeyCodeByCodeSet() {
-        // nativeScanCode 44, nativeVirtualKey 0x26, as an event on either
-        // platform carries.
+        // nativeScanCode 44, nativeVirtualKey 0x26, nativeModifiers 0x100, as
+        // a real event carries.
         const QKeyEvent event(QEvent::KeyPress, Qt::Key_J, Qt::NoModifier, 44,
-                              0x26, 0);
+                              0x26, 0x100);
         QCOMPARE(roost::NativeKeyCode(event, ENativeKeyCodes::MacVirtualKey),
-                 0x26u);
-        QCOMPARE(roost::NativeKeyCode(event, ENativeKeyCodes::XkbKeycode), 44u);
-        QCOMPARE(roost::NativeKeyCode(event, ENativeKeyCodes::None), 0u);
+                 std::optional<quint32>(0x26));
+        QCOMPARE(roost::NativeKeyCode(event, ENativeKeyCodes::XkbKeycode),
+                 std::optional<quint32>(44));
+        QVERIFY(!roost::NativeKeyCode(event, ENativeKeyCodes::None));
+    }
+
+    void NativeKeyCodeMacPhysicalA() {
+        // A real A press: virtual key 0 with the modifier flags of a key event.
+        const QKeyEvent event(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, 0, 0,
+                              0x100);
+        QCOMPARE(roost::NativeKeyCode(event, ENativeKeyCodes::MacVirtualKey),
+                 std::optional<quint32>(0));
+    }
+
+    void NativeKeyCodeSyntheticEvent() {
+        // The constructor without native codes zeroes all three.
+        const QKeyEvent event(QEvent::KeyPress, 0x44E, Qt::NoModifier,
+                              QString(QChar(0x44E)));
+        QVERIFY(!roost::NativeKeyCode(event, ENativeKeyCodes::MacVirtualKey));
+        QVERIFY(!roost::NativeKeyCode(event, ENativeKeyCodes::XkbKeycode));
+        QCOMPARE(PhysicalKey(ENativeKeyCodes::MacVirtualKey, std::nullopt),
+                 EKey::Unidentified);
+        QCOMPARE(PhysicalKey(ENativeKeyCodes::XkbKeycode, std::nullopt),
+                 EKey::Unidentified);
+        // A Cyrillic letter without a code is not remapped to A.
+        QCOMPARE(::BindingKey(
+                     0x44E,  // я
+                     Qt::NoModifier,
+                     PhysicalKey(ENativeKeyCodes::MacVirtualKey,
+                                 roost::NativeKeyCode(
+                                     event, ENativeKeyCodes::MacVirtualKey))),
+                 0x44E);
+    }
+
+    void BindingKeySymbols_data() {
+        QTest::addColumn<EKey>("physical");
+        QTest::addColumn<int>("unshifted");
+        QTest::addColumn<int>("shifted");
+        const auto row = [](const char* name, EKey key, int unshifted,
+                            int shifted) {
+            QTest::newRow(name) << key << unshifted << shifted;
+        };
+        row("Backquote", EKey::Backquote, Qt::Key_QuoteLeft,
+            Qt::Key_AsciiTilde);
+        row("Backslash", EKey::Backslash, Qt::Key_Backslash, Qt::Key_Bar);
+        row("BracketLeft", EKey::BracketLeft, Qt::Key_BracketLeft,
+            Qt::Key_BraceLeft);
+        row("BracketRight", EKey::BracketRight, Qt::Key_BracketRight,
+            Qt::Key_BraceRight);
+        row("Comma", EKey::Comma, Qt::Key_Comma, Qt::Key_Less);
+        row("Equal", EKey::Equal, Qt::Key_Equal, Qt::Key_Plus);
+        row("Minus", EKey::Minus, Qt::Key_Minus, Qt::Key_Underscore);
+        row("Period", EKey::Period, Qt::Key_Period, Qt::Key_Greater);
+        row("Quote", EKey::Quote, Qt::Key_Apostrophe, Qt::Key_QuoteDbl);
+        row("Semicolon", EKey::Semicolon, Qt::Key_Semicolon, Qt::Key_Colon);
+        row("Slash", EKey::Slash, Qt::Key_Slash, Qt::Key_Question);
+        row("Digit0", EKey::Digit0, Qt::Key_0, Qt::Key_ParenRight);
+        row("Digit1", EKey::Digit1, Qt::Key_1, Qt::Key_Exclam);
+        row("Digit2", EKey::Digit2, Qt::Key_2, Qt::Key_At);
+        row("Digit3", EKey::Digit3, Qt::Key_3, Qt::Key_NumberSign);
+        row("Digit4", EKey::Digit4, Qt::Key_4, Qt::Key_Dollar);
+        row("Digit5", EKey::Digit5, Qt::Key_5, Qt::Key_Percent);
+        row("Digit6", EKey::Digit6, Qt::Key_6, Qt::Key_AsciiCircum);
+        row("Digit7", EKey::Digit7, Qt::Key_7, Qt::Key_Ampersand);
+        row("Digit8", EKey::Digit8, Qt::Key_8, Qt::Key_Asterisk);
+        row("Digit9", EKey::Digit9, Qt::Key_9, Qt::Key_ParenLeft);
+    }
+
+    void BindingKeySymbols() {
+        QFETCH(EKey, physical);
+        QFETCH(int, unshifted);
+        QFETCH(int, shifted);
+        constexpr int CYRILLIC_BE = 0x411;
+        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::NoModifier, physical),
+                 unshifted);
+        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::ShiftModifier, physical),
+                 shifted);
+        // Only Shift picks the shifted symbol.
+        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::ControlModifier, physical),
+                 unshifted);
+        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::AltModifier, physical),
+                 unshifted);
+        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::MetaModifier, physical),
+                 unshifted);
+        QCOMPARE(
+            ::BindingKey(CYRILLIC_BE, Qt::ControlModifier | Qt::ShiftModifier,
+                         physical),
+            shifted);
     }
 
     void BindingKey_data() {
@@ -177,7 +264,15 @@ private slots:
         row("ru_shift_comma", 0x411, shift, EKey::Comma, Qt::Key_Less);
         row("ru_shift_period", 0x42E, shift, EKey::Period, Qt::Key_Greater);
         row("ru_slash", 0x2F, 0, EKey::Backslash, 0x2F);
-        row("ru_shift_digit", 0x411, shift, EKey::Digit2, Qt::Key_At);
+        // Shift+7 on the Russian layout types '?', which is not a letter: kept.
+        row("ru_shift_digit_kept", Qt::Key_Question, shift, EKey::Digit7,
+            Qt::Key_Question);
+        // The physical A key, code 0 on macOS: the lower edge of the letters.
+        row("ru_a", 0x424, 0, EKey::A, Qt::Key_A);
+        row("ru_z", 0x42F, 0, EKey::Z, Qt::Key_Z);
+        row("greek_j", 0x3BE, 0, EKey::J, Qt::Key_J);
+        // µ is U+00B5 of the Common script: Option+m on a Latin macOS layout.
+        row("micro_sign_kept", 0xB5, 0, EKey::M, 0xB5);
         // Not a letter: kept.
         row("numero_sign_kept", 0x2116, 0, EKey::Backslash, 0x2116);
         row("special_key_kept", Qt::Key_Escape, 0, EKey::A, Qt::Key_Escape);
@@ -201,6 +296,9 @@ private slots:
         QTest::newRow("cyrillic") << 0x41E << true;
         QTest::newRow("greek") << 0x3A9 << true;
         QTest::newRow("hebrew") << 0x5D0 << true;
+        QTest::newRow("micro_sign_common") << 0xB5 << false;
+        QTest::newRow("combining_inherited") << 0x345 << false;
+        QTest::newRow("unassigned") << 0x378 << false;
         QTest::newRow("latin") << int(Qt::Key_A) << false;
         QTest::newRow("latin_extended") << 0xC9 << false;
         QTest::newRow("digit") << int(Qt::Key_1) << false;

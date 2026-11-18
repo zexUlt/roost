@@ -5,6 +5,8 @@
 #include <QKeyEvent>
 #include <Qt>
 
+#include <optional>
+
 namespace roost {
 
 // Which platform's native key codes an event carries: the physical key is
@@ -23,18 +25,24 @@ enum class ENativeKeyCodes {
 };
 
 // The key of the US main block at a native code: a letter, a digit or one of
-// the 11 symbol keys. Unidentified for any other code and for None. On macOS
-// code 0 is the A key, so an event without native codes reads as A there; on
-// xkb 0 is no key.
-EKey PhysicalKey(ENativeKeyCodes codes, quint32 nativeKey);
+// the 11 symbol keys. Unidentified for any other code, for None and for no
+// code (nullopt). On macOS code 0 is the A key, so "no code" must be nullopt,
+// never 0.
+EKey PhysicalKey(ENativeKeyCodes codes, std::optional<quint32> nativeKey);
 
 // The native code the platform's events carry: nativeVirtualKey on macOS,
-// nativeScanCode on xkb, 0 for None.
-quint32 NativeKeyCode(const QKeyEvent& event, ENativeKeyCodes codes);
+// nativeScanCode on xkb. nullopt for None and for an event that carries none:
+// Qt's QKeyEvent constructor without native codes (synthetic events) zeroes
+// scanCode, virtualKey and nativeModifiers; a real macOS key event carries
+// nativeModifiers = NSEvent.modifierFlags, which is not 0 for a key event
+// (the device-independent bit is set), and a real xkb keycode is never 0.
+std::optional<quint32> NativeKeyCode(const QKeyEvent& event,
+                                     ENativeKeyCodes codes);
 
 // Whether the Qt key is a letter of a script other than Latin, which means
 // the layout is not Latin. A letter of a Latin layout (Dvorak, QWERTZ, the
-// French é), a symbol and a special key are not.
+// French é), a letter of the Common or Inherited script (µ of macOS Option+m),
+// a symbol and a special key are not.
 bool IsNonLatinLetter(int qtKey);
 
 // The Qt key a binding matches: qtKey on a Latin layout, else the key the US

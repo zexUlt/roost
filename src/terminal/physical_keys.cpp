@@ -3,6 +3,7 @@
 #include <QChar>
 
 #include <array>
+#include <optional>
 
 namespace roost {
 
@@ -76,31 +77,39 @@ constexpr std::array<Symbol, 21> SYMBOLS = {{
 
 }  // namespace
 
-EKey PhysicalKey(ENativeKeyCodes codes, quint32 nativeKey) {
-    if (codes == ENativeKeyCodes::None) {
+EKey PhysicalKey(ENativeKeyCodes codes, std::optional<quint32> nativeKey) {
+    if (codes == ENativeKeyCodes::None || !nativeKey) {
         return EKey::Unidentified;
     }
     for (const NativeKey& row : NATIVE_KEYS) {
         const quint32 code = codes == ENativeKeyCodes::MacVirtualKey
                                  ? row.MacVirtualKey
                                  : row.XkbKeycode;
-        if (code == nativeKey) {
+        if (code == *nativeKey) {
             return row.Key;
         }
     }
     return EKey::Unidentified;
 }
 
-quint32 NativeKeyCode(const QKeyEvent& event, ENativeKeyCodes codes) {
+std::optional<quint32> NativeKeyCode(const QKeyEvent& event,
+                                     ENativeKeyCodes codes) {
     switch (codes) {
         case ENativeKeyCodes::MacVirtualKey:
+            if (event.nativeVirtualKey() == 0 && event.nativeScanCode() == 0 &&
+                event.nativeModifiers() == 0) {
+                return std::nullopt;
+            }
             return event.nativeVirtualKey();
         case ENativeKeyCodes::XkbKeycode:
+            if (event.nativeScanCode() == 0) {
+                return std::nullopt;
+            }
             return event.nativeScanCode();
         case ENativeKeyCodes::None:
             break;
     }
-    return 0;
+    return std::nullopt;
 }
 
 bool IsNonLatinLetter(int qtKey) {
@@ -110,8 +119,18 @@ bool IsNonLatinLetter(int qtKey) {
         return false;
     }
     const auto codePoint = static_cast<char32_t>(qtKey);
-    return QChar::isLetter(codePoint) &&
-           QChar::script(codePoint) != QChar::Script_Latin;
+    if (!QChar::isLetter(codePoint)) {
+        return false;
+    }
+    switch (QChar::script(codePoint)) {
+        case QChar::Script_Latin:
+        case QChar::Script_Common:
+        case QChar::Script_Inherited:
+        case QChar::Script_Unknown:
+            return false;
+        default:
+            return true;
+    }
 }
 
 int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical) {
