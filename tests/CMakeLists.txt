@@ -374,3 +374,12 @@ roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_lis
 # What the sessions list remembers and derives: the store document, colours,
 # names, unread.
 roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_list_lib)
+
+# SessionsList, the QML-facing model of the sessions list, over a fake source,
+# and the module RoostSessions loaded from the plugin directory as the window
+# does.
+roost_add_qt_test(sessions_list_test plugins/sessions_list_test.cpp
+    sessions_list_lib roost_qml_api roost_qml_apiplugin Qt6::Qml)
+target_compile_definitions(sessions_list_test PRIVATE
+    SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
+add_dependencies(sessions_list_test sessions_qml)

@@ -53,7 +53,7 @@ C++ (`.clang-tidy` в корне):
 | пространства имён | lower_case | `roost` |
 | файлы | snake_case | `session_pool.cpp` |
 
-C++-слой для QML — `src/qml_api/`: типы с `QML_ELEMENT` и `QML_SINGLETON`, их `Q_PROPERTY`, сигналы и `Q_INVOKABLE`. Функции и методы там camelCase (`listSessions`, `titleChanged`), остальное как в C++ выше. Это задаёт `src/qml_api/.clang-tidy`; стиль берётся по месту объявления, так что заголовки слоя можно включать откуда угодно. Остальной C++ в QML напрямую не регистрируется.
+C++-слой для QML — `src/qml_api/`: типы с `QML_ELEMENT` и `QML_SINGLETON`, их `Q_PROPERTY`, сигналы и `Q_INVOKABLE`. Функции и методы там camelCase (`listSessions`, `titleChanged`), остальное как в C++ выше. Это задаёт `src/qml_api/.clang-tidy`; стиль берётся по месту объявления, так что заголовки слоя можно включать откуда угодно. То же для C++ плагина, который виден из QML: `plugins/<id>/qml_types/` (`.clang-tidy` там ссылается на тот же файл). Остальной C++ в QML напрямую не регистрируется.
 
 QML (`qmllint`, `qmlformat`):
 
