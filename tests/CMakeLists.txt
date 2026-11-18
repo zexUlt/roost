@@ -367,3 +367,6 @@ if(APPLE)
     add_executable(terminal_memory bench/terminal_memory.cpp)
     target_link_libraries(terminal_memory PRIVATE roost_terminal)
 endif()
+
+# The rows of the sessions list, in plain C++.
+roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_list_lib)
