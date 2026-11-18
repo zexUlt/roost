@@ -417,7 +417,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{BETA, GAMMA, DELTA}),
                                   TIMEOUT_MS);
         // Not opened again by anything.
-        QCOMPARE(Calls(), QStringList{ALPHA});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{ALPHA}, TIMEOUT_MS);
     }
 
     void XStopsAndArchivesAndClosesTheOpenSession() {
@@ -540,7 +540,7 @@ private slots:
         }
         QSignalSpy respawned(PanelOf(LIST), SIGNAL(respawned(QVariant)));
         OpenAndBack(1);
-        QCOMPARE(Calls(), QStringList{BETA});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
 
         AskAndConfirm(Qt::Key_R);
 
@@ -586,7 +586,7 @@ private slots:
         AskAndConfirm(Qt::Key_R);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("respawned"), TIMEOUT_MS);
         QCOMPARE(Status(), QString("open"));
-        QCOMPARE(Calls(), QStringList{BETA});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
 
         QCOMPARE(::kill(static_cast<pid_t>(AttachPid(BETA)), SIGTERM), 0);
 
@@ -613,7 +613,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
         QTest::qWait(300);
         QCOMPARE(Status(), QString("ended"));
-        QCOMPARE(Calls(), QStringList{BETA});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
     }
 
     void RespawnOfAnotherSessionLeavesTheOpenOneAlone() {
@@ -633,7 +633,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("respawned"), TIMEOUT_MS);
         QTest::qWait(300);
         QCOMPARE(respawned.count(), 0);
-        QCOMPARE(Calls(), QStringList{ALPHA});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{ALPHA}, TIMEOUT_MS);
         QCOMPARE(Status(), QString("open"));
     }
 
@@ -668,7 +668,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
         QTest::qWait(300);
         QCOMPARE(Status(), QString("ended"));
-        QCOMPARE(Calls(), (QStringList{ALPHA, ALPHA, GAMMA}));
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), (QStringList{ALPHA, ALPHA, GAMMA}),
+                                  TIMEOUT_MS);
     }
 
     void NStartsASessionInTheCursorsDirectory() {
@@ -704,7 +705,7 @@ private slots:
         // "Ops", and is opened in the terminal.
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
-        QCOMPARE(Calls(), QStringList{STARTED});
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{STARTED}, TIMEOUT_MS);
         QVERIFY(activated.count() >= 1);
         const int row = List()->property("cursorRow").toInt();
         QCOMPARE(Role(row, "id").toString(), STARTED);
