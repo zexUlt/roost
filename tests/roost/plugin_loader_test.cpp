@@ -348,25 +348,24 @@ private slots:
 
     void TypesOfTwoPluginsLoadAndPanelsAreCreated() {
         QVERIFY(AddPlugin(
-            "a-one",
-            {Panel("one.a", "one-a.qml"), Panel("one.plain", "plain.qml")},
+            "a-one", {Panel("a", "one-a.qml"), Panel("plain", "plain.qml")},
             {{"one-a.qml", ItemPanel("one-a")}, {"plain.qml", PLAIN_PANEL}}));
-        QVERIFY(AddPlugin("b-two", {Panel("two.a", "qml/two-a.qml")},
+        QVERIFY(AddPlugin("b-two", {Panel("a", "qml/two-a.qml")},
                           {{"qml/two-a.qml", ItemPanel("two-a")}}));
         QVERIFY(Boot());
         QCOMPARE(Loader_->PanelTypes(),
-                 (QStringList{"one.a", "one.plain", "two.a"}));
+                 (QStringList{"a-one.a", "a-one.plain", "b-two.a"}));
         QVERIFY(Loader_->Problems().isEmpty());
 
-        QQuickItem* one = Loader_->CreatePanel("one.a");
+        QQuickItem* one = Loader_->CreatePanel("a-one.a");
         QVERIFY(one != nullptr);
         QCOMPARE(one->property("pluginId").toString(), QString("a-one"));
         // Set before Component.onCompleted.
         QCOMPARE(Probe_.Last.value("completed:one-a"), QString("a-one"));
-        QQuickItem* two = Loader_->CreatePanel("two.a");
+        QQuickItem* two = Loader_->CreatePanel("b-two.a");
         QVERIFY(two != nullptr);
         QCOMPARE(Probe_.Last.value("completed:two-a"), QString("b-two"));
-        QQuickItem* second = Loader_->CreatePanel("one.a");
+        QQuickItem* second = Loader_->CreatePanel("a-one.a");
         QVERIFY(second != nullptr && second != one);
         // Each instance has its own context, below the context of its plugin.
         const auto panelContext = [](QQuickItem* item) {
@@ -379,7 +378,7 @@ private slots:
                 panelContext(two)->parentContext());
 
         // No pluginId property: the panel still works.
-        QQuickItem* plain = Loader_->CreatePanel("one.plain");
+        QQuickItem* plain = Loader_->CreatePanel("a-one.plain");
         if (plain == nullptr) {
             QFAIL("the panel without pluginId was not created");
         }
@@ -400,7 +399,7 @@ private slots:
         QVERIFY(Loader_->PanelTypes().isEmpty());
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
     }
 
     void ABrokenPanelDisablesOnlyItself_data() {
@@ -418,25 +417,31 @@ private slots:
             "\"id\" must be a non-empty string");
         row("id-empty", QJsonObject{{"id", ""}, {"qml", "good.qml"}}, "",
             "\"id\" must be a non-empty string");
-        row("qml-missing", QJsonObject{{"id", "p"}}, "p",
+        // Not a name relative to the plugin: the problem names the entry as
+        // written.
+        row("id-with-dot", Panel("x.y", "good.qml"), "x.y", "without '.'");
+        row("id-with-uppercase", Panel("Up", "good.qml"), "Up",
+            "lowercase letters");
+        row("qml-missing", QJsonObject{{"id", "p"}}, "a-bad.p",
             "\"qml\" must be a non-empty string");
-        row("qml-not-a-string", QJsonObject{{"id", "p"}, {"qml", 5}}, "p",
+        row("qml-not-a-string", QJsonObject{{"id", "p"}, {"qml", 5}}, "a-bad.p",
             "\"qml\" must be a non-empty string");
-        row("qml-absolute", Panel("p", "/tmp/panel.qml"), "p",
+        row("qml-absolute", Panel("p", "/tmp/panel.qml"), "a-bad.p",
             "inside the plugin directory");
-        row("qml-escapes", Panel("p", "../escape.qml"), "p",
+        row("qml-escapes", Panel("p", "../escape.qml"), "a-bad.p",
             "inside the plugin directory");
-        row("qml-escapes-deep", Panel("p", "qml/../../escape.qml"), "p",
+        row("qml-escapes-deep", Panel("p", "qml/../../escape.qml"), "a-bad.p",
             "inside the plugin directory");
         row("inputs-not-an-object",
-            QJsonObject{{"id", "p"}, {"qml", "good.qml"}, {"inputs", "x"}}, "p",
-            "\"inputs\" must be an object");
+            QJsonObject{{"id", "p"}, {"qml", "good.qml"}, {"inputs", "x"}},
+            "a-bad.p", "\"inputs\" must be an object");
         row("outputs-not-an-object",
-            QJsonObject{{"id", "p"}, {"qml", "good.qml"}, {"outputs", 1}}, "p",
-            "\"outputs\" must be an object");
-        row("file-missing", Panel("p", "missing.qml"), "p", "does not exist");
-        row("syntax-error", Panel("p", "syntax.qml"), "p", "syntax.qml");
-        row("unknown-type", Panel("p", "unknown.qml"), "p", "NoSuchType");
+            QJsonObject{{"id", "p"}, {"qml", "good.qml"}, {"outputs", 1}},
+            "a-bad.p", "\"outputs\" must be an object");
+        row("file-missing", Panel("p", "missing.qml"), "a-bad.p",
+            "does not exist");
+        row("syntax-error", Panel("p", "syntax.qml"), "a-bad.p", "syntax.qml");
+        row("unknown-type", Panel("p", "unknown.qml"), "a-bad.p", "NoSuchType");
     }
 
     void ABrokenPanelDisablesOnlyItself() {
@@ -452,9 +457,10 @@ private slots:
         ExpectWarnings(1);
         QVERIFY(Boot());
         // The sibling of the same plugin and the other plugin load.
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"good", "other"}));
-        QVERIFY(Loader_->CreatePanel("good") != nullptr);
-        QVERIFY(Loader_->CreatePanel("other") != nullptr);
+        QCOMPARE(Loader_->PanelTypes(),
+                 (QStringList{"a-bad.good", "b-other.other"}));
+        QVERIFY(Loader_->CreatePanel("a-bad.good") != nullptr);
+        QVERIFY(Loader_->CreatePanel("b-other.other") != nullptr);
         QCOMPARE(Loader_->Problems().size(), 1);
         const auto problem = Loader_->Problems().first();
         QCOMPARE(problem.Plugin, QString("a-bad"));
@@ -467,26 +473,111 @@ private slots:
         }
     }
 
-    void ADuplicatePanelIdBelongsToTheEarlierPlugin() {
-        QVERIFY(AddPlugin("a-first", {Panel("dup", "dup.qml")},
-                          {{"dup.qml", ItemPanel("first")}}));
-        QVERIFY(AddPlugin("b-second",
-                          {Panel("dup", "dup.qml"), Panel("second", "s.qml")},
-                          {{"dup.qml", ItemPanel("second-dup")},
-                           {"s.qml", ItemPanel("second")}}));
+    void APanelNameIsRelativeToItsPluginAndTheTypeIsPluginDotName() {
+        QVERIFY(AddPlugin("foo", {Panel("hello", "hello.qml")},
+                          {{"hello.qml", ItemPanel("hello")}}));
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"foo.hello"}));
+        QVERIFY(Loader_->Problems().isEmpty());
+        QVERIFY(Loader_->CreatePanel("hello") == nullptr);
+        QQuickItem* item = Loader_->CreatePanel("foo.hello");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("pluginId").toString(), QString("foo"));
+        const auto info = Loader_->Info("foo.hello");
+        QVERIFY(info.has_value());
+        QCOMPARE(info->Plugin, QString("foo"));
+        QVERIFY(!Loader_->Info("hello").has_value());
+    }
+
+    void ADottedPanelNameIsAProblemAndOnlyThatPanelIsNotCreated() {
+        QVERIFY(AddPlugin("foo",
+                          {Panel("a.b", "a.qml"), Panel("ok", "ok.qml"),
+                           Panel("foo.c", "c.qml")},
+                          {{"a.qml", ItemPanel("a")},
+                           {"ok.qml", ItemPanel("ok")},
+                           {"c.qml", ItemPanel("c")}}));
+        ExpectWarnings(2);
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"foo.ok"}));
+        QVERIFY(Loader_->CreatePanel("foo.ok") != nullptr);
+        for (const QString& id : {"a.b", "foo.a.b", "foo.foo.c", "foo.c"}) {
+            QVERIFY2(Loader_->CreatePanel(id) == nullptr, qPrintable(id));
+        }
+        QCOMPARE(Loader_->Problems().size(), 2);
+        QCOMPARE(Loader_->Problems().at(0).Plugin, QString("foo"));
+        QCOMPARE(Loader_->Problems().at(0).Panel, QString("a.b"));
+        QCOMPARE(Loader_->Problems().at(1).Panel, QString("foo.c"));
+        QVERIFY2(Loader_->Problems().at(0).Message.contains("without '.'"),
+                 qPrintable(Loader_->Problems().at(0).Message));
+    }
+
+    void TwoPluginsWithTheSamePanelNameBothLoad() {
+        QVERIFY(AddPlugin("a", {Panel("view", "view.qml")},
+                          {{"view.qml", ItemPanel("from-a")}}));
+        QVERIFY(AddPlugin("b", {Panel("view", "view.qml")},
+                          {{"view.qml", ItemPanel("from-b")}}));
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a.view", "b.view"}));
+        QVERIFY(Loader_->Problems().isEmpty());
+        QQuickItem* first = Loader_->CreatePanel("a.view");
+        QQuickItem* second = Loader_->CreatePanel("b.view");
+        QVERIFY(first != nullptr);
+        QVERIFY(second != nullptr);
+        QCOMPARE(first->property("content").toString(), QString("from-a"));
+        QCOMPARE(first->property("pluginId").toString(), QString("a"));
+        QCOMPARE(second->property("content").toString(), QString("from-b"));
+        QCOMPARE(second->property("pluginId").toString(), QString("b"));
+    }
+
+    void ADottedPanelNameCannotMakeTheTypeOfAnotherPlugin() {
+        // Plugin "a" with the name "b.c" and plugin "a.b" with the name "c"
+        // would both be "a.b.c" if the dot were allowed in a name.
+        QVERIFY(AddPlugin("a", {Panel("b.c", "bc.qml")},
+                          {{"bc.qml", ItemPanel("from-a")}}));
+        QVERIFY(AddPlugin("a.b", {Panel("c", "c.qml")},
+                          {{"c.qml", ItemPanel("from-a-b")}}));
         ExpectWarnings(1);
         QVERIFY(Boot());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"dup", "second"}));
-        QQuickItem* dup = Loader_->CreatePanel("dup");
-        QVERIFY(dup != nullptr);
-        QCOMPARE(dup->property("content").toString(), QString("first"));
-        QCOMPARE(dup->property("pluginId").toString(), QString("a-first"));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a.b.c"}));
         QCOMPARE(Loader_->Problems().size(), 1);
-        const auto problem = Loader_->Problems().first();
-        QCOMPARE(problem.Plugin, QString("b-second"));
-        QCOMPARE(problem.Panel, QString("dup"));
-        QVERIFY2(problem.Message.contains("a-first"),
-                 qPrintable(problem.Message));
+        QCOMPARE(Loader_->Problems().at(0).Plugin, QString("a"));
+        QCOMPARE(Loader_->Problems().at(0).Panel, QString("b.c"));
+        QQuickItem* item = Loader_->CreatePanel("a.b.c");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("content").toString(), QString("from-a-b"));
+        QCOMPARE(item->property("pluginId").toString(), QString("a.b"));
+    }
+
+    void ASecondDirectoryWithTheSamePluginIdIsNotLoaded() {
+        QVERIFY(AddPlugin("dup", {Panel("view", "view.qml")},
+                          {{"view.qml", ItemPanel("first")}}));
+        // A second directory whose manifest has the same id.
+        const QDir other(Daemon_->PluginsPath() + "/dup-again");
+        QVERIFY(other.mkpath("."));
+        QFile qml(other.filePath("view.qml"));
+        QVERIFY(qml.open(QIODevice::WriteOnly));
+        QVERIFY(qml.write(ItemPanel("second")) > 0);
+        qml.close();
+        QFile manifest(other.filePath("plugin.json"));
+        QVERIFY(manifest.open(QIODevice::WriteOnly));
+        QVERIFY(
+            manifest.write(
+                QJsonDocument(
+                    QJsonObject{
+                        {"id", "dup"},
+                        {"version", "0.1.0"},
+                        {"api", "0"},
+                        {"contributes",
+                         QJsonObject{{"panels",
+                                      QJsonArray{Panel("view", "view.qml")}}}}})
+                    .toJson()) > 0);
+        manifest.close();
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"dup.view"}));
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(
+            Loader_->CreatePanel("dup.view")->property("content").toString(),
+            QString("first"));
     }
 
     void ADuplicatePanelIdInOnePluginKeepsTheFirst() {
@@ -495,9 +586,10 @@ private slots:
             {{"one.qml", ItemPanel("one")}, {"two.qml", ItemPanel("two")}}));
         ExpectWarnings(1);
         QVERIFY(Boot());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"dup"}));
-        QCOMPARE(Loader_->CreatePanel("dup")->property("content").toString(),
-                 QString("one"));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.dup"}));
+        QCOMPARE(
+            Loader_->CreatePanel("a-one.dup")->property("content").toString(),
+            QString("one"));
         QCOMPARE(Loader_->Problems().size(), 1);
     }
 
@@ -506,26 +598,27 @@ private slots:
             "a-one", {Panel("object", "object.qml"), Panel("good", "good.qml")},
             {{"object.qml", OBJECT_PANEL}, {"good.qml", ItemPanel("good")}}));
         QVERIFY(Boot());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"object", "good"}));
+        QCOMPARE(Loader_->PanelTypes(),
+                 (QStringList{"a-one.object", "a-one.good"}));
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
         QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
         ExpectWarnings(1);
-        QVERIFY(Loader_->CreatePanel("object") == nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.object") == nullptr);
         QCOMPARE(Loader_->Problems().size(), 1);
         QCOMPARE(Loader_->Problems().first().Plugin, QString("a-one"));
-        QCOMPARE(Loader_->Problems().first().Panel, QString("object"));
+        QCOMPARE(Loader_->Problems().first().Panel, QString("a-one.object"));
         QVERIFY2(Loader_->Problems().first().Message.contains("Item"),
                  qPrintable(Loader_->Problems().first().Message));
         QCOMPARE(types.count(), 1);
         QCOMPARE(problems.count(), 1);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"good"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.good"}));
         // Disabled: the second try fails quietly.
-        QVERIFY(Loader_->CreatePanel("object") == nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.object") == nullptr);
         QCOMPARE(Loader_->Problems().size(), 1);
         QCOMPARE(types.count(), 1);
         QCOMPARE(problems.count(), 1);
         // The sibling is fine.
-        QVERIFY(Loader_->CreatePanel("good") != nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.good") != nullptr);
     }
 
     void AnUnchangedPluginIsNotTouched_data() {
@@ -542,7 +635,7 @@ private slots:
         const QJsonArray panels{Panel("p", "p.qml")};
         QVERIFY(AddPlugin("a-one", panels, {{"p.qml", ItemPanel("v1")}}));
         QVERIFY(Boot());
-        QQuickItem* item = Loader_->CreatePanel("p");
+        QQuickItem* item = Loader_->CreatePanel("a-one.p");
         QVERIFY(item != nullptr);
         QPointer<QQuickItem> guard = item;
         QSignalSpy destroyed(Loader_.get(),
@@ -570,10 +663,11 @@ private slots:
         QCOMPARE(problems.count(), 0);
         QVERIFY(guard == item);
         QCOMPARE(guard->property("content").toString(), QString("v1"));
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
         // New instances come from the same component: still v1 content.
-        QCOMPARE(Loader_->CreatePanel("p")->property("content").toString(),
-                 QString("v1"));
+        QCOMPARE(
+            Loader_->CreatePanel("a-one.p")->property("content").toString(),
+            QString("v1"));
     }
 
     void AChangedPluginIsReloaded_data() {
@@ -589,8 +683,8 @@ private slots:
         QVERIFY(AddPlugin("b-two", {Panel("q", "q.qml")},
                           {{"q.qml", ItemPanel("q1")}}));
         QVERIFY(Boot());
-        QQuickItem* old = Loader_->CreatePanel("p");
-        QQuickItem* bystander = Loader_->CreatePanel("q");
+        QQuickItem* old = Loader_->CreatePanel("a-one.p");
+        QQuickItem* bystander = Loader_->CreatePanel("b-two.q");
         QVERIFY(old != nullptr && bystander != nullptr);
         QPointer<QQuickItem> oldGuard = old;
         QPointer<QQuickItem> bystanderGuard = bystander;
@@ -629,12 +723,14 @@ private slots:
         QVERIFY(oldGuard.isNull());
         QVERIFY(!bystanderGuard.isNull());
         // The edited file is read from disk again.
-        QQuickItem* fresh = Loader_->CreatePanel("p");
+        QQuickItem* fresh = Loader_->CreatePanel("a-one.p");
         QVERIFY(fresh != nullptr);
         QCOMPARE(fresh->property("content").toString(), QString("v2"));
-        QCOMPARE(Loader_->CreatePanel("q")->property("content").toString(),
-                 QString("q1"));
-        QCOMPARE(Loader_->PanelTypes().contains("p2"), what == "contributes");
+        QCOMPARE(
+            Loader_->CreatePanel("b-two.q")->property("content").toString(),
+            QString("q1"));
+        QCOMPARE(Loader_->PanelTypes().contains("a-one.p2"),
+                 what == "contributes");
     }
 
     void ARemovedPluginIsUnloaded() {
@@ -645,9 +741,9 @@ private slots:
                           {{"q.qml", ItemPanel("q")}}));
         ExpectWarnings(1);
         QVERIFY(Boot());
-        QQuickItem* kept = Loader_->CreatePanel("p");
-        QQuickItem* gone = Loader_->CreatePanel("q");
-        QQuickItem* gone2 = Loader_->CreatePanel("q");
+        QQuickItem* kept = Loader_->CreatePanel("a-one.p");
+        QQuickItem* gone = Loader_->CreatePanel("b-two.q");
+        QQuickItem* gone2 = Loader_->CreatePanel("b-two.q");
         QVERIFY(kept != nullptr && gone != nullptr && gone2 != nullptr);
         QPointer<QQuickItem> keptGuard = kept;
         QPointer<QQuickItem> goneGuard = gone;
@@ -666,47 +762,18 @@ private slots:
         QCOMPARE(destroyed.count(), 2);
         QVERIFY(goneGuard.isNull() && gone2Guard.isNull());
         QVERIFY(!keptGuard.isNull());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
         QVERIFY(Loader_->Problems().isEmpty());
         QCOMPARE(problems.count(), 1);
-        QVERIFY(Loader_->CreatePanel("q") == nullptr);
+        QVERIFY(Loader_->CreatePanel("b-two.q") == nullptr);
         QCOMPARE(types.count(), 1);
-    }
-
-    void AnEarlierPluginThatTakesAPanelIdDisplacesTheLaterOne() {
-        QVERIFY(AddPlugin("a-first", {Panel("x", "x.qml")},
-                          {{"x.qml", ItemPanel("x")}}));
-        QVERIFY(AddPlugin("b-second", {Panel("dup", "dup.qml")},
-                          {{"dup.qml", ItemPanel("second")}}));
-        QVERIFY(Boot());
-        QQuickItem* old = Loader_->CreatePanel("dup");
-        QVERIFY(old != nullptr);
-        QPointer<QQuickItem> guard = old;
-        QSignalSpy destroyed(Loader_.get(),
-                             &PluginLoader::PanelAboutToBeDestroyed);
-        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
-        QVERIFY(Daemon_->Stop());
-        // b-second is the same on disk; only the plugin before it changed.
-        QVERIFY(AddPlugin(
-            "a-first", {Panel("x", "x.qml"), Panel("dup", "dup.qml")},
-            {{"x.qml", ItemPanel("x")}, {"dup.qml", ItemPanel("first")}}));
-        ExpectWarnings(1);
-        QVERIFY(Daemon_->Start(ROOSTD_PATH));
-        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
-        QCOMPARE(destroyed.count(), 1);
-        QVERIFY(guard.isNull());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"x", "dup"}));
-        QCOMPARE(Loader_->CreatePanel("dup")->property("content").toString(),
-                 QString("first"));
-        QCOMPARE(Loader_->Problems().size(), 1);
-        QCOMPARE(Loader_->Problems().first().Plugin, QString("b-second"));
     }
 
     void ANewPluginIsLoadedWhenItAppears() {
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", ItemPanel("p")}}));
         QVERIFY(Boot());
-        QQuickItem* item = Loader_->CreatePanel("p");
+        QQuickItem* item = Loader_->CreatePanel("a-one.p");
         QPointer<QQuickItem> guard = item;
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
         QVERIFY(Daemon_->Stop());
@@ -714,7 +781,7 @@ private slots:
                           {{"q.qml", ItemPanel("q")}}));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p", "q"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p", "b-two.q"}));
         QVERIFY(!guard.isNull());
     }
 
@@ -722,7 +789,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", ItemPanel("p")}}));
         QVERIFY(Boot());
-        QQuickItem* item = Loader_->CreatePanel("p");
+        QQuickItem* item = Loader_->CreatePanel("a-one.p");
         QVERIFY(item != nullptr);
         QPointer<QQuickItem> guard = item;
         QPointer<QQmlContext> context =
@@ -758,7 +825,7 @@ private slots:
         // Not an instance of the loader any more: nothing happens.
         Loader_->DestroyPanel(item);
         QCOMPARE(emitted, 1);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
     }
 
     void ACallOfADestroyedPanelNeverAnswers_data() {
@@ -772,7 +839,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("calls", "calls.qml")},
                           {{"calls.qml", CALLS_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* panel = Loader_->CreatePanel("calls");
+        QQuickItem* panel = Loader_->CreatePanel("a-one.calls");
         QVERIFY(panel != nullptr);
         // The callback belongs to the shell and outlives the panel: only the
         // owner of the call can stop it.
@@ -788,9 +855,10 @@ private slots:
         QVERIFY(
             AddPlugin("b-two", {Panel("q", "q.qml")}, {{"q.qml", LIFE_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* first = Loader_->CreatePanel("p");
-        QQuickItem* second = Loader_->CreatePanel("p");
-        QVERIFY(first != nullptr && second != nullptr);
+        QQuickItem* first = Loader_->CreatePanel("a-one.p");
+        QQuickItem* second = Loader_->CreatePanel("a-one.p");
+        QVERIFY(first != nullptr);
+        QVERIFY(second != nullptr);
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
         QObject scope;
         int slotCalls = 0;
@@ -800,8 +868,8 @@ private slots:
             Loader_.get(), &PluginLoader::PanelAboutToBeDestroyed, &scope,
             [&](QQuickItem*) {
                 ++slotCalls;
-                offered.append(Loader_->CreatePanel("p"));
-                bystanders.append(Loader_->CreatePanel("q"));
+                offered.append(Loader_->CreatePanel("a-one.p"));
+                bystanders.append(Loader_->CreatePanel("b-two.q"));
             },
             Qt::DirectConnection);
 
@@ -820,14 +888,14 @@ private slots:
         }
         QCOMPARE(Probe_.Count("completed:life"), 2 + 2);
         QCOMPARE(Probe_.Count("destroyed:life"), 2);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"q"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"b-two.q"}));
     }
 
     void ADestroyedLoaderTearsItsPanelsDownWithTheItemAlive() {
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", ItemPanel("v1")}}));
         QVERIFY(Boot());
-        QQuickItem* item = Loader_->CreatePanel("p");
+        QQuickItem* item = Loader_->CreatePanel("a-one.p");
         QVERIFY(item != nullptr);
         QPointer<QQuickItem> guard = item;
         QObject scope;
@@ -853,7 +921,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", REQUIRED_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* item = Loader_->CreatePanel("p");
+        QQuickItem* item = Loader_->CreatePanel("a-one.p");
         QVERIFY2(item != nullptr, "the required pluginId was not satisfied");
         QCOMPARE(item->property("pluginId").toString(), QString("a-one"));
         QCOMPARE(Probe_.Last.value("completed:required"), QString("a-one"));
@@ -864,7 +932,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", ItemPanel("v1")}}));
         QVERIFY(Boot());
-        QQuickItem* old = Loader_->CreatePanel("p");
+        QQuickItem* old = Loader_->CreatePanel("a-one.p");
         QVERIFY(old != nullptr);
         QCOMPARE(old->property("content").toString(), QString("v1"));
         Loader_->DestroyPanel(old);
@@ -883,53 +951,9 @@ private slots:
                              {{"p.qml", ItemPanel("v2")}}, "0.2.0");
         }));
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 2, TIMEOUT_MS * 2);
-        QQuickItem* fresh = Loader_->CreatePanel("p");
+        QQuickItem* fresh = Loader_->CreatePanel("a-one.p");
         QVERIFY(fresh != nullptr);
         QCOMPARE(fresh->property("content").toString(), QString("v2"));
-    }
-
-    void AnEarlierPluginWithABrokenPanelStillHoldsTheId() {
-        QVERIFY(AddPlugin("a-first", {Panel("dup", "missing.qml")}, {}));
-        QVERIFY(AddPlugin("b-second", {Panel("dup", "dup.qml")},
-                          {{"dup.qml", ItemPanel("second")}}));
-        ExpectWarnings(2);
-        QVERIFY(Boot());
-        QVERIFY(Loader_->PanelTypes().isEmpty());
-        QVERIFY(Loader_->CreatePanel("dup") == nullptr);
-        QCOMPARE(Loader_->Problems().size(), 2);
-        QCOMPARE(Loader_->Problems().at(0).Plugin, QString("a-first"));
-        QVERIFY2(Loader_->Problems().at(0).Message.contains("does not exist"),
-                 qPrintable(Loader_->Problems().at(0).Message));
-        QCOMPARE(Loader_->Problems().at(1).Plugin, QString("b-second"));
-        QVERIFY2(Loader_->Problems().at(1).Message.contains("a-first"),
-                 qPrintable(Loader_->Problems().at(1).Message));
-    }
-
-    void ALaterPluginGetsThePanelWhenTheEarlierOneStopsDeclaringTheId() {
-        QVERIFY(AddPlugin(
-            "a-first", {Panel("x", "x.qml"), Panel("dup", "dup.qml")},
-            {{"x.qml", ItemPanel("x")}, {"dup.qml", ItemPanel("first")}}));
-        QVERIFY(AddPlugin("b-second", {Panel("dup", "dup.qml")},
-                          {{"dup.qml", ItemPanel("second")}}));
-        ExpectWarnings(1);
-        QVERIFY(Boot());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"x", "dup"}));
-        QCOMPARE(Loader_->Problems().size(), 1);
-        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
-        QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
-
-        QVERIFY(RestartWith([&] {
-            return AddPlugin("a-first", {Panel("x", "x.qml")},
-                             {{"x.qml", ItemPanel("x")}});
-        }));
-        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
-        QVERIFY(Loader_->Problems().isEmpty());
-        QCOMPARE(problems.count(), 1);
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"x", "dup"}));
-        QQuickItem* item = Loader_->CreatePanel("dup");
-        QVERIFY(item != nullptr);
-        QCOMPARE(item->property("content").toString(), QString("second"));
-        QCOMPARE(item->property("pluginId").toString(), QString("b-second"));
     }
 
     void ProblemsChangedFiresOnTheFirstLoadAndWhenAReloadClearsThem() {
@@ -946,7 +970,7 @@ private slots:
         }));
         QTRY_COMPARE_WITH_TIMEOUT(problems.count(), 2, TIMEOUT_MS * 2);
         QVERIFY(Loader_->Problems().isEmpty());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
     }
 
     void InfoGivesTheDeclaredInputsAndOutputsOfACreatableType() {
@@ -959,17 +983,17 @@ private slots:
              {"plain.qml", PLAIN_PANEL},
              {"broken.qml", SYNTAX_ERROR_PANEL}}));
         QVERIFY(Boot());
-        const auto typed = Loader_->Info("typed");
+        const auto typed = Loader_->Info("a-one.typed");
         QVERIFY(typed.has_value());
         QCOMPARE(typed->Plugin, QString("a-one"));
         QCOMPARE(typed->Inputs, (QVariantMap{{"session", "SessionRef"}}));
         QCOMPARE(typed->Outputs, (QVariantMap{{"selected", "SessionRef"},
                                               {"count", "Number"}}));
-        const auto bare = Loader_->Info("bare");
+        const auto bare = Loader_->Info("a-one.bare");
         QVERIFY(bare.has_value());
         QVERIFY(bare->Inputs.isEmpty() && bare->Outputs.isEmpty());
         // A type that cannot be created, and one nobody declared.
-        QVERIFY(!Loader_->Info("broken").has_value());
+        QVERIFY(!Loader_->Info("a-one.broken").has_value());
         QVERIFY(!Loader_->Info("nothing").has_value());
         QVERIFY(Loader_->Problems().size() == 1);
     }
@@ -986,18 +1010,18 @@ private slots:
         QVERIFY(Boot());
         QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
 
-        QQuickItem* full = Loader_->CreatePanel("full");
+        QQuickItem* full = Loader_->CreatePanel("a-one.full");
         QVERIFY(full != nullptr);
         QVERIFY(Loader_->Problems().isEmpty());
         QVERIFY(problems.isEmpty());
 
-        QQuickItem* panel = Loader_->CreatePanel("short");
+        QQuickItem* panel = Loader_->CreatePanel("a-one.short");
         QVERIFY(panel != nullptr);
         QCOMPARE(Loader_->Problems().size(), 2);
         QStringList messages;
         for (const auto& problem : Loader_->Problems()) {
             QCOMPARE(problem.Plugin, QString("a-one"));
-            QCOMPARE(problem.Panel, QString("short"));
+            QCOMPARE(problem.Panel, QString("a-one.short"));
             messages.append(problem.Message);
         }
         messages.sort();
@@ -1008,11 +1032,11 @@ private slots:
                               "property of the root"}));
         QCOMPARE(problems.count(), 1);
         // The panel is usable and the type stays on offer.
-        QVERIFY(Loader_->PanelTypes().contains("short"));
-        QVERIFY(Loader_->Info("short").has_value());
+        QVERIFY(Loader_->PanelTypes().contains("a-one.short"));
+        QVERIFY(Loader_->Info("a-one.short").has_value());
 
         // A second instance reports the same thing once.
-        QVERIFY(Loader_->CreatePanel("short") != nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.short") != nullptr);
         QCOMPARE(Loader_->Problems().size(), 2);
         QCOMPARE(problems.count(), 1);
     }
@@ -1021,7 +1045,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", FAREWELL_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* panel = Loader_->CreatePanel("p");
+        QQuickItem* panel = Loader_->CreatePanel("a-one.p");
         QVERIFY(panel != nullptr);
         // The control: a call of the live panel reaches roostd.
         QVERIFY(QMetaObject::invokeMethod(panel, "save"));
@@ -1039,7 +1063,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("calls", "calls.qml")},
                           {{"calls.qml", CALLS_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* panel = Loader_->CreatePanel("calls");
+        QQuickItem* panel = Loader_->CreatePanel("a-one.calls");
         QVERIFY(panel != nullptr);
         QVERIFY(Invoke(panel, "run", "get", CallbackOf("panel")));
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("panel"), 1, TIMEOUT_MS);
@@ -1049,7 +1073,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("calls", "calls.qml")},
                           {{"calls.qml", CALLS_PANEL}}));
         QVERIFY(Boot());
-        QQuickItem* panel = Loader_->CreatePanel("calls");
+        QQuickItem* panel = Loader_->CreatePanel("a-one.calls");
         QVERIFY(panel != nullptr);
         QVERIFY(QMetaObject::invokeMethod(panel, "sub",
                                           Q_ARG(QVariant, CallbackOf("bus"))));
@@ -1071,8 +1095,8 @@ private slots:
             "0.1.0", QJsonObject{{"qmlImportPath", "qml"}}));
         QVERIFY(Boot());
         QVERIFY(Loader_->Problems().isEmpty());
-        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
-        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
+        QVERIFY(Loader_->CreatePanel("a-one.p") != nullptr);
         QCOMPARE(Probe_.Last.value("label"), QString("one"));
     }
 
@@ -1105,7 +1129,7 @@ Item {
         QCOMPARE(after.size(), before.size() + 1);
         QVERIFY(after.last().endsWith("/a-one/qml"));
         // And the panel gets the Roost of roost.
-        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.p") != nullptr);
         QCOMPARE(Probe_.Last.value("shadow"), QString("undefined"));
     }
 
@@ -1121,8 +1145,8 @@ Item {
             "0.1.0", native));
         QVERIFY(Boot());
         QVERIFY(Loader_->Problems().isEmpty());
-        QVERIFY(Loader_->CreatePanel("one") != nullptr);
-        QVERIFY(Loader_->CreatePanel("two") != nullptr);
+        QVERIFY(Loader_->CreatePanel("a-first.one") != nullptr);
+        QVERIFY(Loader_->CreatePanel("b-second.two") != nullptr);
         // Two plugins that ship one URI share the engine's one module, and
         // the plugin that comes first in the load order owns it.
         QCOMPARE(Probe_.Count("label"), 2);
@@ -1150,7 +1174,7 @@ Item {
             ExpectWarnings(1);
         }
         QVERIFY(Boot());
-        QCOMPARE(Loader_->PanelTypes().contains("p"), declaredBefore);
+        QCOMPARE(Loader_->PanelTypes().contains("a-one.p"), declaredBefore);
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
 
         QVERIFY(Daemon_->Stop());
@@ -1160,7 +1184,7 @@ Item {
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
 
         QVERIFY(Loader_->Problems().isEmpty());
-        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QVERIFY(Loader_->CreatePanel("a-one.p") != nullptr);
         QCOMPARE(Probe_.Last.value("label"), QString("new"));
         // Only the directory that is declared now is on the import path.
         // (the engine keeps them with symlinks resolved)
