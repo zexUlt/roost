@@ -154,6 +154,15 @@ target_compile_definitions(claude_adapter_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_dependencies(claude_adapter_test claude-adapter)
 
+# The commands of the Claude plugin: the adapter binary behind a fake `claude`,
+# and the manifest of the built plugin through the real roostd.
+roost_add_qt_test(claude_commands_test plugins/claude_commands_test.cpp roost_api)
+target_compile_definitions(claude_commands_test PRIVATE
+    CLAUDE_ADAPTER_PATH="$<TARGET_FILE:claude-adapter>"
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(claude_commands_test roostd claude-adapter)
+
 # The real roostd with the real Claude plugin, behind a fake `claude`.
 roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp roost_api)
 target_compile_definitions(claude_e2e_test PRIVATE

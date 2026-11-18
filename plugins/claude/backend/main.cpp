@@ -69,13 +69,23 @@ int main(int argc, char** argv) {
         "poll-ms", "Milliseconds between runs of claude agents.", "ms");
     const QCommandLineOption timeoutMs(
         "timeout-ms", "Milliseconds a run of claude agents may take.", "ms");
-    parser.addOptions({pollMs, timeoutMs});
+    const QCommandLineOption commandTimeoutMs(
+        "command-timeout-ms",
+        "Milliseconds any command (stop, rm, respawn) may take.", "ms");
+    parser.addOptions({pollMs, timeoutMs, commandTimeoutMs});
     parser.addHelpOption();
     parser.process(app);
     options.PollInterval =
         Milliseconds(parser.value(pollMs), options.PollInterval);
     options.PollTimeout =
         Milliseconds(parser.value(timeoutMs), options.PollTimeout);
+    // One value for every command: the defaults differ per command, a test
+    // wants a short one for all.
+    if (const std::chrono::milliseconds all = Milliseconds(
+            parser.value(commandTimeoutMs), std::chrono::milliseconds::zero());
+        all > std::chrono::milliseconds::zero()) {
+        options.Timeouts = {all, all, all, all};
+    }
 
     roost::claude::Adapter adapter(options, Send);
 

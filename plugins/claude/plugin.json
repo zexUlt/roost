@@ -4,6 +4,12 @@
   "api": "0",
   "backend": { "command": ["backend/claude-adapter"] },
   "contributes": {
-    "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }]
+    "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }],
+    "commands": [
+      { "id": "claude.stop", "title": "Stop Claude session" },
+      { "id": "claude.remove", "title": "Remove Claude session" },
+      { "id": "claude.respawn", "title": "Respawn Claude session" },
+      { "id": "claude.respawnAll", "title": "Respawn all Claude sessions" }
+    ]
   }
 }

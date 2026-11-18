@@ -22,7 +22,11 @@ plugins/claude/
     "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }],
     "panels": [{ "id": "claude.transcript", "qml": "qml/Transcript.qml",
                  "inputs": { "session": "SessionRef" }, "outputs": {} }],
-    "commands": [{ "id": "claude.newSession", "title": "New Claude session" }],
+    "commands": [{ "id": "claude.newSession", "title": "New Claude session" },
+                 { "id": "claude.stop", "title": "Stop Claude session" },
+                 { "id": "claude.remove", "title": "Remove Claude session" },
+                 { "id": "claude.respawn", "title": "Respawn Claude session" },
+                 { "id": "claude.respawnAll", "title": "Respawn all Claude sessions" }],
     "keybindings": [{ "command": "claude.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }],
     "settings": "qml/Settings.qml"
   }
