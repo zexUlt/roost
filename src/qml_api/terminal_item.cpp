@@ -316,7 +316,9 @@ void TerminalItem::handleKey(QKeyEvent* event, EKeyAction action) {
     if (!Session_) {
         return;
     }
-    if (IsCopyShortcut(event->key(), event->modifiers(), KeyOptions_)) {
+    const auto nativeKey = NativeKeyCode(*event, KeyOptions_.NativeKeys);
+    if (IsCopyShortcut(event->key(), event->modifiers(), nativeKey,
+                       KeyOptions_)) {
         // Taken even when there is nothing to copy, and never sent on: the
         // key release too, which the kitty protocol could report.
         if (action != EKeyAction::Release) {
@@ -329,7 +331,7 @@ void TerminalItem::handleKey(QKeyEvent* event, EKeyAction action) {
         return;
     }
     const auto key = MapQtKey(event->key(), event->modifiers(), event->text(),
-                              action, KeyOptions_);
+                              nativeKey, action, KeyOptions_);
     if (!key) {
         return;
     }

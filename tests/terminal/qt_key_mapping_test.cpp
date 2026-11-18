@@ -181,7 +181,7 @@ private slots:
         const auto event = MapQtKey(
             qtKey,
             Qt::KeyboardModifiers::fromInt(static_cast<unsigned>(qtMods)), text,
-            EKeyAction::Press, Options(platform));
+            std::nullopt, EKeyAction::Press, Options(platform));
         QVERIFY(event.has_value());
         QCOMPARE(static_cast<int>(event->Key), key);
         QCOMPARE(Bits(event->Mods), mods);
@@ -244,7 +244,7 @@ private slots:
         const auto event = MapQtKey(
             qtKey,
             Qt::KeyboardModifiers::fromInt(static_cast<unsigned>(qtMods)), text,
-            EKeyAction::Press, {});
+            std::nullopt, EKeyAction::Press, {});
         QVERIFY(event.has_value());
         const auto bytes = encoder->Encode(*event);
         QVERIFY(bytes.has_value());
@@ -268,12 +268,14 @@ private slots:
     void MapsToNothing() {
         QFETCH(int, qtKey);
         QFETCH(QString, text);
-        QVERIFY(!MapQtKey(qtKey, {}, text, EKeyAction::Press, {}).has_value());
+        QVERIFY(!MapQtKey(qtKey, {}, text, std::nullopt, EKeyAction::Press, {})
+                     .has_value());
     }
 
     void KeepsTheAction() {
         const auto action = [](EKeyAction wanted) {
-            return MapQtKey(Qt::Key_A, {}, "a", wanted, {})->Action;
+            return MapQtKey(Qt::Key_A, {}, "a", std::nullopt, wanted, {})
+                ->Action;
         };
         QCOMPARE(action(EKeyAction::Press), EKeyAction::Press);
         QCOMPARE(action(EKeyAction::Repeat), EKeyAction::Repeat);
@@ -282,8 +284,8 @@ private slots:
 
     void NumLockAndCapsLockAreNotInferred() {
         // Qt does not say, so the mapping never claims them.
-        const auto event =
-            MapQtKey(Qt::Key_5, Qt::KeypadModifier, "5", EKeyAction::Press, {});
+        const auto event = MapQtKey(Qt::Key_5, Qt::KeypadModifier, "5",
+                                    std::nullopt, EKeyAction::Press, {});
         QVERIFY(event.has_value());
         QVERIFY(!event->Mods.NumLock);
         QVERIFY(!event->Mods.CapsLock);

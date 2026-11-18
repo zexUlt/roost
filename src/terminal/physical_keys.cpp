@@ -44,14 +44,7 @@ constexpr std::array<NativeKey, 47> NATIVE_KEYS = {{
     {EKey::Z, 0x06, 52},
 }};
 
-// The US layout's character of a key that is not a letter, by Qt key.
-struct Symbol {
-    EKey Key;
-    int Unshifted;
-    int Shifted;
-};
-
-constexpr std::array<Symbol, 21> SYMBOLS = {{
+constexpr std::array<SymbolKey, 21> SYMBOLS = {{
     {EKey::Backquote, Qt::Key_QuoteLeft, Qt::Key_AsciiTilde},
     {EKey::Backslash, Qt::Key_Backslash, Qt::Key_Bar},
     {EKey::BracketLeft, Qt::Key_BracketLeft, Qt::Key_BraceLeft},
@@ -76,6 +69,8 @@ constexpr std::array<Symbol, 21> SYMBOLS = {{
 }};
 
 }  // namespace
+
+std::span<const SymbolKey> SymbolKeys() { return SYMBOLS; }
 
 EKey PhysicalKey(ENativeKeyCodes codes, std::optional<quint32> nativeKey) {
     if (codes == ENativeKeyCodes::None || !nativeKey) {
@@ -141,7 +136,7 @@ int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical) {
         return Qt::Key_A +
                (static_cast<int>(physical) - static_cast<int>(EKey::A));
     }
-    for (const Symbol& symbol : SYMBOLS) {
+    for (const SymbolKey& symbol : SYMBOLS) {
         if (symbol.Key == physical) {
             return modifiers.testFlag(Qt::ShiftModifier) ? symbol.Shifted
                                                          : symbol.Unshifted;

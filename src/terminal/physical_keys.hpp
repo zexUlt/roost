@@ -6,6 +6,7 @@
 #include <Qt>
 
 #include <optional>
+#include <span>
 
 namespace roost {
 
@@ -44,6 +45,19 @@ std::optional<quint32> NativeKeyCode(const QKeyEvent& event,
 // French é), a letter of the Common or Inherited script (µ of macOS Option+m),
 // a symbol and a special key are not.
 bool IsNonLatinLetter(int qtKey);
+
+// A key of the US main block that is not a letter: the 11 symbol keys and the
+// 10 digits, with the Qt key each types without and with Shift (Qt names a
+// shifted symbol by the symbol: Shift+1 is Qt::Key_Exclam).
+struct SymbolKey {
+    EKey Key;
+    int Unshifted;
+    int Shifted;
+};
+
+// The 21 symbol and digit keys, the one table of them: BindingKey and
+// MapQtKey read it.
+std::span<const SymbolKey> SymbolKeys();
 
 // The Qt key a binding matches: qtKey on a Latin layout, else the key the US
 // layout types at the physical position. A letter is the capital (Qt::Key_J
