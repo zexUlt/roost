@@ -179,6 +179,7 @@ void SessionsList::setSource(QAbstractItemModel* source) {
         });
         connect(source, &QAbstractItemModel::destroyed, this, [this] {
             ResetPending_ = true;
+            setSourceLoaded(false);
             scheduleSync();
         });
         connect(source, &QAbstractItemModel::rowsInserted, this,
@@ -412,14 +413,16 @@ bool SessionsList::reveal(const QVariant& ref) {
 
 void SessionsList::restore(const QVariantMap& document) {
     const QJsonObject doc = QJsonObject::fromVariantMap(document);
-    if (Ready_ && !ReadFailed_) {
-        const qsizetype echo = Echoes_.indexOf(doc);
-        if (echo >= 0) {
-            Echoes_.remove(0, echo + 1);
-            return;
-        }
+    if (Ready_ && !ReadFailed_ && Echo_ && *Echo_ == doc) {
+        Echo_.reset();
+        return;
     }
     changing([&] {
+        // A foreign document replaces the state, our unsent edits with it. A
+        // write of ours still in flight is later in the store than this
+        // document, so its echo is a foreign one too and is taken in.
+        Echo_.reset();
+        Dirty_ = false;
         bool save = State_.Restore(doc);
         ReadFailed_ = false;
         ReadProblem_.clear();
@@ -455,11 +458,11 @@ void SessionsList::saveFinished(const QString& error) {
     }
     changing([&] {
         InFlight_ = false;
+        Echo_.reset();
         if (!error.isEmpty()) {
-            // The write did not happen: nothing will come back from it.
-            if (!Echoes_.isEmpty()) {
-                Echoes_.removeLast();
-            }
+            // The write did not happen: nothing will come back from it, and
+            // the next edit or change of the source writes the state again.
+            Dirty_ = true;
             SaveProblem_ = error;
             return;
         }
@@ -480,6 +483,12 @@ void SessionsList::requestSave() {
     }
 }
 
+void SessionsList::retrySave() {
+    if (Dirty_ && !InFlight_ && Ready_ && !readOnly()) {
+        sendSave();
+    }
+}
+
 void SessionsList::sendSave() {
     const std::optional<QJsonObject> document = State_.ToDocument();
     if (!document || readOnly()) {
@@ -488,10 +497,7 @@ void SessionsList::sendSave() {
     }
     InFlight_ = true;
     Dirty_ = false;
-    Echoes_.append(*document);
-    if (Echoes_.size() > 8) {
-        Echoes_.removeFirst();
-    }
+    Echo_ = *document;
     emit saveRequested(document->toVariantMap());
 }
 
@@ -508,7 +514,10 @@ void SessionsList::scheduleSync() {
 void SessionsList::sync() {
     SyncQueued_ = false;
     if (Ready_) {
-        changing([this] { syncBody(); });
+        changing([this] {
+            syncBody();
+            retrySave();
+        });
     }
 }
 

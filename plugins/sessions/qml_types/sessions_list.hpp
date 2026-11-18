@@ -2,7 +2,6 @@
 
 #include <QAbstractListModel>
 #include <QJsonObject>
-#include <QList>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
@@ -168,6 +167,7 @@ private:
     void reconcileCursor(const std::vector<QString>& oldStops, bool reset);
     void setCursor(const QString& key);
     void requestSave();
+    void retrySave();
     void sendSave();
     std::vector<SessionEntry> readSource() const;
     // The category of a listed session, nullopt if it is not listed.
@@ -204,8 +204,10 @@ private:
 
     bool InFlight_ = false;
     bool Dirty_ = false;
-    // Documents written and not yet seen coming back from the store.
-    QList<QJsonObject> Echoes_;
+    // The document in flight, until its change event comes back or the answer
+    // does: roostd announces every successful write, equal or not, and does
+    // so before it answers, so no echo outlives its write.
+    std::optional<QJsonObject> Echo_;
 };
 
 }  // namespace roost::sessions

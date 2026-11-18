@@ -100,6 +100,21 @@ public:
         emit dataChanged(index(row), index(row));
     }
 
+    void MoveRow(int from, int to) {
+        beginMoveRows({}, from, from, {}, to > from ? to + 1 : to);
+        Item item = std::move(Items_[static_cast<std::size_t>(from)]);
+        Items_.erase(Items_.begin() + from);
+        Items_.insert(Items_.begin() + to, std::move(item));
+        endMoveRows();
+    }
+
+    // A sort of a proxy: the rows change places and only layoutChanged says so.
+    void Reverse() {
+        emit layoutAboutToBeChanged();
+        std::ranges::reverse(Items_);
+        emit layoutChanged();
+    }
+
     void ResetTo(std::vector<Item> items) {
         beginResetModel();
         Items_ = std::move(items);
@@ -311,6 +326,18 @@ private slots:
     void TheSourceRolesAreRoostSessionsRoles();
     void TheModuleLoadsFromThePluginDirectory();
     void RevealClearsTheQueryUnfoldsAndPutsTheCursorOnTheSession();
+    void NoEchoOutlivesItsWrite();
+    void AForeignDocumentInTheMiddleOfOurWriteEndsOnTheLastWriter();
+    void AForeignDocumentTakesTheViewAndTheOpenedSessionAlong();
+    void AFailedWriteIsWrittenAgainWithTheNextChangeOfTheSource();
+    void AFailedWriteLeavesNoEchoBehind();
+    void ADestroyedSourceEmptiesTheListAndUnloadsIt();
+    void TheOpenedSessionSetBeforeAFailedReadIsKept();
+    void ADocumentEqualToOurWriteEndsAFailedReread();
+    void ARemovedStopMovesTheCursorToTheStopThatTookItsPlace();
+    void AColourThatChangesIsAChangeOfTheRow();
+    void RowsShownAfterTheSourceIsLoadedWithNoOtherSignal();
+    void MovedAndRelaidSourceRowsChangeTheOrderInAGroup();
 };
 
 // test_fold_cursor.py:18
@@ -929,6 +956,270 @@ void SessionsListTest::
     QVERIFY(env.List.viewArchive());
     QCOMPARE(Cur(env.List), Key("b"));
     QVERIFY(!env.List.reveal(Ref("missing")));
+}
+
+// 06-panels.md, 3.6: roostd announces every successful write, equal or not,
+// before it answers (store_service.cpp:94-95); an echo belongs to its write.
+void SessionsListTest::NoEchoOutlivesItsWrite() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    const QVariantMap first = env.Saved.last();
+    env.List.restore(first);  // its echo
+    env.List.saveFinished({});
+    for (const QString& pin : {QString("alpha"), QString("work")}) {
+        env.List.togglePin(pin);
+        env.List.restore(env.Saved.last());
+        env.List.saveFinished({});
+    }
+    QCOMPARE(env.Saved.size(), 3);
+    QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
+
+    // Another window writes something else, then a document equal to our
+    // first write: that one is a write of its own and is taken in, however
+    // long ago we wrote it.
+    env.List.restore(Doc({{"a", "work"}, {"z", "alpha"}}, {}, {"alpha"}));
+    QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
+    env.List.restore(first);
+    QCOMPARE(Rows(env.List),
+             (QStringList{"header:work", Key("a"), "header:alpha", Key("z")}));
+}
+
+// restore(foreign), restore(echo of ours), saveFinished: roostd saw the
+// foreign write first and ours after it, so the store ends on ours and so does
+// the list; nothing is written back.
+void SessionsListTest::
+    AForeignDocumentInTheMiddleOfOurWriteEndsOnTheLastWriter() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    const QVariantMap ours = env.Saved.last();
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+
+    env.List.restore(Doc({{"a", "work"}, {"z", "alpha"}}, {}, {"alpha"}));
+    QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
+    env.List.restore(ours);
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+    env.List.saveFinished({});
+    Settle();
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+    QCOMPARE(env.Saved.size(), 1);
+}
+
+// 06-panels.md, [APPROVAL 3]: query, tab, archive, compact and opened are in
+// the shared document; the last whole-document writer wins, the view's state
+// with it (two list panels are M5).
+void SessionsListTest::AForeignDocumentTakesTheViewAndTheOpenedSessionAlong() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.List.setOpened(Ref("a"));
+    Settle();
+    QSignalSpy openedChanged(&env.List, &SessionsList::openedChanged);
+    QSignalSpy tabChanged(&env.List, &SessionsList::tabChanged);
+    QSignalSpy compactChanged(&env.List, &SessionsList::compactChanged);
+
+    QVariantMap other = Doc({{"a", "work"}, {"z", "alpha"}});
+    other["view"] = QVariantMap{{"query", ""},
+                                {"tab", "active"},
+                                {"compact", true},
+                                {"opened", Key("z")}};
+    env.List.restore(other);
+    Settle();
+    QCOMPARE(env.List.opened().toMap(), Ref("z"));
+    QCOMPARE(env.List.tab(), QString("active"));
+    QVERIFY(env.List.compact());
+    QCOMPARE(openedChanged.size(), 1);
+    QCOMPARE(tabChanged.size(), 1);
+    QCOMPARE(compactChanged.size(), 1);
+    QVERIFY(Role(env.List, env.List.rowOf(Ref("z")), "isOpen").toBool());
+}
+
+void SessionsListTest::
+    AFailedWriteIsWrittenAgainWithTheNextChangeOfTheSource() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    const QVariantMap failed = env.Saved.last();
+    env.List.saveFinished("disk full");
+    QCOMPARE(env.List.problem(), QString("disk full"));
+    Settle();
+    QCOMPARE(env.Saved.size(), 1);
+
+    // A change of the source that changes nothing of the document.
+    env.Source.SetState(0, "working");
+    Settle();
+    QCOMPARE(env.Saved.size(), 2);
+    QCOMPARE(env.Saved.last(), failed);
+    env.List.saveFinished({});
+    QVERIFY(env.List.problem().isEmpty());
+    // Done: nothing more is written.
+    env.Source.SetState(0, "working");
+    Settle();
+    QCOMPARE(env.Saved.size(), 2);
+
+    // An edit made while the write that failed was in flight goes out with the
+    // retry as well, once, in one document.
+    env.List.togglePin("alpha");
+    env.List.setQuery("a");
+    env.List.saveFinished("again");
+    QCOMPARE(env.Saved.size(), 3);
+    env.Source.SetState(0, "working");
+    Settle();
+    QCOMPARE(env.Saved.size(), 4);
+    QCOMPARE(env.Saved.last()["view"].toMap()["query"].toString(),
+             QString("a"));
+}
+
+void SessionsListTest::AFailedWriteLeavesNoEchoBehind() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    const QVariantMap failed = env.Saved.last();
+    env.List.setQuery("z");  // an edit while it was in flight
+    env.List.saveFinished("disk full");
+    QCOMPARE(env.Saved.size(), 1);
+    QCOMPARE(env.List.query(), QString("z"));
+
+    // Another window writes what we failed to: nothing of ours came back from
+    // it, so it is a write of its own and is taken in.
+    env.List.restore(failed);
+    QCOMPARE(env.List.query(), QString());
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+}
+
+void SessionsListTest::ADestroyedSourceEmptiesTheListAndUnloadsIt() {
+    Env env;
+    env.Open({});
+    auto* source = new FakeSource;
+    source->ResetTo({{"a"}, {"b"}});
+    env.List.setSource(source);
+    env.List.setSourceLoaded(true);
+    Settle();
+    QCOMPARE(env.List.rowCount(), 3);
+    QSignalSpy loaded(&env.List, &SessionsList::sourceLoadedChanged);
+
+    delete source;
+    Settle();
+    QCOMPARE(env.List.rowCount(), 0);
+    QCOMPARE(env.List.cursorRow(), -1);
+    QVERIFY(!env.List.sourceLoaded());
+    QCOMPARE(loaded.size(), 1);
+
+    // A new source is taken once it says it is loaded.
+    env.Source.ResetTo({{"c"}});
+    env.List.setSource(&env.Source);
+    Settle();
+    QCOMPARE(env.List.rowCount(), 0);
+    env.List.setSourceLoaded(true);
+    Settle();
+    QCOMPARE(Rows(env.List), (QStringList{"header:", Key("c")}));
+}
+
+void SessionsListTest::TheOpenedSessionSetBeforeAFailedReadIsKept() {
+    Env env;
+    env.Source.ResetTo({{"a"}, {"b"}});
+    env.List.setSource(&env.Source);
+    env.List.setSourceLoaded(true);
+    env.List.setOpened(Ref("b"));
+    env.List.readFailed("store: -32004");
+    Settle();
+    QCOMPARE(env.List.opened().toMap(), Ref("b"));
+    QVERIFY(Role(env.List, env.List.rowOf(Ref("b")), "isOpen").toBool());
+    QVERIFY(env.Saved.isEmpty());
+}
+
+// A read fails after we wrote; the good document that follows is equal to
+// what we wrote. It is no echo: it ends the read-only state.
+void SessionsListTest::ADocumentEqualToOurWriteEndsAFailedReread() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    const QVariantMap ours = env.Saved.last();
+    env.List.readFailed("store: -32004");
+    QVERIFY(env.List.readOnly());
+    env.List.restore(ours);
+    QVERIFY(!env.List.readOnly());
+    QVERIFY(env.List.problem().isEmpty());
+}
+
+void SessionsListTest::ARemovedStopMovesTheCursorToTheStopThatTookItsPlace() {
+    // A session in the middle: the next one, not the last.
+    {
+        Env env;
+        env.Open({{"a"}, {"b"}, {"c"}, {"d"}});
+        env.CursorTo(Key("b"));
+        env.Source.Remove(1);
+        Settle();
+        QCOMPARE(Cur(env.List), Key("c"));
+    }
+    // A folded header whose category is gone: the stop after it.
+    {
+        Env env;
+        env.Open({{"a"}, {"b"}, {"c"}, {"d"}, {"e"}},
+                 Doc({{"a", "work"}, {"b", "work"}, {"c", "alpha"}}, {"work"}));
+        QCOMPARE(Rows(env.List),
+                 (QStringList{"header:alpha", Key("c"), "header:work",
+                              "header:", Key("d"), Key("e")}));
+        env.CursorTo("header:work");
+        env.Source.Remove(1);
+        env.Source.Remove(0);
+        Settle();
+        QCOMPARE(Cur(env.List), Key("d"));
+    }
+}
+
+void SessionsListTest::AColourThatChangesIsAChangeOfTheRow() {
+    Env env;
+    QVariantMap first = Doc({{"a", "work"}, {"z", "alpha"}});
+    first["colors"] = QVariantMap{{"work", 1}, {"alpha", 2}};
+    env.Open({{"a"}, {"z"}}, first);
+    const int work = env.List.rowOf(Ref("a")) - 1;
+    QCOMPARE(Role(env.List, work, "colorIndex").toInt(), 1);
+
+    QSignalSpy changed(&env.List, &QAbstractItemModel::dataChanged);
+    QSignalSpy reset(&env.List, &QAbstractItemModel::modelReset);
+    QVariantMap second = first;
+    second["colors"] = QVariantMap{{"work", 5}, {"alpha", 2}};
+    env.List.restore(second);
+    Settle();
+    QCOMPARE(Role(env.List, work, "colorIndex").toInt(), 5);
+    QCOMPARE(reset.size(), 0);
+    QVERIFY(!changed.isEmpty());
+    bool announced = false;
+    for (const QList<QVariant>& call : changed) {
+        const QList<int> roles = call.at(2).value<QList<int>>();
+        announced |= roles.contains(RoleOf(env.List, "colorIndex"));
+    }
+    QVERIFY(announced);
+}
+
+// The rows of a source that is not loaded wait; the flag alone releases them.
+void SessionsListTest::RowsShownAfterTheSourceIsLoadedWithNoOtherSignal() {
+    Env env;
+    env.Open({});
+    env.Reset({{"a"}, {"b"}}, false);
+    QCOMPARE(env.List.rowCount(), 0);
+    env.List.setSourceLoaded(true);
+    Settle();
+    QCOMPARE(Rows(env.List), (QStringList{"header:", Key("a"), Key("b")}));
+}
+
+void SessionsListTest::MovedAndRelaidSourceRowsChangeTheOrderInAGroup() {
+    Env env;
+    env.Open({{"a"}, {"b"}, {"c"}});
+    env.Source.MoveRow(2, 0);
+    Settle();
+    QCOMPARE(Rows(env.List),
+             (QStringList{"header:", Key("c"), Key("a"), Key("b")}));
+    env.Source.Reverse();
+    Settle();
+    QCOMPARE(Rows(env.List),
+             (QStringList{"header:", Key("b"), Key("a"), Key("c")}));
 }
 
 QTEST_MAIN(SessionsListTest)
