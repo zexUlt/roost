@@ -149,6 +149,15 @@ private:
         QVERIFY(sent.result());
     }
 
+    // Has the backend of the plugin exit, as a crash.
+    void Crash(const QString& pluginId) {
+        const QFuture<rpc::Result> crashed =
+            Host_->BackendOf(pluginId)->Request(
+                "commands.run", QJsonObject{{"command", "fixture.crash"}});
+        QVERIFY(WaitFor(crashed));
+        QVERIFY(!crashed.result());
+    }
+
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<Server> Server_;
     std::unique_ptr<PluginHost> Host_;
@@ -774,6 +783,130 @@ private slots:
                 {"name", "session.removed"},
                 {"payload", QJsonObject{{"agent", "claude"}, {"id", "s1"}}},
             }));
+    }
+
+    void ARestartIsAnnouncedAfterWhatTheOldBackendSaid() {
+        AddPlugin("one", {"claude", "codex"});
+        AddPlugin("two", {"gemini"});
+        QVERIFY(Start());
+        QList<QJsonValue> events;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue& payload) {
+                events.append(
+                    QJsonObject{{"name", name}, {"payload", payload}});
+            }));
+        Notify("one",
+               {Notification("session.stateChanged",
+                             QJsonObject{{"agent", "claude"},
+                                         {"session", Session("s1", "done")}})});
+        Crash("one");
+        QTRY_COMPARE_WITH_TIMEOUT(events.size(), 2, TIMEOUT_MS);
+        // Nothing more follows.
+        QTest::qWait(100);
+        QCOMPARE(events.size(), 2);
+        QCOMPARE(events[0].toObject().value("name"),
+                 QJsonValue("session.stateChanged"));
+        QCOMPARE(events[1],
+                 QJsonValue(QJsonObject{
+                     {"name", "session.adapterStarted"},
+                     {"payload",
+                      QJsonObject{{"plugin", "one"},
+                                  {"agents", QJsonArray{"claude", "codex"}}}},
+                 }));
+    }
+
+    void ARestartAfterAFailedFirstLaunchIsAnnounced() {
+        AddPlugin("one", {"claude"});
+        // The command does not exist yet: the first launch fails to start.
+        QVERIFY(QFile::remove(PluginsPath() + "/one/backend"));
+        Server server;
+        PluginHost host(server, Fast());
+        QList<QJsonValue> events;
+        QVERIFY(server.Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue& payload) {
+                events.append(
+                    QJsonObject{{"name", name}, {"payload", payload}});
+            }));
+        int failures = 0;
+        QVERIFY(server.Bus().Subscribe(
+            "plugin.backendCrashed", [&](const QString&, const QJsonValue&) {
+                // The retry finds the backend.
+                if (failures++ == 0) {
+                    QVERIFY(QFile::link(FIXTURE_BACKEND_PATH,
+                                        PluginsPath() + "/one/backend"));
+                }
+            }));
+        host.Load({PluginsPath()});
+        QTRY_COMPARE_WITH_TIMEOUT(events.size(), 1, TIMEOUT_MS);
+        // Nothing more follows.
+        QTest::qWait(100);
+        QCOMPARE(failures, 1);
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events[0],
+                 QJsonValue(QJsonObject{
+                     {"name", "session.adapterStarted"},
+                     {"payload", QJsonObject{{"plugin", "one"},
+                                             {"agents", QJsonArray{"claude"}}}},
+                 }));
+    }
+
+    void AnnouncedAgentsAreTheOnesThePluginOwnsEachOnce() {
+        AddPlugin("one", {"claude"});
+        // claude was lost to "one"; codex is declared twice.
+        AddPlugin("two", {"claude", "codex", "codex"});
+        QVERIFY(Start());
+        QList<QJsonValue> announced;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.adapterStarted",
+            [&](const QString&, const QJsonValue& payload) {
+                announced.append(payload);
+            }));
+        Crash("two");
+        QTRY_COMPARE_WITH_TIMEOUT(announced.size(), 1, TIMEOUT_MS);
+        QTest::qWait(100);
+        QCOMPARE(announced.size(), 1);
+        QCOMPARE(announced[0],
+                 QJsonValue(QJsonObject{{"plugin", "two"},
+                                        {"agents", QJsonArray{"codex"}}}));
+    }
+
+    void TheAnnouncedAdapterAnswersTheList() {
+        AddPlugin("one", {"claude"});
+        SetAnswers("one", {{"agent.listSessions",
+                            QJsonObject{{"claude", Result(QJsonArray{Session(
+                                                       "s1", "working")})}}}});
+        QVERIFY(Start());
+        QList<QFuture<AdapterBridge::Answer<std::vector<AgentSession>>>> listed;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.adapterStarted", [&](const QString&, const QJsonValue&) {
+                listed.append(Host_->BridgeOf("claude")->ListSessions());
+            }));
+        Crash("one");
+        QTRY_COMPARE_WITH_TIMEOUT(listed.size(), 1, TIMEOUT_MS);
+        QVERIFY(WaitFor(listed[0]));
+        const auto answer = listed[0].result();
+        QVERIFY2(answer, qPrintable(Why(answer)));
+        QCOMPARE(answer->size(), size_t{1});
+        QCOMPARE(answer->front().Id, QString("s1"));
+    }
+
+    void TheFirstStartIsNotAnnounced() {
+        AddPlugin("one", {"claude"});
+        Server server;
+        PluginHost host(server, Fast());
+        QList<QString> events;
+        QVERIFY(server.Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue&) {
+                events.append(name);
+            }));
+        host.Load({PluginsPath()});
+        // The backend runs and answers; it was started once.
+        const QFuture<rpc::Result> answered = host.BackendOf("one")->Request(
+            "commands.run", QJsonObject{{"command", "fixture.pid"}});
+        QVERIFY(WaitFor(answered));
+        QVERIFY(answered.result());
+        QTest::qWait(50);
+        QVERIFY2(events.isEmpty(), qPrintable(events.join(", ")));
     }
 
     void AHangingAdapterHoldsTheListUntilItsBackendStops() {

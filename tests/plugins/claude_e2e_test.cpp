@@ -32,6 +32,7 @@
 #include <memory>
 #include <utility>
 
+#include "api/api.hpp"
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
 #include "core/vt_terminal.hpp"
@@ -71,7 +72,10 @@ constexpr const char* EXPECTED_SESSIONS = R"json([
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 case "$1" in
-agents) cat "$dir/agents.json" ;;
+agents)
+  echo $PPID > "$dir/adapter.pid"
+  cat "$dir/agents.json"
+  ;;
 attach)
   echo "$2" >> "$dir/calls"
   exec "$dir/fake_tui"
@@ -237,8 +241,28 @@ private:
         return ids;
     }
 
+    // The pid of the adapter, as the last run of the fake claude wrote it.
+    qint64 AdapterPid() const {
+        QFile file(Dir_->filePath("bin/adapter.pid"));
+        return file.open(QIODevice::ReadOnly)
+                   ? file.readAll().trimmed().toLongLong()
+                   : 0;
+    }
+
+    // Replaces agents.json whole, so that no run reads half of it.
+    bool WriteAgents(const QJsonArray& agents) const {
+        QSaveFile file(Dir_->filePath("bin/agents.json"));
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(
+                   QJsonDocument(agents).toJson(QJsonDocument::Compact)) > 0 &&
+               file.commit();
+    }
+
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
+    // An adapter the test has stopped; it must not outlive the test.
+    qint64 StoppedAdapter_ = 0;
+    std::unique_ptr<api::Api> Api_;
     std::unique_ptr<Window> Window_;
 
 private slots:
@@ -249,6 +273,13 @@ private slots:
     }
 
     void cleanup() {
+        if (StoppedAdapter_ > 0) {
+            // A stopped process takes no SIGTERM.
+            ::kill(static_cast<pid_t>(StoppedAdapter_), SIGCONT);
+            ::kill(static_cast<pid_t>(StoppedAdapter_), SIGKILL);
+            StoppedAdapter_ = 0;
+        }
+        Api_.reset();
         Window_.reset();
         if (Daemon_ && Daemon_->state() != QProcess::NotRunning) {
             QCOMPARE(::kill(static_cast<pid_t>(Daemon_->processId()), SIGTERM),
@@ -346,6 +377,54 @@ private slots:
         const rpc::Result after = Window_->Call("sessions.list", QJsonObject{});
         QVERIFY2(after, qPrintable(Why(after)));
         QCOMPARE(after->toObject().value("sessions").toArray().size(), 3);
+    }
+
+    // What the adapter did while it was down is told by no event: the window
+    // lists the sessions again when roostd announces the restart.
+    void ASessionRemovedWhileTheAdapterIsDownLeavesTheWindow() {
+        QVERIFY(WriteFakeClaude());
+        QVERIFY(Launch(true));
+        Api_ = std::make_unique<api::Api>();
+        QSignalSpy connected(Api_.get(), &api::Api::Connected);
+        Api_->Connect(SocketPath());
+        QVERIFY(connected.wait(TIMEOUT_MS));
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().IsLoaded(), TIMEOUT_MS);
+        QCOMPARE(Api_->Sessions().Rows().size(), 4);
+        const qint64 adapter = AdapterPid();
+        QVERIFY(adapter > 1);
+
+        // The adapter is stopped before claude changes, so it sees none of it.
+        StoppedAdapter_ = adapter;
+        QCOMPARE(::kill(static_cast<pid_t>(adapter), SIGSTOP), 0);
+        const QString gone = "bg-2c3d4e5f";
+        const QString changed = "bg-1b2c3d4e";
+        QJsonArray left;
+        QFile source(Dir_->filePath("bin/agents.json"));
+        QVERIFY(source.open(QIODevice::ReadOnly));
+        for (const QJsonValue& entry :
+             QJsonDocument::fromJson(source.readAll()).array()) {
+            QJsonObject agent = entry.toObject();
+            if (agent.value("id").toString() == gone) {
+                continue;
+            }
+            if (agent.value("id").toString() == changed) {
+                agent.insert("state", "done");
+            }
+            left.append(agent);
+        }
+        source.close();
+        QVERIFY(WriteAgents(left));
+        // roostd starts the adapter again.
+        QCOMPARE(::kill(static_cast<pid_t>(adapter), SIGKILL), 0);
+        StoppedAdapter_ = 0;
+
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().IndexOf("claude", gone), -1,
+                                  TIMEOUT_MS);
+        QCOMPARE(Api_->Sessions().Rows().size(), 3);
+        const int index = Api_->Sessions().IndexOf("claude", changed);
+        QVERIFY(index >= 0);
+        QCOMPARE(Api_->Sessions().Rows()[index].value("state"),
+                 QJsonValue("done"));
     }
 
     void ListsTheSessionsOfTheRealClaude() {

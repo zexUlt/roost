@@ -232,6 +232,20 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Run("fixture.echo").has_value(), TIMEOUT_MS);
     }
 
+    void ARestartOfABackendWithoutAgentsIsNotAnnounced() {
+        AddPlugin("fixture", {"fixture.crash", "fixture.echo"});
+        QVERIFY(Start());
+        QList<QString> events;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue&) {
+                events.append(name);
+            }));
+        QCOMPARE(CodeOf(Run("fixture.crash")), UNAVAILABLE);
+        QTRY_VERIFY_WITH_TIMEOUT(Run("fixture.echo").has_value(), TIMEOUT_MS);
+        QTest::qWait(50);
+        QVERIFY2(events.isEmpty(), qPrintable(events.join(", ")));
+    }
+
     void GivingUpIsPublished() {
         AddPlugin("fixture", {"fixture.echo"}, {"--crash-on-start"});
         BackendOptions options = Fast();

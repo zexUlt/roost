@@ -309,6 +309,49 @@ private slots:
         QCOMPARE(changed[1][0].toInt(), index);
     }
 
+    // What the adapter did while it was down is told by no event: the restart
+    // is announced, and the window lists again.
+    void ARestartedAdapterIsListedAnew() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        QVERIFY(Api_->Sessions().IndexOf(AGENT, "s1") >= 0);
+        QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
+        QVERIFY(SetAnswers(Answers({Row("s2", "done")})));
+        const QFuture<rpc::Result> crashed =
+            Api_->Commands().Run("fixture.crash");
+        QVERIFY(WaitFor(crashed));
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().IndexOf(AGENT, "s1"), -1,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().IndexOf(AGENT, "s2") >= 0,
+                                 TIMEOUT_MS);
+        const int index = Api_->Sessions().IndexOf(AGENT, "s2");
+        QCOMPARE(Api_->Sessions().Rows()[index], Row("s2", "done"));
+        QCOMPARE(Api_->Sessions().Rows().size(), 1);
+        QCOMPARE(reset.size(), 1);
+    }
+
+    // The event of the old process that a list is out for is older than the
+    // restart: the list that follows the restart is the one to trust.
+    void EventsKeptBeforeARestartAreNotReplayed() {
+        QVERIFY(StartDaemonWithASlowAgent());
+        QVERIFY(ConnectApi());
+        QVERIFY(SetSlowListing(3000));
+        QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
+        QSignalSpy inserted(&Api_->Sessions(),
+                            &api::SessionService::RowInserted);
+        // A, which waits for the slow agent.
+        const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
+        QVERIFY(Notify({StateChanged(Row("s3", "working"))}));
+        QTRY_COMPARE_WITH_TIMEOUT(inserted.size(), 1, TIMEOUT_MS);
+        QVERIFY(!refreshed.isFinished());
+        // The restart asks B while A is out.
+        const QFuture<rpc::Result> crashed =
+            Api_->Commands().Run("fixture.crash");
+        QVERIFY(WaitFor(crashed));
+        QTRY_COMPARE_WITH_TIMEOUT(reset.size(), 2, TIMEOUT_MS);
+        QCOMPARE(Api_->Sessions().IndexOf(AGENT, "s3"), -1);
+    }
+
     // The answer still lists s1, which the fast agent has said is gone.
     void ARemovalDuringARefreshSurvivesAnOlderAnswer() {
         QVERIFY(StartDaemonWithASlowAgent());

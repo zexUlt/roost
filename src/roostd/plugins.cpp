@@ -5,6 +5,9 @@
 #include <QList>
 #include <QPointer>
 
+#include <memory>
+#include <utility>
+
 #include "core/protocol.hpp"
 #include "roostd/server.hpp"
 
@@ -308,6 +311,40 @@ void PluginHost::StartBackend(const PluginManifest& plugin) {
             [this, id](const QString& method, const QJsonValue& params) {
                 OnNotified(id, method, params);
             });
+    // The agents of the plugin, by the rule of Load(): a restarted adapter does
+    // not tell what changed while it was down, so the window is told of the
+    // restart and lists the sessions of these agents again.
+    QJsonArray agents;
+    QStringList seen;
+    for (const PluginAgent& agent : plugin.Agents) {
+        if (Registry_.AgentOwner(agent.Id) == &plugin &&
+            !seen.contains(agent.Id)) {
+            seen.append(agent.Id);
+            agents.append(agent.Id);
+        }
+    }
+    if (!agents.isEmpty()) {
+        // A start that follows a stop is a restart, whether the process ran
+        // before or failed to start (then QProcess::started never fired for
+        // it). The very first successful start, with nothing before it, is not.
+        const auto stopped = std::make_shared<bool>(false);
+        connect(backend.get(), &Backend::Crashed, this,
+                [stopped](const QString&, qint64) { *stopped = true; });
+        connect(backend.get(), &Backend::Started, this,
+                [this, id, agents, stopped]() {
+                    if (!std::exchange(*stopped, false)) {
+                        return;
+                    }
+                    qInfo("roostd: the backend of %s is running again",
+                          qUtf8Printable(id));
+                    Server_.Bus().Publish(
+                        QStringLiteral("session.adapterStarted"),
+                        QJsonObject{
+                            {QStringLiteral("plugin"), id},
+                            {QStringLiteral("agents"), agents},
+                        });
+                });
+    }
     backend->Start();
     Backends_.emplace(id, std::move(backend));
 }
