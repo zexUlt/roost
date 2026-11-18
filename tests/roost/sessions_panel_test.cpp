@@ -68,6 +68,22 @@ const QStringList ORDER = {ALPHA, BETA, GAMMA, DELTA};
 const QRegularExpression ANSWERED_ONCE(
     QStringLiteral(R"(answers da1=1 cpr=1(?!\d))"));
 
+// What row 5 of the TUI shows once "world" has arrived, whatever the split. No
+// 'e', 'q' or 'x': fake_tui takes them for commands when one arrives in a read
+// of its own.
+const QRegularExpression TYPED_WORLD(
+    QStringLiteral(R"(input (?:d|ld|rld|orld|world) total=5(?!\d))"));
+
+// The modifier Qt delivers for the physical Control key, written out per
+// platform on purpose: deriving it from the options under test would pass
+// whatever they said. On macOS Qt names the Command key Control and the
+// Control key Meta.
+#ifdef Q_OS_MACOS
+constexpr Qt::KeyboardModifier CONTROL_KEY = Qt::MetaModifier;
+#else
+constexpr Qt::KeyboardModifier CONTROL_KEY = Qt::ControlModifier;
+#endif
+
 // A fake `claude`, steered by the files next to it: agents.json is what
 // `agents` prints, and `attach <id>` runs fake_tui, which shows the id as its
 // greeting. In the root directory, so that the greeting shares its row with a
@@ -384,6 +400,12 @@ private:
         Settle();
     }
 
+    // Ctrl+\ from the terminal; waits until the list has the keyboard.
+    void BackToList() {
+        Press(Qt::Key_Backslash, CONTROL_KEY);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
     QStringList Problems() {
         return Root()->property("problems").toStringList();
     }
@@ -508,6 +530,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(BETA)),
                                  TIMEOUT_MS);
+        BackToList();
 
         // Enter of the keypad does the same, for the row above.
         Press(Qt::Key_Up);
@@ -547,6 +570,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        BackToList();
         Watch();
         QSignalSpy changed(PanelOf(LIST), SIGNAL(selectedChanged()));
 
@@ -620,6 +644,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        BackToList();
 
         QVERIFY(ListWithout(ORDER));
 
@@ -652,6 +677,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        BackToList();
         Press(Qt::Key_Down);
         Press(Qt::Key_Down);
         QCOMPARE(CursorId(), DELTA);
@@ -683,6 +709,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        BackToList();
         Press(Qt::Key_Down);
         QCOMPARE(CursorId(), GAMMA);
 
@@ -746,6 +773,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        BackToList();
         Press(Qt::Key_Down);
         QCOMPARE(CursorId(), GAMMA);
 
@@ -887,6 +915,109 @@ private slots:
             PanelOf(LIST)->findChild<QQuickItem*>("sessionsUnavailable");
         QVERIFY(unavailable->isVisible());
         QVERIFY(ListView()->y() + ListView()->height() <= unavailable->y());
+    }
+
+    void ReturnMovesTheKeyboardToTheTerminalAndTheKeysReachTheTui() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(ListView()->hasActiveFocus());
+
+        Press(Qt::Key_Down);
+        Press(Qt::Key_Return);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(!ListView()->hasActiveFocus());
+        Settle();
+        for (const char key : {'w', 'o', 'r', 'l', 'd'}) {
+            QTest::keyClick(Window(), key);
+            // Each key in a read of its own: the split a slow runner makes.
+            QTest::qWait(50);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(TYPED_WORLD), TIMEOUT_MS);
+        // The typed letters did not move the list.
+        QCOMPARE(Cursor(), 1);
+    }
+
+    void ControlBackslashMovesTheKeyboardToTheListAndSendsNoByteToTheTui() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+        QTest::keyClick(Window(), 'w');
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains("input w total=1"),
+                                 TIMEOUT_MS);
+
+        Press(Qt::Key_Backslash, CONTROL_KEY);
+
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(!Terminal()->hasActiveFocus());
+        QCOMPARE(Cursor(), 1);
+        QCOMPARE(SelectedId(), BETA);
+        // The byte 0x1c did not reach the TUI: its last input is still "w".
+        QTest::qWait(300);
+        const QString screen = ScreenNow();
+        QVERIFY2(screen.contains("input w total=1"), qPrintable(screen));
+        QVERIFY2(!screen.contains("x1c"), qPrintable(screen));
+        // The keys go to the list now.
+        Press(Qt::Key_Down);
+        QCOMPARE(Cursor(), 2);
+    }
+
+    void ReturnOnTheOpenRowAfterControlBackslashRefocusesTheTerminalOnly() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_Backslash, CONTROL_KEY);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+        Watch();
+        QSignalSpy changed(PanelOf(LIST), SIGNAL(selectedChanged()));
+
+        Press(Qt::Key_Return);
+
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(!ListView()->hasActiveFocus());
+        QTest::qWait(300);
+        QCOMPARE(changed.count(), 0);
+        QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
+        QCOMPARE(SelectedId(), BETA);
+        QCOMPARE(Status(), QString("open"));
+    }
+
+    void ControlBackslashInTheListKeepsTheKeyboardInTheList() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_Down);
+        QVERIFY(ListView()->hasActiveFocus());
+
+        // After each press: a toggle is back in the list after the second.
+        for (int i = 0; i < 2; ++i) {
+            Press(Qt::Key_Backslash, CONTROL_KEY);
+            QTest::qWait(100);
+            QVERIFY(ListView()->hasActiveFocus());
+            QVERIFY(!Terminal()->hasActiveFocus());
+        }
+        QCOMPARE(Cursor(), 1);
+        QCOMPARE(Status(), QString("none"));
+        QVERIFY(SelectedId().isEmpty());
     }
 
     // The build holds copies of the plugin's files (configure_file); a copy

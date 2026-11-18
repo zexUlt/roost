@@ -43,8 +43,9 @@ roostd reads manifests at start.
 
 The window shows the session list on the left and the terminal on the right.
 The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
-In the list, ↑/↓ or `j`/`k` move the cursor and Enter opens the session in the
-terminal.
+In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and moves
+the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS) moves it
+back to the list.
 
 ## License
 

@@ -130,4 +130,24 @@ Window {
         value: listSlot.panel && listSlot.linkOutput !== "" ? (listSlot.panel[listSlot.linkOutput] ?? null) : null
         when: terminalSlot.panel !== null && listSlot.panel !== null && terminalSlot.linkInput !== "" && listSlot.linkOutput !== ""
     }
+
+    // The list panel's optional signal `activated()`: the user chose a row, so
+    // the keyboard goes to the terminal. A list panel without it is fine.
+    Connections {
+        target: listSlot.panel
+        ignoreUnknownSignals: true
+
+        function onActivated() {
+            terminalSlot.forceActiveFocus();
+        }
+    }
+
+    // Ctrl+\ (the physical Control key; Qt's Ctrl is Command on macOS) moves
+    // the keyboard to the list from anywhere, the terminal included. Not a
+    // toggle: in the list it does nothing.
+    Shortcut {
+        context: Qt.WindowShortcut
+        sequence: Qt.platform.os === "osx" ? "Meta+\\" : "Ctrl+\\"
+        onActivated: listSlot.forceActiveFocus()
+    }
 }
