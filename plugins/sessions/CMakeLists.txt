@@ -11,6 +11,7 @@ configure_file(qml/SessionsPanel.qml
 # thing. Position independent: the QML module of a later step links it.
 add_library(sessions_list_lib STATIC
     model/session_rows.cpp
+    model/list_state.cpp
 )
 target_include_directories(sessions_list_lib PUBLIC ${PROJECT_SOURCE_DIR}/plugins)
 target_link_libraries(sessions_list_lib PUBLIC Qt6::Core)
