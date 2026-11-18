@@ -31,9 +31,10 @@ namespace roost {
 //
 // The session also owns the one VtRenderState of its terminal: beginning an
 // update consumes the terminal's dirty state, so a second state would miss
-// the changes the first took. Exactly one thread renders a session. Several
-// panes on one session must share its single dirty state, which a later
-// milestone handles.
+// the changes the first took. Exactly one thread renders a session, and
+// WarmTerminals lets only one pane show a session at a time; several panes on
+// one session must share its single dirty state, which a later milestone
+// handles.
 //
 // Threads: the IO thread writes under the lock; the GUI thread takes it
 // briefly to sync; the render thread begins an update under the lock, drops

@@ -1,8 +1,9 @@
-// SessionPane against the real roostd with two fixture plugins, whose agents
-// "fast-agent" and "slow-agent" attach to fake_tui (the slow one answers
-// agent.attachCommand late): what the pane shows and which status it reports
-// for an open, a quick switch, the end of the session, a refused open, a
-// null, a burst of sizes and a lost connection.
+// SessionPane over WarmTerminals against the real roostd with two fixture
+// plugins, whose agents "fast-agent" and "slow-agent" attach to fake_tui (the
+// slow one answers agent.attachCommand late): what the pane shows and which
+// status it reports for an open, a quick switch, the end of the session, a
+// refused open, a null, a burst of sizes and a lost connection. What the pool
+// keeps warm and drops is in warm_terminals_test.cpp.
 
 #include <QCoreApplication>
 #include <QDir>
@@ -10,27 +11,25 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QLocalServer>
-#include <QLocalSocket>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTest>
-#include <QtEndian>
 
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <utility>
 #include <vector>
 
-#include "core/frame.hpp"
 #include "helpers/channels_left.hpp"
+#include "helpers/counting_proxy.hpp"
 #include "helpers/roostd_process.hpp"
 #include "terminal/io_thread.hpp"
 #include "terminal/session_pane.hpp"
+#include "terminal/warm_terminals.hpp"
 
 using namespace roost;
 using roost::testing::ChannelsLeft;
+using roost::testing::CountingProxy;
 using roost::testing::RoostdProcess;
 
 namespace {
@@ -67,77 +66,6 @@ QString SizeLine(int columns, int rows) {
 QString Greeting(const QString& plugin) {
     return QStringLiteral("greeting=%1-%2").arg(plugin, SESSION_ID);
 }
-
-// A socket between the IO thread and roostd that passes the bytes through and
-// counts what the client sends: session.resize requests and input frames.
-// Runs in the thread that makes it.
-class CountingProxy : public QObject {
-public:
-    CountingProxy(QString listenPath, QString upstreamPath)
-        : Listen_(std::move(listenPath)), Upstream_(std::move(upstreamPath)) {
-        connect(&Server_, &QLocalServer::newConnection, this,
-                &CountingProxy::Accept);
-    }
-
-    bool Listen() { return Server_.listen(Listen_); }
-    const QString& Path() const { return Listen_; }
-    int ResizeRequests() const { return ResizeRequests_; }
-    int InputFrames() const { return InputFrames_; }
-
-private:
-    void Accept() {
-        while (QLocalSocket* const client = Server_.nextPendingConnection()) {
-            auto* const upstream = new QLocalSocket(client);
-            upstream->connectToServer(Upstream_);
-            if (!upstream->waitForConnected(TIMEOUT_MS)) {
-                client->disconnectFromServer();
-                continue;
-            }
-            const auto buffer = std::make_shared<QByteArray>();
-            connect(client, &QLocalSocket::readyRead, client,
-                    [this, client, upstream, buffer] {
-                        const QByteArray bytes = client->readAll();
-                        upstream->write(bytes);
-                        buffer->append(bytes);
-                        Count(*buffer);
-                    });
-            connect(upstream, &QLocalSocket::readyRead, client,
-                    [client, upstream] { client->write(upstream->readAll()); });
-            connect(client, &QLocalSocket::disconnected, upstream,
-                    [upstream] { upstream->disconnectFromServer(); });
-            connect(upstream, &QLocalSocket::disconnected, client,
-                    [client] { client->disconnectFromServer(); });
-        }
-    }
-
-    // Takes the whole frames off the front of what the client sent.
-    void Count(QByteArray& buffer) {
-        constexpr qsizetype lengthSize = 4;
-        while (buffer.size() > lengthSize) {
-            const auto length = qFromBigEndian<quint32>(buffer.constData());
-            const qsizetype frame = lengthSize + qsizetype{length};
-            if (length == 0 || buffer.size() < frame) {
-                return;
-            }
-            const auto kind = static_cast<EFrameKind>(buffer[lengthSize]);
-            if (kind == EFrameKind::Input) {
-                ++InputFrames_;
-            } else if (kind == EFrameKind::Rpc &&
-                       QByteArrayView(buffer)
-                           .sliced(lengthSize, length)
-                           .contains("\"session.resize\"")) {
-                ++ResizeRequests_;
-            }
-            buffer.remove(0, frame);
-        }
-    }
-
-    QLocalServer Server_;
-    QString Listen_;
-    QString Upstream_;
-    int ResizeRequests_ = 0;
-    int InputFrames_ = 0;
-};
 
 }  // namespace
 
@@ -190,7 +118,8 @@ private:
         if (!ConnectIo()) {
             return false;
         }
-        Pane_ = std::make_unique<SessionPane>(*Io_);
+        Pool_ = std::make_unique<WarmTerminals>(*Io_);
+        Pane_ = std::make_unique<SessionPane>(*Pool_);
         connect(Pane_.get(), &SessionPane::StatusChanged, Pane_.get(),
                 [this] { Statuses_.push_back(Pane_->Status()); });
         return true;
@@ -236,20 +165,19 @@ private:
     std::unique_ptr<RoostdProcess> Daemon_;
     std::unique_ptr<CountingProxy> Proxy_;
     std::unique_ptr<IoThread> Io_;
+    std::unique_ptr<WarmTerminals> Pool_;
     std::unique_ptr<SessionPane> Pane_;
     std::vector<EPaneStatus> Statuses_;
-    // The channels that raised Updated, in order.
-    std::vector<std::uint32_t> Channels_;
 
 private slots:
     void init() {
         Daemon_ = std::make_unique<RoostdProcess>();
         Statuses_.clear();
-        Channels_.clear();
     }
 
     void cleanup() {
         Pane_.reset();
+        Pool_.reset();
         if (Io_) {
             Io_->Stop();
         }
@@ -284,7 +212,7 @@ private slots:
     }
 
     // The answer of the slow open comes after the fast one: the pane must not
-    // take it, and must close its channel.
+    // take it. The session stays warm in the pool, hidden.
     void AQuickSwitchEndsOnTheLastSession() {
         QVERIFY(Prepare());
         Pane_->SetGrid(80, 24);
@@ -298,9 +226,9 @@ private slots:
             Screen(Pane_->Session()).contains(Greeting("fast")), TIMEOUT_MS);
         const auto session = Pane_->Session();
         // The slow open was asked first, so its answer has been dealt with
-        // when a channel opened now to the same session is answered; roostd
-        // must have no channel left for it.
-        QCOMPARE(ChannelsLeftTo(Slow()), 0);
+        // when a channel opened now to the same session is answered; its
+        // channel is the pool's, hidden.
+        QCOMPARE(ChannelsLeftTo(Slow()), 1);
         QCOMPARE(Pane_->Status(), EPaneStatus::Open);
         QCOMPARE(Pane_->Session(), session);
         QVERIFY(Screen(Pane_->Session()).contains(Greeting("fast")));
@@ -399,21 +327,14 @@ private slots:
                                   TIMEOUT_MS);
     }
 
-    void NullClosesTheChannelAndClearsTheScreen() {
+    void NullKeepsTheChannelWarmAndClearsTheScreen() {
         QVERIFY(Prepare());
-        // The channel of the session, learned from its output.
-        connect(
-            Io_.get(), &IoThread::Updated, Io_.get(),
-            [this](std::uint32_t channel) { Channels_.push_back(channel); });
         OpenFastAndSettle();
         Pane_->SendInput("q");
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(Pane_->Session()).contains(ANSWERED_TWICE), TIMEOUT_MS);
-        // The screen is parsed on the IO thread; Updated reaches this thread
-        // later.
-        QTRY_VERIFY_WITH_TIMEOUT(!Channels_.empty(), TIMEOUT_MS);
-        const std::uint32_t channel = Channels_.back();
         const auto old = Pane_->Session();
+        const int opens = Proxy_->OpenRequests();
         QSignalSpy sessionChanged(Pane_.get(), &SessionPane::SessionChanged);
 
         Pane_->Show(std::nullopt);
@@ -422,19 +343,19 @@ private slots:
         QCOMPARE(Pane_->Status(), EPaneStatus::None);
         QVERIFY(!Pane_->Key());
         QCOMPARE(sessionChanged.count(), 1);
-        // Input goes nowhere, and the channel is closed: a key sent to it
-        // directly is dropped, so the old terminal gets no third answer.
+        // The pane's input goes nowhere.
         Pane_->SendInput("q");
-        Io_->SendInput(channel, "q");
         QVERIFY(RoundTrip());
         QVERIFY(!Screen(old).contains(QRegularExpression("da1=3")));
         QVERIFY(Screen(old).contains(ANSWERED_TWICE));
-        // roostd has no channel left to the session.
-        QCOMPARE(ChannelsLeftTo(Fast()), 0);
-        // And a new session can be shown.
+        // Showing the session again is a switch, not an open: the same
+        // terminal and no session.open.
         Pane_->Show(Fast());
-        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Open,
-                                  TIMEOUT_MS);
+        QCOMPARE(Pane_->Status(), EPaneStatus::Open);
+        QCOMPARE(Pane_->Session(), old);
+        QCOMPARE(Proxy_->OpenRequests(), opens);
+        // The channel is the pool's: roostd has it.
+        QCOMPARE(ChannelsLeftTo(Fast()), 1);
     }
 
     void ABurstOfSizesEndsWithTheLastOne() {
@@ -504,22 +425,22 @@ private slots:
         QCOMPARE(ChannelsLeftTo(Fast()), 1);
     }
 
-    void TheDestructorClosesTheChannel() {
+    void TheDestructorKeepsTheSessionWarm() {
         QVERIFY(Prepare());
         OpenFastAndSettle();
 
         Pane_.reset();
 
-        QCOMPARE(ChannelsLeftTo(Fast()), 0);
+        QCOMPARE(ChannelsLeftTo(Fast()), 1);
     }
 
-    void SwitchingFromAnOpenSessionClosesItsChannel() {
+    void SwitchingFromAnOpenSessionKeepsItsChannel() {
         QVERIFY(Prepare());
         OpenFastAndSettle();
 
         Pane_->Show(Slow());
 
-        QCOMPARE(ChannelsLeftTo(Fast()), 0);
+        QCOMPARE(ChannelsLeftTo(Fast()), 1);
         QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Open,
                                   TIMEOUT_MS);
         QVERIFY(Pane_->Key() == std::optional<SessionKey>(Slow()));
@@ -549,8 +470,10 @@ private slots:
         const auto session = Pane_->Session();
         const auto statusChanges = Statuses_.size();
 
-        // Ends fast/s1 through a channel of its own.
-        QCOMPARE(ChannelsLeftTo(Fast()), 0);
+        // Ends fast/s1 through a channel of its own: the pool's hidden
+        // channel to it is closed too, and the entry dropped.
+        QCOMPARE(ChannelsLeftTo(Fast()), 1);
+        QCOMPARE(Pool_->Status(Fast()), EPaneStatus::None);
 
         QCOMPARE(Pane_->Status(), EPaneStatus::Open);
         QCOMPARE(Pane_->Session(), session);
@@ -599,7 +522,8 @@ private slots:
         }
     }
 
-    // The late channel must be closed and nothing of the pane touched.
+    // The answer finds no pane: the session completes into a hidden entry of
+    // the pool, and nothing of the pane is touched.
     void APaneGoneWhileOpeningLeavesNoCrash() {
         QVERIFY(Prepare());
         Pane_->Show(Slow());
@@ -609,9 +533,9 @@ private slots:
 
         // The pane's open was asked first, so its answer has been dealt with
         // when this one is answered.
-        QCOMPARE(ChannelsLeftTo(Slow()), 0);
+        QCOMPARE(ChannelsLeftTo(Slow()), 1);
         // The IO thread still serves a new pane.
-        Pane_ = std::make_unique<SessionPane>(*Io_);
+        Pane_ = std::make_unique<SessionPane>(*Pool_);
         Pane_->Show(Fast());
         QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Open,
                                   TIMEOUT_MS);

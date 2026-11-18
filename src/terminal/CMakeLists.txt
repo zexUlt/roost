@@ -7,6 +7,7 @@ add_library(roost_terminal STATIC
     renderer.cpp
     session_pane.cpp
     terminal_session.cpp
+    warm_terminals.cpp
 )
 
 target_link_libraries(roost_terminal PUBLIC roost_core Qt6::Quick)

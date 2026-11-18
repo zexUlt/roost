@@ -506,7 +506,8 @@ private slots:
                  QStringLiteral("no roostd API in this window"));
     }
 
-    // The late channel is closed and nothing of the item is touched.
+    // The answer finds no item: the session completes into the window's warm
+    // terminals, and nothing of the item is touched.
     void AnItemDestroyedWhileOpeningLeavesNoCrash() {
         QVERIFY(Prepare());
         QVERIFY(ShowPage(QML));
@@ -516,8 +517,8 @@ private slots:
         DropPage();
 
         // The item's open was asked first, so its answer has been dealt with
-        // when this one is answered; roostd must have no channel left.
-        QCOMPARE(ChannelsLeft(Api_->Io(), "slow-agent", "s1", TIMEOUT_MS), 0);
+        // when this one is answered; the window still holds its channel.
+        QCOMPARE(ChannelsLeft(Api_->Io(), "slow-agent", "s1", TIMEOUT_MS), 1);
 
         // The window still serves a new item.
         QVERIFY(ShowPage(QML));

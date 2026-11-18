@@ -14,6 +14,7 @@
 #include "api/store_service.hpp"
 #include "core/rpc.hpp"
 #include "terminal/io_thread.hpp"
+#include "terminal/warm_terminals.hpp"
 
 Q_DECLARE_METATYPE(roost::rpc::Error)
 
@@ -45,9 +46,9 @@ struct ApiOptions {
 // the connection was lost has failed with ConnectionLost and is not sent
 // again: it may have been done (commands.run, store.set).
 //
-// The session channels of the terminals do not survive a loss, and the Api
-// does not open them again: whoever holds a channel (TerminalItem, through
-// SessionPane) reopens its session on Connected.
+// The session channels of the terminals do not survive a loss. The window's
+// warm terminals (WarmTerminals, kept here so they outlive a panel) drop the
+// hidden ones and, on Connected, open the shown ones again; the Api does not.
 class Api : public QObject {
     Q_OBJECT
 
@@ -61,8 +62,10 @@ public:
     bool IsConnected() const;
 
     // The window's own parts, for what is not a by-name method: the terminal
-    // panes open session channels through the IO thread.
+    // panes show sessions through the warm terminals, and the IO thread carries
+    // their channels.
     IoThread& Io() { return Io_; }
+    WarmTerminals& Terminals() { return Terminals_; }
     BusService& Bus() { return Bus_; }
     CommandService& Commands() { return Commands_; }
     PluginService& Plugins() { return Plugins_; }
@@ -93,6 +96,7 @@ private:
     const ApiOptions Options_;
     // Declared first, so that it goes last: the services hold a reference.
     IoThread Io_;
+    WarmTerminals Terminals_;
     BusService Bus_;
     CommandService Commands_;
     PluginService Plugins_;

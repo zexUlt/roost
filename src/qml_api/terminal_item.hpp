@@ -55,19 +55,22 @@ namespace roost {
 // (copy-on-select = primary); on macOS it does not. A click takes the focus.
 //
 // The `session` property shows a session of roostd in the item: a SessionRef,
-// {agent, id}, or null. The item opens the channel itself (SessionPane), at its
-// own grid, through the window's API (the singleton Roost), and follows the
-// size, the input and the output. It does not open before the item has a size
-// (status "none" until then), so the program never sees a 1x1 terminal. The
-// same ref again does nothing; reopen() is the way to open an ended session.
-// `status` tells how it stands. "none" is no session; "opening" is the open in
-// flight, with the screen cleared; "open"; "ended" is a session that ended by
-// itself, its last screen kept, and "failed" is an open that was refused or a
-// `session` that is no SessionRef, each with `statusMessage` for the reason;
-// "disconnected" is a lost connection, the last screen kept, and the item opens
-// the same session again when the window is reconnected. reopen() opens an
-// ended, failed or disconnected session anew. Without the API of a window (no
-// singleton, or no Api set in it) the status is "failed".
+// {agent, id}, or null. The item shows the session through the window's warm
+// terminals (SessionPane over the singleton Roost's Api), at its own grid, and
+// follows the size, the input and the output. It does not open before the item
+// has a size (status "none" until then), so the program never sees a 1x1
+// terminal. The same ref again does nothing; reopen() is the way to open an
+// ended session. A session keeps its channel when the item shows another one or
+// null: it stays warm in the window until roostd closes it, and showing it
+// again is one switch, with no open. `status` tells how it stands. "none" is
+// no session; "opening" is a cold open in flight, with the screen cleared (a
+// warm session goes straight to "open"); "open"; "ended" is a session that
+// ended by itself, its last screen kept, and "failed" is an open that was
+// refused or a `session` that is no SessionRef, each with `statusMessage` for
+// the reason; "disconnected" is a lost connection, the last screen kept, and
+// the window opens the shown session again when it is reconnected. reopen()
+// opens an ended, failed or disconnected session anew. Without the API of a
+// window (no singleton, or no Api set in it) the status is "failed".
 //
 // The item does not resize the session either. It says how many columns and
 // rows fit (`gridSizeChanged`), and the owner sends session.resize, which

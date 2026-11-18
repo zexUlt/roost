@@ -19,7 +19,10 @@ target_link_libraries(roost_test_helpers PUBLIC
 
 # Helpers for the tests of terminal channels; apart, so the others do not link
 # roost_terminal.
-add_library(roost_test_terminal_helpers STATIC helpers/channels_left.cpp)
+add_library(roost_test_terminal_helpers STATIC
+    helpers/channels_left.cpp
+    helpers/counting_proxy.cpp
+)
 target_link_libraries(roost_test_terminal_helpers PUBLIC
     roost_test_helpers roost_terminal)
 
@@ -180,6 +183,17 @@ target_compile_definitions(session_pane_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(session_pane_test roostd fake_tui fixture_backend)
 
+# The warm terminals of the window against the real roostd, fixture plugins
+# whose agents attach to fake_tui: what stays warm, what is dropped, what
+# roostd is told.
+roost_add_qt_test(warm_terminals_test terminal/warm_terminals_test.cpp
+    roost_terminal roost_test_terminal_helpers)
+target_compile_definitions(warm_terminals_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(warm_terminals_test roostd fake_tui fixture_backend)
+
 # The developer mode: one TerminalItem wired to a session of the real roostd,
 # and the roost executable started with --session against it.
 roost_add_qt_test(single_session_test roost/single_session_test.cpp roost_app)
@@ -316,6 +330,7 @@ set_tests_properties(
     io_thread_test
     single_session_test
     session_pane_test
+    warm_terminals_test
     terminal_item_test
     terminal_item_session_test
     terminal_item_input_test

@@ -13,6 +13,7 @@ namespace roost::api {
 Api::Api(ApiOptions options, QObject* parent)
     : QObject(parent),
       Options_(options),
+      Terminals_(Io_),
       Bus_(Io_),
       Commands_(Io_),
       Plugins_(Io_),
@@ -23,6 +24,7 @@ Api::Api(ApiOptions options, QObject* parent)
     RetryTimer_.setSingleShot(true);
     connect(&RetryTimer_, &QTimer::timeout, this, &Api::Attempt);
     connect(&Io_, &IoThread::Disconnected, this, &Api::OnDisconnected);
+    connect(this, &Api::Connected, &Terminals_, &WarmTerminals::ReopenShown);
 }
 
 void Api::Connect(const QString& socketPath) {

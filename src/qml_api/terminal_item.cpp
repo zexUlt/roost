@@ -218,7 +218,7 @@ bool TerminalItem::ensurePane() {
                   QStringLiteral("no roostd API in this window"));
         return false;
     }
-    auto* const pane = new SessionPane(windowApi->Io(), this);
+    auto* const pane = new SessionPane(windowApi->Terminals(), this);
     Pane_ = pane;
     connect(this, &TerminalItem::input, pane, &SessionPane::SendInput);
     connect(this, &TerminalItem::gridSizeChanged, pane, [this, pane] {
@@ -235,15 +235,6 @@ bool TerminalItem::ensurePane() {
             return;
         }
         setStatus(statusName(pane->Status()), pane->Message());
-    });
-    // The channels went with the connection; the same session is opened again
-    // once the window is back. The pane has already seen the IoThread's
-    // Disconnected by then: Api::Connected comes from a hello on a new
-    // connection, made after that signal was queued to this thread.
-    connect(windowApi, &api::Api::Connected, pane, [pane] {
-        if (pane->Status() == EPaneStatus::Disconnected) {
-            pane->Reopen();
-        }
     });
     pane->SetGrid(static_cast<quint16>(Columns_), static_cast<quint16>(Rows_));
     return true;
