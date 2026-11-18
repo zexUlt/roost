@@ -65,7 +65,7 @@ enum class EPaneStatus {
 //   - the open fails: dropped if hidden, Failed if shown;
 //   - the connection is lost: every hidden entry is dropped, a shown one is
 //     Disconnected with its screen kept, and ReopenShown opens it again once
-//     the window is back;
+//     the window is back (Prefetch calls it, after the hidden opens);
 //   - an open still in flight when the session is hidden completes into a
 //     hidden warm entry, as roostd holds the session either way;
 //   - an entry that is Release'd while Ended, Failed or Disconnected is
@@ -74,6 +74,8 @@ enum class EPaneStatus {
 //     that the first show after a restart of the window is warm as well. It
 //     opens them without a size, so as not to resize what a panel may be
 //     showing elsewhere: the one resize is sent when the entry is first shown.
+//     The shown sessions are opened after them, so that roostd touches them
+//     last and the session on screen is its most recent one.
 //
 // At most one owner shows a key (a session has one render state): the entry
 // records who Acquired it. A second Acquire of a shown key from another owner
@@ -115,13 +117,16 @@ public:
     // Opens a shown session again if it is Ended, Failed or Disconnected; the
     // screen clears while it opens. Otherwise does nothing.
     void Reopen(const SessionKey& key);
-    // Reopen of every shown session that is Disconnected; for when the window
-    // is connected again. Hidden sessions are not opened.
+    // Reopen of every shown session that is Disconnected. Hidden sessions are
+    // not opened. Prefetch calls it, so the window needs only Prefetch when
+    // it is connected again.
     void ReopenShown();
-    // Opens, hidden, the sessions roostd keeps warm that have no entry yet,
-    // for when the window is connected. They are opened oldest first, so that
-    // roostd's order of recent use is the same after as before. An error
-    // answer or a lost connection leaves things as they are.
+    // For when the window is connected: opens, hidden, the sessions roostd
+    // keeps warm that have no entry yet, then does ReopenShown. The hidden
+    // ones are opened oldest first, so that roostd's order of recent use is
+    // the same after as before, and the shown ones after them, so that they
+    // are the most recent. An error answer to sessions.warm opens no hidden
+    // session, and the shown ones are reopened all the same.
     void Prefetch();
 
     // None, and a null terminal, for a session the pool has no entry for.

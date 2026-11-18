@@ -134,6 +134,7 @@ void WarmTerminals::Prefetch() {
                 // Not fatal: the sessions are then opened when shown.
                 qDebug("roost: sessions.warm failed: %s",
                        qPrintable(result.error().Message));
+                ReopenShown();
                 return;
             }
             // Newest first in the answer; the oldest is opened first, so
@@ -159,6 +160,9 @@ void WarmTerminals::Prefetch() {
                 entry.Key = key;
                 StartOpen(key, false);
             }
+            // After the hidden opens: roostd touches the session on screen
+            // last, and it is the most recent one.
+            ReopenShown();
         });
 }
 

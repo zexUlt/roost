@@ -24,9 +24,9 @@ Api::Api(ApiOptions options, QObject* parent)
     RetryTimer_.setSingleShot(true);
     connect(&RetryTimer_, &QTimer::timeout, this, &Api::Attempt);
     connect(&Io_, &IoThread::Disconnected, this, &Api::OnDisconnected);
-    connect(this, &Api::Connected, &Terminals_, &WarmTerminals::ReopenShown);
-    // After ReopenShown: what the window shows is opened first, and the
-    // prefetch skips it.
+    // Prefetch opens the hidden sessions and then reopens the shown one, so
+    // that the session the window shows is the most recent in roostd's pool
+    // and the last to be evicted.
     connect(this, &Api::Connected, &Terminals_, &WarmTerminals::Prefetch);
 }
 

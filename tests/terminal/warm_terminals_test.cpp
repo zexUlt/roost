@@ -704,8 +704,8 @@ private slots:
         QVERIFY(ConnectIo());
         const int opened = Proxy_->OpenRequests();
 
-        // As the Api does it when it is connected.
-        Pool_->ReopenShown();
+        // As the Api does it when it is connected: Prefetch reopens the
+        // shown session too.
         Pool_->Prefetch();
 
         QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(2), TIMEOUT_MS);
@@ -714,6 +714,55 @@ private slots:
         QVERIFY(RoundTrip());
         QCOMPARE(Proxy_->OpenRequests(), opened + 2);
         QCOMPARE(Pool_->Size(), std::size_t{2});
+    }
+
+    // The session on screen is the last one roostd is told about, so it is
+    // the most recent and the last to be evicted.
+    void AReopenedShownSessionStaysTheMostRecent() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(2));
+        ShowAndSettle(Fast(3));
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QCOMPARE(DaemonWarm(), (QStringList{"fast-agent/s1", "fast-agent/s3",
+                                            "fast-agent/s2"}));
+        Proxy_->DropClients();
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        QVERIFY(ConnectIo());
+
+        // The one entry point of the Api when it is connected.
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(3), TIMEOUT_MS);
+        QCOMPARE(Pane_->Status(), EPaneStatus::Open);
+        QVERIFY(RoundTrip());
+        QCOMPARE(DaemonWarm(), (QStringList{"fast-agent/s1", "fast-agent/s3",
+                                            "fast-agent/s2"}));
+    }
+
+    // sessions.warm fails (here: no connection to ask), and the shown session
+    // is opened again all the same.
+    void AShownSessionIsReopenedWhenSessionsWarmFails() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        Proxy_->DropClients();
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        Statuses_.clear();
+
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::ranges::find(Statuses_, EPaneStatus::Opening) !=
+                Statuses_.end(),
+            TIMEOUT_MS);
+        // The open meets the same lost connection: still Disconnected, and
+        // no hidden session came of the failed sessions.warm.
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        QCOMPARE(Pool_->Size(), std::size_t{1});
     }
 
     // A prefetched session is shown as any warm one: at once, one view, and
