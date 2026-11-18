@@ -2,10 +2,11 @@
   "id": "sessions",
   "version": "0.1.0",
   "api": "0",
+  "native": { "qt": "6.8", "qmlImportPath": "qml" },
   "contributes": {
     "panels": [
       {
-        "id": "sessions.list",
+        "id": "list",
         "qml": "qml/SessionsPanel.qml",
         "inputs": {},
         "outputs": { "selected": "SessionRef" }

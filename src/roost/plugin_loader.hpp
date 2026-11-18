@@ -35,11 +35,12 @@ namespace roost {
 // plugins load.
 //
 // On each Changed of PluginService the list is compared per plugin id on
-// (directory, version, native, contributes, panel ids the plugin lost to an
-// earlier plugin): an unchanged plugin is not touched, its components and live
-// panels stay; a removed plugin is unloaded; a changed one is unloaded and
-// loaded again; a new one is loaded. The first plugin in load order that
-// declares a panel id keeps it, whether or not its panel loads.
+// (directory, version, native, contributes): an unchanged plugin is not
+// touched, its components and live panels stay; a removed plugin is unloaded;
+// a changed one is unloaded and loaded again; a new one is loaded.
+//
+// A panel id in a manifest is a name relative to the plugin; the full id of
+// the panel type is "<plugin id>.<name>".
 //
 // A plugin that declares `native.qmlImportPath` gets that directory on the
 // import path of the engine, so its panels can import the QML module in it.
@@ -171,8 +172,6 @@ private:
         QString Directory;
         QJsonObject Native;
         QJsonObject Contributes;
-        // Panel id -> the plugin that has it.
-        QMap<QString, QString> Rejected;
         std::unique_ptr<QQmlContext> Context;
         std::vector<PanelType> Panels;
         std::vector<Instance> Instances;
@@ -188,7 +187,6 @@ private:
         QString Directory;
         QJsonObject Native;
         QJsonObject Contributes;
-        QMap<QString, QString> Rejected;
     };
 
     void OnPluginsChanged();

@@ -1,10 +1,13 @@
 #include "terminal/warm_terminals.hpp"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
 #include <QtLogging>
 
 #include <algorithm>
+#include <ranges>
+#include <vector>
 
 #include "core/protocol.hpp"
 #include "core/rpc.hpp"
@@ -124,6 +127,45 @@ void WarmTerminals::ReopenShown() {
     }
 }
 
+void WarmTerminals::Prefetch() {
+    Io_.Request(QStringLiteral("sessions.warm"))
+        .then(this, [this](const rpc::Result& result) {
+            if (!result) {
+                // Not fatal: the sessions are then opened when shown.
+                qDebug("roost: sessions.warm failed: %s",
+                       qPrintable(result.error().Message));
+                ReopenShown();
+                return;
+            }
+            // Newest first in the answer; the oldest is opened first, so
+            // that roostd touches them in the order it listed them.
+            std::vector<SessionKey> keys;
+            const QJsonArray sessions =
+                result->toObject().value(QStringLiteral("sessions")).toArray();
+            for (const QJsonValue& value : sessions) {
+                const QJsonObject session = value.toObject();
+                const QJsonValue agent = session.value(QStringLiteral("agent"));
+                const QJsonValue id = session.value(QStringLiteral("id"));
+                if (agent.isString() && id.isString()) {
+                    keys.push_back({agent.toString(), id.toString()});
+                }
+            }
+            // StartOpen emits, and a slot may change the entries: look each
+            // key up as it comes.
+            for (const SessionKey& key : keys | std::views::reverse) {
+                if (Find(key) != nullptr) {
+                    continue;
+                }
+                auto& entry = *Entries_.emplace_back(std::make_unique<Entry>());
+                entry.Key = key;
+                StartOpen(key, false);
+            }
+            // After the hidden opens: roostd touches the session on screen
+            // last, and it is the most recent one.
+            ReopenShown();
+        });
+}
+
 EPaneStatus WarmTerminals::Status(const SessionKey& key) const {
     const Entry* const entry = Find(key);
     return entry != nullptr ? entry->Status : EPaneStatus::None;
@@ -177,7 +219,7 @@ void WarmTerminals::Erase(const Entry* entry) {
                   [entry](const auto& owned) { return owned.get() == entry; });
 }
 
-void WarmTerminals::StartOpen(const SessionKey& key) {
+void WarmTerminals::StartOpen(const SessionKey& key, bool sized) {
     Entry* entry = Find(key);
     if (entry == nullptr) {
         return;
@@ -203,10 +245,11 @@ void WarmTerminals::StartOpen(const SessionKey& key) {
     if (stale()) {
         return;
     }
-    entry->SentSize = entry->Grid;
+    entry->SentSize = sized ? std::optional(entry->Grid) : std::nullopt;
     // The context is the IO thread, which outlives the pool, so the answer
     // always arrives; the pool may be gone by then.
-    Io_.Open(key.Agent, key.Id, entry->Grid.first, entry->Grid.second)
+    (sized ? Io_.Open(key.Agent, key.Id, entry->Grid.first, entry->Grid.second)
+           : Io_.Open(key.Agent, key.Id))
         .then(&Io_, [pool = QPointer(this), io = &Io_, key,
                      generation](const OpenResult& result) {
             if (pool) {

@@ -30,6 +30,7 @@ void CountingProxy::Accept() {
             client->disconnectFromServer();
             continue;
         }
+        Clients_.append(client);
         const auto buffer = std::make_shared<QByteArray>();
         connect(client, &QLocalSocket::readyRead, client,
                 [this, client, upstream, buffer] {
@@ -44,6 +45,14 @@ void CountingProxy::Accept() {
                 [upstream] { upstream->disconnectFromServer(); });
         connect(upstream, &QLocalSocket::disconnected, client,
                 [client] { client->disconnectFromServer(); });
+    }
+}
+
+void CountingProxy::DropClients() {
+    for (const QPointer<QLocalSocket>& client : std::exchange(Clients_, {})) {
+        if (client) {
+            client->disconnectFromServer();
+        }
     }
 }
 
@@ -65,6 +74,9 @@ void CountingProxy::Count(QByteArray& buffer) {
                 ++ResizeRequests_;
             } else if (body.contains("\"session.open\"")) {
                 ++OpenRequests_;
+                if (body.contains("\"columns\"")) {
+                    ++SizedOpenRequests_;
+                }
             } else if (body.contains("\"session.view\"")) {
                 ++ViewRequests_;
             }

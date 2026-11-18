@@ -157,6 +157,18 @@ target_compile_definitions(claude_adapter_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_dependencies(claude_adapter_test claude-adapter)
 
+# ClaudeRun on a run that cannot start, in a child process of its own.
+roost_add_qt_test(claude_run_test plugins/claude_run_test.cpp claude_adapter_lib)
+
+# The commands of the Claude plugin: the adapter binary behind a fake `claude`,
+# and the manifest of the built plugin through the real roostd.
+roost_add_qt_test(claude_commands_test plugins/claude_commands_test.cpp roost_api)
+target_compile_definitions(claude_commands_test PRIVATE
+    CLAUDE_ADAPTER_PATH="$<TARGET_FILE:claude-adapter>"
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(claude_commands_test roostd claude-adapter)
+
 # The real roostd with the real Claude plugin, behind a fake `claude`.
 roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp roost_api)
 target_compile_definitions(claude_e2e_test PRIVATE
@@ -311,6 +323,17 @@ target_compile_definitions(plugin_reload_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(plugin_reload_test roostd)
 
+# The template templates/plugin-qml: a copy of it with another id, loaded by the
+# real roostd, its panel opened in the window. The template is read from the
+# source tree; the build does not install it.
+roost_add_qt_test(plugin_template_test roost/plugin_template_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(plugin_template_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    PLUGIN_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates/plugin-qml")
+add_dependencies(plugin_template_test roostd)
+
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
     roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml)
@@ -370,3 +393,19 @@ if(APPLE)
     add_executable(terminal_memory bench/terminal_memory.cpp)
     target_link_libraries(terminal_memory PRIVATE roost_terminal)
 endif()
+
+# The rows of the sessions list, in plain C++.
+roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_list_lib)
+
+# What the sessions list remembers and derives: the store document, colours,
+# names, unread.
+roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_list_lib)
+
+# SessionsList, the QML-facing model of the sessions list, over a fake source,
+# and the module RoostSessions loaded from the plugin directory as the window
+# does.
+roost_add_qt_test(sessions_list_test plugins/sessions_list_test.cpp
+    sessions_list_lib roost_qml_api roost_qml_apiplugin Qt6::Qml)
+target_compile_definitions(sessions_list_test PRIVATE
+    SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
+add_dependencies(sessions_list_test sessions_qml)

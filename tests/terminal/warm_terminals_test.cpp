@@ -9,9 +9,11 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QStringList>
 #include <QTest>
 
 #include <algorithm>
@@ -181,6 +183,58 @@ private:
             return 0;
         }
         return open.result()->Channel;
+    }
+
+    // The sessions roostd keeps warm, most recently viewed first, as
+    // "agent/id"; empty if the request failed.
+    QStringList DaemonWarm() {
+        QFuture<rpc::Result> warm =
+            Io_->Request(QStringLiteral("sessions.warm"));
+        if (!QTest::qWaitFor([&] { return warm.isFinished(); }, TIMEOUT_MS) ||
+            !warm.result()) {
+            return {};
+        }
+        QStringList keys;
+        const QJsonArray sessions =
+            warm.result()->toObject().value("sessions").toArray();
+        for (const QJsonValue& session : sessions) {
+            keys << session.toObject().value("agent").toString() + u'/' +
+                        session.toObject().value("id").toString();
+        }
+        return keys;
+    }
+
+    // A window that is closed and started again: the sessions stay warm in
+    // roostd, and the new window has a connection and no entries. Its pool
+    // has not yet asked for them (Prefetch).
+    bool RestartWindow() {
+        Pane_.reset();
+        Pool_.reset();
+        Io_->Stop();
+        Io_ = std::make_unique<IoThread>();
+        if (!ConnectIo()) {
+            return false;
+        }
+        Pool_ = std::make_unique<WarmTerminals>(*Io_);
+        Pane_ = std::make_unique<SessionPane>(*Pool_);
+        Statuses_.clear();
+        connect(Pane_.get(), &SessionPane::StatusChanged, Pane_.get(),
+                [this] { Statuses_.push_back(Pane_->Status()); });
+        return true;
+    }
+
+    // The window's pool has the n first sessions of the fast agent, all Open
+    // and hidden.
+    bool AllPrefetched(int count) {
+        if (Pool_->Size() != static_cast<std::size_t>(count)) {
+            return false;
+        }
+        for (int n = 1; n <= count; ++n) {
+            if (Pool_->Status(Fast(n)) != EPaneStatus::Open) {
+                return false;
+            }
+        }
+        return true;
     }
 
     std::unique_ptr<RoostdProcess> Daemon_;
@@ -569,6 +623,200 @@ private slots:
         QCOMPARE(Proxy_->OpenRequests(), 2);
     }
 
+    // The point of the prefetch: what a restarted window has not opened is
+    // warm in roostd, and the window opens it without a size, hidden.
+    void AConnectedWindowOpensTheDaemonsWarmSessionsHidden() {
+        QVERIFY(Prepare());
+        for (int n = 1; n <= 3; ++n) {
+            ShowAndSettle(Fast(n));
+        }
+        QVERIFY(RoundTrip());
+        const int opened = Proxy_->OpenRequests();
+        const int sized = Proxy_->SizedOpenRequests();
+        QVERIFY(RestartWindow());
+        QCOMPARE(Pool_->Size(), std::size_t{0});
+
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(3), TIMEOUT_MS);
+        for (int n = 1; n <= 3; ++n) {
+            QVERIFY(!Pool_->IsShown(Fast(n)));
+            QVERIFY(Pool_->Session(Fast(n)));
+        }
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->OpenRequests(), opened + 3);
+        // No size, no view, no resize: it is hidden.
+        QCOMPARE(Proxy_->SizedOpenRequests(), sized);
+        QCOMPARE(Proxy_->ViewRequests(), 0);
+        QCOMPARE(Proxy_->ResizeRequests(), 0);
+    }
+
+    void AnOpenWithoutASizeCarriesNoColumns() {
+        QVERIFY(Prepare());
+        QFuture<OpenResult> sizeless = Io_->Open(Fast(1).Agent, Fast(1).Id);
+        QVERIFY(
+            QTest::qWaitFor([&] { return sizeless.isFinished(); }, TIMEOUT_MS));
+        QVERIFY(sizeless.result());
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->OpenRequests(), 1);
+        QCOMPARE(Proxy_->SizedOpenRequests(), 0);
+
+        QVERIFY(OpenDirect(Fast(2)) != 0);
+
+        QCOMPARE(Proxy_->SizedOpenRequests(), 1);
+    }
+
+    // roostd's order of recent use is the same after the prefetch as before,
+    // so the eviction order does not change with a restart of the window.
+    void APrefetchKeepsTheDaemonsOrder() {
+        QVERIFY(Prepare());
+        for (int n = 1; n <= 3; ++n) {
+            ShowAndSettle(Fast(n));
+        }
+        // fast/1 viewed last: the order is 1, 3, 2.
+        Pane_->Show(Fast(1));
+        QVERIFY(RoundTrip());
+        const QStringList before = DaemonWarm();
+        QCOMPARE(before, (QStringList{"fast-agent/s1", "fast-agent/s3",
+                                      "fast-agent/s2"}));
+        QVERIFY(RestartWindow());
+
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(3), TIMEOUT_MS);
+        QCOMPARE(DaemonWarm(), before);
+    }
+
+    // The window reopens its shown session itself, and the prefetch leaves it
+    // alone: one open for it, not two.
+    void APrefetchSkipsASessionTheWindowAlreadyHas() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(2));
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        // The connection is lost but roostd and its sessions are not.
+        Proxy_->DropClients();
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        QCOMPARE(Pool_->Size(), std::size_t{1});
+        QVERIFY(ConnectIo());
+        const int opened = Proxy_->OpenRequests();
+
+        // As the Api does it when it is connected: Prefetch reopens the
+        // shown session too.
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(2), TIMEOUT_MS);
+        QCOMPARE(Pane_->Status(), EPaneStatus::Open);
+        QVERIFY(Pool_->IsShown(Fast(1)));
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->OpenRequests(), opened + 2);
+        QCOMPARE(Pool_->Size(), std::size_t{2});
+    }
+
+    // The session on screen is the last one roostd is told about, so it is
+    // the most recent and the last to be evicted.
+    void AReopenedShownSessionStaysTheMostRecent() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(2));
+        ShowAndSettle(Fast(3));
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QCOMPARE(DaemonWarm(), (QStringList{"fast-agent/s1", "fast-agent/s3",
+                                            "fast-agent/s2"}));
+        Proxy_->DropClients();
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        QVERIFY(ConnectIo());
+
+        // The one entry point of the Api when it is connected.
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(3), TIMEOUT_MS);
+        QCOMPARE(Pane_->Status(), EPaneStatus::Open);
+        QVERIFY(RoundTrip());
+        QCOMPARE(DaemonWarm(), (QStringList{"fast-agent/s1", "fast-agent/s3",
+                                            "fast-agent/s2"}));
+    }
+
+    // sessions.warm fails (here: no connection to ask), and the shown session
+    // is opened again all the same.
+    void AShownSessionIsReopenedWhenSessionsWarmFails() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        Proxy_->DropClients();
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        Statuses_.clear();
+
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::ranges::find(Statuses_, EPaneStatus::Opening) !=
+                Statuses_.end(),
+            TIMEOUT_MS);
+        // The open meets the same lost connection: still Disconnected, and
+        // no hidden session came of the failed sessions.warm.
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Disconnected,
+                                  TIMEOUT_MS);
+        QCOMPARE(Pool_->Size(), std::size_t{1});
+    }
+
+    // A prefetched session is shown as any warm one: at once, one view, and
+    // the one resize that its sizeless open has not sent.
+    void TheFirstShowOfAPrefetchedSessionIsWarm() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        ShowAndSettle(Fast(2));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+        Pool_->Prefetch();
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(2), TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        const int opened = Proxy_->OpenRequests();
+        const auto prefetched = Pool_->Session(Fast(1));
+        Pane_->SetGrid(100, 30);
+
+        Pane_->Show(Fast(1));
+
+        QCOMPARE(Pane_->Status(), EPaneStatus::Open);
+        QCOMPARE(Pane_->Session(), prefetched);
+        QVERIFY(std::ranges::find(Statuses_, EPaneStatus::Opening) ==
+                Statuses_.end());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(Pane_->Session()).contains(SizeLine(100, 30)), TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->OpenRequests(), opened);
+        QCOMPARE(Proxy_->ViewRequests(), 1);
+        QCOMPARE(Proxy_->ResizeRequests(), 1);
+    }
+
+    // The window asks for a session while its prefetch open is in flight: it
+    // waits for the answer, as for any open in flight, and opens nothing.
+    void AShowWhileThePrefetchOpensWaitsForIt() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+        const int opened = Proxy_->OpenRequests();
+        Pool_->Prefetch();
+        QTRY_COMPARE_WITH_TIMEOUT(Pool_->Status(Fast(1)), EPaneStatus::Opening,
+                                  TIMEOUT_MS);
+        Pane_->SetGrid(100, 30);
+
+        Pane_->Show(Fast(1));
+
+        QCOMPARE(Pane_->Status(), EPaneStatus::Opening);
+        QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Open,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(Pane_->Session()).contains(SizeLine(100, 30)), TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->OpenRequests(), opened + 1);
+        QCOMPARE(Proxy_->ResizeRequests(), 1);
+    }
+
     // An open that is refused leaves nothing warm behind, whether the pane
     // waited for the answer or not.
     void AFailedOpenIsDroppedWhenHidden() {
@@ -588,6 +836,84 @@ private slots:
         QCOMPARE(Pane_->Status(), EPaneStatus::Open);
         QTRY_COMPARE_WITH_TIMEOUT(Pool_->Size(), std::size_t{1}, TIMEOUT_MS);
         QCOMPARE(Pool_->Status(unknown), EPaneStatus::None);
+    }
+
+    // The sizeless open leaves the session at the size another client gave it:
+    // the window must not take that for a size it has sent.
+    void APrefetchedSessionIsResizedOnShowWhenTheDaemonHasAnotherSize() {
+        QVERIFY(Prepare());
+        Pane_->SetGrid(100, 30);
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+        Pool_->Prefetch();
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(1), TIMEOUT_MS);
+        QVERIFY(!ScreenOf(Fast(1)).contains(SizeLine(80, 24)));
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->ResizeRequests(), 0);
+
+        // The pane's default grid is 80x24.
+        Pane_->Show(Fast(1));
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(Pane_->Session()).contains(SizeLine(80, 24)), TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->ResizeRequests(), 1);
+    }
+
+    void APrefetchedSessionHasNoOwner() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        ShowAndSettle(Fast(2));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+
+        Pool_->Prefetch();
+
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(2), TIMEOUT_MS);
+        QVERIFY(Pool_->Owner(Fast(1)) == nullptr);
+        QVERIFY(Pool_->Owner(Fast(2)) == nullptr);
+    }
+
+    void ANewGridOfAPrefetchedSessionSendsNoResize() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+        Pool_->Prefetch();
+        QTRY_VERIFY_WITH_TIMEOUT(AllPrefetched(1), TIMEOUT_MS);
+
+        Pool_->SetGrid(Fast(1), 120, 40);
+
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->ResizeRequests(), 0);
+        // Shown, it takes the size the window has now.
+        Pane_->SetGrid(120, 40);
+        Pane_->Show(Fast(1));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(Pane_->Session()).contains(SizeLine(120, 40)), TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        QCOMPARE(Proxy_->ResizeRequests(), 1);
+    }
+
+    // The answer of sessions.warm comes after the pool is gone: it is dropped.
+    void DestroyingThePoolBeforeSessionsWarmAnswersIsSafe() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        QVERIFY(RoundTrip());
+        QVERIFY(RestartWindow());
+        const int opened = Proxy_->OpenRequests();
+
+        Pool_->Prefetch();
+        Pane_.reset();
+        Pool_.reset();
+
+        // The answer has been delivered when a request sent after it is.
+        QVERIFY(RoundTrip());
+        QTest::qWait(100);
+        QCoreApplication::processEvents();
+        QCOMPARE(Proxy_->OpenRequests(), opened);
+        QCOMPARE(DaemonWarm(), (QStringList{"fast-agent/s1"}));
     }
 };
 
