@@ -204,11 +204,24 @@ void PluginLoader::Reload(const QString& pluginId) {
     Plugin& old = **found;
     const Declared declared{old.Id,     old.Version,     old.Directory,
                             old.Native, old.Contributes, old.Rejected};
+    // A directory that was not there at the last diff may be now.
+    std::vector<Declared> all;
+    for (const auto& plugin : Loaded_) {
+        if (!plugin->Unloading) {
+            all.push_back({plugin->Id,
+                           plugin->Version,
+                           plugin->Directory,
+                           plugin->Native,
+                           {},
+                           {}});
+        }
+    }
     // Unload leaves the plugin in Loaded_, empty: a slot of the signal that
     // calls CreatePanel gets nothing, and the place in the order stays.
     Unload(old);
     EverUnloaded_ = true;
     Engine_.clearComponentCache();
+    SetImportPaths(all);
     *found = Load(declared);
 
     if (ProblemsDirty_) {
@@ -229,10 +242,13 @@ QMap<QString, QString> PluginLoader::PluginDirectories() const {
 }
 
 void PluginLoader::SetImportPaths(const std::vector<Declared>& declared) {
+    // What the engine has, minus what this loader put there. By value, not by
+    // position: the engine drops a directory that is gone and merges those
+    // that are one after symlinks are resolved.
     QStringList paths = Engine_.importPathList();
     paths.removeIf(
         [&](const QString& path) { return ImportPaths_.contains(path); });
-    const qsizetype kept = paths.size();
+    QStringList added;
     for (const Declared& d : declared) {
         const QJsonValue value = d.Native.value("qmlImportPath");
         if (!value.isString()) {
@@ -240,18 +256,21 @@ void PluginLoader::SetImportPaths(const std::vector<Declared>& declared) {
         }
         const QString path = InsidePlugin(d.Directory, value.toString());
         // roostd checks the path, so an empty one is not expected; the panels
-        // of the plugin say what they miss.
-        if (path.isEmpty() || paths.contains(path)) {
+        // of the plugin say what they miss. A directory that does not exist
+        // has no canonical form: the engine would drop it, and it is tried
+        // again at the next call.
+        const QString canonical =
+            path.isEmpty() ? QString() : QFileInfo(path).canonicalFilePath();
+        if (canonical.isEmpty() || paths.contains(canonical) ||
+            added.contains(canonical)) {
             continue;
         }
-        paths.append(path);
+        added.append(canonical);
     }
     // Not addImportPath: it puts a path before the others, and a module of
     // roost must come first.
-    Engine_.setImportPathList(paths);
-    // As the engine keeps them: it resolves symlinks, so the strings given
-    // would not match the entries when the paths are taken off again.
-    ImportPaths_ = Engine_.importPathList().mid(kept);
+    Engine_.setImportPathList(paths + added);
+    ImportPaths_ = added;
 }
 
 std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(

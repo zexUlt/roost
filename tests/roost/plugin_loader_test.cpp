@@ -18,6 +18,7 @@
 #include <QQuickItem>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <memory>
@@ -1075,11 +1076,11 @@ private slots:
         QCOMPARE(Probe_.Last.value("label"), QString("one"));
     }
 
-    void APluginModuleCannotShadowRoostApi() {
-        // The plugin ships a module under the name of roost's own. The shell
-        // has imported Roost.Api by the time a panel loads, so what is
-        // checked is the order of the import path: every path the engine had
-        // keeps its place, and the plugin's directory comes after them.
+    void APluginImportPathComesAfterTheEnginesOwn() {
+        // Roost.Api is imported before any plugin loads, so a shadow module
+        // cannot win here whatever the order: the import path is what is
+        // checked. Every path the engine had keeps its place, and the
+        // plugin's directory comes after them.
         const QStringList before = QQmlEngine().importPathList();
         const QMap<QString, QByteArray> shadow{
             {"qml/Roost/Api/qmldir",
@@ -1189,6 +1190,68 @@ Item {
         QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
 
         QVERIFY(QFileInfo(path).isDir());
+        QVERIFY(!Engine_->importPathList().contains(path));
+    }
+    void APathThatLeftTheDiskDoesNotPinThePathOfAPlugin() {
+        const auto files =
+            Joined({{"p.qml", ItemPanel("p")}}, ThingModule("qml", "one"));
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files, "0.1.0",
+                          QJsonObject{{"qmlImportPath", "qml"}}));
+        QVERIFY(Boot());
+        const QString path = QFileInfo(Daemon_->PluginsPath() + "/a-one/qml")
+                                 .canonicalFilePath();
+        QVERIFY(Engine_->importPathList().contains(path));
+        // Someone else's path, put before the plugin's, gone from the disk
+        // by the next diff: the engine drops it on the next set.
+        auto other = std::make_unique<QTemporaryDir>();
+        QVERIFY(other->isValid());
+        Engine_->addImportPath(other->path());
+        QVERIFY(other->remove());
+        other.reset();
+
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin("b-two", {Panel("q", "q.qml")},
+                          {{"q.qml", ItemPanel("q")}}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+        QVERIFY(Engine_->importPathList().contains(path));
+
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 2, TIMEOUT_MS * 2);
+        QVERIFY(QFileInfo(path).isDir());
+        QVERIFY(!Engine_->importPathList().contains(path));
+    }
+
+    void TwoPluginsThatNameOneDirectoryByDifferentPathsShareOneEntry() {
+        const auto files =
+            Joined({{"p.qml", ItemPanel("p")}}, ThingModule("qml", "one"));
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files, "0.1.0",
+                          QJsonObject{{"qmlImportPath", "qml"}}));
+        QVERIFY(AddPlugin("b-two", {Panel("q", "q.qml")},
+                          {{"q.qml", ItemPanel("q")}}, "0.1.0",
+                          QJsonObject{{"qmlImportPath", "link"}}));
+        // b-two reaches the directory of a-one through a symlink.
+        const QString path = QFileInfo(Daemon_->PluginsPath() + "/a-one/qml")
+                                 .canonicalFilePath();
+        QVERIFY(QFile::link(path, Daemon_->PluginsPath() + "/b-two/link"));
+        QVERIFY(Boot());
+        QCOMPARE(Engine_->importPathList().count(path), 1);
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+
+        // The plugin that stays still holds the entry.
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(QDir(Daemon_->PluginsPath() + "/b-two").removeRecursively());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+        QCOMPARE(Engine_->importPathList().count(path), 1);
+
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 2, TIMEOUT_MS * 2);
         QVERIFY(!Engine_->importPathList().contains(path));
     }
 };

@@ -139,8 +139,9 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
                     {QStringLiteral("directory"), plugin.Directory},
                     {QStringLiteral("contributes"), plugin.Contributes},
                 };
-                // Only when declared, so that the window tells a plugin
-                // without native code from one with an empty declaration.
+                // Only when declared. The window reads an absent key and an
+                // empty object the same way: nothing to add to the import
+                // path.
                 if (plugin.Native) {
                     QJsonObject native;
                     if (!plugin.Native->Qt.isEmpty()) {

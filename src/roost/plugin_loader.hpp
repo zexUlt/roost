@@ -194,7 +194,9 @@ private:
     void OnPluginsChanged();
     std::vector<Declared> ReadDeclared() const;
     // Puts the import directories of the declared plugins after the engine's
-    // own, in the order given, in place of the ones put before.
+    // own, in the order given, in place of the ones put before. Compared by
+    // value (the canonical path, as the engine keeps it), never by position.
+    // A directory that does not exist is left out; the next call tries again.
     void SetImportPaths(const std::vector<Declared>& declared);
     std::unique_ptr<Plugin> Load(const Declared& declared);
     void LoadPanel(Plugin& plugin, const QJsonValue& entry);

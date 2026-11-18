@@ -6,6 +6,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJSEngine>
 #include <QJSValue>
 #include <QJsonArray>
@@ -101,6 +102,22 @@ QString TagOf(QQuickItem* item) {
     return item == nullptr ? QStringLiteral("(none)")
                            : item->property("tag").toString();
 }
+
+// A panel whose root is a Thing of a QML-only module `Thing` of the plugin.
+const QByteArray THING_PANEL = R"(
+import QtQuick
+import Thing
+Thing {
+    property string pluginId
+    property string tag: label
+}
+)";
+
+const QMap<QString, QByteArray> THING_MODULE{
+    {"qml/Thing/qmldir", "module Thing\nThing 1.0 Thing.qml\n"},
+    {"qml/Thing/Thing.qml",
+     "import QtQuick\nItem { property string label: \"one\" }\n"},
+};
 
 }  // namespace
 
@@ -251,6 +268,28 @@ private slots:
         Singleton_ = nullptr;
         Api_.reset();
         Daemon_.reset();
+    }
+
+    void AReloadPicksUpAModuleDirectoryThatCameAfterTheList() {
+        // The plugin names a directory that is not there when the list
+        // arrives: the engine drops it, and the panel cannot import.
+        QVERIFY(Daemon_->AddQmlPlugin("a-one", {Entry("one.p", "p.qml")},
+                                      {{"p.qml", THING_PANEL}}, "0.1.0",
+                                      QJsonObject{{"qmlImportPath", "qml"}}));
+        ExpectProblemWarning("a-one");
+        QVERIFY(Boot());
+        QVERIFY(!Loader_->PanelTypes().contains("one.p"));
+
+        for (auto it = THING_MODULE.begin(); it != THING_MODULE.end(); ++it) {
+            QVERIFY(QDir().mkpath(
+                QFileInfo(PathOf("a-one", it.key())).absolutePath()));
+            QVERIFY(EditInPlace("a-one", it.key(), it.value()));
+        }
+        QVERIFY(EditInPlace("a-one", "p.qml", THING_PANEL + "\n"));
+        QVERIFY(WaitReloads(1));
+        QCOMPARE(LastReloaded(), QString("a-one"));
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(TagOf(Loader_->CreatePanel("one.p")), QString("one"));
     }
 
     void EditingAFileInPlaceReloadsOnlyThatPlugin() {
