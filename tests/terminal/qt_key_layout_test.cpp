@@ -187,16 +187,18 @@ private slots:
         for (const int platform : {Mac, Xkb}) {
             const char* tag = platform == Mac ? "mac" : "xkb";
             const quint32 code = platform == Mac ? MAC_C : XKB_C;
+            // The tag is returned by value: a pointer into a temporary string
+            // would dangle before newRow reads it.
             const auto name = [tag](const char* what) {
-                return qPrintable(QString("%1_%2").arg(what, tag));
+                return QString("%1_%2").arg(what, tag).toUtf8();
             };
-            QTest::newRow(name("ctrl_c_text"))
+            QTest::newRow(name("ctrl_c_text").constData())
                 << platform << none << QString("с") << code
                 << QByteArray("\x03");
-            QTest::newRow(name("ctrl_c_control_code"))
+            QTest::newRow(name("ctrl_c_control_code").constData())
                 << platform << none << QString("\x03") << code
                 << QByteArray("\x03");
-            QTest::newRow(name("ctrl_c_no_text"))
+            QTest::newRow(name("ctrl_c_no_text").constData())
                 << platform << none << QString() << code << QByteArray("\x03");
         }
     }

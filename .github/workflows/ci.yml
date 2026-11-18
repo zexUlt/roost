@@ -44,20 +44,27 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
 
-  # What runs where: dev and release on macOS, the platform roost ships on;
-  # asan-ubsan on Linux arm64. macOS runners are scarce, and ASan and UBSan
-  # check the same code on Linux; ASan on macOS runs nightly
+  # What runs where: dev on macOS, the platform roost ships on; asan-ubsan on
+  # Linux arm64; release on Linux arm64 for pull requests and on macOS for
+  # trunk pushes. macOS runners are scarce, so a pull request takes one: what
+  # only macOS has (native key codes, process groups, libc++) builds and runs
+  # in dev, and release on macOS is checked once the change is on trunk.
+  # Trunk pushes also run release on Linux arm64 (trunk_only): caches are
+  # saved by trunk only, and pull requests read its libghostty-vt build and
+  # compiler cache instead of building cold and fetching zig's dependencies.
+  # ASan and UBSan check the same code on Linux; ASan on macOS runs nightly
   # (nightly-tsan.yml). Linux builds with clang and the distro's libstdc++,
   # not libc++: a Qt from a binary distribution is built against libstdc++.
   test:
-    name: test (${{ matrix.preset }})
+    name: test (${{ matrix.label || matrix.preset }})
     needs: changes
     if: ${{ !cancelled() }}
     # Not skipped at the job level: a skipped matrix job is never expanded,
-    # so the required "test (dev)" and the others would wait for ever. The
-    # job runs and its steps skip instead, on Linux: macOS runners are the
-    # scarce ones.
-    runs-on: ${{ needs.changes.outputs.code != 'false' && matrix.runner || 'ubuntu-24.04' }}
+    # so the required "test (dev)" and the others would wait for ever, and
+    # the job-level if cannot see the matrix. The job runs and its steps skip
+    # instead, on Linux: macOS runners are the scarce ones. NEEDED below holds
+    # the same condition.
+    runs-on: ${{ needs.changes.outputs.code != 'false' && !(matrix.trunk_only && github.event_name == 'pull_request') && matrix.runner || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -68,9 +75,13 @@ jobs:
           - preset: asan-ubsan
             runner: ubuntu-24.04-arm
           - preset: release
-            runner: macos-15
+            runner: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04-arm' || 'macos-15' }}
+          - preset: release
+            label: release, linux
+            runner: ubuntu-24.04-arm
+            trunk_only: true
     env:
-      NEEDED: ${{ needs.changes.outputs.code != 'false' }}
+      NEEDED: ${{ needs.changes.outputs.code != 'false' && !(matrix.trunk_only && github.event_name == 'pull_request') }}
     steps:
       - uses: actions/checkout@v4
         if: env.NEEDED == 'true'
@@ -290,6 +301,33 @@ jobs:
       - name: Install clang-tidy
         run: pipx install "clang-tidy==${CLANG_TIDY_VERSION}"
 
+      # ctcache (https://github.com/matus-chochlik/ctcache) remembers the files
+      # clang-tidy passed. The key is the file's preprocessed source with
+      # its comments (a NOLINT taken out of a header must miss), the
+      # clang-tidy arguments and the configuration it dumps for the file, so a
+      # change to a header invalidates every file that includes it. Failures
+      # are not remembered: a failing file runs again every time. The
+      # clang-tidy version is not in that key, so it is in the cache key.
+      - name: Install the clang-tidy cache
+        run: pipx install "git+https://github.com/matus-chochlik/ctcache@${CTCACHE_COMMIT}"
+        env:
+          CTCACHE_COMMIT: 2cb1c2bdd86f5e56a9044908f7c36a8a04a30ca2
+
+      # Saved like the compiler cache (.github/actions/ccache): the first
+      # trunk push of a day saves, pull requests read what trunk left.
+      - name: Today
+        id: today
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the clang-tidy cache
+        id: ctcache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ctcache
+          key: ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-${{ steps.today.outputs.date }}
+          restore-keys: |
+            ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-
+
       # libghostty-vt takes about two minutes to build. Zig's own cache does
       # not hit on a fresh clone (touching the sources' mtimes alone is
       # enough to miss), so the finished build is cached instead:
@@ -320,11 +358,28 @@ jobs:
       # tests/bench/terminal_memory.cpp is built on macOS only (mach), so it
       # is not in the compilation database here.
       - name: Naming and the static analyser
+        env:
+          CTCACHE_DIR: ${{ runner.temp }}/ctcache
+          CTCACHE_KEEP_COMMENTS: "1"
         run: |
+          clang-tidy-cache --zero-stats
           find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
             -not -path tests/bench/terminal_memory.cpp | sort |
-            xargs -P "$(nproc)" -n 1 clang-tidy -p build/dev --quiet \
-              --warnings-as-errors='*'
+            xargs -P "$(nproc)" -n 1 clang-tidy-cache "$(command -v clang-tidy)" \
+              -p build/dev --quiet --warnings-as-errors='*'
+
+      - name: Clang-tidy cache hits
+        if: always()
+        env:
+          CTCACHE_DIR: ${{ runner.temp }}/ctcache
+        run: clang-tidy-cache --show-stats | grep '(local)'
+
+      - name: Save the clang-tidy cache
+        if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk' && steps.ctcache.outputs.cache-primary-key != '' && steps.ctcache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ctcache
+          key: ${{ steps.ctcache.outputs.cache-primary-key }}
 
   gates:
     name: gates

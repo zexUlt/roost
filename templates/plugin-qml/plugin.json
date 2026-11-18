@@ -1,0 +1,15 @@
+{
+  "id": "plugin-template",
+  "version": "0.1.0",
+  "api": "0",
+  "contributes": {
+    "panels": [
+      {
+        "id": "hello",
+        "qml": "qml/HelloPanel.qml",
+        "inputs": {},
+        "outputs": {}
+      }
+    ]
+  }
+}

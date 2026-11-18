@@ -1,5 +1,7 @@
 #include "roost/plugin_loader.hpp"
 
+#include "core/store.hpp"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QJSEngine>
@@ -15,15 +17,6 @@
 namespace roost {
 
 namespace {
-
-// The id of a panel entry if it has a usable one.
-QString PanelIdOf(const QJsonValue& entry) {
-    if (!entry.isObject()) {
-        return {};
-    }
-    const QJsonValue id = entry.toObject().value("id");
-    return id.isString() ? id.toString() : QString();
-}
 
 // The path a manifest names, resolved, if it stays inside the plugin
 // directory. The same rule as roostd's check of backend paths: on the text,
@@ -87,8 +80,6 @@ std::optional<PluginLoader::PanelInfo> PluginLoader::Info(
 std::vector<PluginLoader::Declared> PluginLoader::ReadDeclared() const {
     std::vector<Declared> declared;
     QSet<QString> seen;
-    // Panel id -> the plugin that declared it first.
-    QMap<QString, QString> claims;
     const QJsonArray list = Plugins_.Plugins().value("plugins").toArray();
     for (const QJsonValue& entry : list) {
         const QJsonObject object = entry.toObject();
@@ -98,25 +89,10 @@ std::vector<PluginLoader::Declared> PluginLoader::ReadDeclared() const {
             continue;
         }
         seen.insert(id);
-        Declared plugin{id,
-                        object.value("version").toString(),
+        Declared plugin{id, object.value("version").toString(),
                         object.value("directory").toString(),
                         object.value("native").toObject(),
-                        object.value("contributes").toObject(),
-                        {}};
-        for (const QJsonValue& panel :
-             plugin.Contributes.value("panels").toArray()) {
-            const QString panelId = PanelIdOf(panel);
-            if (panelId.isEmpty()) {
-                continue;
-            }
-            const auto claim = claims.constFind(panelId);
-            if (claim == claims.constEnd()) {
-                claims.insert(panelId, id);
-            } else if (claim.value() != id) {
-                plugin.Rejected.insert(panelId, claim.value());
-            }
-        }
+                        object.value("contributes").toObject()};
         declared.push_back(std::move(plugin));
     }
     return declared;
@@ -136,8 +112,7 @@ void PluginLoader::OnPluginsChanged() {
         if (same != declared.end() && same->Version == plugin->Version &&
             same->Directory == plugin->Directory &&
             same->Native == plugin->Native &&
-            same->Contributes == plugin->Contributes &&
-            same->Rejected == plugin->Rejected) {
+            same->Contributes == plugin->Contributes) {
             continue;
         }
         reloaded = reloaded || same != declared.end();
@@ -202,8 +177,8 @@ void PluginLoader::Reload(const QString& pluginId) {
         return;
     }
     Plugin& old = **found;
-    const Declared declared{old.Id,     old.Version,     old.Directory,
-                            old.Native, old.Contributes, old.Rejected};
+    const Declared declared{old.Id, old.Version, old.Directory, old.Native,
+                            old.Contributes};
     // A directory that was not there at the last diff may be now.
     std::vector<Declared> all;
     for (const auto& plugin : Loaded_) {
@@ -212,7 +187,6 @@ void PluginLoader::Reload(const QString& pluginId) {
                            plugin->Version,
                            plugin->Directory,
                            plugin->Native,
-                           {},
                            {}});
         }
     }
@@ -281,7 +255,6 @@ std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(
     plugin->Directory = declared.Directory;
     plugin->Native = declared.Native;
     plugin->Contributes = declared.Contributes;
-    plugin->Rejected = declared.Rejected;
     plugin->Context = std::make_unique<QQmlContext>(Engine_.rootContext());
     Plugin& ref = *plugin;
 
@@ -308,14 +281,14 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
                    QStringLiteral("\"id\" must be a non-empty string"));
         return;
     }
-    const QString id = idValue.toString();
-    const auto taken = plugin.Rejected.constFind(id);
-    if (taken != plugin.Rejected.constEnd()) {
-        AddProblem(plugin.Id, id,
-                   QStringLiteral("panel id is already taken by plugin \"%1\"")
-                       .arg(taken.value()));
+    const QString name = idValue.toString();
+    if (name.contains(u'.') || !Store::IsValidPluginId(name)) {
+        AddProblem(plugin.Id, name,
+                   QStringLiteral("panel id must be a name of lowercase "
+                                  "letters, digits, '_' and '-', without '.'"));
         return;
     }
+    const QString id = plugin.Id + u'.' + name;
     if (plugin.Claimed.contains(id)) {
         AddProblem(plugin.Id, id,
                    QStringLiteral("panel id is declared twice in the plugin"));
