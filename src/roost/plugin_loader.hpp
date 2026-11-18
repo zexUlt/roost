@@ -35,11 +35,18 @@ namespace roost {
 // plugins load.
 //
 // On each Changed of PluginService the list is compared per plugin id on
-// (directory, version, contributes, panel ids the plugin lost to an earlier
-// plugin): an unchanged plugin is not touched, its components and live panels
-// stay; a removed plugin is unloaded; a changed one is unloaded and loaded
-// again; a new one is loaded. The first plugin in load order that declares a
-// panel id keeps it, whether or not its panel loads.
+// (directory, version, native, contributes, panel ids the plugin lost to an
+// earlier plugin): an unchanged plugin is not touched, its components and live
+// panels stay; a removed plugin is unloaded; a changed one is unloaded and
+// loaded again; a new one is loaded. The first plugin in load order that
+// declares a panel id keeps it, whether or not its panel loads.
+//
+// A plugin that declares `native.qmlImportPath` gets that directory on the
+// import path of the engine, so its panels can import the QML module in it.
+// The directories of the plugins go after every path the engine had, in load
+// order: a plugin cannot shadow a module of roost (Roost.Api), and the earlier
+// plugin keeps a module URI that two plugins ship. Qt loads the library of a
+// module once and keeps it until exit: a changed library needs a new window.
 //
 // The loader owns the instances it creates (C++ ownership); the caller only
 // shows the item (setParentItem) and gives it back with DestroyPanel. The
@@ -162,6 +169,7 @@ private:
         QString Id;
         QString Version;
         QString Directory;
+        QJsonObject Native;
         QJsonObject Contributes;
         // Panel id -> the plugin that has it.
         QMap<QString, QString> Rejected;
@@ -178,12 +186,18 @@ private:
         QString Id;
         QString Version;
         QString Directory;
+        QJsonObject Native;
         QJsonObject Contributes;
         QMap<QString, QString> Rejected;
     };
 
     void OnPluginsChanged();
     std::vector<Declared> ReadDeclared() const;
+    // Puts the import directories of the declared plugins after the engine's
+    // own, in the order given, in place of the ones put before. Compared by
+    // value (the canonical path, as the engine keeps it), never by position.
+    // A directory that does not exist is left out; the next call tries again.
+    void SetImportPaths(const std::vector<Declared>& declared);
     std::unique_ptr<Plugin> Load(const Declared& declared);
     void LoadPanel(Plugin& plugin, const QJsonValue& entry);
     // Destroys the instances, the components, the context and the problems.
@@ -206,6 +220,8 @@ private:
     bool ProblemsDirty_ = false;
     // Something was unloaded earlier: a load clears the component cache.
     bool EverUnloaded_ = false;
+    // The directories this loader put on the import path of the engine.
+    QStringList ImportPaths_;
 };
 
 }  // namespace roost
