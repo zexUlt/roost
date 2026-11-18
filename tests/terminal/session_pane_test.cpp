@@ -228,6 +228,9 @@ private slots:
         // The slow open was asked first, so its answer has been dealt with
         // when a channel opened now to the same session is answered; its
         // channel is the pool's, hidden.
+        QTRY_COMPARE_WITH_TIMEOUT(Pool_->Status(Slow()), EPaneStatus::Open,
+                                  TIMEOUT_MS);
+        QVERIFY(!Pool_->IsShown(Slow()));
         QCOMPARE(ChannelsLeftTo(Slow()), 1);
         QCOMPARE(Pane_->Status(), EPaneStatus::Open);
         QCOMPARE(Pane_->Session(), session);
@@ -533,6 +536,9 @@ private slots:
 
         // The pane's open was asked first, so its answer has been dealt with
         // when this one is answered.
+        QTRY_COMPARE_WITH_TIMEOUT(Pool_->Status(Slow()), EPaneStatus::Open,
+                                  TIMEOUT_MS);
+        QVERIFY(!Pool_->IsShown(Slow()));
         QCOMPARE(ChannelsLeftTo(Slow()), 1);
         // The IO thread still serves a new pane.
         Pane_ = std::make_unique<SessionPane>(*Pool_);

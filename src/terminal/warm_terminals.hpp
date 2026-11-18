@@ -71,9 +71,10 @@ enum class EPaneStatus {
 //   - an entry that is Release'd while Ended, Failed or Disconnected is
 //     dropped.
 //
-// At most one pane shows a key (a session has one render state): a second
-// Acquire of a shown key asserts in a debug build and does nothing in a
-// release build.
+// At most one owner shows a key (a session has one render state): the entry
+// records who Acquired it. A second Acquire of a shown key from another owner
+// takes the show over and says Superseded, so that the old owner stops
+// showing it; the old owner's Release then changes nothing.
 //
 // Uses an IoThread and lives in the thread of it (the GUI thread). The
 // IoThread must outlive the pool. The destructor closes every channel.
@@ -90,13 +91,16 @@ public:
     // Shows the session in the panel: a warm one at once (its terminal and
     // the status Open, with no Opening in between, then the acknowledgement,
     // session.view and a resize if the size differs), any other one with a
-    // session.open at the grid. An open in flight is waited for. A session
-    // that is shown, or Ended, Failed or Disconnected, does nothing here:
-    // see Reopen.
-    void Acquire(const SessionKey& key, quint16 columns, quint16 rows);
+    // session.open at the grid. An open in flight is waited for. A shown
+    // session goes to the new owner, with what a warm show does if it is
+    // Open. An Ended, Failed or Disconnected session is not opened here: see
+    // Reopen. The owner is only compared, never used.
+    void Acquire(const SessionKey& key, const QObject* owner, quint16 columns,
+                 quint16 rows);
     // The panel no longer shows the session. A live or opening one stays
-    // warm; any other is dropped.
-    void Release(const SessionKey& key);
+    // warm; any other is dropped. Does nothing unless the owner is the one
+    // that shows it.
+    void Release(const SessionKey& key, const QObject* owner);
 
     // The grid wanted for the session. Only the latest size is sent, once the
     // session is shown: at most one session.resize is in flight, and the
@@ -123,6 +127,8 @@ public:
     std::uint32_t Channel(const SessionKey& key) const;
     // Whether a panel shows the session.
     bool IsShown(const SessionKey& key) const;
+    // Who shows the session; null if nobody or no entry.
+    const QObject* Owner(const SessionKey& key) const;
     // The sessions the pool has an entry for.
     std::size_t Size() const { return Entries_.size(); }
 
@@ -133,6 +139,8 @@ signals:
     void Updated(const roost::SessionKey& key);
     // Status(key) or Message(key) changed.
     void StatusChanged(const roost::SessionKey& key);
+    // Another owner has Acquired the shown session; Owner(key) is it.
+    void Superseded(const roost::SessionKey& key);
 
 private:
     struct Entry {
@@ -146,6 +154,8 @@ private:
         // closed at once and ignored.
         std::uint64_t Generation = 0;
         bool Shown = false;
+        // Who Acquired it; null while hidden.
+        const QObject* Owner = nullptr;
         std::pair<quint16, quint16> Grid{80, 24};
         // The size the live channel was last given, by the open or a resize.
         std::optional<std::pair<quint16, quint16>> SentSize;
@@ -156,8 +166,9 @@ private:
     Entry* FindByChannel(std::uint32_t channel) const;
     void Erase(const Entry* entry);
 
-    // Opens the entry at its grid; the screen of an earlier open goes.
-    void StartOpen(Entry& entry);
+    // Opens the entry at its grid; the screen of an earlier open goes. Emits,
+    // so it works from the key and stops if the entry is gone or opened again.
+    void StartOpen(const SessionKey& key);
     void OnOpened(const SessionKey& key, std::uint64_t generation,
                   const OpenResult& result);
     void OnUpdated(std::uint32_t channel);

@@ -517,7 +517,12 @@ private slots:
         DropPage();
 
         // The item's open was asked first, so its answer has been dealt with
-        // when this one is answered; the window still holds its channel.
+        // when this one is answered; the window still holds its channel, as a
+        // warm entry that no item shows.
+        const SessionKey slow{"slow-agent", "s1"};
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Terminals().Status(slow),
+                                  EPaneStatus::Open, TIMEOUT_MS);
+        QVERIFY(!Api_->Terminals().IsShown(slow));
         QCOMPARE(ChannelsLeft(Api_->Io(), "slow-agent", "s1", TIMEOUT_MS), 1);
 
         // The window still serves a new item.

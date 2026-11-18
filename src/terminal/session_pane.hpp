@@ -32,7 +32,9 @@ namespace roost {
 // Updated it passes on.
 //
 // Lives in the thread of the pool (the GUI thread). The pool must outlive the
-// pane. At most one pane shows a session.
+// pane. At most one pane shows a session: when another pane Shows it, the
+// newest takes it over, and this one presents no session, the status None, and
+// sends nothing, until it Shows something else.
 class SessionPane : public QObject {
     Q_OBJECT
 
@@ -76,6 +78,8 @@ signals:
     void StatusChanged();
 
 private:
+    // Whether the pool has this pane as the one showing its key.
+    bool Owns() const;
     // Says SessionChanged or StatusChanged if the pool has moved on from what
     // the pane last said.
     void SyncSession();

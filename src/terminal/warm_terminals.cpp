@@ -41,15 +41,12 @@ WarmTerminals::~WarmTerminals() {
     }
 }
 
-void WarmTerminals::Acquire(const SessionKey& key, quint16 columns,
-                            quint16 rows) {
+void WarmTerminals::Acquire(const SessionKey& key, const QObject* owner,
+                            quint16 columns, quint16 rows) {
     if (Entry* const warm = Find(key)) {
-        Q_ASSERT_X(!warm->Shown, "WarmTerminals::Acquire",
-                   "at most one pane shows a session");
-        if (warm->Shown) {
-            return;
-        }
+        const QObject* const previous = warm->Owner;
         warm->Shown = true;
+        warm->Owner = owner;
         warm->Grid = {columns, rows};
         // A hidden entry is Open or Opening. An open in flight is
         // acknowledged when its answer comes; a live one switches in here:
@@ -61,21 +58,26 @@ void WarmTerminals::Acquire(const SessionKey& key, quint16 columns,
             SendView(warm->Channel);
             PumpResize(*warm);
         }
+        if (previous != nullptr && previous != owner) {
+            emit Superseded(SessionKey(key));
+        }
         return;
     }
     auto& entry = *Entries_.emplace_back(std::make_unique<Entry>());
     entry.Key = key;
     entry.Shown = true;
+    entry.Owner = owner;
     entry.Grid = {columns, rows};
-    StartOpen(entry);
+    StartOpen(key);
 }
 
-void WarmTerminals::Release(const SessionKey& key) {
+void WarmTerminals::Release(const SessionKey& key, const QObject* owner) {
     Entry* const entry = Find(key);
-    if (entry == nullptr) {
+    if (entry == nullptr || entry->Owner != owner) {
         return;
     }
     entry->Shown = false;
+    entry->Owner = nullptr;
     // What is not live or coming has no channel to keep warm.
     if (entry->Status != EPaneStatus::Open &&
         entry->Status != EPaneStatus::Opening) {
@@ -105,7 +107,7 @@ void WarmTerminals::Reopen(const SessionKey& key) {
         (entry->Status == EPaneStatus::Ended ||
          entry->Status == EPaneStatus::Failed ||
          entry->Status == EPaneStatus::Disconnected)) {
-        StartOpen(*entry);
+        StartOpen(key);
     }
 }
 
@@ -148,6 +150,11 @@ bool WarmTerminals::IsShown(const SessionKey& key) const {
     return entry != nullptr && entry->Shown;
 }
 
+const QObject* WarmTerminals::Owner(const SessionKey& key) const {
+    const Entry* const entry = Find(key);
+    return entry != nullptr ? entry->Owner : nullptr;
+}
+
 WarmTerminals::Entry* WarmTerminals::Find(const SessionKey& key) const {
     const auto found = std::ranges::find_if(
         Entries_, [&key](const auto& entry) { return entry->Key == key; });
@@ -170,22 +177,38 @@ void WarmTerminals::Erase(const Entry* entry) {
                   [entry](const auto& owned) { return owned.get() == entry; });
 }
 
-void WarmTerminals::StartOpen(Entry& entry) {
-    entry.Generation = ++LastGeneration_;
-    entry.ResizeInFlight = false;
+void WarmTerminals::StartOpen(const SessionKey& key) {
+    Entry* entry = Find(key);
+    if (entry == nullptr) {
+        return;
+    }
+    const std::uint64_t generation = ++LastGeneration_;
+    entry->Generation = generation;
+    entry->ResizeInFlight = false;
+    // A slot of an emit below may release the entry or open it again.
+    const auto stale = [&] {
+        entry = Find(key);
+        return entry == nullptr || entry->Generation != generation;
+    };
     // The old screen goes at once: the session shows nothing until it is
     // open.
-    if (entry.Session) {
-        entry.Session.reset();
-        emit SessionChanged(SessionKey(entry.Key));
+    if (entry->Session) {
+        entry->Session.reset();
+        emit SessionChanged(SessionKey(key));
+        if (stale()) {
+            return;
+        }
     }
-    SetStatus(entry, EPaneStatus::Opening);
-    entry.SentSize = entry.Grid;
+    SetStatus(*entry, EPaneStatus::Opening);
+    if (stale()) {
+        return;
+    }
+    entry->SentSize = entry->Grid;
     // The context is the IO thread, which outlives the pool, so the answer
     // always arrives; the pool may be gone by then.
-    Io_.Open(entry.Key.Agent, entry.Key.Id, entry.Grid.first, entry.Grid.second)
-        .then(&Io_, [pool = QPointer(this), io = &Io_, key = entry.Key,
-                     generation = entry.Generation](const OpenResult& result) {
+    Io_.Open(key.Agent, key.Id, entry->Grid.first, entry->Grid.second)
+        .then(&Io_, [pool = QPointer(this), io = &Io_, key,
+                     generation](const OpenResult& result) {
             if (pool) {
                 pool->OnOpened(key, generation, result);
             } else if (result) {

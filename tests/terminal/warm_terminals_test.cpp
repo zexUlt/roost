@@ -434,6 +434,80 @@ private slots:
         QCOMPARE(Proxy_->ResizeRequests(), 2);
     }
 
+    // Warm again, a session is acknowledged once more: the one Updated that a
+    // hidden channel raised is not acknowledged, so without the
+    // acknowledgement of the show it would never raise another.
+    void AWarmShowAcknowledgesTheUpdateRaisedWhileHidden() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        const auto hidden = Pane_->Session();
+        ShowAndSettle(Fast(2));
+        QVERIFY(RoundTrip());
+        const std::uint32_t direct = OpenDirect(Fast(1));
+        QVERIFY(direct != 0);
+        // Output while hidden: the channel raises its one Updated, which the
+        // pool does not acknowledge.
+        Io_->SendInput(direct, "q");
+        QTRY_VERIFY_WITH_TIMEOUT(Screen(hidden).contains(ANSWERED_TWICE),
+                                 TIMEOUT_MS);
+        QVERIFY(RoundTrip());
+        int updates = 0;
+        connect(Pane_.get(), &SessionPane::Updated, Pane_.get(),
+                [&updates] { ++updates; });
+
+        Pane_->Show(Fast(1));
+        QVERIFY(RoundTrip());
+        const int before = updates;
+        Io_->SendInput(direct, "q");
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(Pane_->Session()).contains(QStringLiteral("answers da1=3 ")),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(updates > before, TIMEOUT_MS);
+    }
+
+    // A new pane for a session another pane still shows (a QML Loader makes
+    // the new item before the old one is deleted): the newest takes the
+    // session over, the old one presents nothing, and the old one's end does
+    // not stop the new one's updates.
+    void ASecondPaneTakesTheSessionOver() {
+        QVERIFY(Prepare());
+        ShowAndSettle(Fast(1));
+        const auto session = Pane_->Session();
+        auto second = std::make_unique<SessionPane>(*Pool_);
+        int updates = 0;
+        connect(second.get(), &SessionPane::Updated, second.get(),
+                [&updates] { ++updates; });
+
+        second->Show(Fast(1));
+
+        QCOMPARE(second->Status(), EPaneStatus::Open);
+        QCOMPARE(second->Session(), session);
+        QVERIFY(!Pane_->Session());
+        QCOMPARE(Pane_->Status(), EPaneStatus::None);
+        QCOMPARE(Pool_->Owner(Fast(1)),
+                 static_cast<const QObject*>(second.get()));
+        // The old pane's end is not the new one's.
+        Pane_.reset();
+        QVERIFY(Pool_->IsShown(Fast(1)));
+        QCOMPARE(Pool_->Owner(Fast(1)),
+                 static_cast<const QObject*>(second.get()));
+        QCOMPARE(second->Status(), EPaneStatus::Open);
+        const std::uint32_t direct = OpenDirect(Fast(1));
+        QVERIFY(direct != 0);
+        Io_->SendInput(direct, "q");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(second->Session()).contains(ANSWERED_TWICE), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(updates > 0, TIMEOUT_MS);
+        const int before = updates;
+        Io_->SendInput(direct, "q");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Screen(second->Session())
+                .contains(QStringLiteral("answers da1=3 ")),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(updates > before, TIMEOUT_MS);
+    }
+
     void DestroyingThePoolClosesEveryChannel() {
         QVERIFY(Prepare());
         ShowAndSettle(Fast(1));
