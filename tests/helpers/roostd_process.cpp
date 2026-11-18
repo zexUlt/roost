@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 
 #include "core/rpc_client.hpp"
 
@@ -59,14 +60,19 @@ constexpr int GRACE_POLLS = 50;  // 5 s between SIGTERM and SIGKILL.
     }
     pollfd watched{lifeline, POLLIN, 0};
     for (;;) {
-        // roostd gone: nothing left to guard. Checked before the pipe, so that
-        // a recycled pid is never signalled.
+        // roostd gone: nothing left to guard.
         if (::getppid() != roostd) {
             ::_exit(0);
         }
         if (::poll(&watched, 1, WATCH_POLL_MS) > 0) {
-            break;  // The test process is gone: nobody writes, so EOF.
+            break;  // Nobody writes, so EOF.
         }
+    }
+    // EOF also comes from Stop(), which closes the pipe after roostd has left
+    // and been reaped, and its pid may already be reused. While roostd is still
+    // the parent, even a zombie, the pid cannot be reused.
+    if (::getppid() != roostd) {
+        ::_exit(0);
     }
     ::kill(roostd, SIGTERM);
     for (int i = 0; i < GRACE_POLLS && ::getppid() == roostd; ++i) {
@@ -186,12 +192,18 @@ bool RoostdProcess::Start(const QString& roostdPath) {
     WatcherLifeline_ = lifeline[1];
     const int watcherEnd = lifeline[0];
     Process_->setChildProcessModifier(
-        [watcherEnd, lifelineWrite = lifeline[1]] {
+        [process = Process_.get(), watcherEnd, lifelineWrite = lifeline[1]] {
             const pid_t roostd = ::getpid();
             const pid_t watcher = ::fork();
             if (watcher == 0) {
                 ::close(lifelineWrite);
                 Watch(watcherEnd, roostd);
+            }
+            if (watcher < 0) {
+                // Without the watcher an aborted test would leave roostd
+                // behind, so the start fails instead.
+                process->failChildProcessModifier("fork of the roostd watcher",
+                                                  errno);
             }
         });
     Process_->start(roostdPath, {});
