@@ -985,6 +985,55 @@ private slots:
         QCOMPARE(Channels_->ChannelCount(), 1);
     }
 
+    void AViewChangesNothingButTheViewingOrder() {
+        QVERIFY(Start());
+        Window* viewer = Connect();
+        Window* other = Connect();
+        QVERIFY(viewer && other);
+        const std::uint32_t channel = viewer->Open("s1");
+        const std::uint32_t shared = other->Open("s1");
+        QVERIFY(channel && shared);
+        // The program has said all it has to say.
+        QVERIFY(viewer->WaitDump(channel, "answers da1=1 cpr=1"));
+        QVERIFY(other->WaitDump(shared, "answers da1=1 cpr=1"));
+        const qsizetype viewerLog = viewer->Log.size();
+        const qsizetype otherLog = other->Log.size();
+        const PtySize size = Channels_->Pool().Find(Key("s1"))->Size();
+
+        const rpc::Result viewed =
+            viewer->Call("session.view",
+                         QJsonObject{{"channel", static_cast<int>(channel)}});
+        QVERIFY(viewed);
+        QVERIFY(viewed->isNull());
+
+        // No notification, frame or other change on either connection.
+        QTest::qWait(NOTHING_HAPPENS_MS);
+        QCOMPARE(viewer->Log.size(), viewerLog);
+        QCOMPARE(other->Log.size(), otherLog);
+        QVERIFY(viewer->Closed.isEmpty());
+        QVERIFY(other->Closed.isEmpty());
+        QCOMPARE(Channels_->Pool().Find(Key("s1"))->Size(), size);
+        QCOMPARE(Channels_->ChannelCount(), 2);
+        QVERIFY(!Channels_->Pool().Find(Key("s1"))->IsClosed());
+    }
+
+    void AViewOfAClosedChannelIsInvalidParams() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t channel = window->Open("s1");
+        QVERIFY(channel);
+        const QJsonObject params{{"channel", static_cast<int>(channel)}};
+        QVERIFY(window->Call("session.view", params));
+        QVERIFY(window->Call("session.close", params));
+
+        const rpc::Result viewed = window->Call("session.view", params);
+        QVERIFY(!viewed);
+        QCOMPARE(viewed.error().Code, INVALID_PARAMS);
+        QCOMPARE(Channels_->ChannelCount(), 0);
+        QVERIFY(Channels_->Pool().Find(Key("s1")));
+    }
+
     void OutputDuringAnOpenIsNeitherLostNorRepeated() {
         QVERIFY(Start());
         Window* first = Connect();
