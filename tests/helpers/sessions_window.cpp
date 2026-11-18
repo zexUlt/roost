@@ -445,9 +445,18 @@ QStringList SessionsWindow::Problems() {
 }
 
 // Auto-repeat of a key held down: the press arrives with `autorep` set.
-void SessionsWindow::PressRepeated(Qt::Key key) {
-    QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier, QString("\r"), true);
+void SessionsWindow::PressRepeated(Qt::Key key, Qt::KeyboardModifiers modifiers,
+                                   const QString& text) {
+    QKeyEvent event(QEvent::KeyPress, key, modifiers, text, true);
     QVERIFY(QCoreApplication::sendEvent(Window(), &event));
+}
+
+bool SessionsWindow::PressAccepted(Qt::Key key,
+                                   Qt::KeyboardModifiers modifiers) {
+    QKeyEvent event(QEvent::KeyPress, key, modifiers);
+    event.setAccepted(false);
+    QCoreApplication::sendEvent(Window(), &event);
+    return event.isAccepted();
 }
 
 // Until the panel has nothing left to write: it writes the document by

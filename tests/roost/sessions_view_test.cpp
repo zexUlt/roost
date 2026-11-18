@@ -674,6 +674,195 @@ private slots:
             ListView()->property("contentY").toReal() <= ViewItem(1)->y(),
             TIMEOUT_MS);
     }
+
+    void TheHelpTakesEnterAndTab() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        QSignalSpy selected(PanelOf(LIST), SIGNAL(selectedChanged()));
+        PressShifted(Qt::Key_Question, "?", 0x2C, 61);
+        QVERIFY(HelpOpen());
+
+        // Every key is taken, not only passed over: the event is accepted, so
+        // it does not go on to the focus chain or the shell.
+        for (const Qt::Key key :
+             {Qt::Key_Return, Qt::Key_Enter, Qt::Key_Tab, Qt::Key_Backtab,
+              Qt::Key_J, Qt::Key_Z, Qt::Key_Left}) {
+            QVERIFY2(PressAccepted(key), qPrintable(QString::number(key)));
+        }
+        Press(Qt::Key_Return);
+        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        Press(Qt::Key_Tab);
+        Press(Qt::Key_Backtab, Qt::ShiftModifier);
+        QTest::qWait(50);
+
+        QVERIFY(HelpOpen());
+        QVERIFY(SelectedId().isEmpty());
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(selected.count(), 0);
+        QVERIFY(ListView()->hasActiveFocus());
+        QVERIFY(!Terminal()->hasActiveFocus());
+        QCOMPARE(Cursor(), 0);
+
+        // Closed, the same Enter opens the row.
+        Press(Qt::Key_Escape);
+        QVERIFY(!HelpOpen());
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
+        QCOMPARE(activated.count(), 1);
+    }
+
+    void AHeldToggleKeyDoesNothing() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const auto held = [this](Qt::Key key, const QString& text,
+                                 Qt::KeyboardModifiers modifiers =
+                                     Qt::NoModifier) {
+            PressRepeated(key, modifiers, text);
+        };
+
+        held(Qt::Key_A, "a");
+        held(Qt::Key_V, "v");
+        held(Qt::Key_M, "m");
+        held(Qt::Key_P, "p");
+        held(Qt::Key_Z, "z");
+        held(Qt::Key_Question, "?", Qt::ShiftModifier);
+        QTest::qWait(100);
+
+        QVERIFY(!HelpOpen());
+        QCOMPARE(TabNow(), QString("all"));
+        QCOMPARE(Title(), QString("Sessions"));
+        QCOMPARE(Count(), 4);
+        QVERIFY(!Role(0, "pinned").toBool());
+        QVERIFY(
+            RowItem(3)->findChild<QQuickItem*>("sessionDetail")->isVisible());
+
+        // A held Shift+z unfolds nothing; a held `?` does not close the help.
+        Press(Qt::Key_Z);
+        QTRY_VERIFY_WITH_TIMEOUT(Role(0, "folded").toBool(), TIMEOUT_MS);
+        held(Qt::Key_Z, "Z", Qt::ShiftModifier);
+        QTest::qWait(100);
+        QVERIFY(Role(0, "folded").toBool());
+        Press(Qt::Key_Z, Qt::ShiftModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
+        PressShifted(Qt::Key_Question, "?", 0x2C, 61);
+        QVERIFY(HelpOpen());
+        held(Qt::Key_Question, "?", Qt::ShiftModifier);
+        held(Qt::Key_Escape, QString());
+        QTest::qWait(50);
+        QVERIFY(HelpOpen());
+        Press(Qt::Key_Escape);
+        QVERIFY(!HelpOpen());
+
+        // `<` and `>` keep repeating: a held key resizes step by step.
+        held(Qt::Key_Comma, ",");
+        held(Qt::Key_Comma, ",");
+        QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), LIST_WIDTH - 2 * WIDTH_STEP,
+                                  TIMEOUT_MS);
+        held(Qt::Key_Period, ".");
+        QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), LIST_WIDTH - WIDTH_STEP,
+                                  TIMEOUT_MS);
+    }
+
+    void ShiftedLettersAreNotViewKeys() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        for (const Qt::Key key : {Qt::Key_A, Qt::Key_V, Qt::Key_M, Qt::Key_P}) {
+            Press(key, Qt::ShiftModifier);
+        }
+        QTest::qWait(100);
+
+        QCOMPARE(TabNow(), QString("all"));
+        QCOMPARE(Title(), QString("Sessions"));
+        QVERIFY(!Role(0, "pinned").toBool());
+        QVERIFY(
+            RowItem(3)->findChild<QQuickItem*>("sessionDetail")->isVisible());
+        QVERIFY(StoredDocument().value("pinned").toArray().isEmpty());
+        QVERIFY(!StoredView().value("compact").toBool());
+        QCOMPARE(Count(), 4);
+    }
+
+    void TheListEndsAboveTheFooterAndTheUnavailableAgents() {
+        FailOnWarnings();
+        // A document of a newer version fills the footer with the problem; a
+        // broken claude fills the list of unavailable agents.
+        QVERIFY(Seed(QJsonObject{{"version", 2}}));
+        Boot(0, BROKEN_CLAUDE);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsProblem")->isVisible() &&
+                                     Part("sessionsUnavailable")->isVisible(),
+                                 TIMEOUT_MS);
+        auto* footer = Part("footer");
+        auto* unavailable = Part("sessionsUnavailable");
+        const qreal bottom = ListView()->y() + ListView()->height();
+
+        QVERIFY(footer->height() > 0);
+        QVERIFY(bottom <= unavailable->y());
+        QVERIFY(unavailable->y() + unavailable->height() <= footer->y());
+        QVERIFY(bottom <= footer->y());
+    }
+
+    void TheFooterWithoutTheUnavailableAgentsBoundsTheList() {
+        FailOnWarnings();
+        QVERIFY(Seed(QJsonObject{{"version", 2}}));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsProblem")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(!Part("sessionsUnavailable")->isVisible());
+        QVERIFY(Part("footer")->height() > 0);
+        QVERIFY(ListView()->y() + ListView()->height() <= Part("footer")->y());
+    }
+
+    void TheHeadFitsTheNarrowestPanel() {
+        FailOnWarnings();
+        const QString query =
+            QString("a long query that cannot fit ").repeated(4);
+        BootWith(Document({{"view", QJsonObject{{"query", query}}}}), 0);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        for (int i = 0; i < 30; ++i) {
+            Press(Qt::Key_Comma);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MIN, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsQuery")->isVisible(),
+                                 TIMEOUT_MS);
+
+        // Whatever is drawn in the head stays inside the panel: the query is
+        // elided and the tabs fit.
+        const qreal panel = PanelOf(LIST)->width();
+        QCOMPARE(panel, static_cast<qreal>(WIDTH_MIN));
+        const auto right = [&](QQuickItem* item) {
+            return item->mapToItem(PanelOf(LIST), QPointF(item->width(), 0))
+                .x();
+        };
+        QVERIFY(right(Part("sessionsQuery")) <= panel);
+        QVERIFY(Part("sessionsQuery")->property("truncated").toBool());
+        QVERIFY(Part("sessionsHead")->clip());
+        QVERIFY(right(Part("sessionsTitle")) <= panel);
+        QCOMPARE(TabItems().size(), 3);
+        for (QQuickItem* tab : TabItems()) {
+            QVERIFY2(right(tab) <= panel,
+                     qPrintable(tab->property("text").toString()));
+        }
+        QVERIFY(Part("sessionsHead")->property("implicitWidth").toReal() <=
+                panel);
+    }
 };
 
 QTEST_MAIN(SessionsViewTest)

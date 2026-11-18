@@ -246,7 +246,13 @@ public:
     QStringList Problems();
 
     // Auto-repeat of a key held down: the press arrives with `autorep` set.
-    void PressRepeated(Qt::Key key);
+    void PressRepeated(Qt::Key key,
+                       Qt::KeyboardModifiers modifiers = Qt::NoModifier,
+                       const QString& text = QStringLiteral("\r"));
+
+    // A press as Press, and whether the window's item took the event.
+    bool PressAccepted(Qt::Key key,
+                       Qt::KeyboardModifiers modifiers = Qt::NoModifier);
 
 protected:
     QStringList Changes_;

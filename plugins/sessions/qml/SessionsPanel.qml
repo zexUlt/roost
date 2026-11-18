@@ -130,7 +130,8 @@ FocusScope {
     // header unfolds and opens nothing. Not while the list is being replaced:
     // the cursor is then not the user's.
     function openCurrent() {
-        if (resetting) {
+        // The help takes every key, Enter included.
+        if (resetting || helpOpen) {
             return;
         }
         const ref = sessionsList.cursorSession;
@@ -196,40 +197,53 @@ FocusScope {
             return false;
         }
         const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+        const act = !event.isAutoRepeat;
         switch (key) {
         case Qt.Key_A:
             if (shift) {
                 return false;
             }
-            sessionsList.nextTab();
+            if (act) {
+                sessionsList.nextTab();
+            }
             return true;
         case Qt.Key_V:
             if (shift) {
                 return false;
             }
-            sessionsList.viewArchive = !sessionsList.viewArchive;
+            if (act) {
+                sessionsList.viewArchive = !sessionsList.viewArchive;
+            }
             return true;
         case Qt.Key_M:
             if (shift) {
                 return false;
             }
-            sessionsList.compact = !sessionsList.compact;
+            if (act) {
+                sessionsList.compact = !sessionsList.compact;
+            }
             return true;
         case Qt.Key_P:
             if (shift) {
                 return false;
             }
-            pinCursorCategory();
+            if (act) {
+                pinCursorCategory();
+            }
             return true;
         case Qt.Key_Z:
-            if (shift) {
-                sessionsList.unfoldAll();
-            } else {
-                foldCursorCategory();
+            if (act) {
+                if (shift) {
+                    sessionsList.unfoldAll();
+                } else {
+                    foldCursorCategory();
+                }
             }
             return true;
         case Qt.Key_Question:
-            helpOpen = true;
+            if (act) {
+                helpOpen = true;
+            }
             return true;
         case Qt.Key_Less:
         case Qt.Key_Comma:
@@ -345,8 +359,11 @@ FocusScope {
         anchors.top: parent.top
         anchors.margins: 8
         spacing: 4
+        // The rows are cut at the panel edge, not drawn over its neighbour.
+        clip: true
 
         Row {
+            width: parent.width
             spacing: 8
 
             Text {
@@ -359,12 +376,16 @@ FocusScope {
             Text {
                 objectName: "sessionsQuery"
                 visible: sessionsList.query !== ""
+                // The query takes what the title leaves.
+                width: Math.max(0, parent.width - x)
+                elide: Text.ElideRight
                 color: "#a0a0a0"
                 text: "/ " + sessionsList.query
             }
         }
 
         Row {
+            width: parent.width
             spacing: 12
 
             Repeater {
@@ -425,7 +446,8 @@ FocusScope {
             const key = Roost.bindingKey(event);
             const plain = event.modifiers === Qt.NoModifier;
             if (root.helpOpen) {
-                if (key === Qt.Key_Question || event.key === Qt.Key_Escape) {
+                // A held `?` or Esc closes it once, not through the keys behind.
+                if (!event.isAutoRepeat && (key === Qt.Key_Question || event.key === Qt.Key_Escape)) {
                     root.helpOpen = false;
                 }
                 event.accepted = true;
