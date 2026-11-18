@@ -26,6 +26,17 @@ add_library(roost_test_terminal_helpers STATIC
 target_link_libraries(roost_test_terminal_helpers PUBLIC
     roost_test_helpers roost_terminal)
 
+# The window of the shell with the sessions panel, for the tests of that panel.
+add_library(roost_test_sessions_window STATIC helpers/sessions_window.cpp)
+target_link_libraries(roost_test_sessions_window PUBLIC
+    roost_test_helpers roost_app roost_shell roost_qml_api roost_api
+    Qt6::Qml Qt6::Quick)
+target_compile_definitions(roost_test_sessions_window PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+
 # One executable per test file, so a crash in one does not hide the others.
 function(roost_add_qt_test name source)
     # test_environment.cpp is a source, not a library member: the linker may drop
@@ -287,7 +298,7 @@ add_dependencies(terminal_panel_test roostd fake_tui claude-adapter)
 # behind a fake claude.
 roost_add_qt_test(sessions_panel_test roost/sessions_panel_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
-    roost_test_helpers Qt6::Qml Qt6::Quick)
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
 target_compile_definitions(sessions_panel_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
