@@ -281,7 +281,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 1, TIMEOUT_MS);
         QVERIFY(Api_->Sessions().Rows().isEmpty());
         // An event that comes while the new list is out is kept for it, as it
-        // is for any list: the loss left no count of the lost Refresh behind.
+        // is for any list.
         Daemon_->Event("session.stateChanged", Row("s3", "done"));
         Daemon_->AnswerList(0, {Row("s3", "working")});
         QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().IsLoaded(), TIMEOUT_MS);
@@ -311,10 +311,15 @@ private slots:
         QVERIFY(WaitFor(older));
         // The answer is the daemon's, whatever the cache did with it.
         QVERIFY(older.result());
-        QTest::qWait(100);
+        // The frames come in order: when the marker event is on the rows, the
+        // answer before it has been handled.
+        QSignalSpy inserted(&Api_->Sessions(),
+                            &api::SessionService::RowInserted);
+        Daemon_->Event("session.stateChanged", Row("s8", "idle"));
+        QTRY_COMPARE_WITH_TIMEOUT(inserted.size(), 1, TIMEOUT_MS);
         QCOMPARE(reset.size(), 1);
         QCOMPARE(Seen(Api_->Sessions().Rows()),
-                 (QStringList{"s2:done", "s7:idle"}));
+                 (QStringList{"s2:done", "s7:idle", "s8:idle"}));
     }
 
     // Two Refreshes are out and answer in the order they were asked: the later
@@ -345,7 +350,7 @@ private slots:
     // Both Gets miss the cache, as neither has answered; each asks roostd, and
     // both get the document. The cache is warm after, and the next Get does
     // not ask roostd: a document written behind its back is not seen.
-    void TwoGetsAtOnceAgreeAndLeaveTheCacheWarm() {
+    void TwoGetsAtOnceGetTheSameDocumentAndWarmTheCache() {
         QVERIFY(StartRoostd());
         api::Api api;
         QSignalSpy connected(&api, &api::Api::Connected);
@@ -385,14 +390,14 @@ private slots:
     // brings it back to the first, so that the next loss is retried after the
     // first wait and not the grown one.
     void ASuccessfulHelloTakesTheWaitBackToTheFirst() {
-        ScriptedDaemon daemon;
+        // The daemon and the directory are members, so that they outlive Api_.
+        ScriptedDaemon& daemon = *Daemon_;
         daemon.DropAtOnce = true;
-        QTemporaryDir dir;
-        QVERIFY(dir.isValid());
-        QVERIFY(daemon.Listen(dir.filePath("fake.sock")));
+        QVERIFY(Dir_->isValid());
+        QVERIFY(daemon.Listen(Dir_->filePath("fake.sock")));
         Api_ = std::make_unique<api::Api>(Quick());
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
-        Api_->Connect(dir.filePath("fake.sock"));
+        Api_->Connect(Dir_->filePath("fake.sock"));
         QTRY_VERIFY_WITH_TIMEOUT(
             static_cast<int>(daemon.Arrived().size()) >= ATTEMPTS_TO_GROW,
             TIMEOUT_MS);
@@ -405,10 +410,13 @@ private slots:
         const std::size_t lost = daemon.Arrived().size();
         QTRY_VERIFY_WITH_TIMEOUT(daemon.Arrived().size() > lost, TIMEOUT_MS);
         const qint64 waited = daemon.Arrived().at(lost) - daemon.DroppedAt();
-        // A timer never fires early; late by half the cap is a loaded machine.
+        // A timer never fires early. Without the reset the wait is the cap
+        // (640 ms), with it the first (40 ms); the bound is the middle between
+        // the cap and the 4th wait (320 ms), so that a loaded machine has
+        // ~440 ms of slack.
         QVERIFY2(waited >= FIRST_DELAY.count() - 2,
                  qPrintable(QString("waited %1 ms").arg(waited)));
-        QVERIFY2(waited < MAX_DELAY.count() / 2,
+        QVERIFY2(waited < MAX_DELAY.count() * 3 / 4,
                  qPrintable(QString("waited %1 ms").arg(waited)));
         QTRY_COMPARE_WITH_TIMEOUT(connected.size(), 2, TIMEOUT_MS);
     }
