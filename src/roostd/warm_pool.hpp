@@ -52,7 +52,9 @@ public:
 signals:
     // Emitted after the terminal has taken the bytes.
     void Output(const QByteArray& bytes);
-    // "evicted", or the PTY's reason, "exited with code N" and the like.
+    // The reason the pool gave when it evicted the session ("evicted" for the
+    // least recently viewed one, "removed" for a session gone from its
+    // agent), or the PTY's: "exited with code N" and the like.
     void Closed(const QString& reason);
 
 private:
@@ -64,7 +66,7 @@ private:
     void Close(const QString& reason);
     // Closes the session and hangs the program up; the session is deleted
     // once the program has gone.
-    void Evict();
+    void Evict(const QString& reason);
 
     WarmSessionKey Key_;
     VtTerminal Terminal_;
@@ -81,7 +83,8 @@ struct WarmPoolOptions {
 
 // The warm sessions of the daemon (design.md §3), at most Capacity of them.
 // When one more is opened, the one viewed least recently is evicted: its
-// program is hung up and its session closed.
+// program is hung up and its session closed. A session
+// can also be evicted by its key (Evict).
 //
 // An evicted session leaves the pool at once and does not count in Capacity,
 // but its program lives until it exits on SIGHUP, at most a hang-up timeout:
@@ -107,6 +110,10 @@ public:
     WarmSession* Find(const WarmSessionKey& key) const;
     // The session counts as viewed now.
     void Touch(WarmSession* session);
+    // Evicts the warm session of the key as EvictExtra does, but with the
+    // reason given: the program is hung up and the session closed with the
+    // reason. Nothing happens if the session is not warm.
+    void Evict(const WarmSessionKey& key, const QString& reason);
     qsizetype Count() const { return Sessions_.size(); }
 
 private:

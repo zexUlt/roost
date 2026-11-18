@@ -115,6 +115,19 @@ SessionChannels::SessionChannels(Server& server, PluginHost& plugins,
     connect(&Server_, &Server::InputReceived, this, &SessionChannels::OnInput);
     connect(&Server_, &Server::ConnectionClosed, this,
             &SessionChannels::OnConnectionClosed);
+
+    RemovedSubscription_ = Server_.Bus().Subscribe(
+        QStringLiteral("session.removed"),
+        [this](const QString&, const QJsonValue& payload) {
+            OnSessionRemoved(payload);
+        });
+    Q_ASSERT(RemovedSubscription_);
+}
+
+SessionChannels::~SessionChannels() {
+    if (RemovedSubscription_) {
+        Server_.Bus().Unsubscribe(*RemovedSubscription_);
+    }
 }
 
 qsizetype SessionChannels::ChannelCount() const {
@@ -378,6 +391,19 @@ void SessionChannels::OnConnectionClosed(Server::ConnectionId connection) {
         disconnect(channel.ClosedLink);
     }
     Connections_.erase(it);
+}
+
+void SessionChannels::OnSessionRemoved(const QJsonValue& payload) {
+    const QJsonObject object = payload.toObject();
+    const QJsonValue agent = object.value(QStringLiteral("agent"));
+    const QJsonValue id = object.value(QStringLiteral("id"));
+    if (!agent.isString() || !id.isString()) {
+        return;
+    }
+    // Closed tells the channels of the session and forgets it.
+    Pool_.Evict(
+        WarmSessionKey{.Agent = agent.toString(), .Session = id.toString()},
+        QStringLiteral("removed"));
 }
 
 }  // namespace roost

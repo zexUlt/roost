@@ -71,8 +71,8 @@ void WarmSession::Close(const QString& reason) {
     emit Closed(reason);
 }
 
-void WarmSession::Evict() {
-    Close(QStringLiteral("evicted"));
+void WarmSession::Evict(const QString& reason) {
+    Close(reason);
     // Finished comes once the program has gone, at most a hang-up timeout
     // from now, and deletes the session.
     Pty_->HangUp();
@@ -122,13 +122,20 @@ void WarmPool::Forget(WarmSession* session) {
     }
 }
 
+void WarmPool::Evict(const WarmSessionKey& key, const QString& reason) {
+    if (WarmSession* session = Find(key); session != nullptr) {
+        // Closed forgets it.
+        session->Evict(reason);
+    }
+}
+
 void WarmPool::EvictExtra() {
     while (Sessions_.size() > Options_.Capacity) {
         const auto oldest = std::ranges::min_element(
             Sessions_, {},
             [](const WarmSession* session) { return session->LastViewed_; });
         // Closed forgets it.
-        (*oldest)->Evict();
+        (*oldest)->Evict(QStringLiteral("evicted"));
     }
 }
 

@@ -235,6 +235,35 @@ private slots:
         QVERIFY(!(*again)->IsClosed());
     }
 
+    void AnEvictionByKeyClosesThatSessionWithTheReason() {
+        WarmPool pool;
+        auto a = pool.Open(Key("a"), FakeTui(), {});
+        auto b = pool.Open(Key("b"), FakeTui(), {});
+        QVERIFY(a && b);
+        const qint64 aPid = (*a)->ProcessId();
+        QSignalSpy aClosed(*a, &WarmSession::Closed);
+        QSignalSpy bClosed(*b, &WarmSession::Closed);
+        const QPointer<WarmSession> removed = *a;
+
+        pool.Evict(Key("a"), "removed");
+        QCOMPARE(aClosed.size(), 1);
+        QCOMPARE(aClosed.first().first().toString(), "removed");
+        QCOMPARE(pool.Find(Key("a")), nullptr);
+        QCOMPARE(pool.Count(), 1);
+        QCOMPARE(pool.Find(Key("b")), *b);
+        QVERIFY(bClosed.isEmpty());
+        QVERIFY(Gone(aPid));
+        QVERIFY(QTest::qWaitFor([&] { return removed.isNull(); }, TIMEOUT_MS));
+
+        // A key that is not warm, and the same key a second time.
+        pool.Evict(Key("a"), "removed");
+        pool.Evict(WarmSessionKey{.Agent = "other", .Session = "b"}, "removed");
+        QCOMPARE(pool.Count(), 1);
+        QCOMPARE(pool.Find(Key("b")), *b);
+        QVERIFY(bClosed.isEmpty());
+        QCOMPARE(aClosed.size(), 1);
+    }
+
     void AnExitClosesTheSession() {
         WarmPool pool;
         auto session = pool.Open(Key("a"), FakeTui(), {});

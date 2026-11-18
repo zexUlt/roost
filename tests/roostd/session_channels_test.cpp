@@ -220,9 +220,9 @@ private:
     QString PluginsPath() const { return Dir_->filePath("plugins"); }
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
-    // A plugin that serves the agent "fake" whose sessions s1, s2 and s3
-    // attach to fake_tui, stream to a shell loop, and null, broken and missing
-    // do not attach.
+    // A plugin that serves the agents "fake" and "other"; sessions s1, s2 and
+    // s3 of "fake" and s1 of "other" attach to fake_tui, stream to a shell
+    // loop, and null, broken and missing do not attach.
     bool WritePlugin() {
         const QDir directory(PluginsPath() + "/one");
         if (!directory.mkpath(".") ||
@@ -235,10 +235,14 @@ private:
             {"api", PLUGIN_API},
             {"backend", QJsonObject{{"command", QJsonArray{"backend"}}}},
             {"contributes",
-             QJsonObject{{"agents", QJsonArray{QJsonObject{
-                                        {"id", "fake"},
-                                        {"capabilities",
-                                         QJsonArray{"nativeTuiAttach"}}}}}}},
+             QJsonObject{
+                 {"agents",
+                  QJsonArray{QJsonObject{{"id", "fake"},
+                                         {"capabilities",
+                                          QJsonArray{"nativeTuiAttach"}}},
+                             QJsonObject{{"id", "other"},
+                                         {"capabilities",
+                                          QJsonArray{"nativeTuiAttach"}}}}}}},
         };
         QFile file(directory.filePath("plugin.json"));
         if (!file.open(QIODevice::WriteOnly)) {
@@ -255,6 +259,7 @@ private:
                  {"fake/s1", fakeTui},
                  {"fake/s2", fakeTui},
                  {"fake/s3", fakeTui},
+                 {"other/s1", fakeTui},
                  {"fake/stream",
                   Result(
                       QJsonObject{{"program", "/bin/sh"},
@@ -584,6 +589,86 @@ private slots:
         QCOMPARE(Channels_->ChannelCount(), 1);
         QCOMPARE(Channels_->Pool().Find(Key("s1")), nullptr);
         QVERIFY(Channels_->Pool().Find(Key("s2")));
+    }
+
+    void ARemovedWarmSessionIsClosedWithReasonRemoved() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        QVERIFY(window->Open("s1"));
+        QVERIFY(window->Open("s2"));
+        Window* second = Connect();
+        QVERIFY(second);
+        QVERIFY(second->Open("s1"));
+        QCOMPARE(Channels_->ChannelCount(), 3);
+
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", "fake"}, {"id", "s1"}}));
+
+        // Every channel of the session is told, with the reason "removed".
+        QTRY_COMPARE_WITH_TIMEOUT(window->Closed.size(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(second->Closed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Closed.at(0),
+                 (QJsonObject{{"channel", 1}, {"reason", "removed"}}));
+        QCOMPARE(second->Closed.at(0),
+                 (QJsonObject{{"channel", 1}, {"reason", "removed"}}));
+        QCOMPARE(Channels_->ChannelCount(), 1);
+        QCOMPARE(Channels_->Pool().Count(), 1);
+        QCOMPARE(Channels_->Pool().Find(Key("s1")), nullptr);
+        QVERIFY(!Channels_->Pool().Find(Key("s2"))->IsClosed());
+    }
+
+    void ARemovalOfAnotherAgentsSessionWithTheSameIdKeepsIt() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t fake = window->Open("s1");
+        QVERIFY(fake);
+        const rpc::Result other = window->OpenWith(
+            QJsonObject{{"agent", "other"}, {"session", "s1"}});
+        QVERIFY2(other, qPrintable(Why(other)));
+        const int otherChannel = other->toObject().value("channel").toInt();
+        QVERIFY(otherChannel > 0);
+        QCOMPARE(Channels_->Pool().Count(), 2);
+
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", "other"}, {"id", "s1"}}));
+
+        QTRY_COMPARE_WITH_TIMEOUT(window->Closed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Closed.at(0), (QJsonObject{{"channel", otherChannel},
+                                                    {"reason", "removed"}}));
+        QTest::qWait(NOTHING_HAPPENS_MS);
+        QCOMPARE(window->Closed.size(), 1);
+        QCOMPARE(Channels_->Pool().Count(), 1);
+        QCOMPARE(Channels_->ChannelCount(), 1);
+        QVERIFY(Channels_->Pool().Find(Key("s1")));
+        QVERIFY(!Channels_->Pool().Find(Key("s1"))->IsClosed());
+        QVERIFY(window->WaitDump(fake, "answers da1=1 cpr=1"));
+    }
+
+    void ARemovalOfANonWarmSessionChangesNothing() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        QVERIFY(window->Open("s1"));
+        QCOMPARE(Channels_->Pool().Count(), 1);
+
+        // A session that is not warm, an agent that is not served, and
+        // payloads that are not a removal at all.
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", "fake"}, {"id", "s3"}}));
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", "nobody"}, {"id", "s1"}}));
+        QVERIFY(Server_->Bus().Publish("session.removed", QJsonObject{}));
+        QVERIFY(Server_->Bus().Publish("session.removed", QJsonValue()));
+        QVERIFY(Server_->Bus().Publish(
+            "session.removed", QJsonObject{{"agent", 1}, {"id", "s1"}}));
+
+        QTest::qWait(NOTHING_HAPPENS_MS);
+        QCOMPARE(Channels_->Pool().Count(), 1);
+        QCOMPARE(Channels_->ChannelCount(), 1);
+        QVERIFY(window->Closed.isEmpty());
+        QVERIFY(!Channels_->Pool().Find(Key("s1"))->IsClosed());
     }
 
     void AClosedConnectionTakesItsChannelsAndLeavesTheSessionWarm() {

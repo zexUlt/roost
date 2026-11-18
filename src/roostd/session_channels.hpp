@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "roostd/server.hpp"
 #include "roostd/warm_pool.hpp"
@@ -39,7 +40,9 @@ class PluginHost;
 //
 // and, as notification session.closed {channel, reason}, tells the client of
 // a channel that its session has closed: the program exited, or the pool
-// evicted it (WarmSession::Closed); the channel is gone then.
+// evicted it (WarmSession::Closed); the channel is gone then. The reason is
+// "evicted" for the least recently viewed session and "removed" when the
+// daemon's bus announced session.removed {agent, id} for it.
 //
 // The size belongs to the session, not to a channel: a size given by
 // session.open or session.resize is the size of the session for all of its
@@ -58,6 +61,8 @@ class SessionChannels : public QObject {
 public:
     SessionChannels(Server& server, PluginHost& plugins,
                     WarmPoolOptions options = {}, QObject* parent = nullptr);
+
+    ~SessionChannels() override;
 
     SessionChannels(const SessionChannels&) = delete;
     SessionChannels& operator=(const SessionChannels&) = delete;
@@ -99,11 +104,15 @@ private:
     void OnSessionClosed(Server::ConnectionId connection, std::uint32_t number,
                          const QString& reason);
     void OnConnectionClosed(Server::ConnectionId connection);
+    // The bus event session.removed {agent, id}: the session is gone from its
+    // agent, so the warm one is evicted with the reason "removed".
+    void OnSessionRemoved(const QJsonValue& payload);
 
     Server& Server_;
     PluginHost& Plugins_;
     WarmPool Pool_;
     QHash<Server::ConnectionId, ConnectionChannels> Connections_;
+    std::optional<EventBus::SubscriptionId> RemovedSubscription_;
 };
 
 }  // namespace roost
