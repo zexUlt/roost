@@ -11,7 +11,9 @@ import RoostSessions
 // `selected`: opening a session is not free. A tap on a header folds or
 // unfolds it. The head shows the title (Sessions, or Archive), the query and
 // the tabs with their counts; the keys a, v, m, z, Z, p, ?, < and > act on the
-// view (the help overlay lists them).
+// view (the help overlay lists them). The keys /, c and e open the prompt in
+// the footer: the search, the category and the name of the session under the
+// cursor.
 FocusScope {
     id: root
 
@@ -30,6 +32,13 @@ FocusScope {
 
     // The help overlay is open: it takes every key until `?` or Esc closes it.
     property bool helpOpen: false
+
+    // The prompt of the footer: "search", "category", "rename", or "" when
+    // there is none. The session a category or a name is for is taken when the
+    // prompt opens (`promptRef`), whatever the cursor does while the user
+    // types.
+    property string promptKind: ""
+    property var promptRef: null
 
     // The colours of the categories, by the `colorIndex` of the model, and of
     // the states, hard-coded until the palette of the layout (M5).
@@ -188,6 +197,65 @@ FocusScope {
         list.forceActiveFocus();
     }
 
+    // The title of the row under the cursor, as the list shows it.
+    function cursorTitle() {
+        const item = list.itemAtIndex(sessionsList.cursorRow);
+        return item !== null && item.model.kind === "session" ? item.model.title : "";
+    }
+
+    // Opens the prompt of the footer with its text. The keys then go to the
+    // text field, not to the list.
+    function openPrompt(kind, ref, text) {
+        promptKind = kind;
+        promptRef = ref;
+        promptInput.text = text;
+        promptInput.cursorPosition = text.length;
+        promptInput.forceActiveFocus();
+    }
+
+    function closePrompt() {
+        promptKind = "";
+        promptRef = null;
+        promptInput.text = "";
+        list.forceActiveFocus();
+    }
+
+    // Enter: the category or the name goes to the model, the search keeps its
+    // query, which is already set.
+    function submitPrompt() {
+        const ref = promptRef;
+        const text = promptInput.text;
+        const kind = promptKind;
+        closePrompt();
+        if (kind === "category") {
+            sessionsList.setCategory(ref, text.trim());
+        } else if (kind === "rename") {
+            sessionsList.rename(ref, text);
+        }
+    }
+
+    // Esc: nothing changes, but the search drops its query.
+    function cancelPrompt() {
+        if (promptKind === "search") {
+            sessionsList.query = "";
+        }
+        closePrompt();
+    }
+
+    // c and e: the prompt for the session under the cursor; on a header there
+    // is no session and nothing happens.
+    function openSessionPrompt(kind) {
+        const ref = sessionsList.cursorSession;
+        if (ref === null) {
+            return;
+        }
+        if (kind === "category") {
+            openPrompt(kind, ref, sessionsList.cursorCategory ?? "");
+        } else {
+            openPrompt(kind, ref, cursorTitle());
+        }
+    }
+
     // The keys of the view. `key` is Roost.bindingKey(event). Letters match the
     // key and Shift (z, Z); symbols match the key and ignore Shift, which a
     // layout may need for them (? is Shift+7 on the Russian one). Ctrl, Alt or
@@ -238,6 +306,27 @@ FocusScope {
                 } else {
                     foldCursorCategory();
                 }
+            }
+            return true;
+        case Qt.Key_C:
+            if (shift) {
+                return false;
+            }
+            if (act) {
+                openSessionPrompt("category");
+            }
+            return true;
+        case Qt.Key_E:
+            if (shift) {
+                return false;
+            }
+            if (act) {
+                openSessionPrompt("rename");
+            }
+            return true;
+        case Qt.Key_Slash:
+            if (act) {
+                openPrompt("search", null, sessionsList.query);
             }
             return true;
         case Qt.Key_Question:
@@ -457,6 +546,10 @@ FocusScope {
             } else if (event.key === Qt.Key_Up || (key === Qt.Key_K && plain)) {
                 sessionsList.move(-1);
                 event.accepted = true;
+            } else if (event.key === Qt.Key_Escape && plain && sessionsList.query !== "") {
+                // Esc drops the search the Enter of the prompt kept.
+                sessionsList.query = "";
+                event.accepted = true;
             } else if (root.viewKey(event, key)) {
                 event.accepted = true;
             }
@@ -648,8 +741,8 @@ FocusScope {
 
     // The footer: one area under the list, lines one over the other, each only
     // as high as its text and none when it has no text. Its lines keep their
-    // places: the problem of the store; the prompt, and the confirmation and
-    // the notice of a command (steps that add them put them in this Column).
+    // places: the problem of the store; the prompt; the confirmation and the
+    // notice of a command (steps that add them put them in this Column).
     Column {
         id: footer
 
@@ -670,6 +763,92 @@ FocusScope {
             color: sessionsList.readOnly ? "#e06060" : "#e0a060"
             wrapMode: Text.Wrap
             text: sessionsList.problem
+        }
+
+        // The prompt: the search, the category or the name of a session. Enter
+        // submits, Esc cancels; the text is typed as it is, not through
+        // bindingKey, so that any layout types its letters.
+        Column {
+            objectName: "sessionsPrompt"
+            width: parent.width
+            visible: root.promptKind !== ""
+            bottomPadding: 4
+
+            Item {
+                width: parent.width
+                height: promptInput.implicitHeight + 4
+
+                Text {
+                    id: promptLabel
+
+                    objectName: "sessionsPromptLabel"
+                    anchors.left: parent.left
+                    anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: "#a0a0a0"
+                    text: root.promptKind === "search" ? "/" : (root.promptKind === "category" ? "Category:" : "Name:")
+                }
+
+                TextInput {
+                    id: promptInput
+
+                    objectName: "sessionsPromptInput"
+                    anchors.left: promptLabel.right
+                    anchors.leftMargin: 6
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    clip: true
+                    color: root.textColor
+                    selectionColor: "#3d5a80"
+                    selectByMouse: true
+
+                    // The search is live: the list follows every edit.
+                    onTextEdited: {
+                        if (root.promptKind === "search") {
+                            sessionsList.query = text;
+                        }
+                    }
+                    onAccepted: root.submitPrompt()
+                    // A tap on the list takes the keyboard away: the search
+                    // keeps its query, the others are dropped. Not when the
+                    // whole window lost the focus.
+                    onActiveFocusChanged: {
+                        if (!activeFocus && root.promptKind !== "" && Window.active) {
+                            if (root.promptKind === "search") {
+                                root.closePrompt();
+                            } else {
+                                root.cancelPrompt();
+                            }
+                        }
+                    }
+
+                    Keys.onEscapePressed: root.cancelPrompt()
+                    // A digit 1-9 in an empty category prompt picks the
+                    // category with that number.
+                    Keys.onPressed: event => {
+                        const index = event.key - Qt.Key_1;
+                        const plain = (event.modifiers & ~Qt.KeypadModifier) === Qt.NoModifier;
+                        if (root.promptKind === "category" && text === "" && plain && index >= 0 && index < 9 && index < sessionsList.knownCategories.length) {
+                            text = sessionsList.knownCategories[index];
+                            root.submitPrompt();
+                            event.accepted = true;
+                        }
+                    }
+                }
+            }
+
+            // The categories the digits pick.
+            Text {
+                objectName: "sessionsPromptHint"
+                width: parent.width
+                leftPadding: 8
+                rightPadding: 8
+                visible: root.promptKind === "category" && promptInput.text === "" && sessionsList.knownCategories.length > 0
+                color: "#808080"
+                elide: Text.ElideRight
+                text: sessionsList.knownCategories.slice(0, 9).map((name, i) => (i + 1) + " " + name).join("   ")
+            }
         }
     }
 
@@ -706,7 +885,7 @@ FocusScope {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap
-                text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor"
+                text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor\n/   search, live (Enter keeps it, Esc clears it)\nc   category of the session under the cursor (1-9 picks a known one, empty clears)\ne   rename the session under the cursor (empty restores the agent's title)"
             }
 
             Text {
