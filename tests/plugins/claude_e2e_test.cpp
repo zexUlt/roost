@@ -214,13 +214,56 @@ private:
                QFile::link(FAKE_TUI_PATH, bin.filePath("fake_tui"));
     }
 
-    // roostd with the Claude plugin, behind the fake claude or not.
-    bool Launch(bool fakeClaude) {
+    // The plugins directory of the test: the built Claude plugin behind a
+    // script that runs the adapter with --poll-ms, so that only a poll the
+    // adapter takes on a command can show in a short wait.
+    bool WriteSlowPollingPlugin(int pollMs) const {
+        const QDir plugin(Dir_->filePath("plugins/claude"));
+        const QString adapter =
+            QStringLiteral(ROOST_PLUGINS_DIR "/claude/backend/claude-adapter");
+        QFile built(QStringLiteral(ROOST_PLUGINS_DIR "/claude/plugin.json"));
+        if (!plugin.mkpath("backend") || !built.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        QJsonObject manifest =
+            QJsonDocument::fromJson(built.readAll()).object();
+        manifest.insert(
+            "backend",
+            QJsonObject{{"command", QJsonArray{"backend/claude-adapter"}}});
+        QFile script(plugin.filePath("backend/claude-adapter"));
+        QFile json(plugin.filePath("plugin.json"));
+        const QByteArray shell = QStringLiteral(
+                                     "#!/bin/sh\nexec '%1' --poll-ms "
+                                     "%2 \"$@\"\n")
+                                     .arg(adapter)
+                                     .arg(pollMs)
+                                     .toUtf8();
+        return script.open(QIODevice::WriteOnly) &&
+               script.write(shell) == shell.size() &&
+               script.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
+                                     QFile::ExeOwner) &&
+               json.open(QIODevice::WriteOnly) &&
+               json.write(QJsonDocument(manifest).toJson()) > 0;
+    }
+
+    // roostd with the Claude plugin, behind the fake claude or not. A
+    // pollMs above 0 sets the poll interval of the adapter.
+    bool Launch(bool fakeClaude, int pollMs = 0) {
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
         environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
-        environment.insert("ROOST_PLUGINS_PATH", ROOST_PLUGINS_DIR);
+        if (pollMs > 0) {
+            // The directory first: of two plugins with an id, the first wins.
+            if (!WriteSlowPollingPlugin(pollMs)) {
+                return false;
+            }
+            environment.insert("ROOST_PLUGINS_PATH",
+                               Dir_->filePath("plugins") + u':' +
+                                   QStringLiteral(ROOST_PLUGINS_DIR));
+        } else {
+            environment.insert("ROOST_PLUGINS_PATH", ROOST_PLUGINS_DIR);
+        }
         if (fakeClaude) {
             environment.insert("PATH", Dir_->filePath("bin") + u':' +
                                            environment.value("PATH"));
@@ -311,6 +354,13 @@ private:
         }
         return static_cast<std::uint32_t>(
             opened->toObject().value("channel").toInt());
+    }
+
+    // The fake claude has written the pid of the attach of the session, so
+    // that stop, rm and respawn find a process to end.
+    bool AttachStarted(const QString& id) const {
+        QFile file(Dir_->filePath("bin/attach-" + id + ".pid"));
+        return file.open(QIODevice::ReadOnly) && file.readAll().endsWith('\n');
     }
 
     // The window has been told that the session of the channel ended.
@@ -505,15 +555,18 @@ private slots:
     }
 
     // Window -> Api -> roostd -> adapter -> claude rm. The adapter lists at
-    // once after the command; the poll of the built plugin, 3 s, is too late.
+    // once after the command; the poll, here a minute, is too late.
     void RemoveThroughTheWindow() {
         QVERIFY(WriteFakeClaude());
-        QVERIFY(Launch(true));
+        // A poll every minute: the list can change at once only through the
+        // poll the adapter takes after the command.
+        QVERIFY(Launch(true, 60'000));
         QVERIFY(ConnectApi());
         const QString gone = "bg-2c3d4e5f";
         QCOMPARE(Api_->Sessions().Rows().size(), 4);
         const std::uint32_t channel = OpenSession(gone);
         QVERIFY(channel > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(AttachStarted(gone), TIMEOUT_MS);
         QSignalSpy notified(&Window_->Rpc, &RpcClient::NotificationReceived);
 
         // What claude lists after rm: agents.json without the session.
@@ -536,7 +589,7 @@ private slots:
         QCOMPARE(Commands(), QStringList{"rm " + gone});
         QTRY_VERIFY_WITH_TIMEOUT(HasClosed(notified, channel), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().IndexOf("claude", gone), -1,
-                                  1000);
+                                  5000);
         QCOMPARE(Api_->Sessions().Rows().size(), 3);
     }
 
@@ -568,6 +621,7 @@ private slots:
         const std::uint32_t first = OpenSession(id);
         QVERIFY(first > 0);
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{id}, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(AttachStarted(id), TIMEOUT_MS);
         QSignalSpy notified(&Window_->Rpc, &RpcClient::NotificationReceived);
 
         const rpc::Result respawned =
