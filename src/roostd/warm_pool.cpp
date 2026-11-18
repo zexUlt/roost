@@ -1,6 +1,7 @@
 #include "roostd/warm_pool.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 namespace roost {
@@ -113,6 +114,23 @@ WarmSession* WarmPool::Find(const WarmSessionKey& key) const {
 }
 
 void WarmPool::Touch(WarmSession* session) { session->LastViewed_ = ++Clock_; }
+
+std::vector<WarmSessionKey> WarmPool::KeysMostRecentFirst() const {
+    std::vector<const WarmSession*> sessions;
+    sessions.reserve(static_cast<size_t>(Sessions_.size()));
+    for (const WarmSession* session : Sessions_) {
+        sessions.push_back(session);
+    }
+    std::ranges::sort(
+        sessions, std::greater<>(),
+        [](const WarmSession* session) { return session->LastViewed_; });
+    std::vector<WarmSessionKey> keys;
+    keys.reserve(sessions.size());
+    for (const WarmSession* session : sessions) {
+        keys.push_back(session->Key());
+    }
+    return keys;
+}
 
 void WarmPool::Forget(WarmSession* session) {
     // An evicted session is forgotten before its program has gone, and the

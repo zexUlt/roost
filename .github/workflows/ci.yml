@@ -44,9 +44,13 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
 
-  # What runs where: dev and release on macOS, the platform roost ships on;
-  # asan-ubsan on Linux arm64. macOS runners are scarce, and ASan and UBSan
-  # check the same code on Linux; ASan on macOS runs nightly
+  # What runs where: dev on macOS, the platform roost ships on; asan-ubsan on
+  # Linux arm64; release on Linux arm64 for pull requests and on macOS for
+  # trunk pushes. macOS runners are scarce, so a pull request takes one: what
+  # only macOS has (native key codes, process groups, libc++) builds and runs
+  # in dev, and release on macOS is checked once the change is on trunk.
+  # Trunk saves no Linux release compiler cache, so that job builds cold.
+  # ASan and UBSan check the same code on Linux; ASan on macOS runs nightly
   # (nightly-tsan.yml). Linux builds with clang and the distro's libstdc++,
   # not libc++: a Qt from a binary distribution is built against libstdc++.
   test:
@@ -68,7 +72,7 @@ jobs:
           - preset: asan-ubsan
             runner: ubuntu-24.04-arm
           - preset: release
-            runner: macos-15
+            runner: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04-arm' || 'macos-15' }}
     env:
       NEEDED: ${{ needs.changes.outputs.code != 'false' }}
     steps:

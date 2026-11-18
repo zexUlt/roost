@@ -24,8 +24,9 @@ class PluginHost;
 //   session.open {agent, session, columns?, rows?}  {channel}
 //     Opens a channel of the session of the agent, attaching to it if it is
 //     not warm. columns and rows are from 1 to VtTerminal::MAX_SIZE, given
-//     both or neither, 80x24 by default; a size given for a warm session
-//     resizes it if it differs. The client gets the answer, then a snapshot
+//     both or neither; without them a cold session starts at 80x24 and a
+//     warm one keeps its size. A size given for a warm session resizes it if
+//     it differs. The client gets the answer, then a snapshot
 //     frame of the terminal, then the output frames that follow it, without a
 //     gap or a repeat between the snapshot and the output. InvalidParams if no
 //     plugin serves the agent, the adapter says the session cannot be attached
@@ -37,6 +38,10 @@ class PluginHost;
 //     session or its PTY cannot be resized.
 //   session.close {channel}                         null
 //     The channel only: the session stays warm and nothing is notified.
+//   sessions.warm                                   {sessions}
+//     The warm sessions, the one viewed most recently first, each {agent,
+//     id}. Params are ignored, as for sessions.list. Nothing is touched: the
+//     list does not change the order it reports.
 //   session.view {channel}                          null
 //     Marks the session of the channel as viewed now, for the pool's
 //     eviction order; InvalidParams for an unknown channel. Nobody is
@@ -94,6 +99,7 @@ private:
     QFuture<rpc::Result> Resize(const rpc::Call& call);
     QFuture<rpc::Result> Close(const rpc::Call& call);
     QFuture<rpc::Result> View(const rpc::Call& call);
+    QFuture<rpc::Result> Warm(const rpc::Call& call);
 
     // The last step of Open, always from the event loop: the answer reaches
     // the client only once the dispatcher is waiting for it.
