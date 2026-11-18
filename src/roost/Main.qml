@@ -19,6 +19,12 @@ Window {
     // The Retry button of a refused connection.
     signal retryRequested
 
+    // The width of the list slot in pixels: a step of `<` or `>` in the list
+    // panel, and its bounds. Not saved until the layout is (M5).
+    readonly property int listWidthStep: 20
+    readonly property int listWidthMin: 200
+    readonly property int listWidthMax: 560
+
     width: 960
     height: 600
     visible: true
@@ -131,8 +137,10 @@ Window {
         when: terminalSlot.panel !== null && listSlot.panel !== null && terminalSlot.linkInput !== "" && listSlot.linkOutput !== ""
     }
 
-    // The list panel's optional signal `activated()`: the user chose a row, so
-    // the keyboard goes to the terminal. A list panel without it is fine.
+    // The list panel's optional signals. `activated()`: the user chose a row, so
+    // the keyboard goes to the terminal. `widthStepRequested(step)`: `<` or `>`,
+    // a narrower (-1) or a wider (+1) list, within bounds. A list panel without
+    // them is fine.
     Connections {
         target: listSlot.panel
         ignoreUnknownSignals: true
@@ -143,6 +151,10 @@ Window {
             if (terminalSlot.panel !== null) {
                 terminalSlot.forceActiveFocus();
             }
+        }
+
+        function onWidthStepRequested(step) {
+            listSlot.Layout.preferredWidth = Math.max(root.listWidthMin, Math.min(root.listWidthMax, listSlot.Layout.preferredWidth + step * root.listWidthStep));
         }
     }
 

@@ -412,9 +412,8 @@ void SessionsWindow::Press(Qt::Key key, Qt::KeyboardModifiers modifiers) {
 // the letter typed, and the event carries the native codes of both
 // platforms (the macOS virtual key, the xkb keycode).
 void SessionsWindow::PressNative(int key, const QString& text, quint32 mac,
-                                 quint32 xkb) {
-    QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier, xkb, mac, 0x100,
-                    text);
+                                 quint32 xkb, Qt::KeyboardModifiers modifiers) {
+    QKeyEvent event(QEvent::KeyPress, key, modifiers, xkb, mac, 0x100, text);
     event.setAccepted(false);
     QCoreApplication::sendEvent(Window(), &event);
 }

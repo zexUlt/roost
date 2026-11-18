@@ -72,7 +72,7 @@ private slots:
             QCOMPARE(RowText(row, "sessionTitle"), titles[row]);
         }
         QCOMPARE(RowText(0, "sessionDetail"), QString("working · /work/alpha"));
-        QCOMPARE(RowText(1, "sessionDetail"), QString("blocked · /work/beta"));
+        QCOMPARE(RowText(1, "sessionDetail"), QString("waiting · /work/beta"));
         QCOMPARE(RowText(2, "sessionDetail"), QString("done · /work/gamma"));
         QVERIFY(ListStatusNow().isEmpty());
         QVERIFY(!ListStatus()->isVisible());
@@ -137,8 +137,9 @@ private slots:
         QCOMPARE(Cursor(), 2);
         PressNative(0x041A, QStringLiteral("к"), 0x28, 45);
         QCOMPARE(Cursor(), 1);
-        // A Cyrillic letter that is not on J or K moves nothing.
-        PressNative(0x0424, QStringLiteral("ф"), 0x00, 38);
+        // A Cyrillic letter that is not on a key of the list moves nothing: ч
+        // sits on X (kVK_ANSI_X 0x07, KEY_X + 8).
+        PressNative(0x0427, QStringLiteral("ч"), 0x07, 53);
         QCOMPARE(Cursor(), 1);
         QVERIFY(SelectedId().isEmpty());
     }

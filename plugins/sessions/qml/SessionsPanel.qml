@@ -8,7 +8,10 @@ import RoostSessions
 // cursor over the stops: sessions and folded headers. Enter, or a tap on a
 // row, writes the session under the cursor to `selected`, the output of the
 // panel; Enter on a folded header unfolds it. Moving does not change
-// `selected`: opening a session is not free.
+// `selected`: opening a session is not free. A tap on a header folds or
+// unfolds it. The head shows the title (Sessions, or Archive), the query and
+// the tabs with their counts; the keys a, v, m, z, Z, p, ?, < and > act on the
+// view (the help overlay lists them).
 FocusScope {
     id: root
 
@@ -19,6 +22,52 @@ FocusScope {
     // may move the keyboard to the terminal. Not emitted when Enter does
     // nothing.
     signal activated
+
+    // `<` or `>`: the user asks the shell for a narrower (-1) or a wider (+1)
+    // list. The shell decides the width; a shell without a handler does
+    // nothing.
+    signal widthStepRequested(int step)
+
+    // The help overlay is open: it takes every key until `?` or Esc closes it.
+    property bool helpOpen: false
+
+    // The colours of the categories, by the `colorIndex` of the model, and of
+    // the states, hard-coded until the palette of the layout (M5).
+    readonly property var categoryColors: ["#0087d7", "#d70000", "#008700", "#d75f00", "#8700d7", "#008787", "#d700af", "#875f00"]
+    readonly property string textColor: "#e0e0e0"
+    readonly property var tabs: [
+        {
+            "name": "all",
+            "label": "All"
+        },
+        {
+            "name": "active",
+            "label": "Active"
+        },
+        {
+            "name": "unread",
+            "label": "Unread"
+        }
+    ]
+
+    function stateColor(state) {
+        switch (state) {
+        case "working":
+            return "#d78700";
+        case "blocked":
+        case "needs_input":
+            return "#005fd7";
+        case "failed":
+            return "#d70000";
+        default:
+            return textColor;
+        }
+    }
+
+    // The words of the second line: a session that waits for the user says so.
+    function stateWord(state) {
+        return state === "blocked" || state === "needs_input" ? "waiting" : state;
+    }
 
     // Between the start of a reset of Roost.sessions and the reconcile of
     // `selected`: the list is not settled, so Enter does nothing.
@@ -98,11 +147,100 @@ FocusScope {
         activated();
     }
 
-    // The ListView follows the cursor of the model, whatever it did itself.
+    // The ListView follows the cursor of the model, whatever it did itself; its
+    // highlight keeps the row in view.
     function syncCursor() {
         if (list.currentIndex !== sessionsList.cursorRow) {
             list.currentIndex = sessionsList.cursorRow;
         }
+    }
+
+    // z and p act on the category of the cursor: of the session under it, or of
+    // the folded header it is on. "" is the uncategorized, so the absence of a
+    // category is null, not falsy.
+    function foldCursorCategory() {
+        const category = sessionsList.cursorCategory;
+        if (category !== null) {
+            sessionsList.toggleFold(category);
+        }
+    }
+
+    function pinCursorCategory() {
+        const category = sessionsList.cursorCategory;
+        if (category !== null) {
+            sessionsList.togglePin(category);
+        }
+    }
+
+    // A tap on a header folds or unfolds its category and puts the cursor on
+    // it, when it is a stop: a folded header is one, an unfolded one is not.
+    // Nothing is opened and `selected` stays.
+    function tapHeader(row, category, folded) {
+        if (folded) {
+            sessionsList.setCursorRow(row);
+            sessionsList.toggleFold(category);
+        } else {
+            sessionsList.toggleFold(category);
+            sessionsList.setCursorRow(row);
+        }
+        syncCursor();
+        list.forceActiveFocus();
+    }
+
+    // The keys of the view. `key` is Roost.bindingKey(event). Letters match the
+    // key and Shift (z, Z); symbols match the key and ignore Shift, which a
+    // layout may need for them (? is Shift+7 on the Russian one). Ctrl, Alt or
+    // Meta: not a list key. Whether the key was taken.
+    function viewKey(event, key) {
+        if ((event.modifiers & ~(Qt.ShiftModifier | Qt.KeypadModifier)) !== 0) {
+            return false;
+        }
+        const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+        switch (key) {
+        case Qt.Key_A:
+            if (shift) {
+                return false;
+            }
+            sessionsList.nextTab();
+            return true;
+        case Qt.Key_V:
+            if (shift) {
+                return false;
+            }
+            sessionsList.viewArchive = !sessionsList.viewArchive;
+            return true;
+        case Qt.Key_M:
+            if (shift) {
+                return false;
+            }
+            sessionsList.compact = !sessionsList.compact;
+            return true;
+        case Qt.Key_P:
+            if (shift) {
+                return false;
+            }
+            pinCursorCategory();
+            return true;
+        case Qt.Key_Z:
+            if (shift) {
+                sessionsList.unfoldAll();
+            } else {
+                foldCursorCategory();
+            }
+            return true;
+        case Qt.Key_Question:
+            helpOpen = true;
+            return true;
+        case Qt.Key_Less:
+        case Qt.Key_Comma:
+            widthStepRequested(-1);
+            return true;
+        case Qt.Key_Greater:
+        case Qt.Key_Period:
+            widthStepRequested(1);
+            return true;
+        }
+        return false;
     }
 
     // The stored document: read on creation if connected and at every
@@ -196,15 +334,77 @@ FocusScope {
         restoreOpened();
     }
 
+    // The head: the title and the query, and the tabs with the counts of the
+    // view.
+    Column {
+        id: head
+
+        objectName: "sessionsHead"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 8
+        spacing: 4
+
+        Row {
+            spacing: 8
+
+            Text {
+                objectName: "sessionsTitle"
+                color: root.textColor
+                font.bold: true
+                text: sessionsList.viewArchive ? "Archive" : "Sessions"
+            }
+
+            Text {
+                objectName: "sessionsQuery"
+                visible: sessionsList.query !== ""
+                color: "#a0a0a0"
+                text: "/ " + sessionsList.query
+            }
+        }
+
+        Row {
+            spacing: 12
+
+            Repeater {
+                model: root.tabs
+
+                // A tap on a tab selects it.
+                delegate: Text {
+                    id: tab
+
+                    required property var modelData
+                    readonly property bool current: sessionsList.tab === modelData.name
+
+                    objectName: "sessionsTab"
+                    color: current ? "#ffffff" : "#808080"
+                    font.bold: current
+                    font.underline: current
+                    text: modelData.label + " " + (sessionsList.counts[modelData.name] ?? 0)
+
+                    TapHandler {
+                        onTapped: {
+                            sessionsList.tab = tab.modelData.name;
+                            list.forceActiveFocus();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     ListView {
         id: list
 
         objectName: "sessionList"
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: parent.top
-        // The list ends above the list of unavailable agents.
-        anchors.bottom: unavailable.visible ? unavailable.top : parent.bottom
+        anchors.top: head.bottom
+        anchors.topMargin: 6
+        // The list ends above the list of unavailable agents, and above the
+        // footer.
+        anchors.bottom: unavailable.visible ? unavailable.top : footer.top
         focus: true
         clip: true
         model: sessionsList
@@ -219,15 +419,23 @@ FocusScope {
         onCountChanged: Qt.callLater(root.syncCursor)
 
         // Up and Down, and j and k with no modifier on any layout: bindingKey
-        // is the key the US layout has at the physical position.
+        // is the key the US layout has at the physical position. With the help
+        // open every key is taken, and `?` or Esc closes it.
         Keys.onPressed: event => {
             const key = Roost.bindingKey(event);
             const plain = event.modifiers === Qt.NoModifier;
-            if (event.key === Qt.Key_Down || (key === Qt.Key_J && plain)) {
+            if (root.helpOpen) {
+                if (key === Qt.Key_Question || event.key === Qt.Key_Escape) {
+                    root.helpOpen = false;
+                }
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Down || (key === Qt.Key_J && plain)) {
                 sessionsList.move(1);
                 event.accepted = true;
             } else if (event.key === Qt.Key_Up || (key === Qt.Key_K && plain)) {
                 sessionsList.move(-1);
+                event.accepted = true;
+            } else if (root.viewKey(event, key)) {
                 event.accepted = true;
             }
         }
@@ -259,9 +467,19 @@ FocusScope {
                 "agent": model.agent,
                 "id": model.id
             })
+            // The second line of a session; in the compact view only under the
+            // cursor.
+            readonly property bool showsDetail: !isHeader && (!sessionsList.compact || index === sessionsList.cursorRow)
 
             width: ListView.view.width
-            height: isHeader ? headerText.implicitHeight + 8 : titleText.implicitHeight + detailText.implicitHeight + 12
+            height: isHeader ? headerText.implicitHeight + 8 : titleText.implicitHeight + (showsDetail ? detailText.implicitHeight : 0) + 12
+
+            // The open session: a tint over the row and a bar at its edge.
+            Rectangle {
+                visible: row.isOpen
+                anchors.fill: parent
+                color: "#225aa0ff"
+            }
 
             Rectangle {
                 visible: row.isOpen
@@ -270,28 +488,63 @@ FocusScope {
                 color: "#5aa0ff"
             }
 
-            // A header: the category ("Uncategorized" for none), the number of
-            // its sessions, and a mark of a folded one.
+            // A header: the category ("Uncategorized" for none) in its colour,
+            // the number of its sessions, and a mark of a folded one; at the
+            // right the marks of a pinned category and of the unread sessions
+            // of a folded one.
             Text {
                 id: headerText
 
                 objectName: "headerTitle"
                 visible: row.isHeader
                 anchors.left: parent.left
-                anchors.right: parent.right
+                anchors.right: marks.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 10
                 anchors.rightMargin: 8
                 elide: Text.ElideRight
-                color: "#a0a0a0"
+                color: row.isHeader && row.model.colorIndex >= 0 ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : "#a0a0a0"
                 font.bold: true
                 text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : row.model.category) + " · " + row.model.count : ""
+            }
+
+            Row {
+                id: marks
+
+                visible: row.isHeader
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
+
+                Text {
+                    objectName: "pinMark"
+                    visible: row.isHeader && row.model.pinned
+                    color: "#a0a0a0"
+                    text: "▲"
+                }
+
+                Text {
+                    objectName: "headerUnread"
+                    visible: row.isHeader && row.model.folded && row.model.unreadCount > 0
+                    color: "#5aa0ff"
+                    text: row.isHeader ? "● " + row.model.unreadCount : ""
+                }
+            }
+
+            Text {
+                objectName: "unreadDot"
+                visible: !row.isHeader && row.model.unread
+                x: 10
+                y: 6
+                color: "#5aa0ff"
+                text: "●"
             }
 
             Column {
                 visible: !row.isHeader
                 anchors.fill: parent
-                anchors.leftMargin: 10
+                anchors.leftMargin: 26
                 anchors.rightMargin: 8
                 anchors.topMargin: 6
 
@@ -301,7 +554,7 @@ FocusScope {
                     objectName: "sessionTitle"
                     width: parent.width
                     elide: Text.ElideRight
-                    color: "#e0e0e0"
+                    color: row.isHeader ? root.textColor : root.stateColor(row.model.state)
                     font.bold: row.isOpen
                     text: row.isHeader ? "" : row.model.title
                 }
@@ -311,16 +564,20 @@ FocusScope {
 
                     objectName: "sessionDetail"
                     width: parent.width
+                    visible: row.showsDetail
                     elide: Text.ElideMiddle
                     color: "#808080"
                     font.pixelSize: titleText.font.pixelSize * 0.85
-                    text: row.isHeader ? "" : row.model.state + " · " + row.model.cwd
+                    text: row.isHeader ? "" : root.stateWord(row.model.state) + " · " + row.model.cwd
                 }
             }
 
             TapHandler {
-                enabled: !row.isHeader
                 onTapped: {
+                    if (row.isHeader) {
+                        root.tapHeader(row.index, row.model.category, row.model.folded);
+                        return;
+                    }
                     sessionsList.setCursorRow(row.index);
                     root.syncCursor();
                     list.forceActiveFocus();
@@ -359,11 +616,83 @@ FocusScope {
         objectName: "sessionsUnavailable"
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: footer.top
         anchors.margins: 8
         visible: text !== ""
         color: "#e0a060"
         wrapMode: Text.Wrap
         text: Roost.sessions.unavailable.map(entry => entry.agent + ": " + entry.reason).join("\n")
+    }
+
+    // The footer: one area under the list, lines one over the other, each only
+    // as high as its text and none when it has no text. Its lines keep their
+    // places: the problem of the store; the prompt, and the confirmation and
+    // the notice of a command (steps that add them put them in this Column).
+    Column {
+        id: footer
+
+        objectName: "footer"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        spacing: 2
+
+        // A list that cannot be written says why; the list itself works.
+        Text {
+            objectName: "sessionsProblem"
+            width: parent.width
+            leftPadding: 8
+            rightPadding: 8
+            bottomPadding: 4
+            visible: text !== ""
+            color: sessionsList.readOnly ? "#e06060" : "#e0a060"
+            wrapMode: Text.Wrap
+            text: sessionsList.problem
+        }
+    }
+
+    // The keys that work, over the list: `?` or Esc closes it.
+    Rectangle {
+        objectName: "sessionsHelp"
+        anchors.fill: parent
+        visible: root.helpOpen
+        color: "#f01e1e1e"
+
+        TapHandler {
+            onTapped: root.helpOpen = false
+        }
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 10
+
+            Text {
+                color: root.textColor
+                font.bold: true
+                text: "Keyboard shortcuts"
+            }
+
+            Text {
+                width: parent.width
+                color: root.textColor
+                wrapMode: Text.Wrap
+                text: "Move\n↑ ↓ j k   move the cursor\nEnter   open the session, unfold a folded category"
+            }
+
+            Text {
+                width: parent.width
+                color: root.textColor
+                wrapMode: Text.Wrap
+                text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor"
+            }
+
+            Text {
+                width: parent.width
+                color: root.textColor
+                wrapMode: Text.Wrap
+                text: "Window\n< >   narrower or wider list\n?   this help (Esc closes it)\nCtrl+\\   from the terminal back to the list"
+            }
+        }
     }
 }

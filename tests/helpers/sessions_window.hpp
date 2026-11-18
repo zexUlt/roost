@@ -233,7 +233,8 @@ public:
     // A press of a physical key on another layout: the Qt key and the text are
     // the letter typed, and the event carries the native codes of both
     // platforms (the macOS virtual key, the xkb keycode).
-    void PressNative(int key, const QString& text, quint32 mac, quint32 xkb);
+    void PressNative(int key, const QString& text, quint32 mac, quint32 xkb,
+                     Qt::KeyboardModifiers modifiers = Qt::NoModifier);
 
     // Moves the cursor to the row and opens it with Return; waits until the
     // session is open in the terminal.
@@ -247,6 +248,7 @@ public:
     // Auto-repeat of a key held down: the press arrives with `autorep` set.
     void PressRepeated(Qt::Key key);
 
+protected:
     QStringList Changes_;
     bool WithoutTerminal_ = false;
     bool SpySelected_ = false;
@@ -259,6 +261,7 @@ public:
     std::unique_ptr<PluginLoader> Loader_;
     std::unique_ptr<Shell> Shell_;
 
+public:
     // Until the panel has nothing left to write: it writes the document by
     // itself after it is ready (the first read, then the open session once the
     // list is in), one write at a time, the next one sent when the answer to
