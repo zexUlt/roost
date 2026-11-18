@@ -6,7 +6,7 @@
 
 | Проект | Коммит | Дата | Роль в разборе |
 |---|---|---|---|
-| [cc-fleet](https://github.com/zexUlt/cc-fleet) | `a4d2e73` | 2026-11-12 | прямой предшественник, источник фич и тестов |
+| прежний TUI (приватный) | — | 2026-11-12 | прямой предшественник, источник фич и тестов |
 | [ghostty](https://github.com/ghostty-org/ghostty) (libghostty-vt) | `7fa26e8` | 2026-11-14 | эмулятор терминала roost |
 | [agterm](https://github.com/umputun/agterm) | `c32ebec` | 2026-11-15 | ближайший по UX: сайдбар сессий, хуки статуса |
 | [herdr](https://github.com/herdrdev/herdr) | `ee5bfb5` | 2026-10-29 | плагины, детект состояний, libghostty-vt в Rust |
@@ -18,17 +18,17 @@
 
 ---
 
-## 1. cc-fleet и Claude Code
+## 1. Прежний TUI и Claude Code
 
-### 1.1 Как устроен cc-fleet
+### 1.1 Как устроен прежний TUI
 
-Python TUI, 2638 строк в `src/cc_fleet/`. Слева список сессий по категориям, справа живой TUI выбранной сессии.
+Python TUI, 2638 строк. Слева список сессий по категориям, справа живой TUI выбранной сессии.
 
-- Сессии берутся из `claude agents --json --all` (`src/cc_fleet/fleet_data.py:42`), опрос по таймеру.
-- Выбранная сессия — `claude attach <id>` в PTY (`src/cc_fleet/app.py:102-117`), экран держит свой эмулятор `vterm.py` (623 строки, `src/cc_fleet/vterm.py:48`, разбор — `:448`).
-- Активная сессия одна: `self.session = Session(...)` (`src/cc_fleet/app.py:925`), переключение — новый attach.
-- Состояние — JSON в `~/.config/cc-fleet/` (`src/cc_fleet/fleet_data.py:10-11`), путь переопределяется `CC_FLEET_CONFIG`, этим пользуются тесты.
-- Уведомления через `osascript`, `terminal-notifier`, `notify-send` или свою команду (`src/cc_fleet/notify.py:51-66`); PR по worktree через `gh pr view --json` (`src/cc_fleet/pulls.py:62`); keep-awake через `caffeinate -is -w <pid>` (`src/cc_fleet/awake.py:15-16`).
+- Сессии берутся из `claude agents --json --all`, опрос по таймеру.
+- Выбранная сессия — `claude attach <id>` в PTY, экран держит свой эмулятор `vterm.py` (623 строки).
+- Активная сессия одна: `self.session = Session(...)`, переключение — новый attach.
+- Состояние — JSON в каталоге конфигурации, путь переопределяется переменной окружения, этим пользуются тесты.
+- Уведомления через `osascript`, `terminal-notifier`, `notify-send` или свою команду; PR по worktree через `gh pr view --json`; keep-awake через `caffeinate -is -w <pid>`.
 
 ### 1.2 Что сделано правильно
 
