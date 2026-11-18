@@ -61,6 +61,28 @@ claude --version: 7–8 ms
 
 Источник сессий (`claude agents --json`), модель категорий, пинов, архива и непрочитанных, тексты и переходы уведомлений, поиск PR, keep-awake, тесты как спецификацию. Не забираем `vterm.py` и холодный attach.
 
+### 1.5 Attach при stop, respawn и rm
+
+Проверено на живом `claude attach` в PTY, claude 2.1.325, macOS. Все три команды сами завершаются с кодом 0 за 0,2–0,6 с, stdout `stopped <id>`, `respawned <id>`, `removed <id>`. Живой attach выходит сам, примерно через 0,5 с после начала команды, независимо от её длительности: он замечает конец сессии, а не получает сигнал от команды.
+
+| Команда | Код attach | stderr attach |
+|---|---|---|
+| `claude stop <id>` | 0 | ``Session <id> has exited — run `claude attach <id>` to resume it.`` |
+| `claude respawn <id>` | 0 | то же, что после stop |
+| `claude rm <id>` | 0 | `Session <id> has exited.` |
+
+- `claude attach <id>` после `rm`: код 1, stderr `No job matching '<id>'. Run 'claude agents' to list running sessions.`
+- `rm` живой сессии, занятой или простаивающей, не отказывает без `stop`: останавливает и удаляет. Каталог `~/.claude/jobs/<id>` исчезает, транскрипт остаётся.
+- `stop`, `rm` и `respawn` на удалённом id: код 1, stdout пуст. stderr у `stop` — `No job matching '<id>'. Run 'claude agents' to list running sessions.`, у `rm` и `respawn` — `No job matching '<id>'`.
+- `respawn` оставляет id и исходные флаги (`--model`, `--effort`, `-n`), меняются pid и `startedAt`. Сразу после него `status` равен `null`, `idle` — через ~3 с.
+- `claude agents --json --all` после `stop`: сессия в списке, без `pid` и `status`, `state` равен `done`. Без `--all` её нет. После `rm` сессии нет и с `--all`.
+
+Для roost:
+
+- Окну и демону не нужно закрывать attach перед `stop` или `rm`: он выходит сам с кодом 0.
+- Тёплая сессия `roostd` заканчивается по выходу attach; при `rm` ещё и по `session.removed` из `sessions.list`.
+- Не проверено: `respawn --all`, Linux, отказ `rm` для сессии с worktree (`--discard-unpushed`, `--force-remove-worktree`), `stop` уже остановленной сессии.
+
 ---
 
 ## 2. libghostty-vt
