@@ -164,16 +164,16 @@ private:
     // one output `selected` of type SessionRef, and no backend.
     bool WriteListPlugin() const {
         const QJsonObject panel{
-            {"id", LIST},
+            {"id", "list"},
             {"qml", "list.qml"},
             {"inputs", QJsonObject{}},
             {"outputs", QJsonObject{{"selected", "SessionRef"}}}};
         const QJsonObject manifest{
-            {"id", "list-plugin"},
+            {"id", "sessions"},
             {"version", "0.1.0"},
             {"api", "0"},
             {"contributes", QJsonObject{{"panels", QJsonArray{panel}}}}};
-        const QString directory = OwnPluginsPath() + "/list-plugin";
+        const QString directory = OwnPluginsPath() + "/sessions";
         return WriteFile(directory + "/plugin.json",
                          QJsonDocument(manifest).toJson()) &&
                WriteFile(directory + "/list.qml", LIST_PANEL);

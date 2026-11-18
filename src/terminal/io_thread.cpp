@@ -71,7 +71,7 @@ public:
     }
 
     void Open(const SharedPromise<OpenResult>& promise, const QString& agent,
-              const QString& session, quint16 columns, quint16 rows) {
+              const QString& session, std::optional<OpenSize> size) {
         if (!Rpc_) {
             Settle(*promise, OpenResult(std::unexpected(NotConnected())));
             return;
@@ -79,11 +79,13 @@ public:
         // The answer {channel} is processed at once, in the same pass over
         // the socket as the snapshot frame behind it (design.md §4), so the
         // channel is registered before its snapshot is read.
-        Rpc_->Request(QStringLiteral("session.open"),
-                      QJsonObject{{QStringLiteral("agent"), agent},
-                                  {QStringLiteral("session"), session},
-                                  {QStringLiteral("columns"), columns},
-                                  {QStringLiteral("rows"), rows}})
+        QJsonObject params{{QStringLiteral("agent"), agent},
+                           {QStringLiteral("session"), session}};
+        if (size) {
+            params.insert(QStringLiteral("columns"), size->first);
+            params.insert(QStringLiteral("rows"), size->second);
+        }
+        Rpc_->Request(QStringLiteral("session.open"), params)
             .then([this, promise](rpc::Result answer) {
                 OnOpenAnswer(promise, answer);
             });
@@ -370,10 +372,21 @@ QFuture<rpc::Result> IoThread::Connect(const QString& socketPath) {
 
 QFuture<OpenResult> IoThread::Open(const QString& agent, const QString& session,
                                    quint16 columns, quint16 rows) {
+    return OpenWith(agent, session, OpenSize{columns, rows});
+}
+
+QFuture<OpenResult> IoThread::Open(const QString& agent,
+                                   const QString& session) {
+    return OpenWith(agent, session, std::nullopt);
+}
+
+QFuture<OpenResult> IoThread::OpenWith(const QString& agent,
+                                       const QString& session,
+                                       std::optional<OpenSize> size) {
     auto promise = NewPromise<OpenResult>();
     const QFuture<OpenResult> future = promise->future();
-    if (!Post([promise, agent, session, columns, rows](Worker& worker) {
-            worker.Open(promise, agent, session, columns, rows);
+    if (!Post([promise, agent, session, size](Worker& worker) {
+            worker.Open(promise, agent, session, size);
         })) {
         Settle(*promise, OpenResult(std::unexpected(Lost(
                              QStringLiteral("the IO thread is stopped")))));

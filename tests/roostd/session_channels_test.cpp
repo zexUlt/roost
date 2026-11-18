@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -307,6 +308,21 @@ private:
         }
         Windows_.push_back(std::move(window));
         return Windows_.back().get();
+    }
+
+    // sessions.warm as "agent/id", most recently viewed first.
+    static QStringList WarmList(Window& window) {
+        QStringList keys;
+        const rpc::Result warm = window.Call("sessions.warm");
+        if (!warm) {
+            return keys;
+        }
+        for (const QJsonValue session :
+             warm->toObject().value("sessions").toArray()) {
+            keys << session.toObject().value("agent").toString() + u'/' +
+                        session.toObject().value("id").toString();
+        }
+        return keys;
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
@@ -1032,6 +1048,36 @@ private slots:
         QCOMPARE(viewed.error().Code, INVALID_PARAMS);
         QCOMPARE(Channels_->ChannelCount(), 0);
         QVERIFY(Channels_->Pool().Find(Key("s1")));
+    }
+
+    // The list a restarted window prefetches from: most recently viewed
+    // first, and a view reorders it.
+    void WarmSessionsAreListedMostRecentFirst() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+        const std::uint32_t first = window->Open("s1");
+        QVERIFY(first);
+        QVERIFY(window->Open("s2"));
+        QCOMPARE(WarmList(*window), (QStringList{"fake/s2", "fake/s1"}));
+
+        QVERIFY(window->Call(
+            "session.view", QJsonObject{{"channel", static_cast<int>(first)}}));
+
+        QCOMPARE(WarmList(*window), (QStringList{"fake/s1", "fake/s2"}));
+        // Asking does not change what it answers.
+        QCOMPARE(WarmList(*window), (QStringList{"fake/s1", "fake/s2"}));
+    }
+
+    void AnEmptyPoolListsNoWarmSessions() {
+        QVERIFY(Start());
+        Window* window = Connect();
+        QVERIFY(window);
+
+        const rpc::Result warm = window->Call("sessions.warm");
+
+        QVERIFY2(warm, qPrintable(Why(warm)));
+        QCOMPARE(*warm, QJsonValue(QJsonObject{{"sessions", QJsonArray()}}));
     }
 
     void OutputDuringAnOpenIsNeitherLostNorRepeated() {
