@@ -579,7 +579,10 @@ private slots:
     }
 
     // The channel is silent after each Updated until the pane acknowledges
-    // it: later output must still arrive.
+    // it: later output must still arrive. A round starts only when the screen
+    // shows the answers of the one before: an Updated alone may be left over
+    // from earlier output, and a "q" sent before fake_tui has read the last
+    // one is read together with it ("qq") and counts as one question.
     void UpdatesKeepComingAfterTheFirst() {
         QVERIFY(Prepare());
         OpenFastAndSettle();
@@ -588,11 +591,12 @@ private slots:
         for (int round = 1; round <= 3; ++round) {
             const auto before = updated.count();
             Pane_->SendInput("q");
+            const QRegularExpression answered(
+                QStringLiteral("answers da1=%1 ").arg(round + 1));
+            QTRY_VERIFY_WITH_TIMEOUT(
+                Screen(Pane_->Session()).contains(answered), TIMEOUT_MS);
             QTRY_VERIFY_WITH_TIMEOUT(updated.count() > before, TIMEOUT_MS);
         }
-        QTRY_VERIFY_WITH_TIMEOUT(
-            Screen(Pane_->Session()).contains(QRegularExpression("da1=4")),
-            TIMEOUT_MS);
     }
 
     // The late channel must be closed and nothing of the pane touched.
