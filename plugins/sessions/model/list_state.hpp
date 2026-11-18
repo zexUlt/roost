@@ -7,6 +7,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
 #include <vector>
 
 #include "sessions/model/session_rows.hpp"
@@ -24,12 +25,24 @@ inline constexpr int DOCUMENT_VERSION = 1;
 class ListState {
 public:
     // Replaces everything with the document. A missing or unreadable section
-    // is empty, a malformed entry is dropped alone. A `version` above ours
-    // keeps the state readable but sets ReadOnly(): the caller must not write
-    // such a state back. A document without `states` is a first run: the
+    // is empty, a malformed entry is dropped alone, a repeated pin keeps its
+    // last position. A `version` that is missing is 1; an integer 1 is read
+    // and written; anything else (above ours, below 1, fractional, not a
+    // number) keeps the state readable but sets ReadOnly(): the caller must
+    // not write such a state back. A document without `states` (or with a
+    // `states` object of nothing but malformed entries) is a first run: the
     // next Update seeds the states and marks nothing unread.
-    void Restore(const QJsonObject& document);
-    QJsonObject ToDocument() const;
+    //
+    // The view (opened, query, tab, archive, compact, pins, folds) is always
+    // the document's: a store change overwrites what the window shows. The
+    // ranking is kept, renewed only by the rule of Update.
+    //
+    // Returns whether the state, reconciled with the listed sessions, differs
+    // from the given document, so the caller should save it. Always false
+    // when read-only.
+    bool Restore(const QJsonObject& document);
+    // The document to save; nullopt when read-only.
+    std::optional<QJsonObject> ToDocument() const;
 
     bool ReadOnly() const { return !Problem_.isEmpty(); }
     // Why the state is read-only; empty otherwise.
@@ -52,8 +65,9 @@ public:
     // The colour index of a category; -1 for "" and for a category with none.
     int ColorIndex(const QString& category) const;
 
-    // The edits return whether the document changed. They work in a
-    // read-only state too (the list stays usable); the caller does not save.
+    // The edits return whether the document changed and should be saved. They
+    // work in a read-only state too (the list stays usable) but return false
+    // there. A key that is not `agent/id` is refused: false, no change.
     //
     // "" is uncategorized. A category gets its colour at its first session.
     bool SetCategory(const QString& key, const QString& category);
@@ -69,13 +83,18 @@ public:
     bool SetCompact(bool compact);
     // Opening reads the session. Empty key: nothing is opened.
     bool SetOpened(const QString& key);
-    // Drops everything the list knows of the session, as after its deletion.
+    // Drops everything the list knows of the session, as after its deletion,
+    // including its place in the last listing: a later Update that still lists
+    // it treats it as a new session, first seen (unread if not working).
     bool Forget(const QString& key);
 
 private:
     bool IsShownUnread(const QString& key, const QString& state) const;
-    bool Reconcile();
-    void RenewRanking();
+    QSet<QString> ShownUnread() const;
+    std::optional<QJsonObject> BuildDocument() const;
+    bool Saved(bool changed) const { return changed && !ReadOnly(); }
+    bool Reconcile(const QSet<QString>& shownBefore);
+    void RenewRanking(const QSet<QString>& shownBefore);
     void AssignColor(const QString& category);
 
     QHash<QString, QString> Categories_;

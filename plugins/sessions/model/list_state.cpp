@@ -1,6 +1,7 @@
 #include "sessions/model/list_state.hpp"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonValue>
 
 #include <algorithm>
@@ -125,23 +126,39 @@ bool Assign(TValue& target, const TValue& value) {
     return true;
 }
 
-bool Toggle(QSet<QString>& set, const QString& item) {
-    if (set.remove(item)) {
-        return false;
+// Each item once, at its last position.
+QStringList DedupedKeepLast(const QStringList& list) {
+    QStringList reversed;
+    QSet<QString> seen;
+    for (auto it = list.crbegin(); it != list.crend(); ++it) {
+        if (!seen.contains(*it)) {
+            seen.insert(*it);
+            reversed << *it;
+        }
     }
-    set.insert(item);
+    return QStringList(reversed.crbegin(), reversed.crend());
+}
+
+bool Toggle(QSet<QString>& set, const QString& item) {
+    if (!set.remove(item)) {
+        set.insert(item);
+    }
     return true;
 }
 
 }  // namespace
 
-void ListState::Restore(const QJsonObject& document) {
+bool ListState::Restore(const QJsonObject& document) {
+    const QSet<QString> shownBefore = ShownUnread();
     Categories_ = ReadSessionStrings(document.value(CATEGORIES_KEY));
     Names_ = ReadSessionStrings(document.value(NAMES_KEY));
     Archived_ = ReadSessionKeys(document.value(ARCHIVED_KEY));
     Unread_ = ReadSessionKeys(document.value(UNREAD_KEY));
     States_ = ReadSessionStrings(document.value(STATES_KEY));
-    Seeded_ = document.value(STATES_KEY).isObject();
+    // An object of nothing but malformed entries is not a seeded one.
+    Seeded_ =
+        document.value(STATES_KEY).isObject() &&
+        (document.value(STATES_KEY).toObject().isEmpty() || !States_.isEmpty());
 
     Colors_.clear();
     const QJsonObject colors = document.value(COLORS_KEY).toObject();
@@ -153,7 +170,7 @@ void ListState::Restore(const QJsonObject& document) {
     }
 
     View_ = ViewState();
-    View_.Pinned = ReadStrings(document.value(PINNED_KEY));
+    View_.Pinned = DedupedKeepLast(ReadStrings(document.value(PINNED_KEY)));
     const QStringList folded = ReadStrings(document.value(FOLDED_KEY));
     View_.Folded = QSet<QString>(folded.begin(), folded.end());
     const QJsonObject view = document.value(VIEW_KEY).toObject();
@@ -167,11 +184,17 @@ void ListState::Restore(const QJsonObject& document) {
 
     Problem_.clear();
     const QJsonValue version = document.value(VERSION_KEY);
-    if (version.isDouble() && version.toInt() > DOCUMENT_VERSION) {
+    const bool ours =
+        version.isUndefined() ||
+        (version.isDouble() &&
+         version.toDouble() == static_cast<double>(DOCUMENT_VERSION));
+    if (!ours) {
+        const QByteArray text =
+            QJsonDocument(QJsonArray{version}).toJson(QJsonDocument::Compact);
         Problem_ = QStringLiteral(
                        "sessions document has version %1, this roost reads "
-                       "up to %2; the list is read-only")
-                       .arg(version.toInt())
+                       "only version %2; the list is read-only")
+                       .arg(QString::fromUtf8(text.mid(1, text.size() - 2)))
                        .arg(DOCUMENT_VERSION);
     }
 
@@ -182,13 +205,21 @@ void ListState::Restore(const QJsonObject& document) {
         AssignColor(category);
     }
 
-    Ranked_.clear();
     if (!Listed_.empty()) {
-        Reconcile();
+        Reconcile(shownBefore);
     }
+    const std::optional<QJsonObject> now = BuildDocument();
+    return now.has_value() && *now != document;
 }
 
-QJsonObject ListState::ToDocument() const {
+std::optional<QJsonObject> ListState::ToDocument() const {
+    return BuildDocument();
+}
+
+std::optional<QJsonObject> ListState::BuildDocument() const {
+    if (ReadOnly()) {
+        return std::nullopt;
+    }
     QJsonObject colors;
     for (auto it = Colors_.begin(); it != Colors_.end(); ++it) {
         colors.insert(it.key(), it.value());
@@ -215,15 +246,27 @@ QJsonObject ListState::ToDocument() const {
 }
 
 bool ListState::Update(std::vector<SessionEntry> listed) {
+    const QSet<QString> shownBefore = ShownUnread();
     Listed_ = std::move(listed);
-    return Reconcile();
+    return Saved(Reconcile(shownBefore));
+}
+
+QSet<QString> ListState::ShownUnread() const {
+    QSet<QString> out;
+    for (const SessionEntry& session : Listed_) {
+        const QString key = SessionKey(session.Agent, session.Id);
+        if (IsShownUnread(key, session.State)) {
+            out.insert(key);
+        }
+    }
+    return out;
 }
 
 bool ListState::IsShownUnread(const QString& key, const QString& state) const {
     return Unread_.contains(key) && state != WORKING && key != View_.Opened;
 }
 
-bool ListState::Reconcile() {
+bool ListState::Reconcile(const QSet<QString>& shownBefore) {
     bool changed = false;
     for (const SessionEntry& session : Listed_) {
         const QString key = SessionKey(session.Agent, session.Id);
@@ -246,19 +289,13 @@ bool ListState::Reconcile() {
         Seeded_ = true;
         changed = true;
     }
-    RenewRanking();
+    RenewRanking(shownBefore);
     return changed;
 }
 
-void ListState::RenewRanking() {
-    QSet<QString> current;
-    for (const SessionEntry& session : Listed_) {
-        const QString key = SessionKey(session.Agent, session.Id);
-        if (IsShownUnread(key, session.State)) {
-            current.insert(key);
-        }
-    }
-    if (!Ranked_.contains(current)) {
+void ListState::RenewRanking(const QSet<QString>& shownBefore) {
+    const QSet<QString> current = ShownUnread();
+    if (!shownBefore.contains(current)) {
         Ranked_ = current;
     }
 }
@@ -294,17 +331,23 @@ void ListState::AssignColor(const QString& category) {
 }
 
 bool ListState::SetCategory(const QString& key, const QString& category) {
+    if (!IsSessionKey(key)) {
+        return false;
+    }
     const QString name = category.trimmed();
     AssignColor(name);
     if (name.isEmpty()) {
-        return Categories_.remove(key) > 0;
+        return Saved(Categories_.remove(key) > 0);
     }
     const bool changed = Categories_.value(key) != name;
     Categories_.insert(key, name);
-    return changed;
+    return Saved(changed);
 }
 
 bool ListState::Rename(const QString& key, const QString& name) {
+    if (!IsSessionKey(key)) {
+        return false;
+    }
     const QString given = name.trimmed();
     QString agentTitle;
     for (const SessionEntry& session : Listed_) {
@@ -314,62 +357,73 @@ bool ListState::Rename(const QString& key, const QString& name) {
         }
     }
     if (given.isEmpty() || given == agentTitle) {
-        return Names_.remove(key) > 0;
+        return Saved(Names_.remove(key) > 0);
     }
     const bool changed = Names_.value(key) != given;
     Names_.insert(key, given);
-    return changed;
+    return Saved(changed);
 }
 
 bool ListState::SetArchived(const QString& key, bool archived) {
+    if (!IsSessionKey(key)) {
+        return false;
+    }
     if (!archived) {
-        return Archived_.remove(key);
+        return Saved(Archived_.remove(key));
     }
     if (Archived_.contains(key)) {
         return false;
     }
     Archived_.insert(key);
-    return true;
+    return Saved(true);
 }
 
 bool ListState::TogglePin(const QString& category) {
     if (View_.Pinned.removeAll(category) == 0) {
         View_.Pinned.append(category);
     }
-    return true;
+    return Saved(true);
 }
 
 bool ListState::ToggleFold(const QString& category) {
-    return Toggle(View_.Folded, category);
+    return Saved(Toggle(View_.Folded, category));
 }
 
 bool ListState::UnfoldAll() {
     const bool changed = !View_.Folded.isEmpty();
     View_.Folded.clear();
-    return changed;
+    return Saved(changed);
 }
 
 bool ListState::SetQuery(const QString& query) {
-    return Assign(View_.Query, query);
+    return Saved(Assign(View_.Query, query));
 }
 
-bool ListState::SetTab(ETab tab) { return Assign(View_.Tab, tab); }
+bool ListState::SetTab(ETab tab) { return Saved(Assign(View_.Tab, tab)); }
 
 bool ListState::SetViewArchive(bool archive) {
-    return Assign(View_.ViewArchive, archive);
+    return Saved(Assign(View_.ViewArchive, archive));
 }
 
-bool ListState::SetCompact(bool compact) { return Assign(Compact_, compact); }
+bool ListState::SetCompact(bool compact) {
+    return Saved(Assign(Compact_, compact));
+}
 
 bool ListState::SetOpened(const QString& key) {
+    if (!key.isEmpty() && !IsSessionKey(key)) {
+        return false;
+    }
     bool changed = Assign(View_.Opened, key);
     if (Unread_.remove(key)) {
         changed = true;
     }
-    return changed;
+    return Saved(changed);
 }
 
 bool ListState::Forget(const QString& key) {
+    if (!IsSessionKey(key)) {
+        return false;
+    }
     bool changed = false;
     changed |= Categories_.remove(key) > 0;
     changed |= Names_.remove(key) > 0;
@@ -377,11 +431,14 @@ bool ListState::Forget(const QString& key) {
     changed |= Unread_.remove(key);
     changed |= States_.remove(key) > 0;
     Ranked_.remove(key);
+    std::erase_if(Listed_, [&key](const SessionEntry& session) {
+        return SessionKey(session.Agent, session.Id) == key;
+    });
     if (View_.Opened == key) {
         View_.Opened.clear();
         changed = true;
     }
-    return changed;
+    return Saved(changed);
 }
 
 }  // namespace roost::sessions

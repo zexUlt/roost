@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QTest>
 
+#include <optional>
 #include <vector>
 
 #include "sessions/model/list_state.hpp"
@@ -61,6 +62,15 @@ QStringList RankedOf(const ListState& state) {
     return out;
 }
 
+// The document of a state that is not read-only.
+QJsonObject Doc(const ListState& state) {
+    const std::optional<QJsonObject> document = state.ToDocument();
+    if (!document.has_value()) {
+        qFatal("the state is read-only");
+    }
+    return *document;
+}
+
 const SessionEntry& EntryOf(const std::vector<SessionEntry>& entries,
                             const QString& id) {
     for (const SessionEntry& entry : entries) {
@@ -98,6 +108,17 @@ private slots:
     void ASessionThatFinishedWhileNoWindowRanIsUnread();
     void ANewSessionThatAppearsFinishedIsUnread();
     void TheRankingIsRenewedOnlyByANewUnread();
+    void ARankedSessionThatIsUnreadAgainRenewsTheRanking();
+    void OnlyAnIntegerOneIsOurVersion();
+    void AReadOnlyStateSavesNothing();
+    void ForgetDropsTheListedSessionToo();
+    void RestoreSaysWhetherTheStateDiffersAndKeepsTheRanking();
+    void StatesOfOnlyJunkIsNotSeeded();
+    void AKeyThatIsNotASessionIsRefused();
+    void RepeatedPinsKeepTheLastPosition();
+    void ViewEditsSayWhetherTheyChanged();
+    void ColourIndexBoundary();
+    void UpdateIsTrueWhenOnlyAStateChanges();
 };
 
 void SessionsStateTest::TheDocumentRoundTrips() {
@@ -117,7 +138,7 @@ void SessionsStateTest::TheDocumentRoundTrips() {
     state.Update({Listed(QStringLiteral("a"), "done"),
                   Listed(QStringLiteral("b"), "working")});
 
-    const QJsonObject written = state.ToDocument();
+    const QJsonObject written = Doc(state);
     QCOMPARE(written.value("version").toInt(), 1);
     QCOMPARE(written.value("categories").toObject().value(A).toString(),
              QStringLiteral("work"));
@@ -140,7 +161,7 @@ void SessionsStateTest::TheDocumentRoundTrips() {
 
     ListState restored;
     restored.Restore(written);
-    QCOMPARE(restored.ToDocument(), written);
+    QCOMPARE(Doc(restored), written);
     QVERIFY(!restored.ReadOnly());
     QCOMPARE(restored.View().Opened, B);
     QCOMPARE(restored.View().Pinned,
@@ -194,7 +215,7 @@ void SessionsStateTest::MalformedEntriesAreDroppedOneByOne() {
                              {"opened", "nokey"}}}};
     ListState state;
     state.Restore(document);
-    const QJsonObject out = state.ToDocument();
+    const QJsonObject out = Doc(state);
 
     QCOMPARE(out.value("categories").toObject(), (QJsonObject{{A, "work"}}));
     QCOMPARE(out.value("names").toObject(), (QJsonObject{{A, "n"}}));
@@ -218,9 +239,8 @@ void SessionsStateTest::MalformedEntriesAreDroppedOneByOne() {
                               {"pinned", QStringLiteral("work")},
                               {"names", QJsonObject{{A, "kept"}}}});
     QVERIFY(!other.ReadOnly());
-    QVERIFY(other.ToDocument().value("categories").toObject().isEmpty());
-    QCOMPARE(other.ToDocument().value("names").toObject(),
-             (QJsonObject{{A, "kept"}}));
+    QVERIFY(Doc(other).value("categories").toObject().isEmpty());
+    QCOMPARE(Doc(other).value("names").toObject(), (QJsonObject{{A, "kept"}}));
 }
 
 void SessionsStateTest::ColoursAreHandedOutInTurnThenTheLeastUsedRepeats() {
@@ -257,8 +277,7 @@ void SessionsStateTest::ColoursAreHandedOutInTurnThenTheLeastUsedRepeats() {
     QCOMPARE(gap.ColorIndex(QStringLiteral("r")), 1);
 
     // Handed out and saved with the document.
-    QCOMPARE(state.ToDocument().value("colors").toObject().value("ten").toInt(),
-             1);
+    QCOMPARE(Doc(state).value("colors").toObject().value("ten").toInt(), 1);
 }
 
 void SessionsStateTest::UncategorizedHasNoColour() {
@@ -266,7 +285,7 @@ void SessionsStateTest::UncategorizedHasNoColour() {
     state.SetCategory(A, QStringLiteral("work"));
     state.SetCategory(A, QString());
     QCOMPARE(state.ColorIndex(QString()), -1);
-    QVERIFY(!state.ToDocument().value("colors").toObject().contains(""));
+    QVERIFY(!Doc(state).value("colors").toObject().contains(""));
     // The category stays coloured: its other sessions keep the look.
     QCOMPARE(state.ColorIndex(QStringLiteral("work")), 0);
     QCOMPARE(state.ColorIndex(QStringLiteral("unseen")), -1);
@@ -284,14 +303,14 @@ void SessionsStateTest::ARenameToTheAgentsTitleOrEmptyDropsTheName() {
 
     QVERIFY(state.Rename(A, QStringLiteral("Agent A")));
     QCOMPARE(state.Entries().front().Name, QString());
-    QVERIFY(!state.ToDocument().value("names").toObject().contains(A));
+    QVERIFY(!Doc(state).value("names").toObject().contains(A));
 
     state.Rename(A, QStringLiteral("mine"));
     QVERIFY(state.Rename(A, QString()));
-    QVERIFY(!state.ToDocument().value("names").toObject().contains(A));
+    QVERIFY(!Doc(state).value("names").toObject().contains(A));
     state.Rename(A, QStringLiteral("mine"));
     QVERIFY(state.Rename(A, QStringLiteral("   ")));
-    QVERIFY(!state.ToDocument().value("names").toObject().contains(A));
+    QVERIFY(!Doc(state).value("names").toObject().contains(A));
 }
 
 void SessionsStateTest::ForgetDropsEverythingOfTheSession() {
@@ -307,7 +326,7 @@ void SessionsStateTest::ForgetDropsEverythingOfTheSession() {
     state.SetOpened(A);
     QVERIFY(state.Forget(A));
 
-    const QJsonObject document = state.ToDocument();
+    const QJsonObject document = Doc(state);
     const QString text = QString::fromUtf8(
         QJsonDocument(document).toJson(QJsonDocument::Compact));
     QVERIFY2(!text.contains(A), qPrintable(text));
@@ -329,7 +348,7 @@ void SessionsStateTest::UnreadComesWhenAStateLeavesWork() {
     QVERIFY(state.Update({Listed(QStringLiteral("a"), "done"),
                           Listed(QStringLiteral("b"), "working")}));
     QCOMPARE(UnreadOf(state), QStringList{A});
-    QCOMPARE(List(state.ToDocument().value("unread")), QStringList{A});
+    QCOMPARE(List(Doc(state).value("unread")), QStringList{A});
 
     // The same state again changes nothing.
     QVERIFY(!state.Update({Listed(QStringLiteral("a"), "done"),
@@ -359,7 +378,7 @@ void SessionsStateTest::TheOpenedSessionIsNeverUnreadAndOpeningReadsIt() {
     // Opening reads it, in the display and in the document.
     QVERIFY(state.SetOpened(A));
     QCOMPARE(UnreadOf(state), QStringList{B});
-    QCOMPARE(List(state.ToDocument().value("unread")), QStringList{B});
+    QCOMPARE(List(Doc(state).value("unread")), QStringList{B});
 
     // What the opened session does is never unread.
     state.Update({Listed(QStringLiteral("a"), "working"),
@@ -367,7 +386,7 @@ void SessionsStateTest::TheOpenedSessionIsNeverUnreadAndOpeningReadsIt() {
     state.Update({Listed(QStringLiteral("a"), "done"),
                   Listed(QStringLiteral("b"), "done")});
     QCOMPARE(UnreadOf(state), QStringList{B});
-    QCOMPARE(List(state.ToDocument().value("unread")), QStringList{B});
+    QCOMPARE(List(Doc(state).value("unread")), QStringList{B});
 
     // Once another is opened it is an ordinary session again.
     state.SetOpened(B);
@@ -393,8 +412,8 @@ void SessionsStateTest::TheFirstRunStartsWithNothingUnread() {
                           Listed(QStringLiteral("b"), "idle"),
                           Listed(QStringLiteral("c"), "working")}));
     QCOMPARE(UnreadOf(state), QStringList{});
-    QVERIFY(state.ToDocument().value("unread").toArray().isEmpty());
-    QCOMPARE(state.ToDocument().value("states").toObject().size(), 3);
+    QVERIFY(Doc(state).value("unread").toArray().isEmpty());
+    QCOMPARE(Doc(state).value("states").toObject().size(), 3);
     QCOMPARE(RankedOf(state), QStringList{});
 
     // From then on the transitions count.
@@ -435,7 +454,7 @@ void SessionsStateTest::ANewSessionThatAppearsFinishedIsUnread() {
                   Listed(QStringLiteral("b"), "done"),
                   Listed(QStringLiteral("c"), "working")});
     QCOMPARE(UnreadOf(state), QStringList{B});
-    QCOMPARE(state.ToDocument().value("states").toObject().size(), 3);
+    QCOMPARE(Doc(state).value("states").toObject().size(), 3);
 
     // A session skipped by one listing and back is the same session.
     state.SetOpened(B);
@@ -473,6 +492,206 @@ void SessionsStateTest::TheRankingIsRenewedOnlyByANewUnread() {
     const std::vector<SessionEntry> entries = state.Entries();
     QVERIFY(EntryOf(entries, "b").Ranked);
     QVERIFY(!EntryOf(entries, "a").Ranked);
+}
+
+void SessionsStateTest::ARankedSessionThatIsUnreadAgainRenewsTheRanking() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "working"),
+                              Listed(QStringLiteral("b"), "working")});
+    state.Update({Listed(QStringLiteral("a"), "done"),
+                  Listed(QStringLiteral("b"), "done")});
+    QCOMPARE(RankedOf(state), (QStringList{A, B}));
+    state.SetOpened(A);
+    state.SetOpened(B);
+    QCOMPARE(UnreadOf(state), QStringList{});
+
+    state.Update({Listed(QStringLiteral("a"), "working"),
+                  Listed(QStringLiteral("b"), "done")});
+    state.Update({Listed(QStringLiteral("a"), "done"),
+                  Listed(QStringLiteral("b"), "done")});
+    QCOMPARE(UnreadOf(state), QStringList{A});
+    QCOMPARE(RankedOf(state), QStringList{A});
+}
+
+void SessionsStateTest::OnlyAnIntegerOneIsOurVersion() {
+    ListState state;
+    state.Restore({});
+    QVERIFY(!state.ReadOnly());
+    state.Restore(QJsonObject{{"version", 1}});
+    QVERIFY(!state.ReadOnly());
+    state.Restore(QJsonObject{{"version", 1.0}});
+    QVERIFY(!state.ReadOnly());
+
+    const QList<QJsonValue> unknown{2,
+                                    2.5,
+                                    1e30,
+                                    1.5,
+                                    0,
+                                    -5,
+                                    QStringLiteral("2"),
+                                    QStringLiteral("1"),
+                                    QJsonValue::Null,
+                                    true,
+                                    QJsonArray{1}};
+    for (const QJsonValue& version : unknown) {
+        state.Restore(QJsonObject{{"version", version}});
+        QVERIFY2(state.ReadOnly(),
+                 qPrintable(QJsonDocument(QJsonArray{version}).toJson()));
+        QVERIFY(!state.Problem().isEmpty());
+        // The mark is lifted by the next document that is ours.
+        state.Restore(QJsonObject{{"version", 1}});
+        QVERIFY(!state.ReadOnly());
+    }
+}
+
+void SessionsStateTest::AReadOnlyStateSavesNothing() {
+    ListState state;
+    QVERIFY(
+        !state.Restore(QJsonObject{{"version", 2}, {"states", QJsonObject{}}}));
+    QVERIFY(state.ReadOnly());
+    QVERIFY(!state.ToDocument().has_value());
+
+    // Everything works in memory and nothing asks for a save.
+    QVERIFY(!state.Update({Listed(QStringLiteral("a"), "working")}));
+    QVERIFY(!state.Update({Listed(QStringLiteral("a"), "done")}));
+    QCOMPARE(UnreadOf(state), QStringList{A});
+    QVERIFY(!state.SetCategory(A, QStringLiteral("work")));
+    QCOMPARE(state.Entries().front().Category, QStringLiteral("work"));
+    QVERIFY(!state.Rename(A, QStringLiteral("mine")));
+    QVERIFY(!state.SetArchived(A, true));
+    QVERIFY(!state.TogglePin(QStringLiteral("work")));
+    QVERIFY(!state.ToggleFold(QStringLiteral("work")));
+    QVERIFY(!state.UnfoldAll());
+    QVERIFY(!state.SetQuery(QStringLiteral("q")));
+    QVERIFY(!state.SetTab(ETab::Unread));
+    QVERIFY(!state.SetViewArchive(true));
+    QVERIFY(!state.SetCompact(true));
+    QVERIFY(!state.SetOpened(A));
+    QVERIFY(!state.Forget(A));
+    QCOMPARE(state.View().Query, QStringLiteral("q"));
+}
+
+void SessionsStateTest::ForgetDropsTheListedSessionToo() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "working"),
+                              Listed(QStringLiteral("b"), "working")});
+    state.Update({Listed(QStringLiteral("a"), "done"),
+                  Listed(QStringLiteral("b"), "working")});
+    QVERIFY(state.Forget(A));
+    QCOMPARE(state.Entries().size(), size_t(1));
+    QCOMPARE(UnreadOf(state), QStringList{});
+
+    // The same stale list again: the session is new, first seen, unread.
+    QVERIFY(state.Update({Listed(QStringLiteral("a"), "done"),
+                          Listed(QStringLiteral("b"), "working")}));
+    QCOMPARE(state.Entries().size(), size_t(2));
+    QCOMPARE(UnreadOf(state), QStringList{A});
+    QVERIFY(!state.Update({Listed(QStringLiteral("a"), "done"),
+                           Listed(QStringLiteral("b"), "working")}));
+}
+
+void SessionsStateTest::RestoreSaysWhetherTheStateDiffersAndKeepsTheRanking() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "working"),
+                              Listed(QStringLiteral("b"), "working")});
+    state.Update({Listed(QStringLiteral("a"), "done"),
+                  Listed(QStringLiteral("b"), "done")});
+    const QJsonObject saved = Doc(state);
+    QVERIFY(!state.Restore(saved));
+
+    // The document says a is working; the list says done: reconciled, differs.
+    QJsonObject stale = saved;
+    stale.insert("unread", QJsonArray{});
+    stale.insert("states", QJsonObject{{A, "working"}, {B, "done"}});
+    QVERIFY(state.Restore(stale));
+    QCOMPARE(UnreadOf(state), QStringList{A});
+
+    // The ranking survives a Restore that brings no new unread.
+    ListState ranked = Seeded({Listed(QStringLiteral("a"), "working"),
+                               Listed(QStringLiteral("b"), "working")});
+    ranked.Update({Listed(QStringLiteral("a"), "done"),
+                   Listed(QStringLiteral("b"), "done")});
+    QCOMPARE(RankedOf(ranked), (QStringList{A, B}));
+    ranked.SetOpened(A);
+    ranked.Restore(Doc(ranked));
+    QCOMPARE(RankedOf(ranked), (QStringList{A, B}));
+
+    // Malformed entries dropped: the state differs from what was given.
+    ListState junk;
+    QVERIFY(junk.Restore(QJsonObject{
+        {"version", 1}, {"categories", QJsonObject{{"nokey", "x"}}}}));
+}
+
+void SessionsStateTest::StatesOfOnlyJunkIsNotSeeded() {
+    ListState state;
+    state.Restore(
+        QJsonObject{{"states", QJsonObject{{"nokey", "done"}, {A, 5}}}});
+    state.Update({Listed(QStringLiteral("a"), "done"),
+                  Listed(QStringLiteral("b"), "idle")});
+    QCOMPARE(UnreadOf(state), QStringList{});
+
+    // An empty object is seeded: everything listed is new.
+    ListState empty;
+    empty.Restore(QJsonObject{{"states", QJsonObject{}}});
+    empty.Update({Listed(QStringLiteral("a"), "done")});
+    QCOMPARE(UnreadOf(empty), QStringList{A});
+}
+
+void SessionsStateTest::AKeyThatIsNotASessionIsRefused() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "working")});
+    const QJsonObject before = Doc(state);
+    for (const QString& key : {QStringLiteral("nokey"), QStringLiteral("/x"),
+                               QStringLiteral("x/")}) {
+        QVERIFY(!state.SetCategory(key, QStringLiteral("work")));
+        QVERIFY(!state.Rename(key, QStringLiteral("name")));
+        QVERIFY(!state.SetArchived(key, true));
+        QVERIFY(!state.SetOpened(key));
+        QVERIFY(!state.Forget(key));
+    }
+    QCOMPARE(Doc(state), before);
+    QCOMPARE(state.ColorIndex(QStringLiteral("work")), -1);
+    // An empty key still means nothing is opened.
+    QVERIFY(state.SetOpened(A));
+    QVERIFY(state.SetOpened(QString()));
+}
+
+void SessionsStateTest::RepeatedPinsKeepTheLastPosition() {
+    ListState state;
+    state.Restore(
+        QJsonObject{{"pinned", QJsonArray{"x", "y", "x", "", "y", ""}}});
+    QCOMPARE(
+        state.View().Pinned,
+        (QStringList{QStringLiteral("x"), QStringLiteral("y"), QString()}));
+    QVERIFY(state.TogglePin(QStringLiteral("x")));
+    QVERIFY(!state.View().Pinned.contains(QStringLiteral("x")));
+}
+
+void SessionsStateTest::ViewEditsSayWhetherTheyChanged() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "working")});
+    QVERIFY(!state.UnfoldAll());
+    QVERIFY(state.ToggleFold(QStringLiteral("work")));
+    QVERIFY(state.UnfoldAll());
+    QVERIFY(!state.UnfoldAll());
+    QVERIFY(state.ToggleFold(QStringLiteral("work")));
+    QVERIFY(state.ToggleFold(QStringLiteral("work")));
+
+    QVERIFY(state.SetOpened(A));
+    QVERIFY(!state.SetOpened(A));
+    QVERIFY(state.SetViewArchive(true));
+    QVERIFY(!state.SetViewArchive(true));
+    QVERIFY(state.SetViewArchive(false));
+}
+
+void SessionsStateTest::ColourIndexBoundary() {
+    ListState state;
+    state.Restore(QJsonObject{{"colors", QJsonObject{{"top", COLOR_COUNT - 1},
+                                                     {"over", COLOR_COUNT}}}});
+    QCOMPARE(state.ColorIndex(QStringLiteral("top")), COLOR_COUNT - 1);
+    QCOMPARE(state.ColorIndex(QStringLiteral("over")), -1);
+}
+
+void SessionsStateTest::UpdateIsTrueWhenOnlyAStateChanges() {
+    ListState state = Seeded({Listed(QStringLiteral("a"), "idle")});
+    QVERIFY(state.Update({Listed(QStringLiteral("a"), "working")}));
+    QCOMPARE(UnreadOf(state), QStringList{});
+    QVERIFY(!state.Update({Listed(QStringLiteral("a"), "working")}));
 }
 
 QTEST_GUILESS_MAIN(SessionsStateTest)
