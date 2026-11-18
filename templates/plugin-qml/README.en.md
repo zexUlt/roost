@@ -17,7 +17,7 @@ The panel's root is an `Item`; the optional `pluginId` property receives the plu
 
 ## Adding a backend
 
-1. Put an executable into the plugin's `backend/` and make it executable: `chmod +x backend/run`. Any language; the protocol is JSON-RPC 2.0 over stdio, one message per line.
+1. Put a program into the plugin's `backend/` and make it executable: `chmod +x backend/run`. Any language; the protocol is JSON-RPC 2.0 over stdio, one message per line.
 2. In `plugin.json`, next to `contributes`, add:
    `"backend": { "command": ["backend/run"] }`
    The path is inside the plugin directory; the backend runs in it.
