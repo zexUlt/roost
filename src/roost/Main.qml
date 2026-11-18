@@ -138,7 +138,11 @@ Window {
         ignoreUnknownSignals: true
 
         function onActivated() {
-            terminalSlot.forceActiveFocus();
+            // Without a terminal panel the slot shows a placeholder: the
+            // keyboard stays in the list.
+            if (terminalSlot.panel !== null) {
+                terminalSlot.forceActiveFocus();
+            }
         }
     }
 

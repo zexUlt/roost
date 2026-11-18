@@ -170,8 +170,20 @@ FocusScope {
         }
 
         // Enter, on the main keys and on the keypad.
-        Keys.onReturnPressed: root.openCurrent()
-        Keys.onEnterPressed: root.openCurrent()
+        // A held Enter (auto-repeat) does nothing: it would go on into the
+        // terminal, and there reopen an ended or failed session at once.
+        Keys.onReturnPressed: event => {
+            event.accepted = true;
+            if (!event.isAutoRepeat) {
+                root.openCurrent();
+            }
+        }
+        Keys.onEnterPressed: event => {
+            event.accepted = true;
+            if (!event.isAutoRepeat) {
+                root.openCurrent();
+            }
+        }
 
         delegate: Item {
             id: row

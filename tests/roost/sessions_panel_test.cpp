@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
@@ -185,12 +186,30 @@ private:
                agents.commit();
     }
 
+    // Only the built-in plugins `claude` and `sessions`: no panel
+    // terminal.view.
+    bool LinkPluginsWithoutTerminal() const {
+        if (!QDir().mkpath(Dir_->filePath("plugins"))) {
+            return false;
+        }
+        for (const QString& id :
+             {QStringLiteral("claude"), QStringLiteral("sessions")}) {
+            if (!QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
+                             Dir_->filePath("plugins/") + id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool StartDaemon() {
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
         environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
-        environment.insert("ROOST_PLUGINS_PATH", ROOST_PLUGINS_DIR);
+        environment.insert("ROOST_PLUGINS_PATH",
+                           WithoutTerminal_ ? Dir_->filePath("plugins")
+                                            : QString(ROOST_PLUGINS_DIR));
         environment.insert(
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
         Daemon_ = std::make_unique<QProcess>();
@@ -219,6 +238,9 @@ private:
     void Boot(int rows = 4, const char* claude = FAKE_CLAUDE,
               bool empty = false) {
         QVERIFY(WriteFakeClaude(claude));
+        if (WithoutTerminal_) {
+            QVERIFY(LinkPluginsWithoutTerminal());
+        }
         if (empty) {
             QVERIFY(ListWithout(ORDER));
         }
@@ -237,7 +259,8 @@ private:
         Shell_ = std::make_unique<Shell>(*Engine_->rootObjects().first(),
                                          *Loader_, *Api_, SocketPath());
         QTRY_VERIFY_WITH_TIMEOUT(
-            PanelOf(LIST) != nullptr && PanelOf(TERMINAL) != nullptr,
+            PanelOf(LIST) != nullptr &&
+                (WithoutTerminal_ || PanelOf(TERMINAL) != nullptr),
             TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
                                   QString("connected"), TIMEOUT_MS);
@@ -410,7 +433,15 @@ private:
         return Root()->property("problems").toStringList();
     }
 
+    // Auto-repeat of a key held down: the press arrives with `autorep` set.
+    void PressRepeated(Qt::Key key) {
+        QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier, QString("\r"),
+                        true);
+        QVERIFY(QCoreApplication::sendEvent(Window(), &event));
+    }
+
     QStringList Changes_;
+    bool WithoutTerminal_ = false;
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<api::Api> Api_;
@@ -434,6 +465,7 @@ private slots:
         Singleton_ = nullptr;
         Api_.reset();
         StopDaemon();
+        WithoutTerminal_ = false;
     }
 
     void TheListPanelIsLoadedFromTheBuiltInPluginAndItsOutputIsSelected() {
@@ -558,6 +590,60 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(GAMMA)),
                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    void ReturnOnAnEmptyListKeepsTheKeyboardInTheList() {
+        FailOnWarnings();
+        Boot(0, FAKE_CLAUDE, true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(ListView()->hasActiveFocus());
+
+        Press(Qt::Key_Return);
+        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        QTest::qWait(200);
+
+        QVERIFY(ListView()->hasActiveFocus());
+        QVERIFY(!Terminal()->hasActiveFocus());
+    }
+
+    void AHeldReturnNeitherOpensNorMovesTheKeyboard() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Watch();
+
+        PressRepeated(Qt::Key_Return);
+        QTest::qWait(300);
+
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
+        QVERIFY(ListView()->hasActiveFocus());
+        QVERIFY(!Terminal()->hasActiveFocus());
+        // The same key pressed once opens the row.
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    void WithoutTheTerminalPanelReturnKeepsTheKeyboardInTheList() {
+        FailOnWarnings();
+        WithoutTerminal_ = true;
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(PanelOf(TERMINAL) == nullptr);
+
+        Press(Qt::Key_Return);
+
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
+        QTest::qWait(200);
+        QVERIFY(ListView()->hasActiveFocus());
     }
 
     void ReturnOnTheOpenRowNeitherReopensNorRewritesTheSelection() {
