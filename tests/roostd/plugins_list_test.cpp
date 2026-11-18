@@ -149,6 +149,56 @@ private slots:
                  QString("c-dir"));
     }
 
+    void PluginsListCarriesNativeOnlyWhenDeclared() {
+        AddPlugin("a-plain", "1", QJsonObject{});
+        WriteManifest(
+            "b-native",
+            QJsonDocument(QJsonObject{
+                              {"id", "b-native"},
+                              {"version", "1"},
+                              {"api", PLUGIN_API},
+                              {"native", QJsonObject{{"qt", "6.0"},
+                                                     {"qmlImportPath", "qml"}}},
+                          })
+                .toJson());
+        // Declared and empty is not the same as not declared.
+        WriteManifest("c-empty", QJsonDocument(QJsonObject{
+                                                   {"id", "c-empty"},
+                                                   {"version", "1"},
+                                                   {"api", PLUGIN_API},
+                                                   {"native", QJsonObject{}},
+                                               })
+                                     .toJson());
+        // Refused: not in the list, and the reason is a problem.
+        WriteManifest(
+            "d-library",
+            QJsonDocument(QJsonObject{
+                              {"id", "d-library"},
+                              {"version", "1"},
+                              {"api", PLUGIN_API},
+                              {"native", QJsonObject{{"library", "lib/x"}}},
+                          })
+                .toJson());
+        QVERIFY(Start());
+        const rpc::Result result = List();
+        QVERIFY2(result, qPrintable(result ? "" : result.error().Message));
+        const QJsonObject answer = result->toObject();
+        const QJsonArray plugins = answer.value("plugins").toArray();
+        QCOMPARE(plugins.size(), 3);
+        const QJsonObject plain = plugins.at(0).toObject();
+        QCOMPARE(plain.value("id").toString(), QString("a-plain"));
+        QVERIFY(!plain.contains("native"));
+        const QJsonObject declared = plugins.at(1).toObject();
+        QCOMPARE(declared.value("native").toObject(),
+                 (QJsonObject{{"qt", "6.0"}, {"qmlImportPath", "qml"}}));
+        const QJsonObject empty = plugins.at(2).toObject();
+        QVERIFY(empty.contains("native"));
+        QCOMPARE(empty.value("native"), QJsonValue(QJsonObject{}));
+        const QJsonArray problems = answer.value("problems").toArray();
+        QCOMPARE(problems.size(), 1);
+        QVERIFY(problems.at(0).toString().contains("native.library"));
+    }
+
     void BrokenManifestIsAProblem() {
         AddPlugin("good", "1", QJsonObject{});
         WriteManifest("broken", "{ not json");
