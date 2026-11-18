@@ -25,11 +25,19 @@ namespace {
 constexpr int CYR_O = 0x041E;
 constexpr int CYR_S = 0x0421;
 constexpr int CYR_ZHE = 0x0416;
+constexpr int CYR_EF = 0x0424;
+constexpr int CYR_YA = 0x042F;
+// Polish Ą: Qt names the letter by its capital.
+constexpr int LATIN_A_OGONEK = 0x0104;
 // Native codes of the keys under test.
 constexpr quint32 MAC_J = 0x26;
 constexpr quint32 XKB_J = 44;
 constexpr quint32 MAC_C = 0x08;
 constexpr quint32 XKB_C = 54;
+constexpr quint32 MAC_A = 0x00;
+constexpr quint32 XKB_A = 38;
+constexpr quint32 MAC_Z = 0x06;
+constexpr quint32 XKB_Z = 52;
 constexpr quint32 MAC_V = 0x09;
 constexpr quint32 XKB_V = 55;
 constexpr quint32 MAC_SEMICOLON = 0x29;
@@ -85,6 +93,15 @@ private slots:
             0x043E);
         row("ru_repeat", Xkb, CYR_O, "о", XKB_J, EKeyAction::Repeat, EKey::J,
             0x043E);
+        // The ends of the letter range: the first and the last key.
+        row("ru_a_mac", Mac, CYR_EF, "ф", MAC_A, EKeyAction::Press, EKey::A,
+            0x0444);
+        row("ru_a_xkb", Xkb, CYR_EF, "ф", XKB_A, EKeyAction::Press, EKey::A,
+            0x0444);
+        row("ru_z_mac", Mac, CYR_YA, "я", MAC_Z, EKeyAction::Press, EKey::Z,
+            0x044F);
+        row("ru_z_xkb", Xkb, CYR_YA, "я", XKB_Z, EKeyAction::Press, EKey::Z,
+            0x044F);
         // Shift gives the capital; the unshifted codepoint stays lowercase.
         row("ru_shifted", Xkb, CYR_O, "О", XKB_J, EKeyAction::Press, EKey::J,
             0x043E);
@@ -203,6 +220,113 @@ private slots:
         const auto bytes = encoder->Encode(*event);
         QVERIFY(bytes.has_value());
         QCOMPARE(*bytes, expected);
+    }
+
+    void EncodesCtrlLettersOfTheRussianLayoutAsTheLatinKey_data() {
+        QTest::addColumn<int>("platform");
+        QTest::addColumn<int>("qtKey");
+        QTest::addColumn<quint32>("code");
+        QTest::addColumn<int>("latinKey");
+        QTest::addColumn<bool>("shift");
+        QTest::addColumn<bool>("kitty");
+        QTest::addColumn<int>("textKind");
+
+        // What Qt gives as text under Ctrl: nothing, or the control code.
+        enum { NoText, ControlCode };
+        const struct {
+            const char* Name;
+            int QtKey;
+            int LatinKey;
+            quint32 MacCode;
+            quint32 XkbCode;
+        } letters[] = {
+            {"a", CYR_EF, Qt::Key_A, MAC_A, XKB_A},
+            {"c", CYR_S, Qt::Key_C, MAC_C, XKB_C},
+            {"z", CYR_YA, Qt::Key_Z, MAC_Z, XKB_Z},
+        };
+        for (const auto& letter : letters) {
+            for (const int platform : {Mac, Xkb}) {
+                for (const bool shift : {false, true}) {
+                    for (const bool kitty : {false, true}) {
+                        for (const int kind : {NoText, ControlCode}) {
+                            const auto name =
+                                QString("%1_%2_%3_%4_%5")
+                                    .arg(letter.Name)
+                                    .arg(platform == Mac ? "mac" : "xkb")
+                                    .arg(shift ? "shift" : "plain")
+                                    .arg(kitty ? "kitty" : "legacy")
+                                    .arg(kind == NoText ? "no_text"
+                                                        : "control");
+                            QTest::newRow(qPrintable(name))
+                                << platform << letter.QtKey
+                                << (platform == Mac ? letter.MacCode
+                                                    : letter.XkbCode)
+                                << letter.LatinKey << shift << kitty << kind;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void EncodesCtrlLettersOfTheRussianLayoutAsTheLatinKey() {
+        QFETCH(int, platform);
+        QFETCH(int, qtKey);
+        QFETCH(quint32, code);
+        QFETCH(int, latinKey);
+        QFETCH(bool, shift);
+        QFETCH(bool, kitty);
+        QFETCH(int, textKind);
+
+        auto terminal = roost::VtTerminal::Create(80, 24);
+        QVERIFY(terminal.has_value());
+        // Kitty keyboard protocol: disambiguate escape codes.
+        terminal->Write(kitty ? QByteArray("\x1b[>1u") : QByteArray());
+        auto encoder = roost::VtKeyEncoder::Create();
+        QVERIFY(encoder.has_value());
+        QVERIFY(encoder->SyncFrom(*terminal).has_value());
+
+        Qt::KeyboardModifiers mods = ControlKey(platform);
+        if (shift) {
+            mods |= Qt::ShiftModifier;
+        }
+        // The control code the Latin key gives: A is 0x01.
+        const QString control =
+            QString(QChar(static_cast<char16_t>(latinKey - Qt::Key_A + 1)));
+        const QString text = textKind == 0 ? QString() : control;
+
+        const auto latin = MapQtKey(latinKey, mods, text, std::nullopt,
+                                    EKeyAction::Press, Options(platform));
+        const auto russian = MapQtKey(qtKey, mods, text, code,
+                                      EKeyAction::Press, Options(platform));
+        QVERIFY(latin.has_value());
+        QVERIFY(russian.has_value());
+        const auto latinBytes = encoder->Encode(*latin);
+        const auto russianBytes = encoder->Encode(*russian);
+        QVERIFY(latinBytes.has_value());
+        QVERIFY(russianBytes.has_value());
+        QVERIFY(!latinBytes->isEmpty());
+        QCOMPARE(*russianBytes, *latinBytes);
+    }
+
+    void ALatinLetterOfAnAltGrLayoutIsNotRemapped_data() {
+        QTest::addColumn<int>("platform");
+        QTest::addColumn<quint32>("code");
+        QTest::newRow("mac") << int{Mac} << MAC_A;
+        QTest::newRow("xkb") << int{Xkb} << XKB_A;
+    }
+
+    void ALatinLetterOfAnAltGrLayoutIsNotRemapped() {
+        QFETCH(int, platform);
+        QFETCH(quint32, code);
+        // Polish AltGr+a types "ą" on the physical A key: a Latin letter, so
+        // the layout is Latin and the letter stays text.
+        const auto event = MapQtKey(LATIN_A_OGONEK, {}, "ą", code,
+                                    EKeyAction::Press, Options(platform));
+        QVERIFY(event.has_value());
+        QCOMPARE(event->Key, EKey::Unidentified);
+        QCOMPARE(event->Text, QString("ą"));
+        QCOMPARE(static_cast<int>(event->UnshiftedCodepoint), 0x0105);
     }
 
     void CopyShortcutFollowsThePhysicalKey_data() {
