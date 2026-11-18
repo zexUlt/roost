@@ -1,6 +1,7 @@
 #include "roostd/session_channels.hpp"
 
 #include <QFuture>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
 #include <QPromise>
@@ -112,6 +113,7 @@ SessionChannels::SessionChannels(Server& server, PluginHost& plugins,
     add(QStringLiteral("session.resize"), &SessionChannels::Resize);
     add(QStringLiteral("session.close"), &SessionChannels::Close);
     add(QStringLiteral("session.view"), &SessionChannels::View);
+    add(QStringLiteral("sessions.warm"), &SessionChannels::Warm);
 
     connect(&Server_, &Server::InputReceived, this, &SessionChannels::OnInput);
     connect(&Server_, &Server::ConnectionClosed, this,
@@ -375,6 +377,17 @@ QFuture<rpc::Result> SessionChannels::View(const rpc::Call& call) {
     }
     Pool_.Touch(session);
     return rpc::Ready(QJsonValue());
+}
+
+QFuture<rpc::Result> SessionChannels::Warm(const rpc::Call& /*call*/) {
+    QJsonArray sessions;
+    for (const WarmSessionKey& key : Pool_.KeysMostRecentFirst()) {
+        sessions.append(QJsonObject{
+            {QStringLiteral("agent"), key.Agent},
+            {QStringLiteral("id"), key.Session},
+        });
+    }
+    return rpc::Ready(QJsonObject{{QStringLiteral("sessions"), sessions}});
 }
 
 void SessionChannels::OnInput(Server::ConnectionId connection,

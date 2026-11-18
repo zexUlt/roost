@@ -6,7 +6,7 @@
   "contributes": {
     "panels": [
       {
-        "id": "sessions.list",
+        "id": "list",
         "qml": "qml/SessionsPanel.qml",
         "inputs": {},
         "outputs": { "selected": "SessionRef" }

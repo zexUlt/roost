@@ -8,6 +8,7 @@
 #include <QString>
 
 #include <expected>
+#include <vector>
 
 #include "core/pty.hpp"
 #include "core/vt_terminal.hpp"
@@ -115,6 +116,9 @@ public:
     // reason. Nothing happens if the session is not warm.
     void Evict(const WarmSessionKey& key, const QString& reason);
     qsizetype Count() const { return Sessions_.size(); }
+    // The keys of the warm sessions, the one viewed most recently first. The
+    // order is total: every Touch takes a new tick of the clock.
+    std::vector<WarmSessionKey> KeysMostRecentFirst() const;
 
 private:
     void Forget(WarmSession* session);
