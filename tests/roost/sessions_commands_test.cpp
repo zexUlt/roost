@@ -417,7 +417,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{BETA, GAMMA, DELTA}),
                                   TIMEOUT_MS);
         // Not opened again by anything.
-        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{ALPHA}, TIMEOUT_MS);
+        QTest::qWait(300);
+        QCOMPARE(Calls(), QStringList{ALPHA});
     }
 
     void XStopsAndArchivesAndClosesTheOpenSession() {
@@ -633,11 +634,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("respawned"), TIMEOUT_MS);
         QTest::qWait(300);
         QCOMPARE(respawned.count(), 0);
-        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{ALPHA}, TIMEOUT_MS);
+        QCOMPARE(Calls(), QStringList{ALPHA});
         QCOMPARE(Status(), QString("open"));
     }
 
-    void RespawnAllReopensTheRunningOpenSessionOnly() {
+    void RespawnAllReopensTheOpenSessionWhateverItsState() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -655,7 +656,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Notice(), QString("Respawned all"),
                                   TIMEOUT_MS);
 
-        // GAMMA is done: respawn --all ends its attach, and it stays ended.
+        // GAMMA is done: respawn --all ends its attach too, and it is opened
+        // again as well.
         BackToList();
         MoveTo(GAMMA);
         Press(Qt::Key_Return);
@@ -665,11 +667,9 @@ private slots:
         Press(Qt::Key_R, Qt::ShiftModifier);
         QTRY_VERIFY_WITH_TIMEOUT(!Confirm().isEmpty(), TIMEOUT_MS);
         Press(Qt::Key_Y);
-        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
-        QTest::qWait(300);
-        QCOMPARE(Status(), QString("ended"));
-        QTRY_COMPARE_WITH_TIMEOUT(Calls(), (QStringList{ALPHA, ALPHA, GAMMA}),
-                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Calls(), (QStringList{ALPHA, ALPHA, GAMMA, GAMMA}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
     }
 
     void NStartsASessionInTheCursorsDirectory() {
@@ -747,6 +747,113 @@ private slots:
                                       .toObject()
                                       .value(KeyOf(STARTED)),
                                   QJsonValue("Ops"), TIMEOUT_MS);
+    }
+
+    // The agents list with STARTED and one more session.
+    static QByteArray AgentsWithStartedAndAnother(const QString& id) {
+        QJsonArray all = QJsonDocument::fromJson(AgentsWithStarted()).array();
+        all.append(QJsonObject{{"id", id},
+                               {"cwd", "/work/beta"},
+                               {"kind", "background"},
+                               {"startedAt", qint64{1790150500000}},
+                               {"name", "Another"},
+                               {"state", "working"},
+                               {"status", "busy"}});
+        return QJsonDocument(all).toJson(QJsonDocument::Compact);
+    }
+
+    // In the archive view the new session is not shown: nothing is opened, the
+    // view is not switched, and nothing happens later either.
+    void NInTheArchiveViewOpensNothingNowOrLater() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        Press(Qt::Key_V);
+        QTRY_COMPARE_WITH_TIMEOUT(Ids(), QStringList{}, TIMEOUT_MS);
+
+        StartNewSession("do it");
+
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(500);
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QVERIFY(List()->property("viewArchive").toBool());
+        QVERIFY(ListView()->hasActiveFocus());
+        // Back in the list view the session is there and was not opened.
+        Press(Qt::Key_V);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTest::qWait(500);
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QVERIFY(CursorId() != STARTED);
+        QVERIFY(ListView()->hasActiveFocus());
+    }
+
+    // Once n has opened its session, later changes of the list do not take the
+    // cursor or the keyboard back to it.
+    void NOpensOnceAndLaterChangesLeaveTheCursorAlone() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString another = "bg-9a8b7c6d";
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        Watch();
+
+        StartNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        BackToList();
+        // The cursor is on the new session; ALPHA is above it.
+        for (int step = 0; step < 8 && CursorId() != ALPHA; ++step) {
+            Press(Qt::Key_Up);
+        }
+        QCOMPARE(CursorId(), ALPHA);
+
+        QVERIFY(Put("agents.json", AgentsWithStartedAndAnother(another)));
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(another), TIMEOUT_MS);
+        QTest::qWait(500);
+
+        QCOMPARE(CursorId(), ALPHA);
+        QCOMPARE(SelectedId(), STARTED);
+        QVERIFY(ListView()->hasActiveFocus());
+        QCOMPARE(Calls(), QStringList{STARTED});
+    }
+
+    // The session of n is not listed yet; the user opens another row: the late
+    // session does not take its place.
+    void EnterOnAnotherRowCancelsThePendingOpen() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+
+        StartNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        QVERIFY(SelectedId().isEmpty());
+        MoveTo(BETA);
+        OpenAndBack(1);
+        QCOMPARE(SelectedId(), BETA);
+
+        QVERIFY(Put("agents.json", AgentsWithStarted()));
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(500);
+
+        QCOMPARE(SelectedId(), BETA);
+        QCOMPARE(Calls(), QStringList{BETA});
+        QVERIFY(ListView()->hasActiveFocus());
     }
 
     // A folded header: n takes its category, and there is no session, so the
@@ -945,6 +1052,50 @@ private slots:
         AskAndConfirm(Qt::Key_R);
         QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"respawn " + ALPHA},
                                   TIMEOUT_MS);
+    }
+
+    void ShiftYCancelsTheQuestion() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_D);
+        QTRY_VERIFY_WITH_TIMEOUT(!Confirm().isEmpty(), TIMEOUT_MS);
+
+        Press(Qt::Key_Y, Qt::ShiftModifier);
+
+        QTRY_VERIFY_WITH_TIMEOUT(Confirm().isEmpty(), TIMEOUT_MS);
+        // Nothing ran: the one command after it is the only one.
+        AskAndConfirm(Qt::Key_R);
+        QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"respawn " + ALPHA},
+                                  TIMEOUT_MS);
+    }
+
+    // The question names the session and holds it: when the list changes
+    // before y, the command still goes to it and the notice calls it by the
+    // title it had.
+    void YDeletesTheSessionAskedAboutAfterItLeftTheList() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_D);
+        QTRY_VERIFY_WITH_TIMEOUT(Confirm().contains("Fix the flaky test"),
+                                 TIMEOUT_MS);
+        QVERIFY(Put("agents.json", AgentsWithout({ALPHA})));
+        QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{BETA, GAMMA, DELTA}),
+                                  TIMEOUT_MS);
+        QVERIFY(CursorId() != ALPHA);
+        QVERIFY(!Confirm().isEmpty());
+
+        Press(Qt::Key_Y);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"rm " + ALPHA},
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("deleted"), TIMEOUT_MS);
+        QCOMPARE(Notice(), QString("\"Fix the flaky test\" deleted"));
     }
 
     void ModifiedAndHeldCommandKeysAsknothing() {

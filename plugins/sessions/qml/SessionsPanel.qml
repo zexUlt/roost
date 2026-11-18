@@ -71,7 +71,10 @@ FocusScope {
     // they are forgotten by the list only when they have, or the list would
     // take the session that is still listed for a new one.
     property var forgetPending: []
-    // The session started by n that is not listed yet: opened once it is.
+    // The session started by n that is not shown yet: opened once the list has
+    // it. Dropped when it is opened, when the user opens something else, starts
+    // a prompt or changes the view, and at once in the archive view, which
+    // never shows a new session.
     property var openPending: null
 
     // The colours of the categories, by the `colorIndex` of the model, and of
@@ -283,6 +286,7 @@ FocusScope {
     // Opens the prompt of the footer with its text. The keys then go to the
     // text field, not to the list.
     function openPrompt(kind, ref, text) {
+        openPending = null;
         promptKind = kind;
         promptRef = ref;
         promptInput.text = text;
@@ -536,10 +540,12 @@ FocusScope {
     function askForSession(action, verb) {
         const ref = cursorRef();
         if (ref !== null) {
+            const title = titleOf(ref);
             confirm = {
                 "action": action,
                 "ref": ref,
-                "text": verb + " \"" + titleOf(ref) + "\"? (y: yes, any other key: no)"
+                "title": title,
+                "text": verb + " \"" + title + "\"? (y: yes, any other key: no)"
             };
         }
     }
@@ -554,10 +560,12 @@ FocusScope {
             sessionsList.setArchived(ref, false);
             return;
         }
+        const title = titleOf(ref);
         confirm = {
             "action": "archive",
             "ref": ref,
-            "text": "Archive and stop \"" + titleOf(ref) + "\"? (y: yes, any other key: no)"
+            "title": title,
+            "text": "Archive and stop \"" + title + "\"? (y: yes, any other key: no)"
         };
     }
 
@@ -600,13 +608,13 @@ FocusScope {
     function runConfirmed(asked) {
         switch (asked.action) {
         case "delete":
-            deleteSession(asked.ref);
+            deleteSession(asked.ref, asked.title);
             break;
         case "archive":
-            archiveSession(asked.ref);
+            archiveSession(asked.ref, asked.title);
             break;
         case "respawn":
-            respawnSession(asked.ref);
+            respawnSession(asked.ref, asked.title);
             break;
         case "respawnAll":
             respawnAll(asked.agents);
@@ -616,9 +624,9 @@ FocusScope {
 
     // After the removal the window must not open the session again, so
     // `selected` goes first. The list forgets it once Roost.sessions has
-    // dropped it.
-    function deleteSession(ref) {
-        const title = titleOf(ref);
+    // dropped it. The notices name the session by the title it had when the
+    // question was asked: it may be gone by the answer.
+    function deleteSession(ref, title) {
         if (isSame(selected, ref)) {
             selected = null;
         }
@@ -654,8 +662,7 @@ FocusScope {
     }
 
     // Archived at once; a failed stop leaves it archived and says so.
-    function archiveSession(ref) {
-        const title = titleOf(ref);
+    function archiveSession(ref, title) {
         sessionsList.setArchived(ref, true);
         if (isSame(selected, ref)) {
             selected = null;
@@ -668,8 +675,7 @@ FocusScope {
         });
     }
 
-    function respawnSession(ref) {
-        const title = titleOf(ref);
+    function respawnSession(ref, title) {
         showNotice("Respawning…");
         runCommand(ref.agent, "respawn", {
             "session": ref.id
@@ -685,11 +691,12 @@ FocusScope {
         });
     }
 
-    // One respawnAll for each agent. The open session is reopened only if the
-    // command touches it: it was running.
+    // One respawnAll for each agent. The open session is offered for reopening
+    // whatever its state: the terminal waits `reopenWaitMs` for its attach to
+    // end and gives up by itself if the command did not touch it.
     function respawnAll(agents) {
         const open = selected;
-        const reopen = open !== null && (sessionData(open) ?? {}).state === "working";
+        const reopen = open !== null;
         let left = agents.length;
         let failed = "";
         showNotice("Respawning all…");
@@ -781,11 +788,20 @@ FocusScope {
         });
     }
 
-    // Opens the session of n once it is in the list: it shows after the answer
-    // of the command, with the next list of the agent.
+    // Opens the session of n once the list has it: it shows after the answer
+    // of the command, with the next list of the agent, and the list takes it
+    // after that. The archive view does not show it: the view is not switched
+    // and nothing is opened.
     function openStarted() {
         const ref = openPending;
-        if (ref === null || !listed(ref) || !sessionsList.reveal(ref)) {
+        if (ref === null) {
+            return;
+        }
+        if (sessionsList.viewArchive) {
+            openPending = null;
+            return;
+        }
+        if (!listed(ref) || !sessionsList.reveal(ref)) {
             return;
         }
         openPending = null;
@@ -833,9 +849,15 @@ FocusScope {
         onReadyChanged: root.restoreOpened()
         onSourceLoadedChanged: root.restoreOpened()
         onCursorChanged: root.syncCursor()
-        // The session of n is in the model after the source's sync, which can
-        // come after the row of Roost.sessions.
+        // The session of n is in the list after the sync of the source, which
+        // comes after the row of Roost.sessions: the rows and the counts of
+        // the list are what to wait for.
         onCountsChanged: root.openStarted()
+        // Not inside the insert: the view has not built its rows yet.
+        onRowsInserted: Qt.callLater(root.openStarted)
+        // A change of the view is the user's: the open of n is not wanted.
+        onViewArchiveChanged: root.openPending = null
+        onTabChanged: root.openPending = null
     }
 
     Timer {
@@ -886,10 +908,6 @@ FocusScope {
         function onRowsRemoved() {
             root.dropGone();
             root.drainForget();
-        }
-
-        function onRowsInserted() {
-            root.openStarted();
         }
     }
 
