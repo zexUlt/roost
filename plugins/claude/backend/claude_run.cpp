@@ -1,5 +1,6 @@
 #include "claude/backend/claude_run.hpp"
 
+#include <QRegularExpression>
 #include <QString>
 
 #include <signal.h>
@@ -10,13 +11,21 @@ namespace roost::claude {
 
 namespace {
 
+// A line that is a warning: "warn:" or "warning:" first, in any case. A line
+// that only mentions the word, as in a session name, is not.
+bool IsWarning(const QString& line) {
+    static const QRegularExpression WARNING(
+        QStringLiteral("^warn(ing)?\\s*:"),
+        QRegularExpression::CaseInsensitiveOption);
+    return WARNING.match(line).hasMatch();
+}
+
 // The first line of the text that has words and is no warning, trimmed.
 QString FirstReason(const QByteArray& text) {
     const QStringList lines = QString::fromUtf8(text).split(u'\n');
     for (const QString& raw : lines) {
         const QString line = raw.trimmed();
-        if (!line.isEmpty() &&
-            !line.contains(QStringLiteral("warn"), Qt::CaseInsensitive)) {
+        if (!line.isEmpty() && !IsWarning(line)) {
             return line;
         }
     }
@@ -27,9 +36,13 @@ QString FirstReason(const QByteArray& text) {
 
 void StopRun(QProcess& process) {
     if (process.state() != QProcess::NotRunning) {
-        ::killpg(static_cast<pid_t>(process.processId()), SIGKILL);
+        const auto group = static_cast<pid_t>(process.processId());
+        ::killpg(group, SIGKILL);
         process.kill();
         process.waitForFinished();
+        // A fork that raced with the first signal may have joined the group
+        // after it was delivered; the group lives on while it has a member.
+        ::killpg(group, SIGKILL);
     }
 }
 

@@ -35,8 +35,9 @@ struct RunOutput {
 using RunResult = std::expected<RunOutput, QString>;
 
 // Kills a run still going, with its process group, so that what it started
-// does not outlive it. The group is killed only while its leader runs: until
-// then its id cannot be reused.
+// does not outlive it. The group is signalled again once the leader is reaped,
+// for a fork that raced with the first signal; the group id stays taken while
+// it has a member.
 void StopRun(QProcess& process);
 
 // Why a run with a non-zero exit failed, in one line: the first line of stderr

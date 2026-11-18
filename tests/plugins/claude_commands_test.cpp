@@ -40,6 +40,8 @@ constexpr int TIMEOUT_MS = 5000;
 //   sleep   seconds to take
 //   hang    if present, writes the pids of itself and of a child of its group
 //           to pids and sleeps for good
+//   hold    if present, waits until the file is removed, after the listing
+//           of `agents` is read and before it prints
 //   agents  replaces agents.json whole before it exits, as a removal would
 // `agents` prints agents.json as it was when the run started. Each run adds
 // "start <args>" and "end" lines to calls.
@@ -51,6 +53,7 @@ if [ "$verb" = agents ]; then listing=$(cat "$dir/agents.json"); fi
 if [ -f "$dir/$verb.hang" ]; then
   sleep 600 & echo $! >> "$dir/pids"; echo $$ >> "$dir/pids"; exec sleep 600
 fi
+while [ -f "$dir/$verb.hold" ]; do sleep 0.05; done
 if [ -f "$dir/$verb.sleep" ]; then sleep "$(cat "$dir/$verb.sleep")"; fi
 if [ -f "$dir/$verb.agents" ]; then
   cp "$dir/$verb.agents" "$dir/agents.tmp" && mv "$dir/agents.tmp" "$dir/agents.json"
@@ -395,6 +398,33 @@ private slots:
                      {"stderr", "warning: x\n\nNo job matching 's1'\nmore"}}));
     }
 
+    void AWarningWordInTheReasonIsKept_data() {
+        QTest::addColumn<QByteArray>("stderr");
+        QTest::addColumn<QString>("reason");
+        QTest::newRow("a session named so")
+            << QByteArray("No job matching 'warnings-x'\n")
+            << "No job matching 'warnings-x'";
+        QTest::newRow("a warning before it")
+            << QByteArray(
+                   "Warning: x\nWARN : y\nNo job matching 'warnings-x'\n")
+            << "No job matching 'warnings-x'";
+    }
+
+    void AWarningWordInTheReasonIsKept() {
+        QFETCH(QByteArray, stderr);
+        QFETCH(QString, reason);
+        Put("stop.exit", "1");
+        Put("stop.stderr", stderr);
+        StartAdapter();
+        QCOMPARE(
+            RunCommand("claude.stop", QJsonObject{{"session", "warnings-x"}})
+                .value("error")
+                .toObject()
+                .value("message")
+                .toString(),
+            reason);
+    }
+
     void StdoutIsTheReasonWhenStderrHasNone() {
         Put("rm.exit", "1");
         Put("rm.stdout", "refusing: unpushed work\n");
@@ -454,16 +484,25 @@ private slots:
 
     void AHangingCommandIsKilledWithItsGroup() {
         Put("stop.hang", "");
-        // Long enough for sh to start under load and note its pids.
-        StartAdapter({"--command-timeout-ms", "1500"});
-        const QJsonObject response =
-            RunCommand("claude.stop", QJsonObject{{"session", "s1"}});
-        QCOMPARE(response.value("error").toObject(),
+        StartAdapter({"--command-timeout-ms", "3000"});
+        Write(Request(100, "commands.run",
+                      Run("claude.stop", QJsonObject{{"session", "s1"}})));
+        // The pids come first; the answer waits for the timeout, however
+        // long the pids took.
+        QVERIFY2(WaitForPids(), "the fake did not write its pids");
+        const QList<pid_t> pids = HungPids();
+        std::optional<QJsonObject> response;
+        QVERIFY(QTest::qWaitFor(
+            [&] {
+                Adapter_->waitForReadyRead(10);
+                response = Response(100);
+                return response.has_value();
+            },
+            2 * TIMEOUT_MS));
+        QCOMPARE(response->value("error").toObject(),
                  (QJsonObject{
                      {"code", -32603},
-                     {"message", "claude stop did not finish in 1500 ms"}}));
-        const QList<pid_t> pids = HungPids();
-        QVERIFY2(pids.size() >= 2, "the fake did not write its pids");
+                     {"message", "claude stop did not finish in 3000 ms"}}));
         for (pid_t pid : pids) {
             QTRY_VERIFY_WITH_TIMEOUT(::kill(pid, 0) != 0, TIMEOUT_MS);
         }
@@ -487,15 +526,17 @@ private slots:
 
     void ARunInFlightIsFollowedByAnother() {
         Put("agents.json", Agents({Entry("s1", "idle"), Entry("s2", "idle")}));
-        Put("agents.sleep", "0.6");
+        Put("agents.hold", "");
         Put("rm.agents", Agents({Entry("s2", "idle")}));
         StartAdapter();
-        // The first run is going and has read both sessions.
+        // The first run is going, held, and has read both sessions.
         QVERIFY(QTest::qWaitFor(
             [&] { return AllCalls().contains("start agents --json --all"); },
             TIMEOUT_MS));
+        // The command ends while that run is still held.
         QVERIFY(RunCommand("claude.remove", QJsonObject{{"session", "s1"}})
                     .contains("result"));
+        QVERIFY(QFile::remove(FakePath("agents.hold")));
         // That run lists s1 still; the one after it does not.
         QVERIFY(QTest::qWaitFor(
             [&] {
