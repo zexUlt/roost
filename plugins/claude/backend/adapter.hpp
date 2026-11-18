@@ -50,7 +50,9 @@ struct AdapterOptions {
 // successful run that the new one does not list is sent after them as
 // session.removed {agent, session: <id>}, in the order of the previous
 // listing. A failed run sends nothing: a removal during failed runs is sent
-// after the next successful one.
+// after the next successful one. A restarted process has no previous listing
+// and sends none of this for what changed while it was down: roostd announces
+// the restart and the window lists the sessions again.
 class Adapter : public QObject {
     Q_OBJECT
 

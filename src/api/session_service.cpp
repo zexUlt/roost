@@ -136,6 +136,14 @@ void SessionService::OnAnswer(const QJsonValue& answer) {
 }
 
 void SessionService::OnEvent(const QString& name, const QJsonValue& payload) {
+    if (name == QStringLiteral("session.adapterStarted")) {
+        // What an adapter did while it was down is told by no event. The events
+        // kept so far are older than the restart: the list that is asked for
+        // now is the one to trust.
+        Kept_.clear();
+        Refresh();
+        return;
+    }
     const bool removed = name == QStringLiteral("session.removed");
     if (!removed && name != QStringLiteral("session.stateChanged")) {
         return;

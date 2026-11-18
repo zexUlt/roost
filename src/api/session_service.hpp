@@ -30,6 +30,10 @@ namespace roost::api {
 // the rows; there is no polling. Use it from the GUI thread; the signals are
 // emitted there.
 //
+// A restarted adapter does not tell what changed while it was down: roostd
+// announces the restart with session.adapterStarted, and the service lists
+// again, dropping the kept events that are older than the restart.
+//
 // An event that comes while a list is being asked for is put on the rows again
 // when the answer has replaced them, in the order it came: roostd answers when
 // every agent has, and the list may be older than the event. So a session that
