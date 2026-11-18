@@ -96,12 +96,12 @@ QJsonObject Panel(const QString& id, const QString& qml,
 
 QJsonObject ListEntry(const QJsonObject& outputs = {
                           {"selected", "SessionRef"}}) {
-    return Panel(LIST, "list.qml", {}, outputs);
+    return Panel("list", "list.qml", {}, outputs);
 }
 
 QJsonObject TerminalEntry(const QJsonObject& inputs = {
                               {"session", "SessionRef"}}) {
-    return Panel(TERMINAL, "terminal.qml", inputs);
+    return Panel("view", "terminal.qml", inputs);
 }
 
 QVariantMap Ref(const QString& agent, const QString& id) {
@@ -158,9 +158,9 @@ private:
     bool BootPlugins(const QJsonObject& list, const QByteArray& listQml,
                      const QJsonObject& terminal,
                      const QByteArray& terminalQml) {
-        return Daemon_->AddQmlPlugin("list-plugin", {list},
+        return Daemon_->AddQmlPlugin("sessions", {list},
                                      {{"list.qml", listQml}}) &&
-               Daemon_->AddQmlPlugin("term-plugin", {terminal},
+               Daemon_->AddQmlPlugin("terminal", {terminal},
                                      {{"terminal.qml", terminalQml}}) &&
                Boot();
     }
@@ -286,7 +286,7 @@ private slots:
         // panel, linked again.
         QPointer<QQuickItem> oldList = list;
         QVERIFY(Daemon_->Stop());
-        QVERIFY(Daemon_->AddQmlPlugin("list-plugin", {ListEntry()},
+        QVERIFY(Daemon_->AddQmlPlugin("sessions", {ListEntry()},
                                       {{"list.qml", ListPanel("v2")}},
                                       "0.2.0"));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
@@ -310,7 +310,7 @@ private slots:
         // The loader's own report of the broken file is expected.
         QTest::ignoreMessage(
             QtWarningMsg,
-            QRegularExpression("plugin term-plugin, panel terminal.view: "));
+            QRegularExpression("plugin terminal, panel terminal.view: "));
         // A plugin whose manifest is not JSON: roostd reports it.
         QVERIFY(QDir().mkpath(Daemon_->PluginsPath() + "/broken-manifest"));
         QFile manifest(Daemon_->PluginsPath() + "/broken-manifest/plugin.json");
@@ -327,9 +327,9 @@ private slots:
         QVERIFY2(error.contains("terminal.qml"), qPrintable(error));
         QVERIFY(Placeholder(TERMINAL)->isVisible());
         QCOMPARE(Placeholder(TERMINAL)->property("text").toString(), error);
-        QVERIFY(HasProblem("plugin term-plugin, panel terminal.view: "));
+        QVERIFY(HasProblem("plugin terminal, panel terminal.view: "));
         QVERIFY(HasProblem("broken-manifest"));
-        QVERIFY(!HasProblem("plugin list-plugin"));
+        QVERIFY(!HasProblem("plugin sessions"));
         auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
         QVERIFY(strip->isVisible());
         // Not linked: the terminal has no panel, and the selection warns
@@ -342,7 +342,7 @@ private slots:
     }
 
     void ATypeNobodyOffersIsNamedInThePlaceholder() {
-        QVERIFY(Daemon_->AddQmlPlugin("list-plugin", {ListEntry()},
+        QVERIFY(Daemon_->AddQmlPlugin("sessions", {ListEntry()},
                                       {{"list.qml", ListPanel()}}));
         QVERIFY(Boot());
         QTRY_VERIFY_WITH_TIMEOUT(Settled() && PanelOf(LIST) != nullptr,
@@ -358,7 +358,7 @@ private slots:
                             BARE_PANEL));
         QTRY_VERIFY_WITH_TIMEOUT(BothPanelsShown(), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(
-            HasProblem("plugin term-plugin, panel terminal.view: declared "
+            HasProblem("plugin terminal, panel terminal.view: declared "
                        "input \"session\""),
             TIMEOUT_MS);
         QVERIFY(Slot(TERMINAL)->property("linkInput").toString().isEmpty());
@@ -516,7 +516,7 @@ private slots:
             },
             Qt::DirectConnection);
         QVERIFY(Daemon_->Stop());
-        QVERIFY(Daemon_->AddQmlPlugin("list-plugin", {ListEntry()},
+        QVERIFY(Daemon_->AddQmlPlugin("sessions", {ListEntry()},
                                       {{"list.qml", ListPanel("v2")}},
                                       "0.2.0"));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
@@ -538,8 +538,7 @@ private slots:
                                  TIMEOUT_MS);
 
         QVERIFY(Daemon_->Stop());
-        QVERIFY(
-            QDir(Daemon_->PluginsPath() + "/list-plugin").removeRecursively());
+        QVERIFY(QDir(Daemon_->PluginsPath() + "/sessions").removeRecursively());
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST) == nullptr && Settled(),
                                  TIMEOUT_MS * 2);

@@ -1,5 +1,7 @@
 #include "roost/plugin_loader.hpp"
 
+#include "core/store.hpp"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QJSEngine>
@@ -15,15 +17,6 @@
 namespace roost {
 
 namespace {
-
-// The id of a panel entry if it has a usable one.
-QString PanelIdOf(const QJsonValue& entry) {
-    if (!entry.isObject()) {
-        return {};
-    }
-    const QJsonValue id = entry.toObject().value("id");
-    return id.isString() ? id.toString() : QString();
-}
 
 // The path a manifest names, resolved, if it stays inside the plugin
 // directory. The same rule as roostd's check of backend paths: on the text,
@@ -87,8 +80,6 @@ std::optional<PluginLoader::PanelInfo> PluginLoader::Info(
 std::vector<PluginLoader::Declared> PluginLoader::ReadDeclared() const {
     std::vector<Declared> declared;
     QSet<QString> seen;
-    // Panel id -> the plugin that declared it first.
-    QMap<QString, QString> claims;
     const QJsonArray list = Plugins_.Plugins().value("plugins").toArray();
     for (const QJsonValue& entry : list) {
         const QJsonObject object = entry.toObject();
@@ -98,24 +89,10 @@ std::vector<PluginLoader::Declared> PluginLoader::ReadDeclared() const {
             continue;
         }
         seen.insert(id);
-        Declared plugin{id,
-                        object.value("version").toString(),
+        Declared plugin{id, object.value("version").toString(),
                         object.value("directory").toString(),
-                        object.value("contributes").toObject(),
-                        {}};
-        for (const QJsonValue& panel :
-             plugin.Contributes.value("panels").toArray()) {
-            const QString panelId = PanelIdOf(panel);
-            if (panelId.isEmpty()) {
-                continue;
-            }
-            const auto claim = claims.constFind(panelId);
-            if (claim == claims.constEnd()) {
-                claims.insert(panelId, id);
-            } else if (claim.value() != id) {
-                plugin.Rejected.insert(panelId, claim.value());
-            }
-        }
+                        object.value("native").toObject(),
+                        object.value("contributes").toObject()};
         declared.push_back(std::move(plugin));
     }
     return declared;
@@ -134,8 +111,8 @@ void PluginLoader::OnPluginsChanged() {
             declared, [&](const Declared& d) { return d.Id == plugin->Id; });
         if (same != declared.end() && same->Version == plugin->Version &&
             same->Directory == plugin->Directory &&
-            same->Contributes == plugin->Contributes &&
-            same->Rejected == plugin->Rejected) {
+            same->Native == plugin->Native &&
+            same->Contributes == plugin->Contributes) {
             continue;
         }
         reloaded = reloaded || same != declared.end();
@@ -156,6 +133,8 @@ void PluginLoader::OnPluginsChanged() {
     for (const auto& plugin : Loaded_) {
         kept.insert(plugin->Id);
     }
+    // Before any load: a panel is compiled with the import path it finds.
+    SetImportPaths(declared);
     std::map<QString, std::unique_ptr<Plugin>> fresh;
     for (const Declared& d : declared) {
         if (kept.contains(d.Id)) {
@@ -198,13 +177,25 @@ void PluginLoader::Reload(const QString& pluginId) {
         return;
     }
     Plugin& old = **found;
-    const Declared declared{old.Id, old.Version, old.Directory, old.Contributes,
-                            old.Rejected};
+    const Declared declared{old.Id, old.Version, old.Directory, old.Native,
+                            old.Contributes};
+    // A directory that was not there at the last diff may be now.
+    std::vector<Declared> all;
+    for (const auto& plugin : Loaded_) {
+        if (!plugin->Unloading) {
+            all.push_back({plugin->Id,
+                           plugin->Version,
+                           plugin->Directory,
+                           plugin->Native,
+                           {}});
+        }
+    }
     // Unload leaves the plugin in Loaded_, empty: a slot of the signal that
     // calls CreatePanel gets nothing, and the place in the order stays.
     Unload(old);
     EverUnloaded_ = true;
     Engine_.clearComponentCache();
+    SetImportPaths(all);
     *found = Load(declared);
 
     if (ProblemsDirty_) {
@@ -224,14 +215,46 @@ QMap<QString, QString> PluginLoader::PluginDirectories() const {
     return directories;
 }
 
+void PluginLoader::SetImportPaths(const std::vector<Declared>& declared) {
+    // What the engine has, minus what this loader put there. By value, not by
+    // position: the engine drops a directory that is gone and merges those
+    // that are one after symlinks are resolved.
+    QStringList paths = Engine_.importPathList();
+    paths.removeIf(
+        [&](const QString& path) { return ImportPaths_.contains(path); });
+    QStringList added;
+    for (const Declared& d : declared) {
+        const QJsonValue value = d.Native.value("qmlImportPath");
+        if (!value.isString()) {
+            continue;
+        }
+        const QString path = InsidePlugin(d.Directory, value.toString());
+        // roostd checks the path, so an empty one is not expected; the panels
+        // of the plugin say what they miss. A directory that does not exist
+        // has no canonical form: the engine would drop it, and it is tried
+        // again at the next call.
+        const QString canonical =
+            path.isEmpty() ? QString() : QFileInfo(path).canonicalFilePath();
+        if (canonical.isEmpty() || paths.contains(canonical) ||
+            added.contains(canonical)) {
+            continue;
+        }
+        added.append(canonical);
+    }
+    // Not addImportPath: it puts a path before the others, and a module of
+    // roost must come first.
+    Engine_.setImportPathList(paths + added);
+    ImportPaths_ = added;
+}
+
 std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(
     const Declared& declared) {
     auto plugin = std::make_unique<Plugin>();
     plugin->Id = declared.Id;
     plugin->Version = declared.Version;
     plugin->Directory = declared.Directory;
+    plugin->Native = declared.Native;
     plugin->Contributes = declared.Contributes;
-    plugin->Rejected = declared.Rejected;
     plugin->Context = std::make_unique<QQmlContext>(Engine_.rootContext());
     Plugin& ref = *plugin;
 
@@ -258,14 +281,14 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
                    QStringLiteral("\"id\" must be a non-empty string"));
         return;
     }
-    const QString id = idValue.toString();
-    const auto taken = plugin.Rejected.constFind(id);
-    if (taken != plugin.Rejected.constEnd()) {
-        AddProblem(plugin.Id, id,
-                   QStringLiteral("panel id is already taken by plugin \"%1\"")
-                       .arg(taken.value()));
+    const QString name = idValue.toString();
+    if (name.contains(u'.') || !Store::IsValidPluginId(name)) {
+        AddProblem(plugin.Id, name,
+                   QStringLiteral("panel id must be a name of lowercase "
+                                  "letters, digits, '_' and '-', without '.'"));
         return;
     }
+    const QString id = plugin.Id + u'.' + name;
     if (plugin.Claimed.contains(id)) {
         AddProblem(plugin.Id, id,
                    QStringLiteral("panel id is declared twice in the plugin"));

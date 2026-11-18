@@ -6,6 +6,7 @@ set(ROOST_CLAUDE_PLUGIN_DIR ${ROOST_PLUGINS_OUTPUT_DIR}/claude)
 add_library(claude_adapter_lib STATIC
     backend/adapter.cpp
     backend/agents.cpp
+    backend/claude_run.cpp
     backend/json_rpc.cpp
 )
 target_include_directories(claude_adapter_lib PUBLIC ${PROJECT_SOURCE_DIR}/plugins)

@@ -27,7 +27,7 @@
 | `session.resize` | `{channel, columns, rows}` | `null` |
 | `session.close` | `{channel}` | `null` |
 | `session.view` | `{channel}` | `null` |
-| `plugins.list` | — | `{plugins, problems}`: `{id, version, directory, contributes}` каждого загруженного плагина, проблемы загрузки для пользователя |
+| `plugins.list` | — | `{plugins, problems}`: `{id, version, directory, native?, contributes}` каждого загруженного плагина (`native` — `{qt?, qmlImportPath?}` как в манифесте, только если плагин его объявил), проблемы загрузки для пользователя |
 | `store.get` | `{plugin}` | `{document}`: документ плагина в хранилище (§8), `{}`, если его ещё нет |
 | `store.set` | `{plugin, document}` | `null`: документ заменяется целиком |
 | `keymap.get` | `{platform}` | `{bindings, problems}`: итоговая таблица клавиш для платформы окна (`mac` или `linux`) и проблемы файла и вкладов (§16) |
