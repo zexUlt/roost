@@ -393,3 +393,7 @@ endif()
 
 # The rows of the sessions list, in plain C++.
 roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_list_lib)
+
+# What the sessions list remembers and derives: the store document, colours,
+# names, unread.
+roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_list_lib)
