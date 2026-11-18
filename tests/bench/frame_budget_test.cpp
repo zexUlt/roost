@@ -115,10 +115,6 @@ constexpr double BUSY_BUDGET_MS = 4.0;
 // How long the window may take to draw its first frame.
 constexpr int FIRST_FRAME_TIMEOUT_MS = 20000;
 
-// How long a window is left to settle after it is hidden, before it is
-// destroyed.
-constexpr int TEARDOWN_SETTLE_MS = 100;
-
 std::int64_t NowNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
                Clock::now().time_since_epoch())
@@ -616,17 +612,16 @@ private:
         //  * Hiding the window under the threaded loop waits for the render
         //    thread to stop, so after this no handler of the probe can run
         //    (the probe is destroyed before the window).
-        //  * The window is destroyed only once its render thread is idle:
-        //    the software threaded loop can miss the request to exit of a
-        //    thread that is still handling an update, and then the
-        //    destructor waits for it forever (QSGSoftwareThreadedRenderLoop::
-        //    windowDestroyed). A shared runner makes that race likely.
+        //  * The window's posted events are dropped before it is destroyed.
+        //    Without this, ~QQuickWindow sometimes waited forever for the
+        //    software threaded loop's render thread
+        //    (QSGSoftwareThreadedRenderLoop::windowDestroyed): 2 of 40 runs
+        //    of a failure after the warm-up under load, 0 of 80 with it.
         const auto teardown = qScopeGuard([&] {
             feed.Stop();
             QObject::disconnect(&feed, &Feed::Updated, &window, nullptr);
             window.hide();
             QCoreApplication::removePostedEvents(&window);
-            QTest::qWait(TEARDOWN_SETTLE_MS);
         });
         std::vector<BenchItem*> items;
 
