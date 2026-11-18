@@ -39,12 +39,14 @@ namespace {
 
 // The id of the copy, not the one the template has.
 const QString COPY_ID = "my-notes";
-// The id of the panel the template declares; the copy keeps it.
-const QString PANEL = "plugin-template.hello";
+// The id of the panel of the copy: the id of the plugin and the name the
+// template gives the panel.
+const QString PANEL = COPY_ID + ".hello";
 
 // A window of the shell's kind with one slot, for the panel under test. The
 // slot is the real PanelSlot; the properties are the ones Shell writes.
-const QByteArray WINDOW = R"(
+QByteArray WindowFor(const QString& panel) {
+    return QByteArray(R"(
 import QtQuick
 import Roost.Shell
 Window {
@@ -57,11 +59,13 @@ Window {
     visible: true
     PanelSlot {
         objectName: "panelSlot"
-        panelType: "plugin-template.hello"
+        panelType: "@PANEL@"
         anchors.fill: parent
     }
 }
-)";
+)")
+        .replace("@PANEL@", panel.toUtf8());
+}
 
 bool CopyTree(const QString& from, const QString& to) {
     QDirIterator files(from, QDir::Files, QDirIterator::Subdirectories);
@@ -94,10 +98,10 @@ class PluginTemplateTest : public QObject {
     Q_OBJECT
 
 private:
-    // Copies the template into the plugins directory of roostd. The id of the
-    // copy is written into the one place the template has it: "id" of
+    // Copies the template into the plugins directory of roostd, as the README
+    // says: the id of the plugin and the id of its panel are rewritten in
     // plugin.json.
-    bool InstallCopy(const QString& id, bool rewriteId = true) {
+    bool InstallCopy(const QString& id) {
         const QString target = Daemon_->PluginsPath() + "/copy";
         if (!CopyTree(QStringLiteral(PLUGIN_TEMPLATE_DIR), target)) {
             return false;
@@ -109,9 +113,17 @@ private:
         if (!manifest.contains("id")) {
             return false;
         }
-        if (rewriteId) {
-            manifest["id"] = id;
+        QJsonObject contributes = manifest["contributes"].toObject();
+        QJsonArray panels = contributes["panels"].toArray();
+        if (panels.isEmpty()) {
+            return false;
         }
+        QJsonObject panel = panels.first().toObject();
+        panel["id"] = id + ".hello";
+        panels[0] = panel;
+        contributes["panels"] = panels;
+        manifest["id"] = id;
+        manifest["contributes"] = contributes;
         return WriteFile(manifestPath, QJsonDocument(manifest).toJson());
     }
 
@@ -128,7 +140,7 @@ private:
         }
         Singleton_->setApi(*Api_);
         QQmlComponent window(Engine_.get());
-        window.setData(WINDOW, QUrl());
+        window.setData(WindowFor(PANEL), QUrl());
         Window_.reset(qobject_cast<QQuickWindow*>(window.create()));
         if (!Window_) {
             qWarning("%s", qPrintable(window.errorString()));
@@ -207,6 +219,11 @@ private slots:
         QCOMPARE(TextOf("pluginIdText"), "Plugin " + COPY_ID);
         QTRY_COMPARE_WITH_TIMEOUT(TextOf("connectionText"),
                                   QString("connected to roostd"), TIMEOUT_MS);
+
+        // The text follows the connection: it is not a constant.
+        QVERIFY(Daemon_->Stop());
+        QTRY_COMPARE_WITH_TIMEOUT(TextOf("connectionText"),
+                                  QString("not connected"), TIMEOUT_MS);
     }
 
 private:
