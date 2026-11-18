@@ -828,6 +828,86 @@ private slots:
         QCOMPARE(Calls(), QStringList{STARTED});
     }
 
+    // On the Unread tab the new session (working, not unread) is not shown:
+    // nothing is opened, and when it becomes unread later it is not opened
+    // either.
+    void NOnTheUnreadTabOpensNothingNowOrLater() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        Press(Qt::Key_A);
+        Press(Qt::Key_A);
+        QTRY_COMPARE_WITH_TIMEOUT(TabNowOfList(), QString("unread"),
+                                  TIMEOUT_MS);
+        const QString cursor = CursorId();
+
+        StartNewSession("do it");
+
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(500);
+        QVERIFY(!Ids().contains(STARTED));
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(CursorId(), cursor);
+        QVERIFY(ListView()->hasActiveFocus());
+
+        // The session finishes: unread, so the tab shows it now.
+        QVERIFY(Put(
+            "agents.json",
+            AgentsWithout({}, QJsonObject{{"id", STARTED},
+                                          {"cwd", "/work/beta"},
+                                          {"kind", "background"},
+                                          {"startedAt", qint64{1790150400000}},
+                                          {"name", "Do it"},
+                                          {"state", "done"},
+                                          {"status", "idle"}})));
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTest::qWait(500);
+
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(TabNowOfList(), QString("unread"));
+        QVERIFY(ListView()->hasActiveFocus());
+    }
+
+    // The search prompt opened before the session of n appears: the session
+    // shows up while the prompt is open, and the prompt keeps its text and the
+    // keyboard.
+    void NThenSearchPromptSurvivesTheLateSession() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+
+        StartNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        Press(Qt::Key_Slash);
+        QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Type("al");
+        QCOMPARE(PromptText(), QString("al"));
+
+        QVERIFY(Put("agents.json", AgentsWithStarted()));
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(500);
+
+        QVERIFY(Prompting());
+        QCOMPARE(PromptText(), QString("al"));
+        QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+    }
+
     // The session of n is not listed yet; the user opens another row: the late
     // session does not take its place.
     void EnterOnAnotherRowCancelsThePendingOpen() {

@@ -791,8 +791,13 @@ FocusScope {
     // Opens the session of n once the list has it: it shows after the answer
     // of the command, with the next list of the agent, and the list takes it
     // after that. The archive view does not show it: the view is not switched
-    // and nothing is opened.
-    function openStarted() {
+    // and nothing is opened. Nor is it opened if the list has it but the view
+    // does not show it (the Unread tab): the open is decided once, when the
+    // list first has the session, or it would take the cursor and the keyboard
+    // when the session shows later. `inList` is set by the list's own signals,
+    // that come after its sync; the call from the answer of the command may
+    // come before it.
+    function openStarted(inList) {
         const ref = openPending;
         if (ref === null) {
             return;
@@ -801,7 +806,13 @@ FocusScope {
             openPending = null;
             return;
         }
-        if (!listed(ref) || !sessionsList.reveal(ref)) {
+        if (!listed(ref)) {
+            return;
+        }
+        if (!sessionsList.reveal(ref)) {
+            if (inList === true) {
+                openPending = null;
+            }
             return;
         }
         openPending = null;
@@ -852,9 +863,9 @@ FocusScope {
         // The session of n is in the list after the sync of the source, which
         // comes after the row of Roost.sessions: the rows and the counts of
         // the list are what to wait for.
-        onCountsChanged: root.openStarted()
+        onCountsChanged: root.openStarted(true)
         // Not inside the insert: the view has not built its rows yet.
-        onRowsInserted: Qt.callLater(root.openStarted)
+        onRowsInserted: Qt.callLater(root.openStarted, true)
         // A change of the view is the user's: the open of n is not wanted.
         onViewArchiveChanged: root.openPending = null
         onTabChanged: root.openPending = null
