@@ -49,19 +49,22 @@ jobs:
   # trunk pushes. macOS runners are scarce, so a pull request takes one: what
   # only macOS has (native key codes, process groups, libc++) builds and runs
   # in dev, and release on macOS is checked once the change is on trunk.
-  # Trunk saves no Linux release compiler cache, so that job builds cold.
+  # Trunk pushes also run release on Linux arm64 (trunk_only): caches are
+  # saved by trunk only, and pull requests read its libghostty-vt build and
+  # compiler cache instead of building cold and fetching zig's dependencies.
   # ASan and UBSan check the same code on Linux; ASan on macOS runs nightly
   # (nightly-tsan.yml). Linux builds with clang and the distro's libstdc++,
   # not libc++: a Qt from a binary distribution is built against libstdc++.
   test:
-    name: test (${{ matrix.preset }})
+    name: test (${{ matrix.label || matrix.preset }})
     needs: changes
     if: ${{ !cancelled() }}
     # Not skipped at the job level: a skipped matrix job is never expanded,
-    # so the required "test (dev)" and the others would wait for ever. The
-    # job runs and its steps skip instead, on Linux: macOS runners are the
-    # scarce ones.
-    runs-on: ${{ needs.changes.outputs.code != 'false' && matrix.runner || 'ubuntu-24.04' }}
+    # so the required "test (dev)" and the others would wait for ever, and
+    # the job-level if cannot see the matrix. The job runs and its steps skip
+    # instead, on Linux: macOS runners are the scarce ones. NEEDED below holds
+    # the same condition.
+    runs-on: ${{ needs.changes.outputs.code != 'false' && !(matrix.trunk_only && github.event_name == 'pull_request') && matrix.runner || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -73,8 +76,12 @@ jobs:
             runner: ubuntu-24.04-arm
           - preset: release
             runner: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04-arm' || 'macos-15' }}
+          - preset: release
+            label: release, linux
+            runner: ubuntu-24.04-arm
+            trunk_only: true
     env:
-      NEEDED: ${{ needs.changes.outputs.code != 'false' }}
+      NEEDED: ${{ needs.changes.outputs.code != 'false' && !(matrix.trunk_only && github.event_name == 'pull_request') }}
     steps:
       - uses: actions/checkout@v4
         if: env.NEEDED == 'true'
