@@ -13,7 +13,8 @@ namespace roost::testing {
 // The real roostd binary as a process, in a temporary directory of its own:
 // ROOST_SOCKET, ROOST_CONFIG and ROOST_PLUGINS_PATH point into it, so that
 // nothing touches the user's ~/.config/roost. Stopped and cleaned up with the
-// object.
+// object. If the test process dies without running destructors (abort, crash,
+// a kill by ctest), a watcher next to roostd notices it and stops roostd.
 class RoostdProcess {
 public:
     RoostdProcess();
@@ -55,8 +56,13 @@ public:
     bool IsRunning() const;
 
 private:
+    void CloseLifelineOfWatcher();
+
     QTemporaryDir Dir_;
     std::unique_ptr<QProcess> Process_;
+    // The write end of the pipe the watcher of the running roostd reads: it
+    // stays open while this process lives, and closes with it.
+    int WatcherLifeline_ = -1;
 };
 
 }  // namespace roost::testing
