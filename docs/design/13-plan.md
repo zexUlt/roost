@@ -86,7 +86,7 @@ CI требует репозиторий на GitHub; до его появлен
 12. Буквы по скан-коду в `MapQtKey`, чтобы клавиши списка работали на русской раскладке (§16).
 13. `templates/plugin-qml/` — шаблон QML-плагина: `plugin.json`, панель на QML и README с шагами «скопировать, сменить id, положить в `<каталог состояния>/plugins`» и с тем, как добавить бэкенд. Id задаётся в одном месте. Тест: копия шаблона с другим id грузится `roostd` без проблем в `plugins.list`, и её панель открывается в окне.
 
-Тесты: случаи из `test_pins`, `test_tree`, `test_fold_cursor`, `test_subagents`, `test_launched`, `test_title` переносятся в Qt Test и Qt Quick Test как спецификация логики списка (шаги 9–10); команды `claude` — на фейковом `claude` в `PATH`.
+Тесты: случаи из `test_listview`, `test_pins`, `test_tree`, `test_fold_cursor`, `test_subagents`, `test_launched`, `test_title` и случаи списка из `test_app` (поиск, категории, курсор, удаление, переименование, respawn) переносятся в Qt Test и Qt Quick Test как спецификация логики списка (шаги 9–10); команды `claude` — на фейковом `claude` в `PATH`.
 
 ## M5–M7
 
