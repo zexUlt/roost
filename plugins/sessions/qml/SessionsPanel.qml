@@ -1,4 +1,5 @@
 import QtQuick
+import QtCore
 import Roost.Api
 import RoostSessions
 
@@ -11,7 +12,10 @@ import RoostSessions
 // `selected`: opening a session is not free. A tap on a header folds or
 // unfolds it. The head shows the title (Sessions, or Archive), the query and
 // the tabs with their counts; the keys a, v, m, z, Z, p, ?, < and > act on the
-// view (the help overlay lists them).
+// view (the help overlay lists them). The keys d, x, r, R and n run the
+// commands of the agent of the session (`<agent>.<verb>`, Roost.commands); the
+// footer asks for a confirmation (y), shows the outcome as a notice, and takes
+// the task and the category of a new session.
 FocusScope {
     id: root
 
@@ -28,8 +32,29 @@ FocusScope {
     // nothing.
     signal widthStepRequested(int step)
 
+    // The agent respawned a session that is open here (r, R): the shell may
+    // reopen it in the terminal once its old attach has ended. `session` is
+    // {agent, id}.
+    signal respawned(var session)
+
     // The help overlay is open: it takes every key until `?` or Esc closes it.
     property bool helpOpen: false
+
+    // The footer. `confirm` is null or {action, ref, text}: a command that
+    // waits for y. `notice` is the outcome of a command, cleared after
+    // `noticeMs`. `prompt` is null or the step of the prompt of `n`:
+    // {step: "task" | "category", label, agent, cwd, category, task}.
+    property var confirm: null
+    property string notice: ""
+    property int noticeMs: 8000
+    property var prompt: null
+
+    // The sessions deleted (d) whose rows have not left Roost.sessions yet:
+    // they are forgotten by the list only when they have, or the list would
+    // take the session that is still listed for a new one.
+    property var forgetPending: []
+    // The session started by n that is not listed yet: opened once it is.
+    property var openPending: null
 
     // The colours of the categories, by the `colorIndex` of the model, and of
     // the states, hard-coded until the palette of the layout (M5).
@@ -97,6 +122,35 @@ FocusScope {
         return false;
     }
 
+    // The title the list shows for the session; its row is in view, being the
+    // cursor's. The title of the agent, or the id, if it is not.
+    function titleOf(ref) {
+        const row = sessionsList.rowOf(ref);
+        const item = row >= 0 ? list.itemAtIndex(row) : null;
+        if (item && item.model && item.model.title) {
+            return item.model.title;
+        }
+        const data = sessionData(ref);
+        return data && data.title ? data.title : ref.id;
+    }
+
+    // {title, cwd, state} of a session of Roost.sessions, or null; the roles
+    // are the fields of sessions.list in order: agent, id, title, cwd, state.
+    function sessionData(ref) {
+        const count = Roost.sessions.rowCount();
+        for (let row = 0; row < count; ++row) {
+            const at = Roost.sessions.index(row, 0);
+            if (Roost.sessions.data(at, Qt.UserRole) === ref.agent && Roost.sessions.data(at, Qt.UserRole + 1) === ref.id) {
+                return {
+                    "title": Roost.sessions.data(at, Qt.UserRole + 2),
+                    "cwd": Roost.sessions.data(at, Qt.UserRole + 3),
+                    "state": Roost.sessions.data(at, Qt.UserRole + 4)
+                };
+            }
+        }
+        return null;
+    }
+
     // `selected` goes when its session is no longer listed; not while the list
     // of the connection is missing: the terminal opens the same session when
     // the connection is back.
@@ -130,7 +184,12 @@ FocusScope {
     // header unfolds and opens nothing. Not while the list is being replaced:
     // the cursor is then not the user's.
     function openCurrent() {
-        // The help takes every key, Enter included.
+        // The help takes every key, Enter included; a confirmation is
+        // cancelled by any key but y.
+        if (confirm !== null) {
+            confirm = null;
+            return;
+        }
         if (resetting || helpOpen) {
             return;
         }
@@ -142,6 +201,9 @@ FocusScope {
             }
             return;
         }
+        // A session of n that is not open yet does not take the place of the
+        // one the user chose.
+        openPending = null;
         if (!isSame(selected, ref)) {
             selected = ref;
         }
@@ -257,6 +319,392 @@ FocusScope {
         return false;
     }
 
+    // The keys of the commands, matched as the keys of the view. A key held
+    // down does not ask again. On a header d, x and r do nothing. Whether the
+    // key was taken.
+    function commandKey(event, key) {
+        if ((event.modifiers & ~(Qt.ShiftModifier | Qt.KeypadModifier)) !== 0) {
+            return false;
+        }
+        const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+        const act = !event.isAutoRepeat;
+        switch (key) {
+        case Qt.Key_D:
+            if (shift) {
+                return false;
+            }
+            if (act) {
+                askForSession("delete", "Delete");
+            }
+            return true;
+        case Qt.Key_X:
+            if (shift) {
+                return false;
+            }
+            if (act) {
+                askArchive();
+            }
+            return true;
+        case Qt.Key_R:
+            if (act) {
+                if (shift) {
+                    askRespawnAll();
+                } else {
+                    askForSession("respawn", "Respawn");
+                }
+            }
+            return true;
+        case Qt.Key_N:
+            if (shift) {
+                return false;
+            }
+            if (act) {
+                openNewSessionPrompt();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function isModifierKey(key) {
+        return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_Meta || key === Qt.Key_Super_L || key === Qt.Key_Super_R || key === Qt.Key_CapsLock || key === Qt.Key_NumLock || key === Qt.Key_ScrollLock;
+    }
+
+    // A key while a confirmation waits: y (and the Russian н) runs it with no
+    // modifier; any other key cancels it and is taken. A bare modifier and a
+    // held key do nothing, so that the key that asked does not cancel itself.
+    function confirmKey(event, key) {
+        if (isModifierKey(event.key) || event.isAutoRepeat) {
+            return;
+        }
+        const asked = confirm;
+        confirm = null;
+        if (key === Qt.Key_Y && (event.modifiers & ~Qt.KeypadModifier) === 0) {
+            runConfirmed(asked);
+        }
+    }
+
+    function showNotice(text) {
+        notice = text;
+        noticeTimer.restart();
+    }
+
+    // callback(error, result) of a command `<agent>.<verb>`.
+    function runCommand(agent, verb, args, callback) {
+        Roost.commands.run(agent + "." + verb, args, callback);
+    }
+
+    function failure(error) {
+        return error && error.message ? error.message : "the command failed";
+    }
+
+    // The session under the cursor as a plain {agent, id} of its own: what the
+    // model returns is not kept stable when the edits that follow move the
+    // cursor (x archives the session and the cursor leaves it).
+    function cursorRef() {
+        const ref = sessionsList.cursorSession;
+        return ref === null ? null : {
+            "agent": ref.agent,
+            "id": ref.id
+        };
+    }
+
+    // d and r ask about the session under the cursor.
+    function askForSession(action, verb) {
+        const ref = cursorRef();
+        if (ref !== null) {
+            confirm = {
+                "action": action,
+                "ref": ref,
+                "text": verb + " \"" + titleOf(ref) + "\"? (y: yes, any other key: no)"
+            };
+        }
+    }
+
+    // x archives and stops; in the archive view it restores, at once.
+    function askArchive() {
+        const ref = cursorRef();
+        if (ref === null) {
+            return;
+        }
+        if (sessionsList.viewArchive) {
+            sessionsList.setArchived(ref, false);
+            return;
+        }
+        confirm = {
+            "action": "archive",
+            "ref": ref,
+            "text": "Archive and stop \"" + titleOf(ref) + "\"? (y: yes, any other key: no)"
+        };
+    }
+
+    function runningCount() {
+        let count = 0;
+        const rows = Roost.sessions.rowCount();
+        for (let row = 0; row < rows; ++row) {
+            if (Roost.sessions.data(Roost.sessions.index(row, 0), Qt.UserRole + 4) === "working") {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    // The agents of the listed sessions, each once, in the order of the list.
+    function listedAgents() {
+        const agents = [];
+        const rows = Roost.sessions.rowCount();
+        for (let row = 0; row < rows; ++row) {
+            const agent = Roost.sessions.data(Roost.sessions.index(row, 0), Qt.UserRole);
+            if (agents.indexOf(agent) < 0) {
+                agents.push(agent);
+            }
+        }
+        return agents;
+    }
+
+    function askRespawnAll() {
+        const agents = listedAgents();
+        if (agents.length === 0) {
+            return;
+        }
+        confirm = {
+            "action": "respawnAll",
+            "agents": agents,
+            "text": "Respawn all sessions (" + runningCount() + " running)? (y: yes, any other key: no)"
+        };
+    }
+
+    function runConfirmed(asked) {
+        switch (asked.action) {
+        case "delete":
+            deleteSession(asked.ref);
+            break;
+        case "archive":
+            archiveSession(asked.ref);
+            break;
+        case "respawn":
+            respawnSession(asked.ref);
+            break;
+        case "respawnAll":
+            respawnAll(asked.agents);
+            break;
+        }
+    }
+
+    // After the removal the window must not open the session again, so
+    // `selected` goes first. The list forgets it once Roost.sessions has
+    // dropped it.
+    function deleteSession(ref) {
+        const title = titleOf(ref);
+        if (isSame(selected, ref)) {
+            selected = null;
+        }
+        showNotice("Deleting…");
+        runCommand(ref.agent, "remove", {
+            "session": ref.id
+        }, error => {
+            if (error) {
+                showNotice("Not deleted: " + failure(error));
+                return;
+            }
+            showNotice("\"" + title + "\" deleted");
+            forgetPending = forgetPending.concat([ref]);
+            drainForget();
+        });
+    }
+
+    // Forgets the pending sessions that Roost.sessions no longer lists; not
+    // while the list is being replaced or missing, when nothing is known.
+    function drainForget() {
+        if (resetting || !Roost.sessions.loaded) {
+            return;
+        }
+        const left = [];
+        for (const ref of forgetPending) {
+            if (listed(ref)) {
+                left.push(ref);
+            } else {
+                sessionsList.forget(ref);
+            }
+        }
+        forgetPending = left;
+    }
+
+    // Archived at once; a failed stop leaves it archived and says so.
+    function archiveSession(ref) {
+        const title = titleOf(ref);
+        sessionsList.setArchived(ref, true);
+        if (isSame(selected, ref)) {
+            selected = null;
+        }
+        showNotice("Stopping…");
+        runCommand(ref.agent, "stop", {
+            "session": ref.id
+        }, error => {
+            showNotice(error ? "Not stopped: " + failure(error) : "\"" + title + "\" archived and stopped");
+        });
+    }
+
+    function respawnSession(ref) {
+        const title = titleOf(ref);
+        showNotice("Respawning…");
+        runCommand(ref.agent, "respawn", {
+            "session": ref.id
+        }, error => {
+            if (error) {
+                showNotice("Not respawned: " + failure(error));
+                return;
+            }
+            showNotice("\"" + title + "\" respawned");
+            if (isSame(selected, ref)) {
+                respawned(ref);
+            }
+        });
+    }
+
+    // One respawnAll for each agent. The open session is reopened only if the
+    // command touches it: it was running.
+    function respawnAll(agents) {
+        const open = selected;
+        const reopen = open !== null && (sessionData(open) ?? {}).state === "working";
+        let left = agents.length;
+        let failed = "";
+        showNotice("Respawning all…");
+        for (const agent of agents) {
+            runCommand(agent, "respawnAll", undefined, error => {
+                if (error && failed === "") {
+                    failed = failure(error);
+                }
+                if (!error && reopen && open.agent === agent && isSame(selected, open)) {
+                    respawned(open);
+                }
+                if (--left === 0) {
+                    showNotice(failed === "" ? "Respawned all" : "Not respawned: " + failed);
+                }
+            });
+        }
+    }
+
+    // n: the Task prompt. The agent, the directory and the category are taken
+    // now, from the cursor, so that a poll while the user types does not
+    // change them. A header gives its category; the directory is that of the
+    // session under the cursor, else the home directory.
+    function openNewSessionPrompt() {
+        const ref = sessionsList.cursorSession;
+        const data = ref === null ? null : sessionData(ref);
+        const category = sessionsList.cursorCategory;
+        openPending = null;
+        prompt = {
+            "step": "task",
+            "label": "Task",
+            "agent": ref === null ? "" : ref.agent,
+            "cwd": data && data.cwd ? data.cwd : homeDirectory(),
+            "category": category === null ? "" : category,
+            "task": ""
+        };
+        promptInput.text = "";
+        promptInput.forceActiveFocus();
+    }
+
+    function homeDirectory() {
+        return decodeURIComponent(StandardPaths.writableLocation(StandardPaths.HomeLocation).toString().replace(/^file:\/\//, ""));
+    }
+
+    // Enter in the prompt: the task, then the category, then the start.
+    function submitPrompt() {
+        const asked = prompt;
+        if (asked === null) {
+            return;
+        }
+        const text = promptInput.text.trim();
+        if (asked.step === "task") {
+            if (text === "") {
+                return;
+            }
+            prompt = {
+                "step": "category",
+                "label": "Category",
+                "agent": asked.agent,
+                "cwd": asked.cwd,
+                "category": asked.category,
+                "task": text
+            };
+            promptInput.text = asked.category;
+            promptInput.cursorPosition = promptInput.text.length;
+            return;
+        }
+        closePrompt();
+        startSession(asked.agent, asked.cwd, asked.task, text);
+    }
+
+    function closePrompt() {
+        prompt = null;
+        list.forceActiveFocus();
+    }
+
+    // The agent that starts the session: the one of the session under the
+    // cursor, else the first plugin, in the order roostd loaded them, that has
+    // a command `<agent>.newSession`. callback(agent), "" if there is none.
+    function newSessionAgent(agent, callback) {
+        if (agent !== "") {
+            callback(agent);
+            return;
+        }
+        Roost.call("plugins.list", {}, (error, result) => {
+            const suffix = ".newSession";
+            for (const plugin of error ? [] : result.plugins) {
+                for (const command of (plugin.contributes ?? {}).commands ?? []) {
+                    if (command.id.endsWith(suffix)) {
+                        callback(command.id.slice(0, command.id.length - suffix.length));
+                        return;
+                    }
+                }
+            }
+            callback("");
+        });
+    }
+
+    function startSession(agent, cwd, task, category) {
+        showNotice("Starting…");
+        newSessionAgent(agent, name => {
+            if (name === "") {
+                showNotice("Not started: no agent can start a session");
+                return;
+            }
+            runCommand(name, "newSession", {
+                "cwd": cwd,
+                "prompt": task
+            }, (error, result) => {
+                if (error) {
+                    showNotice("Not started: " + failure(error));
+                    return;
+                }
+                const ref = {
+                    "agent": result.agent,
+                    "id": result.id
+                };
+                showNotice("\"" + result.title + "\" started");
+                if (category !== "") {
+                    sessionsList.setCategory(ref, category);
+                }
+                openPending = ref;
+                openStarted();
+            });
+        });
+    }
+
+    // Opens the session of n once it is in the list: it shows after the answer
+    // of the command, with the next list of the agent.
+    function openStarted() {
+        const ref = openPending;
+        if (ref === null || !listed(ref) || !sessionsList.reveal(ref)) {
+            return;
+        }
+        openPending = null;
+        selected = ref;
+        activated();
+    }
+
     // The stored document: read on creation if connected and at every
     // connection (the window forgets its copy when the connection goes),
     // written as the model asks.
@@ -297,6 +745,16 @@ FocusScope {
         onReadyChanged: root.restoreOpened()
         onSourceLoadedChanged: root.restoreOpened()
         onCursorChanged: root.syncCursor()
+        // The session of n is in the model after the source's sync, which can
+        // come after the row of Roost.sessions.
+        onCountsChanged: root.openStarted()
+    }
+
+    Timer {
+        id: noticeTimer
+
+        interval: root.noticeMs
+        onTriggered: root.notice = ""
     }
 
     Connections {
@@ -339,6 +797,11 @@ FocusScope {
 
         function onRowsRemoved() {
             root.dropGone();
+            root.drainForget();
+        }
+
+        function onRowsInserted() {
+            root.openStarted();
         }
     }
 
@@ -346,6 +809,8 @@ FocusScope {
         resetting = false;
         dropGone();
         restoreOpened();
+        drainForget();
+        openStarted();
     }
 
     // The head: the title and the query, and the tabs with the counts of the
@@ -451,13 +916,16 @@ FocusScope {
                     root.helpOpen = false;
                 }
                 event.accepted = true;
+            } else if (root.confirm !== null) {
+                root.confirmKey(event, key);
+                event.accepted = true;
             } else if (event.key === Qt.Key_Down || (key === Qt.Key_J && plain)) {
                 sessionsList.move(1);
                 event.accepted = true;
             } else if (event.key === Qt.Key_Up || (key === Qt.Key_K && plain)) {
                 sessionsList.move(-1);
                 event.accepted = true;
-            } else if (root.viewKey(event, key)) {
+            } else if (root.viewKey(event, key) || root.commandKey(event, key)) {
                 event.accepted = true;
             }
         }
@@ -671,6 +1139,70 @@ FocusScope {
             wrapMode: Text.Wrap
             text: sessionsList.problem
         }
+
+        // A command that waits for y.
+        Text {
+            objectName: "sessionsConfirm"
+            width: parent.width
+            leftPadding: 8
+            rightPadding: 8
+            bottomPadding: 4
+            visible: root.confirm !== null
+            color: "#ffffff"
+            wrapMode: Text.Wrap
+            text: root.confirm === null ? "" : root.confirm.text
+        }
+
+        // The prompt of n: the label and the line the user types in. Typed
+        // text does not go through Roost.bindingKey, so Cyrillic stays.
+        Row {
+            objectName: "sessionsPrompt"
+            width: parent.width
+            leftPadding: 8
+            rightPadding: 8
+            bottomPadding: 4
+            spacing: 6
+            visible: root.prompt !== null
+
+            Text {
+                objectName: "sessionsPromptLabel"
+                color: "#a0a0a0"
+                text: root.prompt === null ? "" : root.prompt.label + ":"
+            }
+
+            TextInput {
+                id: promptInput
+
+                objectName: "sessionsPromptInput"
+                width: parent.width - x - 8
+                color: "#ffffff"
+                clip: true
+                selectByMouse: true
+
+                Keys.onReturnPressed: root.submitPrompt()
+                Keys.onEnterPressed: root.submitPrompt()
+                Keys.onEscapePressed: root.closePrompt()
+                // The list taking the focus (a tap) ends the prompt.
+                onFocusChanged: {
+                    if (!focus && root.prompt !== null) {
+                        root.prompt = null;
+                    }
+                }
+            }
+        }
+
+        // The outcome of a command, for `noticeMs`.
+        Text {
+            objectName: "sessionsNotice"
+            width: parent.width
+            leftPadding: 8
+            rightPadding: 8
+            bottomPadding: 4
+            visible: root.notice !== ""
+            color: "#a0a0a0"
+            wrapMode: Text.Wrap
+            text: root.notice
+        }
     }
 
     // The keys that work, over the list: `?` or Esc closes it.
@@ -707,6 +1239,13 @@ FocusScope {
                 color: root.textColor
                 wrapMode: Text.Wrap
                 text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor"
+            }
+
+            Text {
+                width: parent.width
+                color: root.textColor
+                wrapMode: Text.Wrap
+                text: "Sessions\nd   delete the session under the cursor (asks)\nx   archive and stop it (asks); in the archive: restore it\nr   respawn it (asks)\nShift+r   respawn all sessions (asks)\nn   new session: Task, then Category"
             }
 
             Text {
