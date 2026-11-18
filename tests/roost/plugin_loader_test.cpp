@@ -521,7 +521,8 @@ private slots:
         QVERIFY(Loader_->Problems().isEmpty());
         QQuickItem* first = Loader_->CreatePanel("a.view");
         QQuickItem* second = Loader_->CreatePanel("b.view");
-        QVERIFY(first != nullptr && second != nullptr);
+        QVERIFY(first != nullptr);
+        QVERIFY(second != nullptr);
         QCOMPARE(first->property("content").toString(), QString("from-a"));
         QCOMPARE(first->property("pluginId").toString(), QString("a"));
         QCOMPARE(second->property("content").toString(), QString("from-b"));
@@ -856,7 +857,8 @@ private slots:
         QVERIFY(Boot());
         QQuickItem* first = Loader_->CreatePanel("a-one.p");
         QQuickItem* second = Loader_->CreatePanel("a-one.p");
-        QVERIFY(first != nullptr && second != nullptr);
+        QVERIFY(first != nullptr);
+        QVERIFY(second != nullptr);
         QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
         QObject scope;
         int slotCalls = 0;
