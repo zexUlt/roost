@@ -39,10 +39,12 @@ public:
     // with the panels as `contributes.panels` entries, written as given, and
     // the files (path relative to the plugin directory -> content). Called
     // again for the same id it rewrites them, which is how a test edits a
-    // plugin between two Starts.
+    // plugin between two Starts. `native`, if not undefined, is written as the
+    // `native` key of the manifest.
     bool AddQmlPlugin(const QString& id, const QJsonArray& panels,
                       const QMap<QString, QByteArray>& files,
-                      const QString& version = "0.1.0");
+                      const QString& version = "0.1.0",
+                      const QJsonValue& native = QJsonValue::Undefined);
 
     // Starts roostd and waits until it answers hello. After Stop it starts
     // again on the same socket and directories, and what is on disk stays.
