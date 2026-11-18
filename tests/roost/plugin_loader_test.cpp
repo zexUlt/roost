@@ -5,6 +5,7 @@
 // alone, and that a torn-down panel leaves no call and no subscription behind.
 
 #include <QDir>
+#include <QFileInfo>
 #include <QJSEngine>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -159,6 +160,36 @@ QtObject {
 }
 )";
 
+// The files of a QML-only module `Thing` under `root` (a path relative to the
+// plugin directory, the plugin's `qmlImportPath`): one type whose `label` tells
+// which copy of the module a panel got.
+QMap<QString, QByteArray> ThingModule(const QString& root,
+                                      const QString& label) {
+    return {
+        {root + "/Thing/qmldir", "module Thing\nThing 1.0 Thing.qml\n"},
+        {root + "/Thing/Thing.qml",
+         QStringLiteral("import QtQuick\nItem { property string label: "
+                        "\"%1\" }\n")
+             .arg(label)
+             .toUtf8()},
+    };
+}
+
+// A panel whose root is a Thing of the module; reports the label it got.
+const QByteArray THING_PANEL = R"(
+import QtQuick
+import Thing
+Thing {
+    Component.onCompleted: roostProbe.Hit("label", label)
+}
+)";
+
+QMap<QString, QByteArray> Joined(QMap<QString, QByteArray> first,
+                                 const QMap<QString, QByteArray>& second) {
+    first.insert(second);
+    return first;
+}
+
 QJsonObject Panel(const QString& id, const QString& qml) {
     return {{"id", id}, {"qml", qml}};
 }
@@ -227,8 +258,9 @@ private:
     // good, one broken in the way the test says.
     bool AddPlugin(const QString& id, const QJsonArray& panels,
                    const QMap<QString, QByteArray>& files,
-                   const QString& version = "0.1.0") {
-        return Daemon_->AddQmlPlugin(id, panels, files, version);
+                   const QString& version = "0.1.0",
+                   const QJsonValue& native = QJsonValue::Undefined) {
+        return Daemon_->AddQmlPlugin(id, panels, files, version, native);
     }
 
     // After a restart of roostd, until the window has the new list.
@@ -1029,6 +1061,135 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("published"), 2, TIMEOUT_MS);
         Settle();
         QCOMPARE(Probe_.Count("bus"), 1);
+    }
+
+    void APanelImportsTheModuleOfItsPlugin() {
+        QVERIFY(AddPlugin(
+            "a-one", {Panel("p", "p.qml")},
+            Joined({{"p.qml", THING_PANEL}}, ThingModule("qml", "one")),
+            "0.1.0", QJsonObject{{"qmlImportPath", "qml"}}));
+        QVERIFY(Boot());
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"p"}));
+        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QCOMPARE(Probe_.Last.value("label"), QString("one"));
+    }
+
+    void APluginModuleCannotShadowRoostApi() {
+        // The plugin ships a module under the name of roost's own. The shell
+        // has imported Roost.Api by the time a panel loads, so what is
+        // checked is the order of the import path: every path the engine had
+        // keeps its place, and the plugin's directory comes after them.
+        const QStringList before = QQmlEngine().importPathList();
+        const QMap<QString, QByteArray> shadow{
+            {"qml/Roost/Api/qmldir",
+             "module Roost.Api\nsingleton Roost 1.0 Roost.qml\n"},
+            {"qml/Roost/Api/Roost.qml",
+             "pragma Singleton\nimport QtQuick\nQtObject { property string "
+             "shadow: \"yes\" }\n"},
+        };
+        const QByteArray panel = R"(
+import QtQuick
+import Roost.Api
+Item {
+    Component.onCompleted: roostProbe.Hit("shadow", typeof Roost.shadow)
+}
+)";
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          Joined({{"p.qml", panel}}, shadow), "0.1.0",
+                          QJsonObject{{"qmlImportPath", "qml"}}));
+        QVERIFY(Boot());
+        const QStringList after = Engine_->importPathList();
+        QCOMPARE(after.mid(0, before.size()), before);
+        QCOMPARE(after.size(), before.size() + 1);
+        QVERIFY(after.last().endsWith("/a-one/qml"));
+        // And the panel gets the Roost of roost.
+        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QCOMPARE(Probe_.Last.value("shadow"), QString("undefined"));
+    }
+
+    void TheEarlierPluginKeepsAModuleUri() {
+        const QJsonObject native{{"qmlImportPath", "qml"}};
+        QVERIFY(AddPlugin(
+            "a-first", {Panel("one", "p.qml")},
+            Joined({{"p.qml", THING_PANEL}}, ThingModule("qml", "first")),
+            "0.1.0", native));
+        QVERIFY(AddPlugin(
+            "b-second", {Panel("two", "p.qml")},
+            Joined({{"p.qml", THING_PANEL}}, ThingModule("qml", "second")),
+            "0.1.0", native));
+        QVERIFY(Boot());
+        QVERIFY(Loader_->Problems().isEmpty());
+        QVERIFY(Loader_->CreatePanel("one") != nullptr);
+        QVERIFY(Loader_->CreatePanel("two") != nullptr);
+        // Two plugins that ship one URI share the engine's one module, and
+        // the plugin that comes first in the load order owns it.
+        QCOMPARE(Probe_.Count("label"), 2);
+        QCOMPARE(Probe_.Last.value("label"), QString("first"));
+    }
+
+    void AChangedNativeReloadsThePlugin_data() {
+        QTest::addColumn<bool>("declaredBefore");
+        QTest::newRow("native added") << false;
+        QTest::newRow("path changed") << true;
+    }
+
+    void AChangedNativeReloadsThePlugin() {
+        QFETCH(bool, declaredBefore);
+        // Both directories hold the module; only `native` tells where to look.
+        const QMap<QString, QByteArray> files =
+            Joined(Joined({{"p.qml", THING_PANEL}}, ThingModule("old", "old")),
+                   ThingModule("new", "new"));
+        QVERIFY(AddPlugin(
+            "a-one", {Panel("p", "p.qml")}, files, "0.1.0",
+            declaredBefore ? QJsonValue(QJsonObject{{"qmlImportPath", "old"}})
+                           : QJsonValue(QJsonValue::Undefined)));
+        if (!declaredBefore) {
+            // The panel cannot import its module yet.
+            ExpectWarnings(1);
+        }
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes().contains("p"), declaredBefore);
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files, "0.1.0",
+                          QJsonObject{{"qmlImportPath", "new"}}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+
+        QVERIFY(Loader_->Problems().isEmpty());
+        QVERIFY(Loader_->CreatePanel("p") != nullptr);
+        QCOMPARE(Probe_.Last.value("label"), QString("new"));
+        // Only the directory that is declared now is on the import path.
+        // (the engine keeps them with symlinks resolved)
+        const QString directory =
+            QFileInfo(Daemon_->PluginsPath() + "/a-one").canonicalFilePath() +
+            "/";
+        QVERIFY(Engine_->importPathList().contains(directory + "new"));
+        QVERIFY(!Engine_->importPathList().contains(directory + "old"));
+    }
+
+    void APluginThatDropsNativeLeavesNoImportPath() {
+        const auto files =
+            Joined({{"p.qml", ItemPanel("p")}}, ThingModule("qml", "one"));
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files, "0.1.0",
+                          QJsonObject{{"qmlImportPath", "qml"}}));
+        QVERIFY(Boot());
+        // The directory stays on disk: the engine would drop one that is
+        // gone, and the test would prove nothing.
+        const QString path = QFileInfo(Daemon_->PluginsPath() + "/a-one/qml")
+                                 .canonicalFilePath();
+        QVERIFY(Engine_->importPathList().contains(path));
+        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
+
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")}, files));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS * 2);
+
+        QVERIFY(QFileInfo(path).isDir());
+        QVERIFY(!Engine_->importPathList().contains(path));
     }
 };
 

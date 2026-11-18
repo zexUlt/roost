@@ -133,12 +133,26 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
             }
             QJsonArray loaded;
             for (const PluginManifest& plugin : self->Registry_.Plugins()) {
-                loaded.append(QJsonObject{
+                QJsonObject entry{
                     {QStringLiteral("id"), plugin.Id},
                     {QStringLiteral("version"), plugin.Version},
                     {QStringLiteral("directory"), plugin.Directory},
                     {QStringLiteral("contributes"), plugin.Contributes},
-                });
+                };
+                // Only when declared, so that the window tells a plugin
+                // without native code from one with an empty declaration.
+                if (plugin.Native) {
+                    QJsonObject native;
+                    if (!plugin.Native->Qt.isEmpty()) {
+                        native.insert(QStringLiteral("qt"), plugin.Native->Qt);
+                    }
+                    if (!plugin.Native->QmlImportPath.isEmpty()) {
+                        native.insert(QStringLiteral("qmlImportPath"),
+                                      plugin.Native->QmlImportPath);
+                    }
+                    entry.insert(QStringLiteral("native"), native);
+                }
+                loaded.append(entry);
             }
             const QJsonObject list{
                 {QStringLiteral("plugins"), loaded},

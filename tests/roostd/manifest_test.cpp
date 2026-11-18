@@ -135,6 +135,132 @@ private slots:
         QVERIFY(ParseManifest(Json(json), DIRECTORY));
     }
 
+    void NativeWithAQtAndAnImportPathParses() {
+        const QString qt =
+            QStringLiteral("%1.%2").arg(QT_VERSION_MAJOR).arg(QT_VERSION_MINOR);
+        const auto manifest = ParseManifest(
+            Json(With(Minimal(), "native",
+                      QJsonObject{{"qt", qt}, {"qmlImportPath", "qml"}})),
+            DIRECTORY);
+        QVERIFY2(manifest, qPrintable(Why(manifest)));
+        QVERIFY(manifest->Native.has_value());
+        QCOMPARE(manifest->Native->Qt, qt);
+        QCOMPARE(manifest->Native->QmlImportPath, QString("qml"));
+        // An older minor of the same Qt is as good.
+        if (QT_VERSION_MINOR > 0) {
+            QVERIFY(ParseManifest(
+                Json(With(Minimal(), "native",
+                          QJsonObject{{"qt", QStringLiteral("%1.0").arg(
+                                                 QT_VERSION_MAJOR)}})),
+                DIRECTORY));
+        }
+        const auto without = ParseManifest(Json(Minimal()), DIRECTORY);
+        QVERIFY(without);
+        QVERIFY(!without->Native.has_value());
+    }
+
+    void NativeImportPathMustStayInsideThePlugin_data() {
+        QTest::addColumn<QString>("path");
+        QTest::newRow("parent") << "../x";
+        QTest::newRow("sibling with a common prefix") << "../claude2/qml";
+        QTest::newRow("deeper and out") << "qml/../../x";
+        QTest::newRow("absolute") << "/abs";
+        QTest::newRow("the directory itself") << ".";
+        QTest::newRow("empty") << "";
+    }
+
+    void NativeImportPathMustStayInsideThePlugin() {
+        QFETCH(QString, path);
+        const auto manifest =
+            ParseManifest(Json(With(Minimal(), "native",
+                                    QJsonObject{{"qmlImportPath", path}})),
+                          DIRECTORY);
+        QVERIFY(!manifest);
+        QVERIFY2(manifest.error().contains("native.qmlImportPath"),
+                 qPrintable(manifest.error()));
+    }
+
+    void NativeQtOfAnotherMajorOrNewerMinorIsRefused_data() {
+        QTest::addColumn<QString>("qt");
+        QTest::newRow("older major")
+            << QStringLiteral("%1.0").arg(QT_VERSION_MAJOR - 1);
+        QTest::newRow("newer major")
+            << QStringLiteral("%1.0").arg(QT_VERSION_MAJOR + 1);
+        QTest::newRow("newer minor") << QStringLiteral("%1.%2")
+                                            .arg(QT_VERSION_MAJOR)
+                                            .arg(QT_VERSION_MINOR + 1);
+        QTest::newRow("a patch is not part of it")
+            << QStringLiteral("%1.%2.1")
+                   .arg(QT_VERSION_MAJOR)
+                   .arg(QT_VERSION_MINOR);
+        QTest::newRow("a major alone") << QString::number(QT_VERSION_MAJOR);
+        QTest::newRow("text") << "latest";
+    }
+
+    void NativeQtOfAnotherMajorOrNewerMinorIsRefused() {
+        QFETCH(QString, qt);
+        const auto manifest = ParseManifest(
+            Json(With(Minimal(), "native", QJsonObject{{"qt", qt}})),
+            DIRECTORY);
+        QVERIFY(!manifest);
+        QVERIFY2(manifest.error().contains("native.qt"),
+                 qPrintable(manifest.error()));
+    }
+
+    void NativeQtOfThisRoostIsAccepted() {
+        // The edge of the rule: the same minor passes.
+        const QString qt =
+            QStringLiteral("%1.%2").arg(QT_VERSION_MAJOR).arg(QT_VERSION_MINOR);
+        QVERIFY(ParseManifest(
+            Json(With(Minimal(), "native", QJsonObject{{"qt", qt}})),
+            DIRECTORY));
+    }
+
+    void NativeLibraryIsRefusedUntilTheSdk_data() {
+        QTest::addColumn<QString>("key");
+        QTest::newRow("library") << "library";
+        QTest::newRow("sdk") << "sdk";
+    }
+
+    void NativeLibraryIsRefusedUntilTheSdk() {
+        QFETCH(QString, key);
+        const auto manifest = ParseManifest(
+            Json(With(Minimal(), "native",
+                      QJsonObject{{"qmlImportPath", "qml"}, {key, "lib/x"}})),
+            DIRECTORY);
+        QVERIFY(!manifest);
+        QVERIFY2(manifest.error().contains("native." + key) &&
+                     manifest.error().contains("SDK 0.1"),
+                 qPrintable(manifest.error()));
+    }
+
+    void NativeOfTheWrongShapeIsRefused_data() {
+        QTest::addColumn<QJsonValue>("native");
+        QTest::addColumn<QString>("error");
+        QTest::newRow("a string") << QJsonValue("qml") << "\"native\"";
+        QTest::newRow("an array")
+            << QJsonValue(QJsonArray{"qml"}) << "\"native\"";
+        QTest::newRow("null") << QJsonValue(QJsonValue::Null) << "\"native\"";
+        QTest::newRow("qt as a number")
+            << QJsonValue(QJsonObject{{"qt", 6.8}}) << "native.qt";
+        QTest::newRow("path as a number")
+            << QJsonValue(QJsonObject{{"qmlImportPath", 1}})
+            << "native.qmlImportPath";
+        QTest::newRow("path as an array")
+            << QJsonValue(QJsonObject{{"qmlImportPath", QJsonArray{"qml"}}})
+            << "native.qmlImportPath";
+    }
+
+    void NativeOfTheWrongShapeIsRefused() {
+        QFETCH(QJsonValue, native);
+        QFETCH(QString, error);
+        const auto manifest =
+            ParseManifest(Json(With(Minimal(), "native", native)), DIRECTORY);
+        QVERIFY(!manifest);
+        QVERIFY2(manifest.error().contains(error),
+                 qPrintable(manifest.error()));
+    }
+
     void BackendIsResolvedInsideThePlugin_data() {
         QTest::addColumn<QJsonArray>("command");
         QTest::addColumn<QStringList>("expected");
