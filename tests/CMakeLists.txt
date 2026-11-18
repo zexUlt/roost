@@ -291,6 +291,14 @@ target_compile_definitions(warm_switch_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(warm_switch_test roostd fake_tui claude-adapter)
+# One binary under both render loops: the test checks that the sync ran in the
+# thread the loop promises. Offscreen has a render thread only when threaded.
+set_tests_properties(warm_switch_test PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic")
+add_test(NAME warm_switch_test_threaded COMMAND warm_switch_test)
+set_tests_properties(warm_switch_test_threaded PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
+    LABELS threads)
 
 # The developer mode: the watcher reloads a plugin whose files changed on disk.
 roost_add_qt_test(plugin_reload_test roost/plugin_reload_test.cpp

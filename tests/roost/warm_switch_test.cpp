@@ -9,7 +9,8 @@
 // afterSynchronizing sees the frame in the scene graph's own thread, where the
 // GUI thread is blocked and nothing else changes the item or its terminal, so
 // what it reads is that frame and no other, under the basic and the threaded
-// render loop alike.
+// render loop alike. ctest runs the test under both (QSG_RENDER_LOOP), and the
+// test checks that the sync ran in the thread that the loop promises.
 
 #include <QDeadlineTimer>
 #include <QDir>
@@ -27,6 +28,7 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 
 #include <signal.h>
 
@@ -60,7 +62,7 @@ const QString LIST = "sessions.list";
 const QString TERMINAL = "terminal.view";
 const QString FIRST = "bg-1b2c3d4e";
 const QString SECOND = "bg-0a1b2c3d";
-const QString HIDDEN_TEXT = "hidden-B";
+const QString HIDDEN_TEXT = "warm-B-1";
 
 // Each query answered once; a digit after the 1 would be more than once.
 const QRegularExpression ANSWERED_ONCE(
@@ -156,12 +158,14 @@ public:
     // processed in between: no frame can be synced by then.
     FirstSync(QQuickWindow& window, const TerminalItem& item,
               std::shared_ptr<TerminalSession> shown)
-        : Connection_(QObject::connect(
+        : GuiThread_(QThread::currentThread()),
+          Connection_(QObject::connect(
               &window, &QQuickWindow::afterSynchronizing, &window,
               [this, &item, shown = std::move(shown)] {
                   if (Done_.load()) {
                       return;
                   }
+                  OffGuiThread_ = QThread::currentThread() != GuiThread_;
                   RowsRebuilt_ = item.rowsRebuilt();
                   Rows_ = item.rows();
                   Text_ = RenderedRows(*shown);
@@ -179,10 +183,14 @@ public:
     int RowsRebuilt() const { return RowsRebuilt_; }
     int Rows() const { return Rows_; }
     const QString& Text() const { return Text_; }
+    // Whether the sync ran in a thread other than the GUI thread.
+    bool OffGuiThread() const { return OffGuiThread_; }
 
 private:
+    const QThread* GuiThread_;
     QMetaObject::Connection Connection_;
     std::atomic<bool> Done_ = false;
+    bool OffGuiThread_ = false;
     int RowsRebuilt_ = -1;
     int Rows_ = -1;
     QString Text_;
@@ -528,6 +536,14 @@ private slots:
         FirstSync sync(*Window(), *Terminal(), hidden);
         Select(Ref(SECOND));
         QTRY_VERIFY_WITH_TIMEOUT(sync.Done(), TIMEOUT_MS);
+
+        // In the thread that the render loop promises.
+        const QString loop = qEnvironmentVariable("QSG_RENDER_LOOP");
+        if (loop == "threaded") {
+            QVERIFY2(sync.OffGuiThread(), "threaded: the sync ran in the GUI");
+        } else if (loop == "basic") {
+            QVERIFY2(!sync.OffGuiThread(), "basic: the sync ran off the GUI");
+        }
 
         // What that frame drew: every row of the grid, from B's terminal.
         QCOMPARE(sync.RowsRebuilt(), sync.Rows());
