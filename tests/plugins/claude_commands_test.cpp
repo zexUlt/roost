@@ -1,8 +1,7 @@
 // The commands of the Claude plugin (new session, stop, remove, respawn,
-// respawn all): the
-// real claude-adapter binary over stdio with a fake `claude` first on PATH,
-// and the manifest of the built plugin through the real roostd. The fake
-// never touches a real Claude account.
+// respawn all): the real claude-adapter binary over stdio with a fake
+// `claude` first on PATH, and the manifest of the built plugin through the real
+// roostd. The fake never touches a real Claude account.
 
 #include <QDeadlineTimer>
 #include <QDir>
@@ -16,6 +15,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
@@ -158,6 +158,10 @@ private:
         Adapter_ = std::make_unique<QProcess>();
         Adapter_->setProcessEnvironment(environment);
         Adapter_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        // A group of its own: a signal the adapter sends to its own group by
+        // mistake kills the adapter, not the test and the ctest run.
+        Adapter_->setUnixProcessParameters(
+            QProcess::UnixProcessFlag::CreateNewSession);
         // The poll timer stays out of the way: what the tests see is what the
         // commands caused. A later flag wins.
         QStringList all{"--poll-ms", "600000"};
@@ -683,6 +687,51 @@ private slots:
                               {"title", "a0ce5af3"}}));
     }
 
+    void ACrLfOutputIsRead_data() {
+        QTest::addColumn<QByteArray>("output");
+        QTest::addColumn<QString>("title");
+        QTest::newRow("with a name")
+            << QByteArray(
+                   "backgrounded \xc2\xb7 a1 \xc2\xb7 fix it  \r\n"
+                   "  hint\r\n")
+            << QString("fix it");
+        QTest::newRow("without a name")
+            << QByteArray("backgrounded \xc2\xb7 a1\r\n  hint\r\n")
+            << QString("a1");
+    }
+
+    void ACrLfOutputIsRead() {
+        QFETCH(QByteArray, output);
+        QFETCH(QString, title);
+        Put("bg.stdout", output);
+        StartAdapter();
+        QCOMPARE(
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("result")
+                .toObject(),
+            (QJsonObject{{"agent", "claude"}, {"id", "a1"}, {"title", title}}));
+    }
+
+    void ADirectoryThatCannotBeEnteredIsRefusedAndTheAdapterLives() {
+        const QString dir = Dir_->filePath("locked");
+        QVERIFY(QDir().mkpath(dir));
+        QVERIFY(QFile::setPermissions(dir, QFileDevice::Permissions()));
+        // Back to normal at the end of the test, so that cleanup removes it.
+        const auto restore = qScopeGuard([&] {
+            QFile::setPermissions(
+                dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        });
+        if (QFileInfo(dir).isExecutable()) {
+            QSKIP("a mode 000 directory can still be entered (root)");
+        }
+        StartAdapter();
+        QCOMPARE(ErrorCode(NewSession({{"cwd", dir}, {"prompt", "p"}})),
+                 -32602);
+        VerifyNoSessionStarted();
+        VerifyNothingRanBefore();
+        QCOMPARE(Adapter_->state(), QProcess::Running);
+    }
+
     void NoIdIsAFailure() {
         Put("bg.stdout", "error: no auth\n");
         StartAdapter();
@@ -745,6 +794,12 @@ private slots:
             << QJsonValue(QJsonObject{{"cwd", dir}, {"prompt", 1}});
         QTest::newRow("flags are a string") << QJsonValue(
             QJsonObject{{"cwd", dir}, {"prompt", "p"}, {"flags", "-x"}});
+        QTest::newRow("a prompt with NUL") << QJsonValue(QJsonObject{
+            {"cwd", dir}, {"prompt", QString("a") + QChar(0) + "b"}});
+        QTest::newRow("a flag with NUL") << QJsonValue(
+            QJsonObject{{"cwd", dir},
+                        {"prompt", "p"},
+                        {"flags", QJsonArray{QString("-x") + QChar(0) + "y"}}});
         QTest::newRow("a flag that is no string") << QJsonValue(QJsonObject{
             {"cwd", dir}, {"prompt", "p"}, {"flags", QJsonArray{"-x", 1}}});
     }
@@ -796,7 +851,9 @@ private slots:
 
     void AHangingNewSessionIsKilledWithItsGroup() {
         Put("bg.hang", "");
-        StartAdapter({"--command-timeout-ms", "300"});
+        // Its own knob: the others stay at their minute, so a newSession that
+        // took another command's timeout would not end in time.
+        StartAdapter({"--new-session-timeout-ms", "300"});
         const QJsonObject error =
             NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
                 .value("error")

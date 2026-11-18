@@ -154,6 +154,9 @@ target_compile_definitions(claude_adapter_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_dependencies(claude_adapter_test claude-adapter)
 
+# ClaudeRun on a run that cannot start, in a child process of its own.
+roost_add_qt_test(claude_run_test plugins/claude_run_test.cpp claude_adapter_lib)
+
 # The commands of the Claude plugin: the adapter binary behind a fake `claude`,
 # and the manifest of the built plugin through the real roostd.
 roost_add_qt_test(claude_commands_test plugins/claude_commands_test.cpp roost_api)

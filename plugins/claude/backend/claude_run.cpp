@@ -35,15 +35,23 @@ QString FirstReason(const QByteArray& text) {
 }  // namespace
 
 void StopRun(QProcess& process) {
-    if (process.state() != QProcess::NotRunning) {
-        const auto group = static_cast<pid_t>(process.processId());
-        ::killpg(group, SIGKILL);
-        process.kill();
-        process.waitForFinished();
-        // A fork that raced with the first signal may have joined the group
-        // after it was delivered; the group lives on while it has a member.
-        ::killpg(group, SIGKILL);
+    if (process.state() == QProcess::NotRunning) {
+        return;
     }
+    // A run that failed to start (chdir failed, say) reports it while the
+    // state is still Starting, with no process: the pid is 0, and killpg(0)
+    // is the group of the adapter itself. There is nothing to signal or to
+    // wait for, and waitForFinished would block for its whole timeout.
+    const auto group = static_cast<pid_t>(process.processId());
+    if (group <= 0) {
+        return;
+    }
+    ::killpg(group, SIGKILL);
+    process.kill();
+    process.waitForFinished();
+    // A fork that raced with the first signal may have joined the group
+    // after it was delivered; the group lives on while it has a member.
+    ::killpg(group, SIGKILL);
 }
 
 QString FailureReason(const RunOutput& output, const QString& verb) {

@@ -72,7 +72,12 @@ int main(int argc, char** argv) {
     const QCommandLineOption commandTimeoutMs(
         "command-timeout-ms",
         "Milliseconds any command (stop, rm, respawn, --bg) may take.", "ms");
-    parser.addOptions({pollMs, timeoutMs, commandTimeoutMs});
+    const QCommandLineOption newSessionTimeoutMs(
+        "new-session-timeout-ms",
+        "Milliseconds claude --bg may take; overrides --command-timeout-ms.",
+        "ms");
+    parser.addOptions(
+        {pollMs, timeoutMs, commandTimeoutMs, newSessionTimeoutMs});
     parser.addHelpOption();
     parser.process(app);
     options.PollInterval =
@@ -86,6 +91,8 @@ int main(int argc, char** argv) {
         all > std::chrono::milliseconds::zero()) {
         options.Timeouts = {all, all, all, all, all};
     }
+    options.Timeouts.NewSession = Milliseconds(
+        parser.value(newSessionTimeoutMs), options.Timeouts.NewSession);
 
     roost::claude::Adapter adapter(options, Send);
 

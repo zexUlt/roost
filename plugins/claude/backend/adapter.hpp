@@ -70,10 +70,11 @@ struct AdapterOptions {
 // is InternalError: the last line of the output as the message, or `claude
 // --bg printed no session id`. cwd is an absolute path of an existing
 // directory, as the adapter does not run in a directory of its own choice;
-// prompt is not empty; flags is an optional array of strings, which the
-// caller owns (model, permission mode). Other keys of args are ignored.
-// Claude refuses a directory it does not trust with exit 1 and its reason,
-// which is the message as for any failed run.
+// prompt is not empty and, like each flag, has no NUL (argv would cut it);
+// cwd is a directory that can be read and entered; flags is an optional array
+// of strings, which the caller owns (model, permission mode). Other keys of
+// args are ignored. Claude refuses a directory it does not trust with exit 1
+// and its reason, which is the message as for any failed run.
 //
 // The result of the others is null. A session is an id of letters, digits, `_`
 // and `-` that does not start with `-`: it is one argument for claude, never an

@@ -85,11 +85,19 @@ bool IsSessionId(const QString& text) {
     return PATTERN.match(text).hasMatch();
 }
 
-// The text of a run without terminal colours and other CSI sequences.
+// The text of a run without terminal colours, other CSI sequences and the CR
+// of CRLF line ends.
 QString WithoutEscapes(const QByteArray& text) {
     static const QRegularExpression CSI(
         QStringLiteral(R"(\x1b\[[0-9;?]*[ -/]*[@-~])"));
-    return QString::fromUtf8(text).remove(CSI);
+    return QString::fromUtf8(text).remove(CSI).remove(u'\r');
+}
+
+// A directory claude can start in: one that is read and entered, else the
+// start fails after the check. A directory that goes away later still fails.
+bool IsUsableDirectory(const QString& path) {
+    const QFileInfo info(path);
+    return info.isDir() && info.isReadable() && info.isExecutable();
 }
 
 struct Backgrounded {
@@ -326,14 +334,15 @@ QFuture<jsonrpc::Result> Adapter::StartSession(const QJsonValue& args) {
     const QJsonValue prompt = object.value(QStringLiteral("prompt"));
     const QJsonValue flags = object.value(QStringLiteral("flags"));
     if (!cwd.isString() || !QDir::isAbsolutePath(cwd.toString()) ||
-        !QFileInfo(cwd.toString()).isDir() || !prompt.isString() ||
+        !IsUsableDirectory(cwd.toString()) || !prompt.isString() ||
         prompt.toString().trimmed().isEmpty() ||
+        prompt.toString().contains(QChar(u'\0')) ||
         (!flags.isUndefined() && !flags.isNull() && !flags.isArray())) {
         return invalid();
     }
     QStringList argv{QStringLiteral("--bg")};
     for (const QJsonValue& flag : flags.toArray()) {
-        if (!flag.isString()) {
+        if (!flag.isString() || flag.toString().contains(QChar(u'\0'))) {
             return invalid();
         }
         argv.append(flag.toString());
