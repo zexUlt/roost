@@ -56,6 +56,8 @@ namespace {
 constexpr int TIMEOUT_MS = 10000;
 const QString LIST = "sessions.list";
 const QString TERMINAL = "terminal.view";
+constexpr int NO_CURSOR = -1;
+constexpr int ON_HEADER = -2;
 const QString EMPTY_TEXT = "No session. Choose one in the list.";
 
 // The sessions of tests/fixtures/claude_agents.json that `claude agents` lists,
@@ -251,7 +253,8 @@ private:
             return;
         }
         QTRY_COMPARE_WITH_TIMEOUT(Count(), rows, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), rows > 0 ? 0 : -1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), rows > 0 ? 0 : NO_CURSOR,
+                                  TIMEOUT_MS);
     }
 
     // A window of the shell, connected to the running daemon, with the panels
@@ -271,6 +274,12 @@ private:
                                                  *Singleton_);
         Shell_ = std::make_unique<Shell>(*Engine_->rootObjects().first(),
                                          *Loader_, *Api_, SocketPath());
+        // One round of events at a time until the list panel is there, so that
+        // the spy is on before the list and the document come.
+        const QDeadlineTimer panelDeadline(TIMEOUT_MS);
+        while (!WatchSelectedOnLoad() && !panelDeadline.hasExpired()) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents);
+        }
         QTRY_VERIFY_WITH_TIMEOUT(
             PanelOf(LIST) != nullptr &&
                 (WithoutTerminal_ || PanelOf(TERMINAL) != nullptr),
@@ -284,10 +293,22 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(Singleton_->sessions()->loaded(), TIMEOUT_MS);
     }
 
+    // Whether the list panel is loaded; with SpySelected_, the first time it
+    // is, every change of its `selected` is recorded, before any list is in.
+    bool WatchSelectedOnLoad() {
+        QQuickItem* panel = PanelOf(LIST);
+        if (panel != nullptr && SpySelected_ && !SelectedSpy_) {
+            SelectedSpy_ =
+                std::make_unique<QSignalSpy>(panel, SIGNAL(selectedChanged()));
+        }
+        return panel != nullptr;
+    }
+
     // The window goes, the daemon stays: the shell before the loader, the
     // loader before the engine, which holds the terminal that closes its
     // session through the API.
     void CloseWindow() {
+        SelectedSpy_.reset();
         Shell_.reset();
         Loader_.reset();
         Engine_.reset();
@@ -344,9 +365,15 @@ private:
     // headers.
     int Count() { return static_cast<int>(SessionRows().size()); }
     int CursorRow() { return ListView()->property("currentIndex").toInt(); }
-    // The number of the session under the cursor; -1 without one.
+    // The number of the session under the cursor; NO_CURSOR without one,
+    // ON_HEADER on a header.
     int Cursor() {
-        return static_cast<int>(SessionRows().indexOf(CursorRow()));
+        const int row = CursorRow();
+        if (row < 0) {
+            return NO_CURSOR;
+        }
+        const auto at = SessionRows().indexOf(row);
+        return at < 0 ? ON_HEADER : static_cast<int>(at);
     }
 
     // The row of the view of the session with the number.
@@ -519,6 +546,8 @@ private:
 
     QStringList Changes_;
     bool WithoutTerminal_ = false;
+    bool SpySelected_ = false;
+    std::unique_ptr<QSignalSpy> SelectedSpy_;
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<api::Api> Api_;
@@ -537,6 +566,7 @@ private slots:
         CloseWindow();
         StopDaemon();
         WithoutTerminal_ = false;
+        SpySelected_ = false;
     }
 
     void TheListPanelIsLoadedFromTheBuiltInPluginAndItsOutputIsSelected() {
@@ -809,7 +839,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(ListStatusNow(), QString("No sessions."),
                                   TIMEOUT_MS);
         QVERIFY(ListStatus()->isVisible());
-        QCOMPARE(Cursor(), -1);
+        QCOMPARE(Cursor(), NO_CURSOR);
         QTRY_VERIFY_WITH_TIMEOUT(SelectedId().isEmpty(), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("none"), TIMEOUT_MS);
 
@@ -819,7 +849,7 @@ private slots:
         Press(Qt::Key_Down);
         Press(Qt::Key_J);
         QTest::qWait(100);
-        QCOMPARE(Cursor(), -1);
+        QCOMPARE(Cursor(), NO_CURSOR);
         // `selected` is still null, not a ref of nothing.
         QVERIFY(PanelOf(LIST)->property("selected").isNull());
     }
@@ -1302,8 +1332,12 @@ private slots:
                                       .toString(),
                                   QString("claude/" + BETA), TIMEOUT_MS);
         CloseWindow();
+        // A new daemon: the old one would answer with the list it has.
+        StopDaemon();
         QVERIFY(ListWithout({BETA}));
+        QVERIFY(StartDaemon());
 
+        SpySelected_ = true;
         OpenWindow();
         if (QTest::currentTestFailed()) {
             return;
@@ -1311,8 +1345,77 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(Count(), 3, TIMEOUT_MS);
         QTest::qWait(300);
+        // `selected` never held the session that is gone, not for a moment.
+        QVERIFY(SelectedSpy_ != nullptr);
+        QCOMPARE(SelectedSpy_->count(), 0);
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(Status(), QString("none"));
+        // The document does not keep it as the open one.
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("view")
+                                      .toObject()
+                                      .value("opened")
+                                      .toString(),
+                                  QString(), TIMEOUT_MS);
+    }
+
+    // A file the store cannot parse stands for a document that cannot be read.
+    bool WriteStoreFile(const QByteArray& content) const {
+        const QDir config(Dir_->filePath("config"));
+        QSaveFile file(config.filePath("sessions.json"));
+        return config.mkpath(".") && file.open(QIODevice::WriteOnly) &&
+               file.write(content) >= 0 && file.commit();
+    }
+
+    void ADocumentThatCannotBeReadMakesTheListReadOnlyAndIsNotOverwritten() {
+        FailOnWarnings();
+        const QByteArray broken = "{not json";
+        QVERIFY(WriteStoreFile(broken));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTRY_VERIFY_WITH_TIMEOUT(List()->property("readOnly").toBool(),
+                                 TIMEOUT_MS);
+        QVERIFY(!List()->property("problem").toString().isEmpty());
+        // Edits that would be written: a fold, and an open session.
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Invoke("toggleFold", QString());
+        QTest::qWait(500);
+
+        QCOMPARE(ReadFile(Dir_->filePath("config/sessions.json")), broken);
+    }
+
+    void ARestartedRoostdsDocumentIsReadAgainAtTheReconnect() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(Kinds().count("header"), 1);
+
+        StopDaemon();
+        QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
+                                  QString("disconnected"), TIMEOUT_MS);
+        QVERIFY(WriteStoreFile(
+            QStringLiteral(
+                R"({"version": 1, "categories": {"claude/%1": "work"}})")
+                .arg(BETA)
+                .toUtf8()));
+        QVERIFY(StartDaemon());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
+                                  QString("connected"), 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Kinds(),
+            (QStringList{"header", "session", "header", "session", "session",
+                         "session"}),
+            30000);
+        QCOMPARE(Ids(), (QStringList{BETA, ALPHA, GAMMA, DELTA}));
     }
 
     void EnterOnAFoldedHeaderUnfoldsAndOpensNothing() {

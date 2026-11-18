@@ -58,7 +58,10 @@ FocusScope {
     }
 
     // Once the document was read and the first list is in: the session that was
-    // open when the window went comes back, if it is still listed.
+    // open when the window went comes back, if it is still listed; `selected`
+    // never takes a session that is not. Then the document follows `selected`,
+    // whatever it is, so that a session that is gone is not kept as the open
+    // one.
     function restoreOpened() {
         if (restored || !sessionsList.ready || !Roost.sessions.loaded) {
             return;
@@ -67,6 +70,9 @@ FocusScope {
         const ref = sessionsList.opened;
         if (ref !== null && selected === null && listed(ref)) {
             selected = ref;
+        }
+        if (!isSame(selected, ref)) {
+            sessionsList.opened = selected;
         }
     }
 
