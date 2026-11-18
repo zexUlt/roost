@@ -1,5 +1,5 @@
 // The rows of the sessions list: grouping, pins, folding, order, tabs, search.
-// The cases are those of cc-fleet's listview.py, test_pins.py and test_tree.py.
+// The cases are ported from the predecessor's list view, pin and tree tests.
 
 #include <QStringList>
 #include <QTest>
@@ -247,7 +247,7 @@ void SessionsRowsTest::TheOrderFollowsRankedNotUnread() {
 }
 
 void SessionsRowsTest::ARepeatedPinTakesItsLastPlace() {
-    // As cc-fleet's {cat: i for i, cat in enumerate(pins)}.
+    // As the predecessor's {cat: i for i, cat in enumerate(pins)}.
     const std::vector<SessionEntry> sessions = {Make("a", "x"), Make("b", "y")};
     ViewState view;
     view.Pinned = {QStringLiteral("x"), QStringLiteral("y"),

@@ -1,7 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
-# Tests never touch the real ~/.config/roost or ~/.config/cc-fleet, and leave
-# no QML disk cache behind in the user's cache directory.
+# Tests never touch the real ~/.config/roost or another program's config, and
+# leave no QML disk cache behind in the user's cache directory.
 set(ROOST_TEST_ENVIRONMENT
     QT_QPA_PLATFORM=offscreen
     QML_DISABLE_DISK_CACHE=1
