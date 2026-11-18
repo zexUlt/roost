@@ -806,9 +806,11 @@ private slots:
                                  TIMEOUT_MS);
         auto* footer = Part("footer");
         auto* unavailable = Part("sessionsUnavailable");
+        // The Column lays itself out on the next polish, not when a line in
+        // it shows.
+        QTRY_VERIFY_WITH_TIMEOUT(footer->height() > 0, TIMEOUT_MS);
         const qreal bottom = ListView()->y() + ListView()->height();
 
-        QVERIFY(footer->height() > 0);
         QVERIFY(bottom <= unavailable->y());
         QVERIFY(unavailable->y() + unavailable->height() <= footer->y());
         QVERIFY(bottom <= footer->y());
@@ -824,7 +826,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsProblem")->isVisible(),
                                  TIMEOUT_MS);
         QVERIFY(!Part("sessionsUnavailable")->isVisible());
-        QVERIFY(Part("footer")->height() > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("footer")->height() > 0, TIMEOUT_MS);
         QVERIFY(ListView()->y() + ListView()->height() <= Part("footer")->y());
     }
 

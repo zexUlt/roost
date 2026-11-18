@@ -718,6 +718,37 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
     }
 
+    // The Category step of n is the field of c: a digit in the empty field
+    // picks the known category with that number and starts the session.
+    void ADigitPicksAKnownCategoryInNsCategoryStep() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        MoveTo(ALPHA);
+
+        Press(Qt::Key_N);
+        QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
+        Type("do it");
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        // The session under the cursor has no category: the field is empty.
+        QCOMPARE(PromptText(), QString());
+        Press(Qt::Key_1);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("categories")
+                                      .toObject()
+                                      .value(KeyOf(STARTED)),
+                                  QJsonValue("Ops"), TIMEOUT_MS);
+    }
+
     // A folded header: n takes its category, and there is no session, so the
     // directory is the home directory and the agent is the one that has
     // newSession.

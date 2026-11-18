@@ -10,6 +10,14 @@
 #include <QProcessEnvironment>
 #include <QTest>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+
 #include "core/rpc_client.hpp"
 
 namespace roost::testing {
@@ -33,11 +41,61 @@ bool Greets(const QString& socketPath) {
     return false;
 }
 
+constexpr int WATCH_POLL_MS = 100;
+constexpr int GRACE_POLLS = 50;  // 5 s between SIGTERM and SIGKILL.
+
+// Runs in the watcher process, forked from the child before it execs roostd, so
+// only async-signal-safe calls are allowed. Does not return. The watcher
+// belongs to the roostd process (its parent), outlives the test process by a
+// moment at most and ends when roostd does.
+[[noreturn]] void Watch(int lifeline, pid_t roostd) {
+    // Drop everything inherited but the read end of the pipe: a copy of the
+    // write end of another RoostdProcess would keep that one's pipe open, and
+    // the standard streams would keep ctest waiting for the output.
+    const int limit = std::min(::getdtablesize(), 65536);
+    for (int fd = 0; fd < limit; ++fd) {
+        if (fd != lifeline) {
+            ::close(fd);
+        }
+    }
+    pollfd watched{lifeline, POLLIN, 0};
+    for (;;) {
+        // roostd gone: nothing left to guard.
+        if (::getppid() != roostd) {
+            ::_exit(0);
+        }
+        if (::poll(&watched, 1, WATCH_POLL_MS) > 0) {
+            break;  // Nobody writes, so EOF.
+        }
+    }
+    // EOF also comes from Stop(), which closes the pipe after roostd has left
+    // and been reaped, and its pid may already be reused. While roostd is still
+    // the parent, even a zombie, the pid cannot be reused.
+    if (::getppid() != roostd) {
+        ::_exit(0);
+    }
+    ::kill(roostd, SIGTERM);
+    for (int i = 0; i < GRACE_POLLS && ::getppid() == roostd; ++i) {
+        ::poll(nullptr, 0, WATCH_POLL_MS);
+    }
+    if (::getppid() == roostd) {
+        ::kill(roostd, SIGKILL);
+    }
+    ::_exit(0);
+}
+
 }  // namespace
 
 RoostdProcess::RoostdProcess() = default;
 
 RoostdProcess::~RoostdProcess() { Stop(); }
+
+void RoostdProcess::CloseLifelineOfWatcher() {
+    if (WatcherLifeline_ >= 0) {
+        ::close(WatcherLifeline_);
+        WatcherLifeline_ = -1;
+    }
+}
 
 bool RoostdProcess::AddFixturePlugin(const QString& id,
                                      const QString& fixtureBackendPath) {
@@ -119,21 +177,53 @@ bool RoostdProcess::Start(const QString& roostdPath) {
     environment.insert("ROOST_CONFIG", ConfigPath());
     environment.insert("ROOST_PLUGINS_PATH", PluginsPath());
     Process_->setProcessEnvironment(environment);
+    // There is no PDEATHSIG on macOS, so a watcher, a fork of the child made
+    // before it execs roostd, reads the pipe whose write end only this process
+    // holds, and stops roostd when it closes. Both ends are close-on-exec, so
+    // roostd and its children do not hold them.
+    CloseLifelineOfWatcher();
+    int lifeline[2] = {-1, -1};
+    if (::pipe(lifeline) != 0) {
+        return false;
+    }
+    for (const int fd : lifeline) {
+        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    WatcherLifeline_ = lifeline[1];
+    const int watcherEnd = lifeline[0];
+    Process_->setChildProcessModifier(
+        [process = Process_.get(), watcherEnd, lifelineWrite = lifeline[1]] {
+            const pid_t roostd = ::getpid();
+            const pid_t watcher = ::fork();
+            if (watcher == 0) {
+                ::close(lifelineWrite);
+                Watch(watcherEnd, roostd);
+            }
+            if (watcher < 0) {
+                // Without the watcher an aborted test would leave roostd
+                // behind, so the start fails instead.
+                process->failChildProcessModifier("fork of the roostd watcher",
+                                                  errno);
+            }
+        });
     Process_->start(roostdPath, {});
+    ::close(watcherEnd);
     return Process_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath());
 }
 
 bool RoostdProcess::Stop() {
     if (!Process_ || Process_->state() == QProcess::NotRunning) {
+        CloseLifelineOfWatcher();
         return true;
     }
     Process_->terminate();
-    if (Process_->waitForFinished(TIMEOUT_MS)) {
-        return true;
+    const bool left = Process_->waitForFinished(TIMEOUT_MS);
+    if (!left) {
+        Process_->kill();
+        Process_->waitForFinished(TIMEOUT_MS);
     }
-    Process_->kill();
-    Process_->waitForFinished(TIMEOUT_MS);
-    return false;
+    CloseLifelineOfWatcher();
+    return left;
 }
 
 bool RoostdProcess::IsRunning() const {
