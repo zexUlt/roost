@@ -5,7 +5,7 @@
   "contributes": {
     "panels": [
       {
-        "id": "terminal.view",
+        "id": "view",
         "qml": "qml/TerminalPanel.qml",
         "inputs": { "session": "SessionRef" },
         "outputs": {}
