@@ -81,7 +81,8 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
 
 bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,
                                  const QMap<QString, QByteArray>& files,
-                                 const QString& version) {
+                                 const QString& version,
+                                 const QJsonValue& native) {
     const QDir directory(PluginsPath() + u'/' + id);
     if (!directory.mkpath(".")) {
         return false;
@@ -94,12 +95,15 @@ bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,
             return false;
         }
     }
-    const QJsonObject manifest{
+    QJsonObject manifest{
         {"id", id},
         {"version", version},
         {"api", "0"},
         {"contributes", QJsonObject{{"panels", panels}}},
     };
+    if (!native.isUndefined()) {
+        manifest.insert("native", native);
+    }
     QFile manifestFile(directory.filePath("plugin.json"));
     return manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
            manifestFile.write(QJsonDocument(manifest).toJson()) > 0;

@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QRegularExpression>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <optional>
@@ -75,6 +77,75 @@ Checked ParseBackend(const QJsonValue& value, PluginManifest& manifest) {
                         .arg(program));
     }
     manifest.Backend.front() = *resolved;
+    return {};
+}
+
+// "6.8": major and minor of a Qt, no patch. The module of the plugin is built
+// against one Qt, and Qt keeps binary compatibility inside a major version
+// only for a minor that is not newer than the running one. roostd and the
+// window are one build, so roostd's Qt stands for the window's.
+Checked CheckQtVersion(const QString& version) {
+    static const QRegularExpression SHAPE(
+        QStringLiteral("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"));
+    const QRegularExpressionMatch match = SHAPE.match(version);
+    if (!match.hasMatch()) {
+        return Fail(QStringLiteral("\"native.qt\" must be a Qt version such "
+                                   "as \"%1.%2\"")
+                        .arg(QT_VERSION_MAJOR)
+                        .arg(QT_VERSION_MINOR));
+    }
+    const int major = match.captured(1).toInt();
+    const int minor = match.captured(2).toInt();
+    if (major != QT_VERSION_MAJOR || minor > QT_VERSION_MINOR) {
+        return Fail(QStringLiteral("\"native.qt\" is %1, but this roost has "
+                                   "Qt %2.%3: a module needs the same major "
+                                   "version and a minor not newer")
+                        .arg(version)
+                        .arg(QT_VERSION_MAJOR)
+                        .arg(QT_VERSION_MINOR));
+    }
+    return {};
+}
+
+Checked ParseNative(const QJsonValue& value, PluginManifest& manifest) {
+    if (value.isUndefined()) {
+        return {};
+    }
+    if (!value.isObject()) {
+        return Fail(QStringLiteral("\"native\" must be an object"));
+    }
+    const QJsonObject native = value.toObject();
+    // Refused rather than ignored: a plugin that needs its library would
+    // otherwise load without it and fail later, far from the cause.
+    for (const char* key : {"library", "sdk"}) {
+        if (native.contains(QLatin1String(key))) {
+            return Fail(QStringLiteral("\"native.%1\" is not supported yet: "
+                                       "native libraries come with SDK 0.1")
+                            .arg(QLatin1String(key)));
+        }
+    }
+    PluginNative parsed;
+    const QJsonValue qt = native.value("qt");
+    if (!qt.isUndefined()) {
+        if (!qt.isString()) {
+            return Fail(QStringLiteral("\"native.qt\" must be a string"));
+        }
+        if (auto checked = CheckQtVersion(qt.toString()); !checked) {
+            return checked;
+        }
+        parsed.Qt = qt.toString();
+    }
+    const QJsonValue path = native.value("qmlImportPath");
+    if (!path.isUndefined()) {
+        if (!path.isString() ||
+            !InsidePlugin(manifest.Directory, path.toString())) {
+            return Fail(
+                QStringLiteral("\"native.qmlImportPath\" must be a "
+                               "path inside the plugin directory"));
+        }
+        parsed.QmlImportPath = path.toString();
+    }
+    manifest.Native = std::move(parsed);
     return {};
 }
 
@@ -248,6 +319,9 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
     if (auto backend = ParseBackend(root.value("backend"), manifest);
         !backend) {
         return std::unexpected(backend.error());
+    }
+    if (auto native = ParseNative(root.value("native"), manifest); !native) {
+        return std::unexpected(native.error());
     }
     if (auto commands =
             ParseCommands(manifest.Contributes.value("commands"), manifest);
