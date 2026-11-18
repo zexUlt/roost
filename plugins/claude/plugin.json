@@ -6,6 +6,7 @@
   "contributes": {
     "agents": [{ "id": "claude", "capabilities": ["backgroundDaemon", "nativeTuiAttach"] }],
     "commands": [
+      { "id": "claude.newSession", "title": "New Claude session" },
       { "id": "claude.stop", "title": "Stop Claude session" },
       { "id": "claude.remove", "title": "Remove Claude session" },
       { "id": "claude.respawn", "title": "Respawn Claude session" },

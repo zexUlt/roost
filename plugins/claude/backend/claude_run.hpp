@@ -37,7 +37,8 @@ using RunResult = std::expected<RunOutput, QString>;
 // Kills a run still going, with its process group, so that what it started
 // does not outlive it. The group is signalled again once the leader is reaped,
 // for a fork that raced with the first signal; the group id stays taken while
-// it has a member.
+// it has a member. A run that has no process (it failed to start) signals no
+// group: pid 0 would be the group of the adapter.
 void StopRun(QProcess& process);
 
 // Why a run with a non-zero exit failed, in one line: the first line of stderr

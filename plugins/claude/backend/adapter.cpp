@@ -1,5 +1,7 @@
 #include "claude/backend/adapter.hpp"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <utility>
 
 #include "claude/backend/claude_run.hpp"
@@ -52,6 +55,8 @@ struct CommandSpec {
     std::chrono::milliseconds AdapterOptions::CommandTimeouts::* Timeout;
 };
 
+constexpr QLatin1StringView NEW_SESSION{"claude.newSession"};
+
 constexpr std::array<CommandSpec, 4> COMMANDS{{
     {QLatin1StringView("claude.stop"), QLatin1StringView("stop"), true,
      &AdapterOptions::CommandTimeouts::Stop},
@@ -78,6 +83,65 @@ bool IsSessionId(const QString& text) {
     static const QRegularExpression PATTERN(
         QStringLiteral(R"(\A[0-9A-Za-z_][0-9A-Za-z_-]*\z)"));
     return PATTERN.match(text).hasMatch();
+}
+
+// The text of a run without terminal colours, other CSI sequences and the CR
+// of CRLF line ends.
+QString WithoutEscapes(const QByteArray& text) {
+    static const QRegularExpression CSI(
+        QStringLiteral(R"(\x1b\[[0-9;?]*[ -/]*[@-~])"));
+    return QString::fromUtf8(text).remove(CSI).remove(u'\r');
+}
+
+// A directory claude can start in: one that is read and entered, else the
+// start fails after the check. A directory that goes away later still fails.
+bool IsUsableDirectory(const QString& path) {
+    const QFileInfo info(path);
+    return info.isDir() && info.isReadable() && info.isExecutable();
+}
+
+struct Backgrounded {
+    QString Id;
+    // Empty if claude printed no name.
+    QString Name;
+};
+
+// The session that `claude --bg` announced: its first line
+// `backgrounded · <id> · <name>`. The lines after it are hints.
+std::optional<Backgrounded> FindBackgrounded(const RunOutput& output) {
+    static const QRegularExpression LINE(
+        QStringLiteral(R"(^[ \t]*backgrounded · ([0-9A-Za-z_][0-9A-Za-z_-]*))"
+                       R"((?: · ([^\n]*))?$)"),
+        QRegularExpression::MultilineOption);
+    const QString text = WithoutEscapes(output.StandardOutput) + u'\n' +
+                         WithoutEscapes(output.StandardError);
+    const QRegularExpressionMatch match = LINE.match(text);
+    if (!match.hasMatch()) {
+        return std::nullopt;
+    }
+    return Backgrounded{match.captured(1), match.captured(2).trimmed()};
+}
+
+// The last line of the text of a run that has words.
+QString LastLine(const QByteArray& standardOutput,
+                 const QByteArray& standardError) {
+    const QStringList lines =
+        (WithoutEscapes(standardOutput) + u'\n' + WithoutEscapes(standardError))
+            .split(u'\n');
+    for (auto line = lines.crbegin(); line != lines.crend(); ++line) {
+        if (!line->trimmed().isEmpty()) {
+            return line->trimmed();
+        }
+    }
+    return {};
+}
+
+QJsonObject FailureData(const RunOutput& output) {
+    return {
+        {QStringLiteral("exitCode"), output.ExitCode},
+        {QStringLiteral("stdout"), ErrorText(output.StandardOutput)},
+        {QStringLiteral("stderr"), ErrorText(output.StandardError)},
+    };
 }
 
 }  // namespace
@@ -218,6 +282,9 @@ void Adapter::PollSoon() {
 
 QFuture<jsonrpc::Result> Adapter::RunCommand(const QJsonObject& params) {
     const QString id = params.value(QStringLiteral("command")).toString();
+    if (id == NEW_SESSION) {
+        return StartSession(params.value(QStringLiteral("args")));
+    }
     const auto spec = std::ranges::find(
         COMMANDS, id, [](const CommandSpec& c) { return QString(c.Id); });
     if (spec == COMMANDS.end()) {
@@ -244,14 +311,81 @@ QFuture<jsonrpc::Result> Adapter::RunCommand(const QJsonObject& params) {
         argv.append(QStringLiteral("--all"));
     }
 
-    const QString verb(spec->Verb);
-    auto* run = new ClaudeRun({.Program = Options_.Program,
-                               .Args = argv,
-                               .Timeout = Options_.Timeouts.*(spec->Timeout)},
-                              this);
+    return Launch({.Program = Options_.Program,
+                   .Args = argv,
+                   .Timeout = Options_.Timeouts.*(spec->Timeout)},
+                  QString(spec->Verb), [](const RunOutput&) -> jsonrpc::Result {
+                      return QJsonValue();
+                  });
+}
+
+QFuture<jsonrpc::Result> Adapter::StartSession(const QJsonValue& args) {
+    const auto invalid = [] {
+        return jsonrpc::Ready(InvalidParams(
+            QStringLiteral("claude.newSession takes {cwd, prompt, flags?}: an "
+                           "absolute path of a directory, a prompt, and "
+                           "strings for claude")));
+    };
+    if (!args.isObject()) {
+        return invalid();
+    }
+    const QJsonObject object = args.toObject();
+    const QJsonValue cwd = object.value(QStringLiteral("cwd"));
+    const QJsonValue prompt = object.value(QStringLiteral("prompt"));
+    const QJsonValue flags = object.value(QStringLiteral("flags"));
+    if (!cwd.isString() || !QDir::isAbsolutePath(cwd.toString()) ||
+        !IsUsableDirectory(cwd.toString()) || !prompt.isString() ||
+        prompt.toString().trimmed().isEmpty() ||
+        prompt.toString().contains(QChar(u'\0')) ||
+        (!flags.isUndefined() && !flags.isNull() && !flags.isArray())) {
+        return invalid();
+    }
+    QStringList argv{QStringLiteral("--bg")};
+    for (const QJsonValue& flag : flags.toArray()) {
+        if (!flag.isString() || flag.toString().contains(QChar(u'\0'))) {
+            return invalid();
+        }
+        argv.append(flag.toString());
+    }
+    // The prompt is one argument, and no option even if it starts with `-`.
+    argv.append(QStringLiteral("--"));
+    argv.append(prompt.toString());
+
+    return Launch(
+        {.Program = Options_.Program,
+         .Args = argv,
+         .WorkingDirectory = cwd.toString(),
+         .Timeout = Options_.Timeouts.NewSession},
+        QStringLiteral("--bg"), [](const RunOutput& output) -> jsonrpc::Result {
+            const std::optional<Backgrounded> started =
+                FindBackgrounded(output);
+            if (!started) {
+                const QString last =
+                    LastLine(output.StandardOutput, output.StandardError);
+                return std::unexpected(jsonrpc::Error::FromCode(
+                    jsonrpc::EErrorCode::InternalError,
+                    last.isEmpty()
+                        ? QStringLiteral("claude --bg printed no session id")
+                        : last,
+                    FailureData(output)));
+            }
+            return QJsonObject{
+                {QStringLiteral("agent"), AGENT},
+                {QStringLiteral("id"), started->Id},
+                {QStringLiteral("title"),
+                 started->Name.isEmpty() ? started->Id : started->Name},
+            };
+        });
+}
+
+QFuture<jsonrpc::Result> Adapter::Launch(
+    RunRequest request, QString verb,
+    std::function<jsonrpc::Result(const RunOutput&)> onSuccess) {
+    auto* run = new ClaudeRun(std::move(request), this);
     return run->Start().then(
         QtFuture::Launch::Sync,
-        [this, verb](RunResult result) -> jsonrpc::Result {
+        [this, verb = std::move(verb), onSuccess = std::move(onSuccess)](
+            RunResult result) -> jsonrpc::Result {
             // Success or not, the list may have changed.
             if (!Stopping_) {
                 PollSoon();
@@ -262,16 +396,9 @@ QFuture<jsonrpc::Result> Adapter::RunCommand(const QJsonObject& params) {
             if (result->ExitCode != 0) {
                 return std::unexpected(jsonrpc::Error::FromCode(
                     jsonrpc::EErrorCode::InternalError,
-                    FailureReason(*result, verb),
-                    QJsonObject{
-                        {QStringLiteral("exitCode"), result->ExitCode},
-                        {QStringLiteral("stdout"),
-                         ErrorText(result->StandardOutput)},
-                        {QStringLiteral("stderr"),
-                         ErrorText(result->StandardError)},
-                    }));
+                    FailureReason(*result, verb), FailureData(*result)));
             }
-            return QJsonValue();
+            return onSuccess(*result);
         });
 }
 

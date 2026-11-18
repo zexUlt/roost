@@ -1,12 +1,13 @@
-// The commands of the Claude plugin (stop, remove, respawn, respawn all): the
-// real claude-adapter binary over stdio with a fake `claude` first on PATH,
-// and the manifest of the built plugin through the real roostd. The fake
-// never touches a real Claude account.
+// The commands of the Claude plugin (new session, stop, remove, respawn,
+// respawn all): the real claude-adapter binary over stdio with a fake
+// `claude` first on PATH, and the manifest of the built plugin through the real
+// roostd. The fake never touches a real Claude account.
 
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
@@ -33,7 +35,7 @@ namespace {
 constexpr int TIMEOUT_MS = 5000;
 
 // A fake `claude`, steered by files next to it. For a verb (`agents`, `stop`,
-// `rm`, `respawn`), a file named <verb>.<what>:
+// `rm`, `respawn`, and `bg` for `--bg`), a file named <verb>.<what>:
 //   exit    its exit code
 //   stdout  what it prints
 //   stderr  what it prints to stderr
@@ -44,10 +46,14 @@ constexpr int TIMEOUT_MS = 5000;
 //           of `agents` is read and before it prints
 //   agents  replaces agents.json whole before it exits, as a removal would
 // `agents` prints agents.json as it was when the run started. Each run adds
-// "start <args>" and "end" lines to calls.
+// "start <args>" and "end" lines to calls, and writes the directory it ran in
+// and its arguments, each whole in brackets, to <verb>.ran.
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 verb=$1
+argv=; for a in "$@"; do argv="$argv[$a]"; done
+if [ "$verb" = --bg ]; then verb=bg; fi
+printf '%s\n%s\n' "$(pwd -P)" "$argv" > "$dir/$verb.ran"
 echo "start $*" >> "$dir/calls"
 if [ "$verb" = agents ]; then listing=$(cat "$dir/agents.json"); fi
 if [ -f "$dir/$verb.hang" ]; then
@@ -152,6 +158,10 @@ private:
         Adapter_ = std::make_unique<QProcess>();
         Adapter_->setProcessEnvironment(environment);
         Adapter_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        // A group of its own: a signal the adapter sends to its own group by
+        // mistake kills the adapter, not the test and the ctest run.
+        Adapter_->setUnixProcessParameters(
+            QProcess::UnixProcessFlag::CreateNewSession);
         // The poll timer stays out of the way: what the tests see is what the
         // commands caused. A later flag wins.
         QStringList all{"--poll-ms", "600000"};
@@ -252,6 +262,38 @@ private:
     bool WaitForPids() {
         return QTest::qWaitFor([&] { return HungPids().size() >= 2; },
                                TIMEOUT_MS);
+    }
+
+    // The directory the tests start sessions in: a physical path, as the fake
+    // prints its own.
+    QString WorkDir() const {
+        const QString path = Dir_->filePath("work");
+        QDir().mkpath(path);
+        return QFileInfo(path).canonicalFilePath();
+    }
+
+    // The directory and the arguments, each in brackets, of the last `--bg`
+    // run: the two lines of bg.ran.
+    QStringList BgRan() const {
+        QFile file(FakePath("bg.ran"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        return QString::fromUtf8(file.readAll())
+            .split(u'\n', Qt::SkipEmptyParts);
+    }
+
+    QString BgArgv() const { return BgRan().value(1); }
+
+    QJsonObject NewSession(const QJsonObject& args) {
+        return RunCommand("claude.newSession", args);
+    }
+
+    void VerifyNoSessionStarted() {
+        const QStringList calls = AllCalls();
+        for (const QString& call : calls) {
+            QVERIFY2(!call.startsWith("start --bg"), qPrintable(call));
+        }
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
@@ -589,6 +631,240 @@ private slots:
                       "the adapter stopped before claude stop finished"}}));
     }
 
+    void NewSessionRunsBgInTheGivenDirectory() {
+        StartAdapter();
+        Put("bg.stdout", "backgrounded · a0ce5af3 · name\n");
+        const QString dir = WorkDir();
+        const QJsonObject response =
+            NewSession({{"cwd", dir},
+                        {"prompt", "fix the \"x\" bug"},
+                        {"flags", QJsonArray{"--permission-mode", "auto"}}});
+        QVERIFY2(response.contains("result"),
+                 QJsonDocument(response).toJson().constData());
+        QCOMPARE(CommandCalls(),
+                 QStringList{"start --bg --permission-mode auto -- fix the "
+                             "\"x\" bug"});
+        // Each argument whole: the prompt is one, with its quotes as typed.
+        QCOMPARE(BgArgv(),
+                 "[--bg][--permission-mode][auto][--][fix the \"x\" bug]");
+        // Not the directory of the plugin or of the adapter.
+        QCOMPARE(BgRan().value(0), dir);
+    }
+
+    void NoFlagsMeansNoneAndAPromptWithADashIsNoOption() {
+        StartAdapter();
+        Put("bg.stdout", "backgrounded · a0ce5af3 · name\n");
+        QVERIFY(NewSession({{"cwd", WorkDir()}, {"prompt", "--all"}})
+                    .contains("result"));
+        QCOMPARE(BgArgv(), "[--bg][--][--all]");
+    }
+
+    void TheIdIsReadFromTheBackgroundedLine() {
+        Put("bg.stdout",
+            "\x1b[2mnote\x1b[0m\n"
+            "  note \xc2\xb7 backgrounded \xc2\xb7 not1 \xc2\xb7 not\n"
+            "\x1b[1mbackgrounded \xc2\xb7 a0ce5af3 \xc2\xb7 fix the "
+            "bug\x1b[0m\n"
+            "  hint \xc2\xb7 claude attach a0ce5af3\n"
+            "  claude logs a0ce5af3\n");
+        StartAdapter();
+        const QJsonObject response =
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}});
+        QCOMPARE(response.value("result").toObject(),
+                 (QJsonObject{{"agent", "claude"},
+                              {"id", "a0ce5af3"},
+                              {"title", "fix the bug"}}));
+    }
+
+    void TheTitleIsTheIdWithoutAName() {
+        Put("bg.stdout", "backgrounded · a0ce5af3\n");
+        StartAdapter();
+        QCOMPARE(NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                     .value("result")
+                     .toObject(),
+                 (QJsonObject{{"agent", "claude"},
+                              {"id", "a0ce5af3"},
+                              {"title", "a0ce5af3"}}));
+    }
+
+    void ACrLfOutputIsRead_data() {
+        QTest::addColumn<QByteArray>("output");
+        QTest::addColumn<QString>("title");
+        QTest::newRow("with a name")
+            << QByteArray(
+                   "backgrounded \xc2\xb7 a1 \xc2\xb7 fix it  \r\n"
+                   "  hint\r\n")
+            << QString("fix it");
+        QTest::newRow("without a name")
+            << QByteArray("backgrounded \xc2\xb7 a1\r\n  hint\r\n")
+            << QString("a1");
+    }
+
+    void ACrLfOutputIsRead() {
+        QFETCH(QByteArray, output);
+        QFETCH(QString, title);
+        Put("bg.stdout", output);
+        StartAdapter();
+        QCOMPARE(
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("result")
+                .toObject(),
+            (QJsonObject{{"agent", "claude"}, {"id", "a1"}, {"title", title}}));
+    }
+
+    void ADirectoryThatCannotBeEnteredIsRefusedAndTheAdapterLives() {
+        const QString dir = Dir_->filePath("locked");
+        QVERIFY(QDir().mkpath(dir));
+        QVERIFY(QFile::setPermissions(dir, QFileDevice::Permissions()));
+        // Back to normal at the end of the test, so that cleanup removes it.
+        const auto restore = qScopeGuard([&] {
+            QFile::setPermissions(
+                dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        });
+        if (QFileInfo(dir).isExecutable()) {
+            QSKIP("a mode 000 directory can still be entered (root)");
+        }
+        StartAdapter();
+        QCOMPARE(ErrorCode(NewSession({{"cwd", dir}, {"prompt", "p"}})),
+                 -32602);
+        VerifyNoSessionStarted();
+        VerifyNothingRanBefore();
+        QCOMPARE(Adapter_->state(), QProcess::Running);
+    }
+
+    void NoIdIsAFailure() {
+        Put("bg.stdout", "error: no auth\n");
+        StartAdapter();
+        const QJsonObject error =
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("error")
+                .toObject();
+        QCOMPARE(error.value("code").toInt(), -32603);
+        QCOMPARE(error.value("message").toString(), "error: no auth");
+        QCOMPARE(error.value("data").toObject().value("exitCode").toInt(), 0);
+    }
+
+    void NoIdAndNoOutputIsAFailure() {
+        StartAdapter();
+        const QJsonObject error =
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("error")
+                .toObject();
+        QCOMPARE(error.value("code").toInt(), -32603);
+        QCOMPARE(error.value("message").toString(),
+                 "claude --bg printed no session id");
+    }
+
+    void AnUntrustedDirectoryFailsWithClaudesWords() {
+        const QString reason =
+            "Workspace not trusted. Run `claude` in /x once and accept the "
+            "trust prompt, then retry.";
+        Put("bg.exit", "1");
+        Put("bg.stderr", reason.toUtf8() + "\n");
+        StartAdapter();
+        const QJsonObject error =
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("error")
+                .toObject();
+        QCOMPARE(error.value("code").toInt(), -32603);
+        QCOMPARE(error.value("message").toString(), reason);
+        QCOMPARE(error.value("data").toObject().value("exitCode").toInt(), 1);
+    }
+
+    void BadNewSessionArgs_data() {
+        QTest::addColumn<QJsonValue>("args");
+        const QString dir = QDir::tempPath();
+        QTest::newRow("no args") << QJsonValue(QJsonValue::Undefined);
+        QTest::newRow("args are a string") << QJsonValue("p");
+        QTest::newRow("no cwd") << QJsonValue(QJsonObject{{"prompt", "p"}});
+        QTest::newRow("a relative cwd")
+            << QJsonValue(QJsonObject{{"cwd", "."}, {"prompt", "p"}});
+        QTest::newRow("a cwd that is no string")
+            << QJsonValue(QJsonObject{{"cwd", 1}, {"prompt", "p"}});
+        QTest::newRow("a missing directory") << QJsonValue(
+            QJsonObject{{"cwd", "/no/such/dir/for/roost"}, {"prompt", "p"}});
+        QTest::newRow("a file for the directory")
+            << QJsonValue(QJsonObject{{"cwd", "/etc/hosts"}, {"prompt", "p"}});
+        QTest::newRow("no prompt") << QJsonValue(QJsonObject{{"cwd", dir}});
+        QTest::newRow("an empty prompt")
+            << QJsonValue(QJsonObject{{"cwd", dir}, {"prompt", ""}});
+        QTest::newRow("a blank prompt")
+            << QJsonValue(QJsonObject{{"cwd", dir}, {"prompt", "  \n"}});
+        QTest::newRow("a prompt that is no string")
+            << QJsonValue(QJsonObject{{"cwd", dir}, {"prompt", 1}});
+        QTest::newRow("flags are a string") << QJsonValue(
+            QJsonObject{{"cwd", dir}, {"prompt", "p"}, {"flags", "-x"}});
+        QTest::newRow("a prompt with NUL") << QJsonValue(QJsonObject{
+            {"cwd", dir}, {"prompt", QString("a") + QChar(0) + "b"}});
+        QTest::newRow("a flag with NUL") << QJsonValue(
+            QJsonObject{{"cwd", dir},
+                        {"prompt", "p"},
+                        {"flags", QJsonArray{QString("-x") + QChar(0) + "y"}}});
+        QTest::newRow("a flag that is no string") << QJsonValue(QJsonObject{
+            {"cwd", dir}, {"prompt", "p"}, {"flags", QJsonArray{"-x", 1}}});
+    }
+
+    void BadNewSessionArgs() {
+        QFETCH(QJsonValue, args);
+        StartAdapter();
+        QCOMPARE(ErrorCode(RunCommand("claude.newSession", args)), -32602);
+        VerifyNoSessionStarted();
+        VerifyNothingRanBefore();
+    }
+
+    void TheNewSessionIsListedAtOnce() {
+        Put("bg.stdout", "backgrounded · s9 · name\n");
+        Put("bg.agents", Agents({Entry("s9", "working")}));
+        StartAdapter();
+        // The first run has listed nothing; the poll timer is 10 minutes away.
+        QCOMPARE(ListSessions().toArray().size(), 0);
+        QVERIFY(NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                    .contains("result"));
+        QVERIFY(QTest::qWaitFor(
+            [&] {
+                Drain();
+                for (const QJsonDocument& message : std::as_const(Received_)) {
+                    const QJsonObject object = message.object();
+                    if (object.value("method") ==
+                            QJsonValue("session.stateChanged") &&
+                        object.value("params")
+                                .toObject()
+                                .value("session")
+                                .toObject()
+                                .value("id") == QJsonValue("s9")) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            TIMEOUT_MS));
+    }
+
+    void UnknownArgsAreIgnored() {
+        Put("bg.stdout", "backgrounded · a0ce5af3 · name\n");
+        StartAdapter();
+        QVERIFY(NewSession(
+                    {{"cwd", WorkDir()}, {"prompt", "p"}, {"category", "work"}})
+                    .contains("result"));
+        QCOMPARE(BgArgv(), "[--bg][--][p]");
+    }
+
+    void AHangingNewSessionIsKilledWithItsGroup() {
+        Put("bg.hang", "");
+        // Its own knob: the others stay at their minute, so a newSession that
+        // took another command's timeout would not end in time.
+        StartAdapter({"--new-session-timeout-ms", "300"});
+        const QJsonObject error =
+            NewSession({{"cwd", WorkDir()}, {"prompt", "p"}})
+                .value("error")
+                .toObject();
+        QCOMPARE(error.value("message").toString(),
+                 "claude --bg did not finish in 300 ms");
+        for (pid_t pid : HungPids()) {
+            QTRY_VERIFY_WITH_TIMEOUT(::kill(pid, 0) != 0, TIMEOUT_MS);
+        }
+    }
+
     void TheManifestDeclaresTheCommands() {
         // The built plugin directory under the real roostd: a command that
         // plugin.json misspells has no owner, and the window gets "no plugin
@@ -639,8 +915,9 @@ private slots:
                                              .toArray()) {
             ids.insert(command.toObject().value("id").toString());
         }
-        QCOMPARE(ids, (QSet<QString>{"claude.stop", "claude.remove",
-                                     "claude.respawn", "claude.respawnAll"}));
+        QCOMPARE(ids, (QSet<QString>{"claude.newSession", "claude.stop",
+                                     "claude.remove", "claude.respawn",
+                                     "claude.respawnAll"}));
 
         QCOMPARE(::kill(static_cast<pid_t>(daemon.processId()), SIGTERM), 0);
         QVERIFY(daemon.waitForFinished(TIMEOUT_MS));

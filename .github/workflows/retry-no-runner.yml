@@ -1,0 +1,81 @@
+name: Retry on no runner
+
+# A hosted runner is sometimes not given at all: the job ends cancelled with
+# no step run and the annotation "The job was not acquired by Runner of type
+# hosted even after multiple attempts" (macOS arm64 most often). Such a run is
+# re-run, its failed jobs only, up to the third attempt.
+#
+# Nothing else is re-run. A run with a job that ran and failed, or that was
+# cancelled while running, is left red: a flaky test must stay visible. A run
+# that is not the latest of its workflow, branch and event (a newer push to
+# the pull request) is left alone.
+#
+# workflow_run takes this file from trunk: a change to it works once merged.
+on:
+  workflow_run:
+    workflows: [CI, Nightly sanitizers]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+# Without an explicit shell, run steps get `bash -e` and no pipefail.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.conclusion != 'success' &&
+      github.event.workflow_run.conclusion != 'skipped' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Re-run the jobs that got no runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+
+          latest=$(gh api "repos/$GH_REPO/actions/workflows/$WORKFLOW_ID/runs?branch=$BRANCH&event=$EVENT&per_page=1" \
+            --jq '.workflow_runs[0].id')
+          if [ "$latest" != "$RUN_ID" ]; then
+            echo "Run $RUN_ID is not the latest of $BRANCH ($latest is): left alone."
+            exit 0
+          fi
+
+          jobs=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100")
+          ran=$(jq -r '.jobs[]
+            | select(.conclusion == "failure" or .conclusion == "timed_out"
+                     or (.conclusion == "cancelled" and (.steps | length) > 0))
+            | .name' <<<"$jobs")
+          if [ -n "$ran" ]; then
+            printf 'Jobs that ran and did not pass, nothing re-run:\n%s\n' "$ran"
+            exit 0
+          fi
+
+          stepless=$(jq -r '.jobs[]
+            | select(.conclusion == "cancelled" and (.steps | length) == 0)
+            | .id' <<<"$jobs")
+          if [ -z "$stepless" ]; then
+            echo "No job was cancelled before its first step: nothing to re-run."
+            exit 0
+          fi
+          for job in $stepless; do
+            notes=$(gh api "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[].message')
+            if ! grep -q 'was not acquired by Runner' <<<"$notes"; then
+              echo "Job $job was cancelled before its first step, not for want of a runner: nothing re-run."
+              exit 0
+            fi
+          done
+
+          echo "No runner for: $(jq -r '[.jobs[] | select(.conclusion == "cancelled") | .name] | join(", ")' <<<"$jobs"); re-running attempt $ATTEMPT."
+          gh run rerun "$RUN_ID" --failed

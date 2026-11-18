@@ -18,9 +18,11 @@
 #include <vector>
 
 #include "claude/backend/agents.hpp"
+#include "claude/backend/claude_run.hpp"
 #include "claude/backend/json_rpc.hpp"
 
 class QJsonObject;
+class QJsonValue;
 class QProcess;
 
 namespace roost::claude {
@@ -37,6 +39,7 @@ struct AdapterOptions {
         std::chrono::milliseconds Remove{60'000};
         std::chrono::milliseconds Respawn{300'000};
         std::chrono::milliseconds RespawnAll{300'000};
+        std::chrono::milliseconds NewSession{120'000};
     };
     CommandTimeouts Timeouts;
 };
@@ -57,10 +60,25 @@ struct AdapterOptions {
 //   claude.remove {session}      `<Program> rm <session>`
 //   claude.respawn {session}     `<Program> respawn <session>`
 //   claude.respawnAll {}         `<Program> respawn --all`
+//   claude.newSession {cwd, prompt, flags?}
+//       `<Program> --bg <flags...> -- <prompt>` in the directory cwd
 //
-// The result is null. A session is an id of letters, digits, `_` and `-` that
-// does not start with `-`: it is one argument for claude, never an option.
-// Anything else, an unknown command included, is InvalidParams and runs
+// The result of the first four is null. The result of newSession is
+// {agent: "claude", id, title}: the id and name from the line
+// `backgrounded · <id> · <name>` that claude prints once it started the
+// session, title being the id if there is no name. Exit 0 without that line
+// is InternalError: the last line of the output as the message, or `claude
+// --bg printed no session id`. cwd is an absolute path of an existing
+// directory, as the adapter does not run in a directory of its own choice;
+// prompt is not empty and, like each flag, has no NUL (argv would cut it);
+// cwd is a directory that can be read and entered; flags is an optional array
+// of strings, which the caller owns (model, permission mode). Other keys of
+// args are ignored. Claude refuses a directory it does not trust with exit 1
+// and its reason, which is the message as for any failed run.
+//
+// The result of the others is null. A session is an id of letters, digits, `_`
+// and `-` that does not start with `-`: it is one argument for claude, never an
+// option. Anything else, an unknown command included, is InvalidParams and runs
 // nothing. A run that exits with a code other than 0 is InternalError: the
 // reason line of claude as the message, {exitCode, stdout, stderr} as data.
 // A run that cannot start, crashes or takes longer than its timeout is
@@ -112,6 +130,12 @@ private:
     // the one that is, which may have started before the change.
     void PollSoon();
     QFuture<jsonrpc::Result> RunCommand(const QJsonObject& params);
+    QFuture<jsonrpc::Result> StartSession(const QJsonValue& args);
+    // One run of claude for a command: failures become errors, a run with exit
+    // 0 is answered by onSuccess, and a run of `claude agents` follows.
+    QFuture<jsonrpc::Result> Launch(
+        RunRequest request, QString verb,
+        std::function<jsonrpc::Result(const RunOutput&)> onSuccess);
     void OnPolled(std::expected<Listing, QString> listing);
     // Sends one JSON-RPC notification to roostd.
     void Notify(const QString& method, const QJsonObject& params);

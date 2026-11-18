@@ -589,14 +589,25 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
+        // The new window opens what roostd keeps warm, hidden, on connecting:
+        // by the time the user picks the session it is a warm switch.
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Terminals().Status(Key(FIRST)),
+                                  EPaneStatus::Open, TIMEOUT_MS);
+        QVERIFY(!Api_->Terminals().IsShown(Key(FIRST)));
+        QVERIFY(RoundTrip());
+        Watch();
+
         Select(Ref(FIRST));
 
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(TYPED_WORLD), TIMEOUT_MS);
         QVERIFY(ScreenNow().contains(Greeting(FIRST)));
         QCOMPARE(Attaches(), 1);
-        // One open of the session, from the snapshot.
+        // The switch showed no `opening`, and the only open of the session is
+        // the prefetch's, from the snapshot.
         QVERIFY(RoundTrip());
+        QVERIFY2(!Changes_.join(", ").contains("opening"),
+                 qPrintable(Changes_.join(", ")));
         QCOMPARE(Proxy_->OpenRequests(), 1);
     }
 };
