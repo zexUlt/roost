@@ -255,6 +255,15 @@ private:
         QTRY_COMPARE_WITH_TIMEOUT(Count(), rows, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Cursor(), rows > 0 ? 0 : NO_CURSOR,
                                   TIMEOUT_MS);
+        // The list shows its rows before the stored document is read, and the
+        // status says "Loading sessions…" until then; a document written
+        // before the read is not seen by the panel (the store keeps no copy
+        // of a document nobody has read, so it forwards no change of it).
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)
+                                     ->findChild<QObject*>("sessionsModel")
+                                     ->property("ready")
+                                     .toBool(),
+                                 TIMEOUT_MS);
     }
 
     // A window of the shell, connected to the running daemon, with the panels
