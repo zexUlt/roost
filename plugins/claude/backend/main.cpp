@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
         "timeout-ms", "Milliseconds a run of claude agents may take.", "ms");
     const QCommandLineOption commandTimeoutMs(
         "command-timeout-ms",
-        "Milliseconds any command (stop, rm, respawn) may take.", "ms");
+        "Milliseconds any command (stop, rm, respawn, --bg) may take.", "ms");
     parser.addOptions({pollMs, timeoutMs, commandTimeoutMs});
     parser.addHelpOption();
     parser.process(app);
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     if (const std::chrono::milliseconds all = Milliseconds(
             parser.value(commandTimeoutMs), std::chrono::milliseconds::zero());
         all > std::chrono::milliseconds::zero()) {
-        options.Timeouts = {all, all, all, all};
+        options.Timeouts = {all, all, all, all, all};
     }
 
     roost::claude::Adapter adapter(options, Send);
