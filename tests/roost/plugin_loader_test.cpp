@@ -495,6 +495,57 @@ private slots:
         QCOMPARE(second->property("pluginId").toString(), QString("b"));
     }
 
+    void ADottedPanelNameCannotMakeTheTypeOfAnotherPlugin() {
+        // Plugin "a" with the name "b.c" and plugin "a.b" with the name "c"
+        // would both be "a.b.c" if the dot were allowed in a name.
+        QVERIFY(AddPlugin("a", {Panel("b.c", "bc.qml")},
+                          {{"bc.qml", ItemPanel("from-a")}}));
+        QVERIFY(AddPlugin("a.b", {Panel("c", "c.qml")},
+                          {{"c.qml", ItemPanel("from-a-b")}}));
+        ExpectWarnings(1);
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"a.b.c"}));
+        QCOMPARE(Loader_->Problems().size(), 1);
+        QCOMPARE(Loader_->Problems().at(0).Plugin, QString("a"));
+        QCOMPARE(Loader_->Problems().at(0).Panel, QString("b.c"));
+        QQuickItem* item = Loader_->CreatePanel("a.b.c");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("content").toString(), QString("from-a-b"));
+        QCOMPARE(item->property("pluginId").toString(), QString("a.b"));
+    }
+
+    void ASecondDirectoryWithTheSamePluginIdIsNotLoaded() {
+        QVERIFY(AddPlugin("dup", {Panel("view", "view.qml")},
+                          {{"view.qml", ItemPanel("first")}}));
+        // A second directory whose manifest has the same id.
+        const QDir other(Daemon_->PluginsPath() + "/dup-again");
+        QVERIFY(other.mkpath("."));
+        QFile qml(other.filePath("view.qml"));
+        QVERIFY(qml.open(QIODevice::WriteOnly));
+        QVERIFY(qml.write(ItemPanel("second")) > 0);
+        qml.close();
+        QFile manifest(other.filePath("plugin.json"));
+        QVERIFY(manifest.open(QIODevice::WriteOnly));
+        QVERIFY(
+            manifest.write(
+                QJsonDocument(
+                    QJsonObject{
+                        {"id", "dup"},
+                        {"version", "0.1.0"},
+                        {"api", "0"},
+                        {"contributes",
+                         QJsonObject{{"panels",
+                                      QJsonArray{Panel("view", "view.qml")}}}}})
+                    .toJson()) > 0);
+        manifest.close();
+        QVERIFY(Boot());
+        QCOMPARE(Loader_->PanelTypes(), (QStringList{"dup.view"}));
+        QVERIFY(Loader_->Problems().isEmpty());
+        QCOMPARE(
+            Loader_->CreatePanel("dup.view")->property("content").toString(),
+            QString("first"));
+    }
+
     void ADuplicatePanelIdInOnePluginKeepsTheFirst() {
         QVERIFY(AddPlugin(
             "a-one", {Panel("dup", "one.qml"), Panel("dup", "two.qml")},
