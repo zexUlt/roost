@@ -5,7 +5,7 @@
   "contributes": {
     "panels": [
       {
-        "id": "plugin-template.hello",
+        "id": "hello",
         "qml": "qml/HelloPanel.qml",
         "inputs": {},
         "outputs": {}

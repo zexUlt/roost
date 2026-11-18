@@ -99,8 +99,8 @@ class PluginTemplateTest : public QObject {
 
 private:
     // Copies the template into the plugins directory of roostd, as the README
-    // says: the id of the plugin and the id of its panel are rewritten in
-    // plugin.json.
+    // says: only the id of the plugin is rewritten in plugin.json; the panel
+    // keeps its name, relative to the plugin.
     bool InstallCopy(const QString& id) {
         const QString target = Daemon_->PluginsPath() + "/copy";
         if (!CopyTree(QStringLiteral(PLUGIN_TEMPLATE_DIR), target)) {
@@ -113,17 +113,7 @@ private:
         if (!manifest.contains("id")) {
             return false;
         }
-        QJsonObject contributes = manifest["contributes"].toObject();
-        QJsonArray panels = contributes["panels"].toArray();
-        if (panels.isEmpty()) {
-            return false;
-        }
-        QJsonObject panel = panels.first().toObject();
-        panel["id"] = id + ".hello";
-        panels[0] = panel;
-        contributes["panels"] = panels;
         manifest["id"] = id;
-        manifest["contributes"] = contributes;
         return WriteFile(manifestPath, QJsonDocument(manifest).toJson());
     }
 
@@ -202,7 +192,7 @@ private slots:
                      .first()
                      .toObject()["id"]
                      .toString(),
-                 PANEL);
+                 QString("hello"));
         QVERIFY2(Api_->Plugins().Plugins()["problems"].toArray().isEmpty(),
                  qPrintable(QJsonDocument(
                                 Api_->Plugins().Plugins()["problems"].toArray())
