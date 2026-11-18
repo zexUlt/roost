@@ -155,15 +155,17 @@ FocusScope {
         onCurrentIndexChanged: root.trackCursor()
         Component.onCompleted: root.trackCursor()
 
-        // j and k, with no modifier.
+        // j and k, with no modifier, on any layout: bindingKey is the key the
+        // US layout has at the physical position.
         Keys.onPressed: event => {
             if (event.modifiers !== Qt.NoModifier) {
                 return;
             }
-            if (event.key === Qt.Key_J) {
+            const key = Roost.bindingKey(event);
+            if (key === Qt.Key_J) {
                 incrementCurrentIndex();
                 event.accepted = true;
-            } else if (event.key === Qt.Key_K) {
+            } else if (key === Qt.Key_K) {
                 decrementCurrentIndex();
                 event.accepted = true;
             }

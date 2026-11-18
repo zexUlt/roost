@@ -1,8 +1,13 @@
 #include "qml_api/roost_singleton.hpp"
 
+#include <QCoreApplication>
+#include <QEvent>
+#include <QKeyEvent>
 #include <QtLogging>
 
 #include "qml_api/js_callback.hpp"
+#include "terminal/physical_keys.hpp"
+#include "terminal/qt_key_mapping.hpp"
 
 namespace roost {
 
@@ -10,7 +15,51 @@ RoostSingleton::RoostSingleton(QJSEngine& engine) : Engine_(engine) {}
 
 RoostSingleton* RoostSingleton::create(QQmlEngine* /*qmlEngine*/,
                                        QJSEngine* jsEngine) {
-    return new RoostSingleton(*jsEngine);
+    auto* const singleton = new RoostSingleton(*jsEngine);
+    if (QCoreApplication* const app = QCoreApplication::instance()) {
+        app->installEventFilter(singleton);
+    }
+    return singleton;
+}
+
+RoostSingleton::~RoostSingleton() {
+    if (QCoreApplication* const app = QCoreApplication::instance()) {
+        app->removeEventFilter(this);
+    }
+}
+
+bool RoostSingleton::eventFilter(QObject* /*watched*/, QEvent* event) {
+    if (event->type() == QEvent::KeyPress ||
+        event->type() == QEvent::KeyRelease) {
+        const auto& keyEvent = static_cast<const QKeyEvent&>(*event);
+        Recorded_ = {.Key = keyEvent.key(),
+                     .Modifiers = keyEvent.modifiers(),
+                     .NativeScanCode = keyEvent.nativeScanCode(),
+                     .NativeVirtualKey = keyEvent.nativeVirtualKey(),
+                     .NativeModifiers = keyEvent.nativeModifiers(),
+                     .Valid = true};
+    }
+    return false;
+}
+
+int RoostSingleton::bindingKey(QObject* event) const {
+    if (event == nullptr) {
+        return 0;
+    }
+    const int key = event->property("key").toInt();
+    const auto modifiers =
+        Qt::KeyboardModifiers::fromInt(event->property("modifiers").toUInt());
+    EKey physical = EKey::Unidentified;
+    if (Recorded_.Valid && Recorded_.Key == key &&
+        Recorded_.Modifiers == modifiers) {
+        const QKeyEvent recorded(
+            QEvent::KeyPress, key, modifiers, Recorded_.NativeScanCode,
+            Recorded_.NativeVirtualKey, Recorded_.NativeModifiers);
+        const ENativeKeyCodes codes =
+            QtKeyOptions::ForThisPlatform().NativeKeys;
+        physical = PhysicalKey(codes, NativeKeyCode(recorded, codes));
+    }
+    return BindingKey(key, modifiers, physical);
 }
 
 void RoostSingleton::setApi(api::Api& api) {

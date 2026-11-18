@@ -60,6 +60,8 @@ roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_termina
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_layout_test qml_api/terminal_item_layout_test.cpp roost_qml_api)
+roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
+    roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 
