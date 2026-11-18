@@ -1,10 +1,14 @@
 import QtQuick
 import Roost.Api
+import RoostSessions
 
-// The panel sessions.list: the sessions of all agents, from Roost.sessions.
-// Up, Down, j and k move the cursor; Enter, or a tap on a row, writes the
-// session under it to `selected`, the output of the panel. Moving does not
-// change `selected`: opening a session is not free.
+// The panel sessions.list: the sessions of all agents, grouped by category by
+// SessionsList (module RoostSessions), which owns the rows, the cursor and the
+// state kept in the store document `sessions`. Up, Down, j and k move the
+// cursor over the stops: sessions and folded headers. Enter, or a tap on a
+// row, writes the session under the cursor to `selected`, the output of the
+// panel; Enter on a folded header unfolds it. Moving does not change
+// `selected`: opening a session is not free.
 FocusScope {
     id: root
 
@@ -16,91 +20,145 @@ FocusScope {
     // nothing.
     signal activated
 
-    // The session the cursor was on last, {agent, id}, kept while the list is
-    // empty or being replaced, to put the cursor back.
-    property var cursorKey: null
-    // Between the start of a reset of the model and its reconcile: the list is
-    // not settled, so Enter does nothing and no row is put under the cursor.
+    // Between the start of a reset of Roost.sessions and the reconcile of
+    // `selected`: the list is not settled, so Enter does nothing.
     property bool resetting: false
-
-    // The ref of a row; the roles of Roost.sessions are the fields of
-    // sessions.list in this order from Qt.UserRole: agent, id.
-    function refAt(row) {
-        const at = Roost.sessions.index(row, 0);
-        return {
-            agent: Roost.sessions.data(at, Qt.UserRole),
-            id: Roost.sessions.data(at, Qt.UserRole + 1)
-        };
-    }
+    // The open session of the stored document was taken into `selected`, or
+    // there was none: from now on `selected` is written to the document.
+    property bool restored: false
 
     function isSame(a, b) {
         return a !== null && b !== null && a.agent === b.agent && a.id === b.id;
     }
 
-    // The row of a ref, or -1.
-    function rowOf(ref) {
+    // Whether Roost.sessions lists the session, whatever the view shows: the
+    // roles of Roost.sessions are the fields of sessions.list in this order
+    // from Qt.UserRole: agent, id.
+    function listed(ref) {
         if (!ref) {
-            return -1;
+            return false;
         }
         const count = Roost.sessions.rowCount();
         for (let row = 0; row < count; ++row) {
-            if (isSame(refAt(row), ref)) {
-                return row;
+            const at = Roost.sessions.index(row, 0);
+            if (Roost.sessions.data(at, Qt.UserRole) === ref.agent && Roost.sessions.data(at, Qt.UserRole + 1) === ref.id) {
+                return true;
             }
         }
-        return -1;
+        return false;
     }
 
-    function trackCursor() {
-        if (Roost.sessions.rowCount() > 0 && list.currentIndex >= 0) {
-            cursorKey = refAt(list.currentIndex);
+    // `selected` goes when its session is no longer listed; not while the list
+    // of the connection is missing: the terminal opens the same session when
+    // the connection is back.
+    function dropGone() {
+        if (Roost.sessions.loaded && selected !== null && !listed(selected)) {
+            selected = null;
         }
     }
 
-    // After rows were inserted: ListView leaves the cursor at -1 when the
-    // first rows come into an empty list, so put it on row 0.
-    function afterInsert() {
-        if (!resetting && list.currentIndex < 0 && Roost.sessions.rowCount() > 0) {
-            list.currentIndex = 0;
+    // Once the document was read and the first list is in: the session that was
+    // open when the window went comes back, if it is still listed.
+    function restoreOpened() {
+        if (restored || !sessionsList.ready || !Roost.sessions.loaded) {
+            return;
         }
-        trackCursor();
+        restored = true;
+        const ref = sessionsList.opened;
+        if (ref !== null && selected === null && listed(ref)) {
+            selected = ref;
+        }
     }
 
     // Enter: the session under the cursor becomes `selected`, unless it is
-    // already, so that a session that is open is not opened again. Not while
-    // the model is being replaced: the cursor is then ListView's, not the user's.
+    // already, so that a session that is open is not opened again; a folded
+    // header unfolds and opens nothing. Not while the list is being replaced:
+    // the cursor is then not the user's.
     function openCurrent() {
-        if (resetting || list.currentIndex < 0 || list.currentIndex >= Roost.sessions.rowCount()) {
+        if (resetting) {
             return;
         }
-        const ref = refAt(list.currentIndex);
+        const ref = sessionsList.cursorSession;
+        if (ref === null) {
+            const category = sessionsList.cursorCategory;
+            if (category !== null) {
+                sessionsList.toggleFold(category);
+            }
+            return;
+        }
         if (!isSame(selected, ref)) {
             selected = ref;
         }
         activated();
     }
 
-    // After a reset of the model, which says before it changes `loaded`: run
-    // later, when it has. Without the first list of the connection (the
-    // connection is gone) `selected` stays: the terminal opens the same
-    // session when the connection is back.
-    function reconcile() {
-        resetting = false;
-        if (!Roost.sessions.loaded) {
-            return;
+    // The ListView follows the cursor of the model, whatever it did itself.
+    function syncCursor() {
+        if (list.currentIndex !== sessionsList.cursorRow) {
+            list.currentIndex = sessionsList.cursorRow;
         }
-        if (selected !== null && rowOf(selected) < 0) {
-            selected = null;
+    }
+
+    // The stored document: read on creation if connected and at every
+    // connection (the window forgets its copy when the connection goes),
+    // written as the model asks.
+    function readStore() {
+        Roost.store.get("sessions", (error, result) => {
+            if (error) {
+                sessionsList.readFailed(error.message ? error.message : "the store read failed");
+            } else {
+                sessionsList.restore(result.document);
+            }
+        });
+    }
+
+    onSelectedChanged: {
+        if (restored) {
+            sessionsList.opened = selected;
         }
-        let row = rowOf(cursorKey);
-        if (row < 0) {
-            row = rowOf(selected);
+    }
+
+    Component.onCompleted: {
+        if (Roost.connected) {
+            readStore();
         }
-        if (row < 0) {
-            row = Roost.sessions.rowCount() > 0 ? 0 : -1;
+    }
+
+    SessionsList {
+        id: sessionsList
+
+        objectName: "sessionsModel"
+        source: Roost.sessions
+        sourceLoaded: Roost.sessions.loaded
+
+        onSaveRequested: document => {
+            Roost.store.set("sessions", document, error => {
+                sessionsList.saveFinished(error ? (error.message ? error.message : "the store write failed") : "");
+            });
         }
-        list.currentIndex = row;
-        trackCursor();
+        onReadyChanged: root.restoreOpened()
+        onSourceLoadedChanged: root.restoreOpened()
+        onCursorChanged: root.syncCursor()
+    }
+
+    Connections {
+        target: Roost
+
+        function onConnectedChanged() {
+            if (Roost.connected) {
+                root.readStore();
+            }
+        }
+    }
+
+    Connections {
+        target: Roost.store
+
+        function onChanged(plugin, document) {
+            if (plugin === "sessions") {
+                sessionsList.restore(document);
+            }
+        }
     }
 
     Rectangle {
@@ -115,22 +173,21 @@ FocusScope {
             root.resetting = true;
         }
 
-        // SessionsModel emits modelReset before it updates `loaded`: reconcile
+        // SessionsModel emits modelReset before it updates `loaded`: settle
         // after the emit has returned.
         function onModelReset() {
-            Qt.callLater(root.reconcile);
+            Qt.callLater(root.settle);
         }
 
         function onRowsRemoved() {
-            if (root.selected !== null && root.rowOf(root.selected) < 0) {
-                root.selected = null;
-            }
-            Qt.callLater(root.trackCursor);
+            root.dropGone();
         }
+    }
 
-        function onRowsInserted() {
-            Qt.callLater(root.afterInsert);
-        }
+    function settle() {
+        resetting = false;
+        dropGone();
+        restoreOpened();
     }
 
     ListView {
@@ -144,27 +201,24 @@ FocusScope {
         anchors.bottom: unavailable.visible ? unavailable.top : parent.bottom
         focus: true
         clip: true
-        model: Roost.sessions
-        keyNavigationEnabled: true
-        keyNavigationWraps: false
+        model: sessionsList
         highlightMoveDuration: 0
         highlight: Rectangle {
             color: list.activeFocus ? "#3d5a80" : "#3a3a3a"
         }
 
-        onCurrentIndexChanged: root.trackCursor()
-        Component.onCompleted: root.trackCursor()
+        // The model owns the cursor: whatever the view does to its index
+        // (rows inserted, removed) is put back.
+        onCurrentIndexChanged: Qt.callLater(root.syncCursor)
+        onCountChanged: Qt.callLater(root.syncCursor)
 
-        // j and k, with no modifier.
+        // Up and Down, and j and k with no modifier.
         Keys.onPressed: event => {
-            if (event.modifiers !== Qt.NoModifier) {
-                return;
-            }
-            if (event.key === Qt.Key_J) {
-                incrementCurrentIndex();
+            if (event.key === Qt.Key_Down || (event.key === Qt.Key_J && event.modifiers === Qt.NoModifier)) {
+                sessionsList.move(1);
                 event.accepted = true;
-            } else if (event.key === Qt.Key_K) {
-                decrementCurrentIndex();
+            } else if (event.key === Qt.Key_Up || (event.key === Qt.Key_K && event.modifiers === Qt.NoModifier)) {
+                sessionsList.move(-1);
                 event.accepted = true;
             }
         }
@@ -191,13 +245,14 @@ FocusScope {
             required property int index
             required property var model
 
-            readonly property bool isOpen: root.isSame(root.selected, {
+            readonly property bool isHeader: model.kind === "header"
+            readonly property bool isOpen: !isHeader && root.isSame(root.selected, {
                 "agent": model.agent,
                 "id": model.id
             })
 
             width: ListView.view.width
-            height: titleText.implicitHeight + detailText.implicitHeight + 12
+            height: isHeader ? headerText.implicitHeight + 8 : titleText.implicitHeight + detailText.implicitHeight + 12
 
             Rectangle {
                 visible: row.isOpen
@@ -206,7 +261,26 @@ FocusScope {
                 color: "#5aa0ff"
             }
 
+            // A header: the category ("Uncategorized" for none), the number of
+            // its sessions, and a mark of a folded one.
+            Text {
+                id: headerText
+
+                objectName: "headerTitle"
+                visible: row.isHeader
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 10
+                anchors.rightMargin: 8
+                elide: Text.ElideRight
+                color: "#a0a0a0"
+                font.bold: true
+                text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : row.model.category) + " · " + row.model.count : ""
+            }
+
             Column {
+                visible: !row.isHeader
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 8
@@ -220,7 +294,7 @@ FocusScope {
                     elide: Text.ElideRight
                     color: "#e0e0e0"
                     font.bold: row.isOpen
-                    text: row.model.title
+                    text: row.isHeader ? "" : row.model.title
                 }
 
                 Text {
@@ -231,13 +305,15 @@ FocusScope {
                     elide: Text.ElideMiddle
                     color: "#808080"
                     font.pixelSize: titleText.font.pixelSize * 0.85
-                    text: row.model.state + " · " + row.model.cwd
+                    text: row.isHeader ? "" : row.model.state + " · " + row.model.cwd
                 }
             }
 
             TapHandler {
+                enabled: !row.isHeader
                 onTapped: {
-                    list.currentIndex = row.index;
+                    sessionsList.setCursorRow(row.index);
+                    root.syncCursor();
                     list.forceActiveFocus();
                     root.openCurrent();
                 }
@@ -255,7 +331,7 @@ FocusScope {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: {
-            if (!Roost.sessions.loaded) {
+            if (!Roost.sessions.loaded || !sessionsList.ready) {
                 return "Loading sessions…";
             }
             // With an agent that did not answer, an empty list is not "No

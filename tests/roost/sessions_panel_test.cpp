@@ -6,6 +6,7 @@
 // and the status and screen of the terminal; keys go through the window, to
 // whatever has the focus.
 
+#include <QAbstractItemModel>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
@@ -245,6 +246,18 @@ private:
             QVERIFY(ListWithout(ORDER));
         }
         QVERIFY(StartDaemon());
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), rows, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), rows > 0 ? 0 : -1, TIMEOUT_MS);
+    }
+
+    // A window of the shell, connected to the running daemon, with the panels
+    // loaded; waits until both slots hold theirs and the list has its first
+    // sessions.
+    void OpenWindow() {
         Api_ = std::make_unique<api::Api>();
         Engine_ = std::make_unique<QQmlApplicationEngine>();
         Singleton_ =
@@ -269,8 +282,17 @@ private:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QVERIFY(QTest::qWaitForWindowActive(window));
         QTRY_VERIFY_WITH_TIMEOUT(Singleton_->sessions()->loaded(), TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Count(), rows, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), rows > 0 ? 0 : -1, TIMEOUT_MS);
+    }
+
+    // The window goes, the daemon stays: the shell before the loader, the
+    // loader before the engine, which holds the terminal that closes its
+    // session through the API.
+    void CloseWindow() {
+        Shell_.reset();
+        Loader_.reset();
+        Engine_.reset();
+        Singleton_ = nullptr;
+        Api_.reset();
     }
 
     QObject* Root() { return Engine_->rootObjects().first(); }
@@ -295,8 +317,61 @@ private:
         return PanelOf(LIST)->findChild<QQuickItem*>("sessionList");
     }
 
-    int Count() { return ListView()->property("count").toInt(); }
-    int Cursor() { return ListView()->property("currentIndex").toInt(); }
+    // The model of the list: its rows are headers and sessions.
+    QAbstractItemModel* List() {
+        return PanelOf(LIST)->findChild<QAbstractItemModel*>("sessionsModel");
+    }
+
+    QVariant Role(int row, const QByteArray& name) {
+        QAbstractItemModel* list = List();
+        return list->data(list->index(row, 0),
+                          list->roleNames().key(name, Qt::DisplayRole));
+    }
+
+    // The rows of the sessions, in the order of the list.
+    QList<int> SessionRows() {
+        QList<int> rows;
+        for (int row = 0; row < List()->rowCount(); ++row) {
+            if (Role(row, "kind").toString() == "session") {
+                rows << row;
+            }
+        }
+        return rows;
+    }
+
+    // The sessions of the list, whatever the headers between them; a row of
+    // the view is a session's number here, so that the cases do not count
+    // headers.
+    int Count() { return static_cast<int>(SessionRows().size()); }
+    int CursorRow() { return ListView()->property("currentIndex").toInt(); }
+    // The number of the session under the cursor; -1 without one.
+    int Cursor() {
+        return static_cast<int>(SessionRows().indexOf(CursorRow()));
+    }
+
+    // The row of the view of the session with the number.
+    int ViewRow(int session) { return SessionRows().value(session, -1); }
+
+    void Invoke(const char* method, const QString& argument) {
+        QVERIFY(QMetaObject::invokeMethod(List(), method,
+                                          Q_ARG(QString, argument)));
+    }
+
+    // The kind of every row, "header" or "session", in the order of the list.
+    QStringList Kinds() {
+        QStringList kinds;
+        for (int row = 0; row < List()->rowCount(); ++row) {
+            kinds << Role(row, "kind").toString();
+        }
+        return kinds;
+    }
+
+    // What the list stored for the plugin, as the daemon keeps it.
+    QJsonObject StoredDocument() {
+        return QJsonDocument::fromJson(
+                   ReadFile(Dir_->filePath("config/sessions.json")))
+            .object();
+    }
 
     QQuickItem* ListStatus() {
         return PanelOf(LIST)->findChild<QQuickItem*>("sessionsStatus");
@@ -314,18 +389,17 @@ private:
     }
 
     // The id of the row of the model, whatever the view shows.
-    QString IdAt(int row) {
-        SessionsModel* model = Singleton_->sessions();
-        return model->data(model->index(row, 0), Qt::UserRole + 1).toString();
+    QString IdAt(int session) {
+        return Role(ViewRow(session), "id").toString();
     }
 
     QString CursorId() { return IdAt(Cursor()); }
 
-    // The ids of the model's rows, in its order.
+    // The ids of the list's sessions, in its order.
     QStringList Ids() {
         QStringList ids;
-        for (int row = 0; row < Singleton_->sessions()->rowCount(); ++row) {
-            ids << IdAt(row);
+        for (int session = 0; session < Count(); ++session) {
+            ids << IdAt(session);
         }
         return ids;
     }
@@ -339,13 +413,16 @@ private:
             .toString();
     }
 
-    QQuickItem* RowItem(int row) {
+    // The delegate of the view's row; of the session's number below.
+    QQuickItem* ViewItem(int viewRow) {
         QQuickItem* item = nullptr;
         QMetaObject::invokeMethod(ListView(), "itemAtIndex",
                                   Q_RETURN_ARG(QQuickItem*, item),
-                                  Q_ARG(int, row));
+                                  Q_ARG(int, viewRow));
         return item;
     }
+
+    QQuickItem* RowItem(int session) { return ViewItem(ViewRow(session)); }
 
     QString RowText(int row, const QString& objectName) {
         QQuickItem* item = RowItem(row);
@@ -457,13 +534,7 @@ private slots:
     }
 
     void cleanup() {
-        // The shell before the loader, the loader before the engine, which
-        // holds the terminal that closes its session through the API.
-        Shell_.reset();
-        Loader_.reset();
-        Engine_.reset();
-        Singleton_ = nullptr;
-        Api_.reset();
+        CloseWindow();
         StopDaemon();
         WithoutTerminal_ = false;
     }
@@ -951,9 +1022,13 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
         QVERIFY(ListStatusNow().isEmpty());
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
+        // The first session of the list: those that came in a state but
+        // `working` are unread, so they are listed before ALPHA.
+        const QString first = IdAt(0);
+        QCOMPARE(first, BETA);
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), first, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(ALPHA)),
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(first)),
                                  TIMEOUT_MS);
     }
 
@@ -966,6 +1041,8 @@ private slots:
             engine.singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
         QVERIFY(singleton != nullptr);
         singleton->setApi(api);
+        // As the window does for a plugin with a native module.
+        engine.addImportPath(QStringLiteral(ROOST_PLUGINS_DIR "/sessions/qml"));
         QQmlComponent component(
             &engine, QUrl::fromLocalFile(QStringLiteral(
                          SESSIONS_PLUGIN_DIR "/qml/SessionsPanel.qml")));
@@ -1104,6 +1181,167 @@ private slots:
         QCOMPARE(Cursor(), 1);
         QCOMPARE(Status(), QString("none"));
         QVERIFY(SelectedId().isEmpty());
+    }
+
+    // From the panel's context, as a plugin calls the store.
+    void StoreSet(const QString& document) {
+        QQmlExpression set(
+            QQmlEngine::contextForObject(PanelOf(LIST)), PanelOf(LIST),
+            QStringLiteral("Roost.store.set(\"sessions\", %1)").arg(document));
+        set.evaluate();
+        QVERIFY2(!set.hasError(), qPrintable(set.error().toString()));
+    }
+
+    void TheSessionsAreUnderTheHeaderOfTheirCategory() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QCOMPARE(Kinds(), (QStringList{"header", "session", "session",
+                                       "session", "session"}));
+        QCOMPARE(Role(0, "category").toString(), QString());
+        QCOMPARE(Role(0, "count").toInt(), 4);
+        QQuickItem* header = ViewItem(0);
+        QVERIFY(header != nullptr);
+        auto* title = header->findChild<QQuickItem*>("headerTitle");
+        QVERIFY(title != nullptr);
+        QCOMPARE(title->property("text").toString(),
+                 QString("▾ Uncategorized · 4"));
+    }
+
+    void ADocumentWrittenToTheStoreRegroupsTheList() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        StoreSet(
+            QStringLiteral(R"({version: 1, categories: {"claude/%1": "work"}})")
+                .arg(BETA));
+
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Kinds(),
+            (QStringList{"header", "session", "header", "session", "session",
+                         "session"}),
+            TIMEOUT_MS);
+        QCOMPARE(Role(0, "category").toString(), QString("work"));
+        QCOMPARE(Ids(), (QStringList{BETA, ALPHA, GAMMA, DELTA}));
+    }
+
+    void TheListStateSurvivesAWindowRestart() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // Folding the only category leaves its header as the one stop.
+        Invoke("toggleFold", QString());
+        QTRY_COMPARE_WITH_TIMEOUT(Kinds(), (QStringList{"header"}), TIMEOUT_MS);
+        QCOMPARE(CursorRow(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument().value("folded").toArray(),
+                                  QJsonArray{QString()}, TIMEOUT_MS);
+
+        CloseWindow();
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(Kinds(), (QStringList{"header"}), TIMEOUT_MS);
+        QVERIFY(Role(0, "folded").toBool());
+        QCOMPARE(Role(0, "count").toInt(), 4);
+        QTRY_COMPARE_WITH_TIMEOUT(CursorRow(), 0, TIMEOUT_MS);
+    }
+
+    void TheOpenedSessionIsOpenedAgainAfterAWindowRestart() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("view")
+                                      .toObject()
+                                      .value("opened")
+                                      .toString(),
+                                  QString("claude/" + BETA), TIMEOUT_MS);
+
+        CloseWindow();
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), BETA, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(BETA)),
+                                 TIMEOUT_MS);
+    }
+
+    void AnOpenSessionThatIsGoneIsNotOpenedAfterAWindowRestart() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("view")
+                                      .toObject()
+                                      .value("opened")
+                                      .toString(),
+                                  QString("claude/" + BETA), TIMEOUT_MS);
+        CloseWindow();
+        QVERIFY(ListWithout({BETA}));
+
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 3, TIMEOUT_MS);
+        QTest::qWait(300);
+        QVERIFY(SelectedId().isEmpty());
+        QCOMPARE(Status(), QString("none"));
+    }
+
+    void EnterOnAFoldedHeaderUnfoldsAndOpensNothing() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Invoke("toggleFold", QString());
+        QTRY_COMPARE_WITH_TIMEOUT(Kinds(), (QStringList{"header"}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CursorRow(), 0, TIMEOUT_MS);
+        QVERIFY(ListView()->hasActiveFocus());
+        Watch();
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        QSignalSpy selected(PanelOf(LIST), SIGNAL(selectedChanged()));
+
+        Press(Qt::Key_Return);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
+        QVERIFY(!Role(0, "folded").toBool());
+        // The cursor went in, to the first session of the category.
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
+        QTest::qWait(300);
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(selected.count(), 0);
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
+        QVERIFY(ListView()->hasActiveFocus());
+        QCOMPARE(Status(), QString("none"));
     }
 
     // The build holds copies of the plugin's files (configure_file); a copy
