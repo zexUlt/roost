@@ -294,7 +294,7 @@ target_compile_definitions(sessions_panel_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
     SESSIONS_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/sessions")
-add_dependencies(sessions_panel_test roostd fake_tui claude-adapter)
+add_dependencies(sessions_panel_test roostd fake_tui claude-adapter sessions_qml)
 
 # Warm terminals in the window: a switch to a warm session is one frame, and a
 # window that restarts finds its session warm in roostd. Same setup as
