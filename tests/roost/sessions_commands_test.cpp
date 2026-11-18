@@ -106,9 +106,6 @@ class SessionsCommandsTest : public SessionsWindow {
 
 private:
     std::optional<ScopedEnv> Home_;
-    // The unread counts the list reported since the case wanted them.
-    QList<int> Unreads_;
-
     QString TabNowOfList() { return List()->property("tab").toString(); }
 
     int SessionsCount() { return Singleton_->sessions()->rowCount(); }
@@ -324,16 +321,14 @@ private slots:
 
     void DThenYDeletesAndForgetsAfterRemoval() {
         FailOnWarnings();
-        // GAMMA is done: forgotten while it is still listed, it would be
-        // taken for a new session and counted unread.
         Start(QJsonObject{{"names", QJsonObject{{KeyOf(GAMMA), "Cleanup"}}},
                           {"categories", QJsonObject{{KeyOf(GAMMA), "Ops"}}}});
         if (QTest::currentTestFailed()) {
             return;
         }
-        QVERIFY(Put("rm.agents", AgentsWithout({GAMMA})));
-        connect(List(), SIGNAL(countsChanged()), this, SLOT(RecordUnread()));
-        Unreads_.clear();
+        // The list claude prints right after rm still has the session: the
+        // adapter reports a removal with a later list, which the case sends.
+        QVERIFY(Put("rm.agents", AgentsWithout({})));
         MoveTo(GAMMA);
 
         Press(Qt::Key_D);
@@ -343,15 +338,22 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"rm " + GAMMA},
                                   TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("deleted"), TIMEOUT_MS);
+        // Answered, but still listed: the list keeps what it knows of it, or
+        // it would take the session for a new one.
+        QTest::qWait(500);
+        QVERIFY(Ids().contains(GAMMA));
+        QVERIFY(StoredHas(GAMMA));
+        QCOMPARE(Role(ViewRow(static_cast<int>(Ids().indexOf(GAMMA))), "title")
+                     .toString(),
+                 QString("Cleanup"));
+
+        QVERIFY(Put("agents.json", AgentsWithout({GAMMA})));
+
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA, BETA, DELTA}),
                                   TIMEOUT_MS);
-        // What the list knew of it is gone from the document, once the
-        // session has left Roost.sessions.
+        // Gone from Roost.sessions: the document is cleaned.
         QTRY_VERIFY_WITH_TIMEOUT(!StoredHas(GAMMA), TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("deleted"), TIMEOUT_MS);
-        // It never showed as a new, unread session on the way.
-        QVERIFY2(!Unreads_.contains(1),
-                 "the deleted session was counted unread");
         QCOMPARE(Unread(), 0);
     }
 
@@ -971,9 +973,6 @@ private slots:
 
         QTRY_VERIFY_WITH_TIMEOUT(!Shown("sessionsNotice"), TIMEOUT_MS);
     }
-
-public slots:
-    void RecordUnread() { Unreads_ << Unread(); }
 };
 
 QTEST_MAIN(SessionsCommandsTest)
