@@ -186,17 +186,12 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
                                  const QtKeyOptions& options) {
     const bool keypad = modifiers.testFlag(Qt::KeypadModifier);
     auto mapped = MapKey(key, keypad, options);
-    // The Qt key whose capital the physical key would have given: the key
-    // itself, or the Latin letter at the position of a non-Latin one.
-    int ctrlKey = key;
     if (mapped.Key == EKey::Unidentified && IsNonLatinLetter(key)) {
         // A letter of a non-Latin layout is the key at its position on the US
         // one; what the layout typed stays in the text.
         const EKey physical = PhysicalKey(options.NativeKeys, nativeKey);
         if (physical >= EKey::A && physical <= EKey::Z) {
             mapped = {physical, QChar::toLower(static_cast<char32_t>(key))};
-            ctrlKey = Qt::Key_A +
-                      (static_cast<int>(physical) - static_cast<int>(EKey::A));
         }
     }
 
@@ -222,14 +217,8 @@ std::optional<KeyEvent> MapQtKey(int key, Qt::KeyboardModifiers modifiers,
     } else if (IsTyped(text)) {
         event.Text = text;
     } else if (event.Mods.Ctrl && event.Key != EKey::Unidentified) {
-        // Qt's text is a control code or nothing. For a remapped letter the
-        // text and the unshifted codepoint come from the physical key, so the
-        // encoding is that of the Latin key (the library reads both).
-        event.Text = CtrlText(ctrlKey, event.Mods.Shift);
-        if (ctrlKey != key) {
-            event.UnshiftedCodepoint = static_cast<char32_t>(
-                U'a' + static_cast<char32_t>(ctrlKey - Qt::Key_A));
-        }
+        // Qt's text is a control code or nothing.
+        event.Text = CtrlText(key, event.Mods.Shift);
     }
 
     if (event.Key == EKey::Unidentified) {
