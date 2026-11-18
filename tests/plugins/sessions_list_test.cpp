@@ -1,8 +1,8 @@
 // SessionsList, the QML-facing model of the sessions list (module
 // RoostSessions): the cursor, folds and pins, the store document and the
 // changes of the rows, over a source model that behaves as Roost.sessions. The
-// cases are those of cc-fleet's test_fold_cursor, test_pins, test_tree and
-// test_title, and of design 06-panels. A QAbstractItemModelTester watches the
+// cases are the ported fold-cursor, pin, tree and title tests, and those
+// of design 06-panels. A QAbstractItemModelTester watches the
 // model through every case.
 
 #include <QAbstractItemModelTester>
