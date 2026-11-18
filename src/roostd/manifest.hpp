@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <expected>
+#include <optional>
 #include <vector>
 
 namespace roost {
@@ -34,6 +35,16 @@ struct PluginAgent {
     QStringList Capabilities;
 };
 
+// The part of the "native" key that roost loads today: the QML module of the
+// plugin. "library" and "sdk" come with the SDK (13-plan.md, M5) and are
+// refused until then.
+struct PluginNative {
+    // As declared, "6.N"; empty if the manifest leaves it out.
+    QString Qt;
+    // As declared, relative to the plugin directory; empty if left out.
+    QString QmlImportPath;
+};
+
 // plugin.json, checked. What the daemon acts on is parsed out; the rest of
 // "contributes" (panels, settings) stays as JSON for the window.
 struct PluginManifest {
@@ -46,6 +57,8 @@ struct PluginManifest {
     QList<PluginCommand> Commands;
     QList<PluginKeybinding> Keybindings;
     QList<PluginAgent> Agents;
+    // Absent when the manifest has no "native".
+    std::optional<PluginNative> Native;
     QJsonObject Contributes;
 };
 
@@ -53,8 +66,9 @@ struct PluginManifest {
 // keys are ignored, so an older roostd reads a newer manifest of the same
 // API. The backend program and the settings page are paths relative to the
 // plugin directory that stay inside it, as written: symlinks are not
-// followed. A keybinding names a command of the same plugin. A plugin with
-// agents has a backend to serve them.
+// followed. "native.qt" is a Qt of the major version roost is built with and
+// a minor not newer than it, as Qt loads no newer one. A keybinding names a
+// command of the same plugin. A plugin with agents has a backend to serve them.
 std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
                                                      const QString& directory);
 
