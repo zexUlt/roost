@@ -224,20 +224,19 @@ private slots:
         QFETCH(EKey, physical);
         QFETCH(int, unshifted);
         QFETCH(int, shifted);
-        constexpr int CYRILLIC_BE = 0x411;
-        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::NoModifier, physical),
-                 unshifted);
-        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::ShiftModifier, physical),
+        constexpr int cyrillicBe = 0x411;
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::NoModifier, physical), unshifted);
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::ShiftModifier, physical),
                  shifted);
         // Only Shift picks the shifted symbol.
-        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::ControlModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::ControlModifier, physical),
                  unshifted);
-        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::AltModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::AltModifier, physical),
                  unshifted);
-        QCOMPARE(::BindingKey(CYRILLIC_BE, Qt::MetaModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::MetaModifier, physical),
                  unshifted);
         QCOMPARE(
-            ::BindingKey(CYRILLIC_BE, Qt::ControlModifier | Qt::ShiftModifier,
+            ::BindingKey(cyrillicBe, Qt::ControlModifier | Qt::ShiftModifier,
                          physical),
             shifted);
     }
