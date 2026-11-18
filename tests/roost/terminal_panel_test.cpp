@@ -136,6 +136,7 @@ class TerminalPanelTest : public QObject {
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
     QString OwnPluginsPath() const { return Dir_->filePath("plugins"); }
+    QString BuiltInPluginsPath() const { return Dir_->filePath("built-in"); }
 
     bool WriteFile(const QString& path, const QByteArray& content) const {
         QFile file(path);
@@ -178,17 +179,33 @@ private:
                WriteFile(directory + "/list.qml", LIST_PANEL);
     }
 
+    // Only the plugins the test needs of the built-in ones: the built-in
+    // `sessions` has the panel sessions.list that the fixture list has.
+    bool LinkBuiltInPlugins() const {
+        if (!QDir().mkpath(BuiltInPluginsPath())) {
+            return false;
+        }
+        for (const QString& id :
+             {QStringLiteral("claude"), QStringLiteral("terminal")}) {
+            if (!QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
+                             BuiltInPluginsPath() + "/" + id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool LaunchDaemon() {
-        if (!WriteFakeClaude() || !WriteListPlugin()) {
+        if (!WriteFakeClaude() || !WriteListPlugin() || !LinkBuiltInPlugins()) {
             return false;
         }
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
         environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
-        environment.insert("ROOST_PLUGINS_PATH",
-                           QStringLiteral(ROOST_PLUGINS_DIR) +
-                               QDir::listSeparator() + OwnPluginsPath());
+        environment.insert(
+            "ROOST_PLUGINS_PATH",
+            BuiltInPluginsPath() + QDir::listSeparator() + OwnPluginsPath());
         environment.insert(
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
         Daemon_ = std::make_unique<QProcess>();

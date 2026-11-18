@@ -3,6 +3,7 @@
 set(ROOST_PLUGINS_OUTPUT_DIR ${PROJECT_BINARY_DIR}/roost-plugins)
 
 add_subdirectory(claude)
+add_subdirectory(sessions)
 add_subdirectory(terminal)
 
 # Built-in plugins use the public API only, like third-party ones (design.md

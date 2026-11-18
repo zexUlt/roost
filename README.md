@@ -37,9 +37,14 @@ build/dev/bin/roost [--dev]
 roostd looks for plugins in `ROOST_PLUGINS_PATH` (absolute paths, separated by
 `:`), then in `<ROOST_CONFIG or ~/.config/roost>/plugins`. With `--dev` the
 window reloads a plugin when its files change. It watches the copy under
-`build/dev/roost-plugins`, so after editing `plugins/terminal/qml/*.qml` run
+`build/dev/roost-plugins`, so after editing `plugins/<id>/qml/*.qml` run
 `cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
 roostd reads manifests at start.
+
+The window shows the session list on the left and the terminal on the right.
+The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
+In the list, ↑/↓ or `j`/`k` move the cursor and Enter opens the session in the
+terminal.
 
 ## License
 

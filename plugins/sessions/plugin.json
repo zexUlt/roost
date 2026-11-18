@@ -1,0 +1,15 @@
+{
+  "id": "sessions",
+  "version": "0.1.0",
+  "api": "0",
+  "contributes": {
+    "panels": [
+      {
+        "id": "sessions.list",
+        "qml": "qml/SessionsPanel.qml",
+        "inputs": {},
+        "outputs": { "selected": "SessionRef" }
+      }
+    ]
+  }
+}
