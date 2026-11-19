@@ -54,11 +54,13 @@ The AppImage mounts itself through FUSE 3: install the `fuse3` package
 
 The window starts `roostd` itself when nobody listens on the socket;
 `roost --no-spawn` (on Linux `./roost-x86_64.AppImage --no-spawn`) turns that
-off. `roostd` outlives the window: closing it (Cmd+Q) leaves the daemon and the
-open sessions running, and the next window finds them again. To stop the
-daemon, `pkill roostd`. Sessions come from `claude agents`; the window reads
-the environment of your login shell for it, so `claude` must be on the `PATH`
-of that shell.
+off. `roostd` outlives the window: quitting the window (Cmd+Q on macOS) leaves
+the daemon and the open sessions running, and the next window finds them
+again. To stop the daemon, `pkill roostd`. Sessions come from `claude agents`,
+run by `roostd`, so `claude` must be on the `PATH` it starts with: a window
+started from Finder or a desktop menu gives it the `PATH` of your login shell,
+a window started from a terminal gives it that terminal's `PATH`. A `roostd`
+that already runs keeps the `PATH` it was started with.
 
 Logs are in the directory of the socket: `roostd.log` (the previous run is
 `roostd.log.1`) and `roostd.start.log` (what `roostd` prints before it holds
@@ -68,7 +70,7 @@ the socket). The directory is the first of these that applies:
 |---|---|
 | `ROOST_SOCKET` is set | the directory of that path |
 | `XDG_RUNTIME_DIR` is an absolute path (Linux desktops: `/run/user/<uid>`) | `$XDG_RUNTIME_DIR/roost/` |
-| otherwise (macOS) | `$TMPDIR/roost-<uid>/`, a `/var/folders/…/T/roost-<uid>/` path; `echo $TMPDIR` shows it. No `TMPDIR`: `/tmp/roost-<uid>/` |
+| otherwise (macOS, or Linux without it) | `$TMPDIR/roost-<uid>/`; on macOS a `/var/folders/…/T/roost-<uid>/` path, `echo $TMPDIR` shows it. No `TMPDIR`: `/tmp/roost-<uid>/` |
 
 State and settings are in `~/.config/roost` (`ROOST_CONFIG` or
 `XDG_CONFIG_HOME` change it).
