@@ -12,7 +12,8 @@ namespace roost::testing {
 // ~QQuickWindow waits forever for that thread
 // (QSGSoftwareThreadedRenderLoop::windowDestroyed). Hiding the window waits
 // for the render thread to stop; the posted events, update requests among
-// them, go before they reach a window that is going away.
+// them, go before they reach a window that is going away; then the render
+// thread gets the time to fall asleep, see window_teardown.cpp.
 //
 // Call it before the engine or the window is destroyed. `root` may be anything
 // but a window: it is then left alone, so a test can pass the first root
