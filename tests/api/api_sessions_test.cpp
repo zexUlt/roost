@@ -100,11 +100,29 @@ private:
 
     // The slow agent answers its next list after delayMs.
     bool SetSlowListing(int delayMs) {
+        return WriteSlowListing(QJsonObject{{"delayMs", delayMs}});
+    }
+
+    // The slow agent answers its next list when ReleaseSlowListing is called:
+    // for a case that must have the list out until something is seen.
+    bool HoldSlowListing() {
+        return WriteSlowListing(QJsonObject{{"holdUntilFile", GatePath()}});
+    }
+
+    bool ReleaseSlowListing() {
+        QFile gate(GatePath());
+        return gate.open(QIODevice::WriteOnly);
+    }
+
+    QString GatePath() const {
+        return Daemon_->PluginsPath() + "/slow/release";
+    }
+
+    bool WriteSlowListing(QJsonObject hold) {
         QFile file(Daemon_->PluginsPath() + "/slow/agent.json");
+        hold.insert("result", QJsonArray{});
         const QJsonObject answers{
-            {"agent.listSessions",
-             QJsonObject{{"slow-agent", QJsonObject{{"result", QJsonArray{}},
-                                                    {"delayMs", delayMs}}}}}};
+            {"agent.listSessions", QJsonObject{{"slow-agent", hold}}}};
         return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
                file.write(QJsonDocument(answers).toJson()) > 0;
     }
@@ -256,20 +274,13 @@ private slots:
         }
 
         // A session that is not in the rows is no signal, and takes no row
-        // with it: checked while a second row is there to be taken. A bounded
-        // wait, as there is nothing to wait for; the removal of a known
-        // session after it shows the first was handled.
+        // with it: checked while a second row is there to be taken. The events
+        // come in order, so the removals of the known sessions after it show
+        // the first was handled, and told has nothing of it.
         QVERIFY(Notify({StateChanged(Row("s1", "idle"))}));
         QTRY_COMPARE_WITH_TIMEOUT(sessions.Rows().size(), 2, TIMEOUT_MS);
         told.clear();
-        QVERIFY(Notify({Removed("s9")}));
-        QTest::qWait(200);
-        QVERIFY(told.isEmpty());
-        QCOMPARE(sessions.Rows().size(), 2);
-        QVERIFY(sessions.IndexOf(AGENT, "s1") >= 0);
-        QVERIFY(sessions.IndexOf(AGENT, "s2") >= 0);
-
-        QVERIFY(Notify({Removed("s1"), Removed("s2")}));
+        QVERIFY(Notify({Removed("s9"), Removed("s1"), Removed("s2")}));
         QTRY_COMPARE_WITH_TIMEOUT(told.size(), 4, TIMEOUT_MS);
         QCOMPARE(told, (QStringList{"about 1 of 2 (s1)", "removed 1 of 1",
                                     "about 0 of 1 (s2)", "removed 0 of 0"}));
@@ -286,7 +297,7 @@ private slots:
         QVERIFY(before >= 0);
         QCOMPARE(Api_->Sessions().Rows()[before].value("state"),
                  QJsonValue("working"));
-        QVERIFY(SetSlowListing(3000));
+        QVERIFY(HoldSlowListing());
         QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
         QSignalSpy changed(&Api_->Sessions(), &api::SessionService::RowChanged);
         const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
@@ -297,6 +308,7 @@ private slots:
         QVERIFY(Notify({StateChanged(done)}));
         QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, TIMEOUT_MS);
         QVERIFY(!refreshed.isFinished());
+        QVERIFY(ReleaseSlowListing());
         QVERIFY(WaitFor(refreshed));
         QVERIFY2(refreshed.result(), qPrintable(Why(refreshed.result())));
         QCOMPARE(reset.size(), 1);
@@ -335,6 +347,10 @@ private slots:
     void EventsKeptBeforeARestartAreNotReplayed() {
         QVERIFY(StartDaemonWithASlowAgent());
         QVERIFY(ConnectApi());
+        // The restart must ask B while A is out, and nothing tells the window
+        // when it has: the delay is what keeps A out. It is long enough for
+        // the events and the crash, which take milliseconds, and each of the
+        // two lists waits it out.
         QVERIFY(SetSlowListing(3000));
         QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
         QSignalSpy inserted(&Api_->Sessions(),
@@ -357,13 +373,14 @@ private slots:
         QVERIFY(StartDaemonWithASlowAgent());
         QVERIFY(ConnectApi());
         QVERIFY(Api_->Sessions().IndexOf(AGENT, "s1") >= 0);
-        QVERIFY(SetSlowListing(3000));
+        QVERIFY(HoldSlowListing());
         QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
         QSignalSpy removed(&Api_->Sessions(), &api::SessionService::RowRemoved);
         const QFuture<rpc::Result> refreshed = Api_->Sessions().Refresh();
         QVERIFY(Notify({Removed("s1")}));
         QTRY_COMPARE_WITH_TIMEOUT(removed.size(), 1, TIMEOUT_MS);
         QVERIFY(!refreshed.isFinished());
+        QVERIFY(ReleaseSlowListing());
         QVERIFY(WaitFor(refreshed));
         QVERIFY2(refreshed.result(), qPrintable(Why(refreshed.result())));
         QCOMPARE(reset.size(), 1);
@@ -379,7 +396,7 @@ private slots:
     void AChangeThenARemovalDuringARefreshLeaveNoRow() {
         QVERIFY(StartDaemonWithASlowAgent());
         QVERIFY(ConnectApi());
-        QVERIFY(SetSlowListing(3000));
+        QVERIFY(HoldSlowListing());
         QSignalSpy inserted(&Api_->Sessions(),
                             &api::SessionService::RowInserted);
         QSignalSpy removed(&Api_->Sessions(), &api::SessionService::RowRemoved);
@@ -387,6 +404,8 @@ private slots:
         QVERIFY(Notify({StateChanged(Row("s3", "working")), Removed("s3")}));
         QTRY_COMPARE_WITH_TIMEOUT(removed.size(), 1, TIMEOUT_MS);
         QCOMPARE(inserted.size(), 1);
+        QVERIFY(!refreshed.isFinished());
+        QVERIFY(ReleaseSlowListing());
         QVERIFY(WaitFor(refreshed));
         QVERIFY2(refreshed.result(), qPrintable(Why(refreshed.result())));
         // Replayed after the answer: inserted and removed again, in order.
@@ -487,7 +506,13 @@ private slots:
         const QFuture<rpc::Result> published = Api_->Bus().Publish(
             "session.stateChanged", QJsonObject{{"state", "idle"}});
         QVERIFY(WaitFor(published));
-        QVERIFY(!changed.wait(300));
+        // The events come in order: once a good one is seen, the bad one is
+        // behind us, and it changed nothing.
+        const QJsonObject done = Row("s2", "done", "finished");
+        QVERIFY(Notify({StateChanged(done)}));
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().Rows().value(1), done,
+                                  TIMEOUT_MS);
+        QCOMPARE(changed.size(), 1);
         QVERIFY(inserted.isEmpty());
         QCOMPARE(Api_->Sessions().Rows().size(), 2);
     }
@@ -502,7 +527,6 @@ private slots:
         QFuture<rpc::Result> published =
             Api_->Bus().Publish("session.other", QJsonObject{{"id", "s1"}});
         QVERIFY(WaitFor(published));
-        QVERIFY(!removed.wait(300));
         for (int i = 0; i < 2; ++i) {
             QTest::ignoreMessage(QtWarningMsg,
                                  "session.removed without an agent or an id");
@@ -513,7 +537,13 @@ private slots:
         published = Api_->Bus().Publish("session.removed",
                                         QJsonObject{{"agent", AGENT}});
         QVERIFY(WaitFor(published));
-        QVERIFY(!removed.wait(300));
+        // The events come in order: once a good one is seen, the bad ones are
+        // behind us, and they removed nothing.
+        const QJsonObject done = Row("s2", "done", "finished");
+        QVERIFY(Notify({StateChanged(done)}));
+        QTRY_COMPARE_WITH_TIMEOUT(Api_->Sessions().Rows().value(1), done,
+                                  TIMEOUT_MS);
+        QVERIFY(removed.isEmpty());
         QCOMPARE(Api_->Sessions().Rows().size(), 2);
     }
 

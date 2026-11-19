@@ -1,5 +1,6 @@
 #include "roost/shell.hpp"
 
+#include <QJSValue>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -37,6 +38,52 @@ QString SingleOfType(const QVariantMap& declared, const QString& type,
                                        : QString::number(names.size()))
                   .arg(QLatin1String(kind), type);
     return {};
+}
+
+// Whether the list panel has not yet settled what it opens at start. A panel
+// without the optional property `restored` is not waited for.
+bool ListIsRestoring(const QQuickItem* panel) {
+    if (panel == nullptr ||
+        panel->metaObject()->indexOfProperty("restored") < 0) {
+        return false;
+    }
+    return !panel->property("restored").toBool();
+}
+
+// What the terminal panel does with the session the link gave it.
+struct TerminalOpening {
+    // The panel shows a session ("agent/id") through a TerminalItem.
+    bool Wanted = false;
+    QString Key;
+    // The status of the item: "none", "opening", "open", "ended", "failed" or
+    // "disconnected", and its reason.
+    QString Status;
+    QString Message;
+};
+
+TerminalOpening OpeningOf(const QQuickItem* panel) {
+    TerminalOpening opening;
+    if (panel == nullptr) {
+        return opening;
+    }
+    const auto* item = panel->findChild<const QQuickItem*>("terminal");
+    if (item == nullptr || item->metaObject()->indexOfProperty("status") < 0) {
+        return opening;
+    }
+    QVariant session = panel->property("session");
+    if (session.metaType() == QMetaType::fromType<QJSValue>()) {
+        session = session.value<QJSValue>().toVariant();
+    }
+    const QVariantMap ref = session.toMap();
+    if (ref.isEmpty()) {
+        return opening;
+    }
+    opening.Wanted = true;
+    opening.Key = QStringLiteral("%1/%2").arg(ref.value("agent").toString(),
+                                              ref.value("id").toString());
+    opening.Status = item->property("status").toString();
+    opening.Message = item->property("statusMessage").toString();
+    return opening;
 }
 
 }  // namespace
@@ -143,6 +190,13 @@ Shell::Readiness Shell::CheckReadiness() const {
                 QStringLiteral("the window has no panel %1").arg(type));
         }
     }
+    const TerminalOpening opening = OpeningOf(PanelOf(TERMINAL_PANEL));
+    // roostd refused the open: the attach will not start by waiting.
+    if (opening.Wanted && opening.Status == QLatin1String("failed")) {
+        failures.append(QStringLiteral("panel %1 could not open %2: %3")
+                            .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
+                                 opening.Message));
+    }
     if (!failures.isEmpty()) {
         return {false, true, failures.join(QStringLiteral("; "))};
     }
@@ -164,10 +218,34 @@ Shell::Readiness Shell::CheckReadiness() const {
     } else if (sessions.Rows().isEmpty()) {
         waiting.append(QStringLiteral("roostd lists no sessions"));
     }
+    // The window opens a session at start, the stored one that is still
+    // listed. Whether it does is known once the list panel has restored it;
+    // then the terminal has to be open (roostd answered session.open, so the
+    // attach process is started, or was already for a warm session) or, if
+    // the program already left, ended.
+    if (ListIsRestoring(PanelOf(LIST_PANEL))) {
+        waiting.append(
+            QStringLiteral("panel %1 has not restored the opened session")
+                .arg(LIST_PANEL));
+    } else if (opening.Wanted && opening.Status != QLatin1String("open") &&
+               opening.Status != QLatin1String("ended")) {
+        waiting.append(QStringLiteral("panel %1 is opening %2 (%3)")
+                           .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
+                                opening.Status));
+    }
     if (!waiting.isEmpty()) {
         return {false, false, waiting.join(QStringLiteral("; "))};
     }
     return {true, false, {}};
+}
+
+const QQuickItem* Shell::PanelOf(const char* type) const {
+    for (const Slot& slot : Slots_) {
+        if (slot.Type == QLatin1String(type)) {
+            return slot.Panel.data();
+        }
+    }
+    return nullptr;
 }
 
 void Shell::OnPanelTypesChanged() {

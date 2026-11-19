@@ -23,7 +23,9 @@
 //                            "hang"}}
 // An answer under "<agent>/<session>" comes first for a request with a
 // session. A "result" or an "error" may come with "delayMs": N, and then it is
-// sent after N milliseconds, the backend answering nothing else meanwhile.
+// sent after N milliseconds, the backend answering nothing else meanwhile; or
+// with "holdUntilFile": path, and then it is sent once that file exists (at
+// most 30 s), likewise.
 // With --crash-on-start it exits with code 3 at once. It exits with code 0 when
 // its stdin closes, or after --linger-ms N more milliseconds.
 
@@ -148,6 +150,16 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
 void Delay(const QJsonObject& answer) {
     std::this_thread::sleep_for(
         std::chrono::milliseconds(answer.value("delayMs").toInt()));
+    const QString gate = answer.value("holdUntilFile").toString();
+    if (gate.isEmpty()) {
+        return;
+    }
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (!QFile::exists(gate) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
 }
 
 void AnswerAgent(const QJsonValue& id, const QString& method,

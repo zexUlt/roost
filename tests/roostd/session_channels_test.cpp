@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSignalSpy>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTest>
@@ -39,6 +40,8 @@ namespace {
 constexpr int TIMEOUT_MS = 5000;
 // How long a test waits to see that something does not happen.
 constexpr int NOTHING_HAPPENS_MS = 300;
+// How long the adapter sits on the attach command of session "slow".
+constexpr int SLOW_ATTACH_MS = 1000;
 // Prints 3000 lines in six bursts, so that a second window can open the
 // session while the output goes on, then "done", and waits.
 constexpr const char* STREAM_SCRIPT =
@@ -260,6 +263,10 @@ private:
                  {"fake/s1", fakeTui},
                  {"fake/s2", fakeTui},
                  {"fake/s3", fakeTui},
+                 {"fake/slow",
+                  QJsonObject{
+                      {"result", QJsonObject{{"program", FAKE_TUI_PATH}}},
+                      {"delayMs", SLOW_ATTACH_MS}}},
                  {"other/s1", fakeTui},
                  {"fake/stream",
                   Result(
@@ -910,15 +917,24 @@ private slots:
         QVERIFY(!stays->OpenWith(
             QJsonObject{{"agent", "fake"}, {"session", "null"}}));
 
-        // The client leaves before the adapter answers.
+        // The client leaves before the adapter answers: the adapter sits on
+        // the answer, and the server sees the connection closed meanwhile.
+        QSignalSpy closed(Server_.get(), &Server::ConnectionClosed);
         const QFuture<rpc::Result> pending = gone->Rpc.Request(
-            "session.open", QJsonObject{{"agent", "fake"}, {"session", "s1"}});
+            "session.open",
+            QJsonObject{{"agent", "fake"}, {"session", "slow"}});
         Q_UNUSED(pending);
         // The server answers in the order it reads: once it has answered this,
         // it has taken the open and asked the adapter.
         QVERIFY(!gone->Call("session.close", QJsonObject{{"channel", 99}}));
         gone->Rpc.Disconnect();
-        QTest::qWait(500);
+        QVERIFY(closed.wait(TIMEOUT_MS));
+
+        // The adapter answers one request at a time, in order: this turn-down
+        // comes after the answer to the open of the gone window, and the
+        // server completes the answers in the order they come.
+        QVERIFY(!stays->OpenWith(
+            QJsonObject{{"agent", "fake"}, {"session", "null"}}));
         QCOMPARE(Channels_->ChannelCount(), 0);
         QCOMPARE(Channels_->Pool().Count(), 0);
     }

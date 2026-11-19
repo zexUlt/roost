@@ -57,12 +57,15 @@ void ExitAfterFirstFrame(QQuickWindow* window, roost::SingleSession* session) {
 }
 
 // --smoke-sessions: exit with 0 once the shell is ready (connected, both
-// panels created without a problem, sessions loaded and not empty) and a frame
-// was swapped after that; with 1 and the reason as soon as the shell cannot
-// become ready (a problem of the loader, such as a QML import a panel lacks),
-// or with the reason of the last check if it is not ready within
-// SMOKE_SESSIONS_TIMEOUT. It opens no session and changes nothing beyond what
-// the window writes when it shows the list.
+// panels created without a problem, sessions loaded and not empty, and the
+// session the window opens at start, if any, open in the terminal, so that
+// roostd has started its attach) and a frame was swapped after that; with 1
+// and the reason as soon as the shell cannot become ready (a problem of the
+// loader, such as a QML import a panel lacks, or roostd refusing to open the
+// session), or with the reason of the last check if it is not ready within
+// SMOKE_SESSIONS_TIMEOUT. It opens no session itself: the one the window
+// opens is the one the store marks as opened, and nothing is changed beyond
+// what the window writes when it shows the list.
 void ExitWhenSessionsShown(QQuickWindow* window, const roost::Shell* shell) {
     struct State {
         bool Ready = false;

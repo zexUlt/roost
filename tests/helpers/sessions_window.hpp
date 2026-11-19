@@ -34,6 +34,8 @@ namespace roost::testing {
 inline constexpr int TIMEOUT_MS = 10000;
 inline const QString LIST = "sessions.list";
 inline const QString TERMINAL = "terminal.view";
+// How often the adapter runs the fake `claude agents`.
+inline constexpr int POLL_MS = 200;
 inline constexpr int NO_CURSOR = -1;
 inline constexpr int ON_HEADER = -2;
 inline const QString EMPTY_TEXT = "No session. Choose one in the list.";
@@ -116,9 +118,10 @@ public:
     // the file is replaced whole, so that no run reads half of it.
     bool ListWithout(const QStringList& gone) const;
 
-    // Only the built-in plugins `claude` and `sessions`: no panel
-    // terminal.view.
-    bool LinkPluginsWithoutTerminal() const;
+    // The plugins directory of the case: the built-in plugins, without
+    // `terminal` (no panel terminal.view) when WithoutTerminal_ is set, and
+    // `claude` polling every POLL_MS.
+    bool LinkPlugins() const;
 
     bool StartDaemon();
 

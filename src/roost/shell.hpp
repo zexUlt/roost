@@ -55,9 +55,18 @@ public:
 
     // Whether the window shows what `roost --smoke-sessions` checks. `Ready`:
     // connected, both panels created, no problem of the loader or of a link,
-    // sessions.list answered with at least one session. `Failed`: it cannot
+    // sessions.list answered with at least one session, and, if the window
+    // opens a session at start, that session is open in the terminal (roostd
+    // answered session.open, so its attach process is started, or was already
+    // running for a warm session) or has ended.
+    // The window opens one when the list panel selects a session once it has
+    // restored its view; the list panel tells that by its optional property
+    // `restored` (true once it has decided; a panel without it is not waited
+    // for), the terminal by the `status` of its TerminalItem "terminal" (a
+    // terminal panel without one is not waited for). `Failed`: it cannot
     // become ready by waiting (a problem of the loader or of a link, the
-    // connection refused). `Reason` names what is missing; empty when Ready.
+    // connection refused, roostd refused to open the session). `Reason` names
+    // what is missing; empty when Ready.
     struct Readiness {
         bool Ready = false;
         bool Failed = false;
@@ -80,6 +89,8 @@ private:
         QString LinkProblem;
     };
 
+    // The panel made for the slot of the type, or null.
+    const QQuickItem* PanelOf(const char* type) const;
     void OnPanelTypesChanged();
     void OnPanelAboutToBeDestroyed(QQuickItem* panel);
     void OnRefused(const rpc::Error& error);

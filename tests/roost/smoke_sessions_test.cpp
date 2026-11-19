@@ -3,7 +3,10 @@
 // ROOST_CONFIG/ROOST_SOCKET/ROOST_PLUGINS_PATH. It exits 0 when the sessions
 // are listed in the window; it exits 1 with the reason when the sessions
 // plugin has lost its QML module (RoostSessions), and when claude lists no
-// sessions (after the timeout of the mode, so that case takes as long).
+// sessions (after the timeout of the mode, so that case takes as long). When
+// the store marks a session as opened, the window attaches to it at start and
+// the mode exits 0 only once the attach has started; it exits 1 with the
+// reason when roostd refuses to open that session.
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -14,6 +17,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <csignal>
 #include <memory>
 
 #include "helpers/roostd_process.hpp"
@@ -27,12 +31,19 @@ constexpr int TIMEOUT_MS = 10000;
 // The mode gives up after 20 s (src/roost/main.cpp); and the window starts.
 constexpr int NOT_READY_WAIT_MS = 60000;
 
-// A fake `claude`: `agents` prints the agents.json next to it. Nothing else is
-// ever run, since the mode opens no session.
+// The session the store marks as opened (a session of claude_agents.json), and
+// the one of the fixture agent, which cannot be attached to.
+constexpr const char* OPENED = "claude/bg-0a1b2c3d";
+constexpr const char* UNATTACHABLE = "fx-agent/s1";
+
+// A fake `claude`: `agents` prints the agents.json next to it, `attach <id>`
+// writes its pid to attach.pid (the file is there whole or not at all) and
+// stays until it is killed.
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 case "$1" in
 agents) cat "$dir/agents.json" ;;
+attach) echo $$ > "$dir/attach.pid.new" && mv "$dir/attach.pid.new" "$dir/attach.pid"; exec sleep 60 ;;
 *) exit 2 ;;
 esac
 )sh";
@@ -118,11 +129,31 @@ private:
     }
 
     // roostd with the plugins and the fake claude; false if any step failed.
-    bool Prepare(EFault fault, const QByteArray& agents) {
+    // `opened` is the session the store marks as opened, so that the window
+    // attaches to it at start; with `fixtureAgent` roostd also lists the
+    // session of an agent that cannot be attached to.
+    bool Prepare(EFault fault, const QByteArray& agents,
+                 const QString& opened = {}, bool fixtureAgent = false) {
         Daemon_ = std::make_unique<testing::RoostdProcess>();
-        return Bin_.isValid() && Daemon_->IsValid() && WriteClaude(agents) &&
-               LinkPlugins(fault) && StartDaemon();
+        if (!Bin_.isValid() || !Daemon_->IsValid() || !WriteClaude(agents) ||
+            !LinkPlugins(fault)) {
+            return false;
+        }
+        if (fixtureAgent && !Daemon_->AddFixturePlugin(
+                                "fx", QStringLiteral(FIXTURE_BACKEND_PATH))) {
+            return false;
+        }
+        // The store document of the sessions plugin (design/08-state.md).
+        if (!opened.isEmpty() &&
+            !WriteFile(Daemon_->ConfigPath() + "/sessions.json",
+                       QByteArray("{\"version\":1,\"view\":{\"opened\":\"") +
+                           opened.toUtf8() + "\"}}")) {
+            return false;
+        }
+        return StartDaemon();
     }
+
+    QString AttachPidFile() const { return Bin_.filePath("attach.pid"); }
 
     bool StartDaemon() {
         // The daemon inherits the environment of this process.
@@ -168,6 +199,13 @@ private slots:
         // The daemon first: it uses the PATH that Path_ restores.
         Daemon_.reset();
         Path_.reset();
+        // The fake attach, if roostd left it behind.
+        if (const qint64 pid = ReadFile(AttachPidFile()).trimmed().toLongLong();
+            pid > 1) {
+            ::kill(static_cast<pid_t>(pid), SIGKILL);
+        }
+        // Bin_ lives as long as the test object: the next case starts clean.
+        QFile::remove(AttachPidFile());
     }
 
     void ExitsZeroWhenTheSessionsAreListed() {
@@ -178,6 +216,54 @@ private slots:
         RunWindow(TIMEOUT_MS * 3, elapsed);
         QVERIFY2(Window_.exitCode() == 0, qPrintable(Errors_));
         qInfo("ready in %lld ms", static_cast<long long>(elapsed.elapsed()));
+    }
+
+    // The window opens the session the store marks as opened, and the mode
+    // does not end before roostd has started the attach to it: the attach is
+    // there as soon as the window has exited. The file is not waited for: a
+    // window that exits with the open sent but not answered still gets its
+    // attach started a moment later, and waiting would hide that.
+    void WaitsForTheAttachOfTheOpenedSession() {
+        QVERIFY(Prepare(
+            EFault::None,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json")),
+            OPENED));
+        QElapsedTimer elapsed;
+        RunWindow(TIMEOUT_MS * 3, elapsed);
+        QVERIFY2(Window_.exitCode() == 0, qPrintable(Errors_));
+        QVERIFY2(QFile::exists(AttachPidFile()), "the attach had not started");
+        qInfo("ready in %lld ms", static_cast<long long>(elapsed.elapsed()));
+    }
+
+    // No session is opened at start: nothing is waited for and nothing is
+    // attached.
+    void WaitsForNoAttachWhenNoSessionIsOpened() {
+        QVERIFY(Prepare(
+            EFault::None,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json"))));
+        QElapsedTimer elapsed;
+        RunWindow(TIMEOUT_MS * 3, elapsed);
+        QVERIFY2(Window_.exitCode() == 0, qPrintable(Errors_));
+        QVERIFY(!QFile::exists(AttachPidFile()));
+    }
+
+    // roostd refuses to open the session of the store: the mode fails at once
+    // with the reason, not after its timeout.
+    void FailsWhenTheOpenedSessionCannotBeOpened() {
+        QVERIFY(Prepare(
+            EFault::None,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json")),
+            UNATTACHABLE, true));
+        QElapsedTimer elapsed;
+        RunWindow(TIMEOUT_MS * 3, elapsed);
+        QCOMPARE(Window_.exitCode(), 1);
+        QVERIFY2(Errors_.contains("roost --smoke-sessions: panel terminal.view "
+                                  "could not open fx-agent/s1: "),
+                 qPrintable(Errors_));
+        // Well under SMOKE_SESSIONS_TIMEOUT (20 s), with room for a loaded
+        // machine.
+        QVERIFY2(elapsed.elapsed() < 10000, qPrintable(Errors_));
+        qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
     }
 
     // A package that lacks the QML module of the sessions plugin: --smoke
