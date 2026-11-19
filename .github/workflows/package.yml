@@ -8,7 +8,17 @@ name: Package
 # its branch: gh workflow run package.yml --ref <branch>. A dispatch takes
 # the workflow from that branch, but only a workflow that is on trunk can be
 # dispatched, hence this file before its jobs.
+#
+# Runs on `v*` tags, on dispatch and on pushes to trunk that change code, not
+# on pull requests: a macOS runner per pull request is too much, and a change
+# to packaging proves itself by the dispatch above. Documentation is the set
+# tools/ci_changes.sh skips. A path filter rather than that script: no job
+# here is a required check, and GitHub does not apply path filters to tags.
 on:
+  push:
+    tags: ["v*"]
+    branches: [trunk]
+    paths-ignore: ["docs/**", ".claude/**", "**.md"]
   workflow_dispatch:
 
 permissions:
@@ -18,17 +28,109 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Keep in step with ci.yml.
+env:
+  QT_VERSION: 6.12.0
+  ZIG_VERSION: 0.17.1
+
 # Without an explicit shell, run steps get `bash -e` and no pipefail.
 defaults:
   run:
     shell: bash
 
 jobs:
-  placeholder:
-    runs-on: ubuntu-24.04
+  # The release build, its tests, then the .app and .dmg and their checks. The
+  # Qt, zig and caches are those of the macOS release job of ci.yml.
+  macos:
+    name: macos
+    runs-on: macos-15
     steps:
-      - name: No packages yet
-        run: echo "the packaging jobs replace this one"
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja ccache
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
+
+      # The entry the release job of ci.yml saves on trunk: the same key, read
+      # only, so that a packaging run pushes nothing out of the full cache.
+      - name: Restore libghostty-vt
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/release/_deps
+            build/release/.ninja_log
+            build/release/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-release-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
+
+      # Restore only: ci.yml saves the compiler cache, from trunk.
+      - name: Restore the compiler cache
+        uses: ./.github/actions/ccache
+        with:
+          key: release
+
+      - name: Configure
+        run: cmake --preset release
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Compiler cache hits
+        run: ccache --show-stats
+
+      - name: Test
+        run: ctest --preset release
+        env:
+          ROOST_FRAME_BUDGET: report
+
+      - name: Package
+        run: tools/package_macos.sh build/release "$RUNNER_TEMP/package"
+
+      # A tag names the version of the release: it must be the version of the
+      # project, which the app carries.
+      - name: The tag is the version of the app
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "$RUNNER_TEMP/package/stage/roost.app/Contents/Info.plist")
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME is not the version $version of the app"
+            exit 1
+          fi
+
+      - name: Check the bundle and the .dmg
+        run: |
+          dmgs=("$RUNNER_TEMP"/package/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ] || { echo "::error::expected one .dmg"; exit 1; }
+          tools/check_bundle.sh "$RUNNER_TEMP/package/stage/roost.app" "${dmgs[0]}"
+
+      - name: Upload the .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: roost-macos-dmg
+          path: ${{ runner.temp }}/package/*.dmg
+          if-no-files-found: error
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 7 }}
 
   # The AppImage, on the machine of its arch: x86_64 on ubuntu-24.04, aarch64
   # on ubuntu-24.04-arm. Set up as the Linux jobs of ci.yml (same Qt, zig,
@@ -52,8 +154,6 @@ jobs:
             qt_host: linux_arm64
             qt_arch: linux_gcc_arm64
     env:
-      QT_VERSION: 6.12.0
-      ZIG_VERSION: 0.17.1
       PRESET: release
     steps:
       - uses: actions/checkout@v4
@@ -143,4 +243,4 @@ jobs:
           name: roost-${{ matrix.arch }}.AppImage
           path: build/package/roost-${{ matrix.arch }}.AppImage
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 7 }}
