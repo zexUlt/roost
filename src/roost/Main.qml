@@ -139,7 +139,10 @@ Window {
 
     // The list panel's optional signals. `activated()`: the user chose a row, so
     // the keyboard goes to the terminal. `widthStepRequested(step)`: `<` or `>`,
-    // a narrower (-1) or a wider (+1) list, within bounds. A list panel without
+    // a narrower (-1) or a wider (+1) list, within bounds. `respawned(session)`:
+    // the agent respawned a session of the list; if the terminal panel shows it
+    // and has the optional function `reopenWhenEnded(session)`, the session is
+    // opened again there once the old attach has ended. A list panel without
     // them is fine.
     Connections {
         target: listSlot.panel
@@ -150,6 +153,13 @@ Window {
             // keyboard stays in the list.
             if (terminalSlot.panel !== null) {
                 terminalSlot.forceActiveFocus();
+            }
+        }
+
+        function onRespawned(session) {
+            const panel = terminalSlot.panel;
+            if (panel !== null && typeof panel.reopenWhenEnded === "function") {
+                panel.reopenWhenEnded(session);
             }
         }
 
