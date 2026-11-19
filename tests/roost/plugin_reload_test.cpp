@@ -165,7 +165,9 @@ private:
                 return fail("the load of the shell");
             }
         }
-        if (!connected.wait(TIMEOUT_MS)) {
+        // Connected may come before the wait: the answer of hello can be there
+        // before Api::Connect returns, and then the signal is said inside it.
+        if (connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
             return fail("the Connected signal of the Api");
         }
         if (!QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },

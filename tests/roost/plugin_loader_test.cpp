@@ -284,7 +284,9 @@ private:
             return true;
         }
         Api_->Connect(Daemon_->SocketPath());
-        if (!connected.wait(TIMEOUT_MS)) {
+        // Connected may come before the wait: the answer of hello can be there
+        // before Api::Connect returns, and then the signal is said inside it.
+        if (connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
             return fail("the Connected signal of the Api");
         }
         *seen << QStringLiteral("Connected at %1 ms").arg(elapsed.elapsed());
