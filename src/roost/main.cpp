@@ -25,6 +25,9 @@ namespace {
 
 // Long enough for a cold start of the software renderer on a loaded CI runner.
 constexpr std::chrono::seconds SMOKE_TIMEOUT{10};
+// Longer: roostd answers, the plugins load and the sessions are listed first.
+constexpr std::chrono::seconds SMOKE_SESSIONS_TIMEOUT{20};
+constexpr std::chrono::milliseconds SMOKE_SESSIONS_POLL{50};
 
 // --smoke: exit with 0 once the window has shown its first frame, with 1 if it
 // has not within SMOKE_TIMEOUT. Proves that Qt, the QML module and the scene
@@ -48,6 +51,61 @@ void ExitAfterFirstFrame(QQuickWindow* window, roost::SingleSession* session) {
     QTimer::singleShot(SMOKE_TIMEOUT, qApp, [] {
         qCritical("roost --smoke: no frame within %lld s",
                   static_cast<long long>(SMOKE_TIMEOUT.count()));
+        QCoreApplication::exit(1);
+    });
+}
+
+// --smoke-sessions: exit with 0 once the shell is ready (connected, both
+// panels created without a problem, sessions loaded and not empty) and a frame
+// was swapped after that; with 1 and the reason as soon as the shell cannot
+// become ready (a problem of the loader, such as a QML import a panel lacks),
+// or with the reason of the last check if it is not ready within
+// SMOKE_SESSIONS_TIMEOUT. It opens no session and changes nothing beyond what
+// the window writes when it shows the list.
+void ExitWhenSessionsShown(QQuickWindow* window, const roost::Shell* shell) {
+    struct State {
+        bool Ready = false;
+        // Frames swapped so far, and the number that ends the run once Ready.
+        int Frames = 0;
+        int FramesNeeded = 0;
+        QString Reason;
+    };
+    auto state = std::make_shared<State>();
+    auto* poll = new QTimer(qApp);
+    poll->setInterval(SMOKE_SESSIONS_POLL);
+    QObject::connect(poll, &QTimer::timeout, qApp, [state, window, shell] {
+        if (state->Ready) {
+            return;
+        }
+        const roost::Shell::Readiness readiness = shell->CheckReadiness();
+        state->Reason = readiness.Reason;
+        if (readiness.Failed) {
+            qCritical("roost --smoke-sessions: %s", qPrintable(state->Reason));
+            QCoreApplication::exit(1);
+        } else if (readiness.Ready) {
+            state->Ready = true;
+            // A frame after the shell is ready, even if nothing else changes.
+            state->FramesNeeded = state->Frames + 1;
+            state->Reason =
+                QStringLiteral("no frame after the shell was ready");
+            window->update();
+        }
+    });
+    poll->start();
+    // frameSwapped comes from the render thread; queued, so exit runs on ours.
+    QObject::connect(
+        window, &QQuickWindow::frameSwapped, qApp,
+        [state] {
+            ++state->Frames;
+            if (state->Ready && state->Frames >= state->FramesNeeded) {
+                QCoreApplication::exit(0);
+            }
+        },
+        Qt::QueuedConnection);
+    QTimer::singleShot(SMOKE_SESSIONS_TIMEOUT, qApp, [state] {
+        qCritical("roost --smoke-sessions: not ready within %lld s: %s",
+                  static_cast<long long>(SMOKE_SESSIONS_TIMEOUT.count()),
+                  qPrintable(state->Reason));
         QCoreApplication::exit(1);
     });
 }
@@ -101,6 +159,13 @@ int main(int argc, char* argv[]) {
         QStringLiteral("smoke"),
         QStringLiteral("Exit after the first frame is shown (CI check)."));
     parser.addOption(smoke);
+    const QCommandLineOption smokeSessions(
+        QStringLiteral("smoke-sessions"),
+        QStringLiteral("Exit 0 once connected to roostd, both panels are "
+                       "created without a problem, the sessions are listed "
+                       "and a frame is shown; 1 with the reason on a timeout "
+                       "(check of the packages)."));
+    parser.addOption(smokeSessions);
     const QCommandLineOption sessionOption(
         QStringLiteral("session"),
         QStringLiteral("Developer mode: show this one session in the whole "
@@ -120,6 +185,14 @@ int main(int argc, char* argv[]) {
     parser.process(app);
 
     const bool sessionMode = parser.isSet(sessionOption);
+    if (parser.isSet(smoke) && parser.isSet(smokeSessions)) {
+        qCritical("roost: --smoke does not go with --smoke-sessions");
+        return 1;
+    }
+    if (sessionMode && parser.isSet(smokeSessions)) {
+        qCritical("roost: --smoke-sessions does not go with --session");
+        return 1;
+    }
     // Declared before the engine, so that it outlives the singleton Roost,
     // which the engine owns. Only the window of the shell has one: --session
     // mode has no use of its IO thread.
@@ -192,6 +265,17 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         ExitAfterFirstFrame(window, session.get());
+    }
+
+    if (parser.isSet(smokeSessions)) {
+        auto* window =
+            qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        if (window == nullptr) {
+            qCritical(
+                "roost --smoke-sessions: the root object is not a window");
+            return 1;
+        }
+        ExitWhenSessionsShown(window, &*shell);
     }
 
     return QGuiApplication::exec();

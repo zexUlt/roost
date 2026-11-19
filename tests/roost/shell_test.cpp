@@ -596,6 +596,30 @@ private slots:
             QCOMPARE(ErrorOf(type), QString("roostd refused the connection"));
         }
     }
+
+    // A window without the slots of the two panel types cannot become ready by
+    // waiting: CheckReadiness fails and names both.
+    void AWindowWithoutPanelSlotsFailsTheReadinessCheck() {
+        QVERIFY(Daemon_->IsValid());
+        Api_ = std::make_unique<api::Api>();
+        Engine_ = std::make_unique<QQmlApplicationEngine>();
+        Singleton_ =
+            Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
+        QVERIFY(Singleton_ != nullptr);
+        Singleton_->setApi(*Api_);
+        Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
+                                                 *Singleton_);
+        QObject bareRoot;
+        Shell_ = std::make_unique<Shell>(bareRoot, *Loader_, *Api_,
+                                         Daemon_->SocketPath());
+        const Shell::Readiness readiness = Shell_->CheckReadiness();
+        QVERIFY(readiness.Failed);
+        QVERIFY2(readiness.Reason.contains("the window has no panel "
+                                           "sessions.list") &&
+                     readiness.Reason.contains("the window has no panel "
+                                               "terminal.view"),
+                 qPrintable(readiness.Reason));
+    }
 };
 
 QTEST_MAIN(ShellTest)
