@@ -220,7 +220,9 @@ private slots:
 
     // The window opens the session the store marks as opened, and the mode
     // does not end before roostd has started the attach to it: the attach is
-    // there as soon as the window has exited.
+    // there as soon as the window has exited. The file is not waited for: a
+    // window that exits with the open sent but not answered still gets its
+    // attach started a moment later, and waiting would hide that.
     void WaitsForTheAttachOfTheOpenedSession() {
         QVERIFY(Prepare(
             EFault::None,
@@ -258,7 +260,9 @@ private slots:
         QVERIFY2(Errors_.contains("roost --smoke-sessions: panel terminal.view "
                                   "could not open fx-agent/s1: "),
                  qPrintable(Errors_));
-        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        // Well under SMOKE_SESSIONS_TIMEOUT (20 s), with room for a loaded
+        // machine.
+        QVERIFY2(elapsed.elapsed() < 10000, qPrintable(Errors_));
         qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
     }
 

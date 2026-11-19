@@ -57,7 +57,8 @@ public:
     // connected, both panels created, no problem of the loader or of a link,
     // sessions.list answered with at least one session, and, if the window
     // opens a session at start, that session is open in the terminal (roostd
-    // answered session.open, so its attach process is started) or has ended.
+    // answered session.open, so its attach process is started, or was already
+    // running for a warm session) or has ended.
     // The window opens one when the list panel selects a session once it has
     // restored its view; the list panel tells that by its optional property
     // `restored` (true once it has decided; a panel without it is not waited

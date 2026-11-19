@@ -221,7 +221,8 @@ Shell::Readiness Shell::CheckReadiness() const {
     // The window opens a session at start, the stored one that is still
     // listed. Whether it does is known once the list panel has restored it;
     // then the terminal has to be open (roostd answered session.open, so the
-    // attach process is started) or, if the program already left, ended.
+    // attach process is started, or was already for a warm session) or, if
+    // the program already left, ended.
     if (ListIsRestoring(PanelOf(LIST_PANEL))) {
         waiting.append(
             QStringLiteral("panel %1 has not restored the opened session")
