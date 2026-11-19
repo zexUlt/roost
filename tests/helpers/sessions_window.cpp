@@ -1,4 +1,5 @@
 #include "helpers/sessions_window.hpp"
+#include "helpers/process_lifeline.hpp"
 
 #include <QDeadlineTimer>
 #include <QDir>
@@ -177,7 +178,10 @@ bool SessionsWindow::StartDaemon() {
         "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
     Daemon_ = std::make_unique<QProcess>();
     Daemon_->setProcessEnvironment(environment);
-    Daemon_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    RelayStandardError(*Daemon_);
+    if (!Lifeline_.Attach(*Daemon_)) {
+        return false;
+    }
     Daemon_->start(ROOSTD_PATH, {});
     return Daemon_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath());
 }

@@ -13,6 +13,12 @@ set(ROOST_TEST_ENVIRONMENT
 # another gets RESOURCE_LOCK with a comment on what it shares; RUN_SERIAL is for
 # timing checks only (frame_budget_test).
 
+# Ties a child of a test to the test process; apart, so that the tests that start
+# roostd without a window need no more than Qt Core.
+add_library(roost_test_lifeline STATIC helpers/process_lifeline.cpp)
+target_include_directories(roost_test_lifeline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(roost_test_lifeline PUBLIC roost::compile_options Qt6::Core)
+
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
     helpers/detached_daemons.cpp
@@ -23,7 +29,8 @@ add_library(roost_test_helpers STATIC
 )
 target_include_directories(roost_test_helpers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(roost_test_helpers PUBLIC
-    roost::compile_options roost_core Qt6::Core Qt6::Gui Qt6::Test)
+    roost::compile_options roost_core roost_test_lifeline Qt6::Core Qt6::Gui
+    Qt6::Test)
 
 # Helpers for the tests of terminal channels; apart, so the others do not link
 # roost_terminal.
@@ -192,7 +199,8 @@ roost_add_qt_test(claude_run_test plugins/claude_run_test.cpp claude_adapter_lib
 
 # The commands of the Claude plugin: the adapter binary behind a fake `claude`,
 # and the manifest of the built plugin through the real roostd.
-roost_add_qt_test(claude_commands_test plugins/claude_commands_test.cpp roost_api)
+roost_add_qt_test(claude_commands_test plugins/claude_commands_test.cpp roost_api
+    roost_test_lifeline)
 target_compile_definitions(claude_commands_test PRIVATE
     CLAUDE_ADAPTER_PATH="$<TARGET_FILE:claude-adapter>"
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
@@ -200,7 +208,8 @@ target_compile_definitions(claude_commands_test PRIVATE
 add_dependencies(claude_commands_test roostd claude-adapter)
 
 # The real roostd with the real Claude plugin, behind a fake `claude`.
-roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp roost_api)
+roost_add_qt_test(claude_e2e_test plugins/claude_e2e_test.cpp roost_api
+    roost_test_lifeline)
 target_compile_definitions(claude_e2e_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
@@ -210,7 +219,8 @@ add_dependencies(claude_e2e_test roostd fake_tui claude-adapter)
 
 # The window's IO thread against the real roostd, the real Claude plugin and a
 # fake `claude`.
-roost_add_qt_test(io_thread_test terminal/io_thread_test.cpp roost_terminal)
+roost_add_qt_test(io_thread_test terminal/io_thread_test.cpp roost_terminal
+    roost_test_lifeline)
 target_compile_definitions(io_thread_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
@@ -241,7 +251,8 @@ add_dependencies(warm_terminals_test roostd fake_tui fixture_backend)
 
 # The developer mode: one TerminalItem wired to a session of the real roostd,
 # and the roost executable started with --session against it.
-roost_add_qt_test(single_session_test roost/single_session_test.cpp roost_app)
+roost_add_qt_test(single_session_test roost/single_session_test.cpp roost_app
+    roost_test_lifeline)
 target_compile_definitions(single_session_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     ROOST_PATH="$<TARGET_FILE:roost>"
@@ -490,7 +501,8 @@ if(ROOST_INSTALL_RPATH_TO_QT)
         set(ROOST_TEST_QT_RUN_PATH "${_qt_lib_dir}")
     endif()
 endif()
-roost_add_qt_test(install_layout_test install/install_layout_test.cpp)
+roost_add_qt_test(install_layout_test install/install_layout_test.cpp
+    roost_test_lifeline)
 target_compile_definitions(install_layout_test PRIVATE
     CMAKE_COMMAND="${CMAKE_COMMAND}"
     BUILD_DIR="${PROJECT_BINARY_DIR}"

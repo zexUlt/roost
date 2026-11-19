@@ -6,6 +6,8 @@
 #include <QString>
 #include <QTemporaryDir>
 
+#include "helpers/process_lifeline.hpp"
+
 #include <memory>
 
 namespace roost::testing {
@@ -56,13 +58,10 @@ public:
     bool IsRunning() const;
 
 private:
-    void CloseLifelineOfWatcher();
-
     QTemporaryDir Dir_;
     std::unique_ptr<QProcess> Process_;
-    // The write end of the pipe the watcher of the running roostd reads: it
-    // stays open while this process lives, and closes with it.
-    int WatcherLifeline_ = -1;
+    // Its watcher stops the running roostd if this process dies.
+    ProcessLifeline Lifeline_;
 };
 
 }  // namespace roost::testing

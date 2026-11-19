@@ -36,8 +36,11 @@
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
 #include "core/vt_terminal.hpp"
+#include "helpers/process_lifeline.hpp"
 
 using namespace roost;
+using roost::testing::ProcessLifeline;
+using roost::testing::RelayStandardError;
 
 namespace {
 
@@ -270,7 +273,10 @@ private:
         }
         Daemon_ = std::make_unique<QProcess>();
         Daemon_->setProcessEnvironment(environment);
-        Daemon_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        RelayStandardError(*Daemon_);
+        if (!Lifeline_.Attach(*Daemon_)) {
+            return false;
+        }
         Daemon_->start(ROOSTD_PATH, {});
         return Daemon_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath()) &&
                Window_->Connect(SocketPath());
@@ -386,6 +392,7 @@ private:
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
+    ProcessLifeline Lifeline_;
     std::unique_ptr<QProcess> Daemon_;
     // An adapter the test has stopped; it must not outlive the test.
     qint64 StoppedAdapter_ = 0;
