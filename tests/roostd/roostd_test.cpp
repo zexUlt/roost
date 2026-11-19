@@ -15,6 +15,7 @@
 
 #include <cerrno>
 #include <memory>
+#include <optional>
 
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
@@ -99,9 +100,54 @@ private:
         return process;
     }
 
-    // A plugin "fixture" whose backend is the fixture backend.
-    bool AddFixturePlugin() const {
-        const QDir plugin(Dir_->filePath("plugins/fixture"));
+    // roostd as the package has it: a copy in <dir>/bin, so that
+    // <dir>/roost-plugins is its bundled directory, with no
+    // ROOST_PLUGINS_PATH. The state is in the temporary directory, as in
+    // Launch().
+    std::unique_ptr<QProcess> LaunchCopy() const {
+        const QString copy = Dir_->filePath("bin/roostd");
+        if (!QDir(Dir_->path()).mkpath("bin") ||
+            !QFile::copy(ROOSTD_PATH, copy)) {
+            return nullptr;
+        }
+        auto process = std::make_unique<QProcess>();
+        QProcessEnvironment environment =
+            QProcessEnvironment::systemEnvironment();
+        environment.insert("ROOST_SOCKET", SocketPath());
+        environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
+        environment.remove("ROOST_PLUGINS_PATH");
+        process->setProcessEnvironment(environment);
+        process->start(copy, {});
+        return process;
+    }
+
+    // The answer of plugins.list of the roostd at the socket.
+    std::optional<QJsonObject> ListPlugins() const {
+        RpcClient client;
+        QFuture<rpc::Result> hello = client.Connect(SocketPath());
+        if (!QTest::qWaitFor([&] { return hello.isFinished(); }, TIMEOUT_MS) ||
+            !hello.result()) {
+            return std::nullopt;
+        }
+        const rpc::Result answer = Call(client, "plugins.list", QJsonObject());
+        if (!answer) {
+            return std::nullopt;
+        }
+        return answer->toObject();
+    }
+
+    static QStringList PluginIds(const QJsonObject& list) {
+        QStringList ids;
+        for (const QJsonValue plugin : list.value("plugins").toArray()) {
+            ids.append(plugin.toObject().value("id").toString());
+        }
+        return ids;
+    }
+
+    // A plugin "fixture" whose backend is the fixture backend, in
+    // <Dir_>/<directory>.
+    bool AddFixturePlugin(const QString& directory = "plugins") const {
+        const QDir plugin(Dir_->filePath(directory + "/fixture"));
         QFile manifest(plugin.filePath("plugin.json"));
         if (!plugin.mkpath(".") ||
             !QFile::link(FIXTURE_BACKEND_PATH, plugin.filePath("backend")) ||
@@ -142,6 +188,46 @@ private slots:
         QVERIFY(hello.result());
         QCOMPARE(hello.result()->toObject().value("roostd").toString(),
                  QString::fromStdString(VersionString()));
+
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    // The M5 criterion in small: the built-in plugins are found next to the
+    // binary, with nothing in the environment.
+    void FindsTheBundledPluginsWithoutTheVariable() {
+        QVERIFY(AddFixturePlugin("roost-plugins"));
+        const auto daemon = LaunchCopy();
+        QVERIFY(daemon);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        const auto list = ListPlugins();
+        QVERIFY(list);
+        QCOMPARE(PluginIds(*list), QStringList{"fixture"});
+        QCOMPARE(list->value("problems").toArray(), QJsonArray());
+
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    // The bundled directory is searched before <config>/plugins, so a plugin
+    // of the user with a built-in id is the one that is not loaded.
+    void BuiltInPluginWinsOverOneOfTheUserWithTheSameId() {
+        QVERIFY(AddFixturePlugin("roost-plugins"));
+        QVERIFY(AddFixturePlugin("config/plugins"));
+        const auto daemon = LaunchCopy();
+        QVERIFY(daemon);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        const auto list = ListPlugins();
+        QVERIFY(list);
+        QCOMPARE(PluginIds(*list), QStringList{"fixture"});
+        const QJsonArray problems = list->value("problems").toArray();
+        QCOMPARE(problems.size(), 1);
+        QVERIFY2(problems.at(0).toString().contains(
+                     "in " + Dir_->filePath("config/plugins/fixture") +
+                     " is not loaded"),
+                 qPrintable(problems.at(0).toString()));
 
         daemon->terminate();
         QVERIFY(daemon->waitForFinished(TIMEOUT_MS));

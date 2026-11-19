@@ -365,13 +365,34 @@ std::expected<PluginManifest, QString> LoadManifest(const QString& directory) {
     return manifest;
 }
 
-QStringList PluginSearchPath(const QString& configDirectory) {
+QString BundledPluginsDirectory(const QString& applicationDirectory) {
+    for (const QString& relative :
+         {QStringLiteral("/../Resources/roost-plugins"),
+          QStringLiteral("/../lib/roost/plugins"),
+          QStringLiteral("/../roost-plugins")}) {
+        const QString candidate =
+            QDir::cleanPath(applicationDirectory + relative);
+        if (QFileInfo(candidate).isDir()) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+QStringList PluginSearchPath(const QString& configDirectory,
+                             const QString& bundledDirectory) {
     QStringList path;
-    for (const QString& entry :
-         qEnvironmentVariable("ROOST_PLUGINS_PATH")
-             .split(QDir::listSeparator(), Qt::SkipEmptyParts)) {
-        if (QDir::isAbsolutePath(entry)) {
-            path.append(QDir::cleanPath(entry));
+    const QString variable = qEnvironmentVariable("ROOST_PLUGINS_PATH");
+    if (variable.isEmpty()) {
+        if (!bundledDirectory.isEmpty()) {
+            path.append(QDir::cleanPath(bundledDirectory));
+        }
+    } else {
+        for (const QString& entry :
+             variable.split(QDir::listSeparator(), Qt::SkipEmptyParts)) {
+            if (QDir::isAbsolutePath(entry)) {
+                path.append(QDir::cleanPath(entry));
+            }
         }
     }
     path.append(QDir::cleanPath(configDirectory + QStringLiteral("/plugins")));
