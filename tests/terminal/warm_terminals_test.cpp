@@ -800,14 +800,21 @@ private slots:
         QVERIFY(RoundTrip());
         QVERIFY(RestartWindow());
         const int opened = Proxy_->OpenRequests();
+        // The open stays in flight until released, however slow or fast the
+        // machine: Opening is not a state to catch on the way.
+        Proxy_->HoldAnswers(QStringLiteral("session.open"));
         Pool_->Prefetch();
         QTRY_COMPARE_WITH_TIMEOUT(Pool_->Status(Fast(1)), EPaneStatus::Opening,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Proxy_->OpenRequests(), opened + 1,
                                   TIMEOUT_MS);
         Pane_->SetGrid(100, 30);
 
         Pane_->Show(Fast(1));
 
         QCOMPARE(Pane_->Status(), EPaneStatus::Opening);
+        QCOMPARE(Pool_->Status(Fast(1)), EPaneStatus::Opening);
+        Proxy_->ReleaseAnswers();
         QTRY_COMPARE_WITH_TIMEOUT(Pane_->Status(), EPaneStatus::Open,
                                   TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(

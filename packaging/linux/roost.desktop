@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=roost
+Comment=Background coding-agent sessions in one window
+Exec=roost
+Icon=roost
+Terminal=false
+StartupWMClass=roost
+Categories=Development;Utility;

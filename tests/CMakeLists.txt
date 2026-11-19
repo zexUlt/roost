@@ -462,6 +462,31 @@ target_compile_definitions(sessions_list_test PRIVATE
     SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
 add_dependencies(sessions_list_test sessions_qml)
 
+# The install layout: `cmake --install` of this build into a temporary prefix,
+# and the installed roostd against a fake `claude`. The test installs by itself,
+# so the targets it installs are built first.
+# The directory of Qt that the installed binaries must have in their run path
+# (ROOST_INSTALL_RPATH_TO_QT): where the Qt of the build is, unless that is a
+# directory the linker searches anyway, which CMake leaves out.
+set(ROOST_TEST_QT_RUN_PATH "")
+if(ROOST_INSTALL_RPATH_TO_QT)
+    get_filename_component(_qt_lib_dir "${Qt6Core_DIR}/../.." ABSOLUTE)
+    if(NOT _qt_lib_dir IN_LIST CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES)
+        set(ROOST_TEST_QT_RUN_PATH "${_qt_lib_dir}")
+    endif()
+endif()
+roost_add_qt_test(install_layout_test install/install_layout_test.cpp)
+target_compile_definitions(install_layout_test PRIVATE
+    CMAKE_COMMAND="${CMAKE_COMMAND}"
+    BUILD_DIR="${PROJECT_BINARY_DIR}"
+    SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    PROJECT_VERSION_STRING="${PROJECT_VERSION}"
+    QT_RUN_PATH="${ROOST_TEST_QT_RUN_PATH}"
+    CLAUDE_ADAPTER_FILE="$<TARGET_FILE_NAME:claude-adapter>"
+    SESSIONS_MODULE_FILE="$<TARGET_FILE_NAME:sessions_qml>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_dependencies(install_layout_test roost roostd claude-adapter sessions_qml)
+
 # `roost --smoke-sessions` as a process: the real roostd with the built-in
 # plugins behind a fake `claude`; a sessions plugin without its QML module and
 # a claude with no sessions must fail it.

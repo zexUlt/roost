@@ -38,6 +38,11 @@ target_link_libraries(roost PRIVATE roost_core roost_app
     roost_shell roost_shellplugin roost_qml_apiplugin
     Qt6::Gui Qt6::Qml Qt6::Quick)
 
+# Not a bundle in the build tree: build/<preset>/bin/roost stays a plain
+# executable. cmake/Install.cmake assembles roost.app at install time.
 set_target_properties(roost PROPERTIES
     MACOSX_BUNDLE OFF
+    INSTALL_RPATH "${ROOST_INSTALL_RPATH}"
+    INSTALL_RPATH_USE_LINK_PATH ${ROOST_INSTALL_RPATH_TO_QT}
 )
+install(TARGETS roost RUNTIME DESTINATION ${ROOST_INSTALL_BINDIR} COMPONENT roost)

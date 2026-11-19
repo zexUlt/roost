@@ -47,3 +47,9 @@ FetchContent_Declare(ghostty
     SYSTEM
 )
 FetchContent_MakeAvailable(ghostty)
+
+# libghostty-vt is linked statically into roost and roostd: its own install
+# rules (a shared copy, headers, a CMake package) are not part of roost's
+# install (cmake/Install.cmake). EXCLUDE_FROM_ALL drops them; the library is
+# still built for what links it.
+set_property(DIRECTORY ${ghostty_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
