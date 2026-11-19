@@ -11,6 +11,8 @@
 #include <QProcessEnvironment>
 #include <QTest>
 
+#include <utility>
+
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -139,18 +141,17 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
                                        {"id", "s1"}, {"state", "idle"}}}}}}}}};
     QFile manifestFile(directory.filePath("plugin.json"));
     QFile answersFile(directory.filePath("agent.json"));
-    const bool written =
-        manifestFile.open(QIODevice::WriteOnly) &&
-        manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
-        answersFile.open(QIODevice::WriteOnly) &&
-        answersFile.write(QJsonDocument(answers).toJson()) > 0;
-    if (!written) {
-        qWarning().noquote()
-            << "AddFixturePlugin: cannot write the manifest or the answers in"
-            << directory.path() << ":" << manifestFile.errorString() << ";"
-            << answersFile.errorString();
+    for (auto [file, json] : {std::pair{&manifestFile, &manifest},
+                              std::pair{&answersFile, &answers}}) {
+        if (!file->open(QIODevice::WriteOnly) ||
+            file->write(QJsonDocument(*json).toJson()) <= 0) {
+            qWarning().noquote()
+                << "AddFixturePlugin: cannot write" << file->fileName() << ":"
+                << file->errorString();
+            return false;
+        }
     }
-    return written;
+    return true;
 }
 
 bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,

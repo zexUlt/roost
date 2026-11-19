@@ -238,7 +238,9 @@ private:
             return fail("the fixture plugin");
         }
         if (!Daemon_->Start(ROOSTD_PATH)) {
-            return fail("the start of roostd (process or hello)");
+            return fail(
+                "the start of roostd (Start returned false; its warnings "
+                "above, if any)");
         }
         Api_ = std::make_unique<api::Api>();
         connect(Api_.get(), &api::Api::Disconnected, this,
