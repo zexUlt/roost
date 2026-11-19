@@ -10,16 +10,25 @@ name: Package
 # the workflow from that branch, but only a workflow that is on trunk can be
 # dispatched, hence this file before its jobs.
 #
-# Runs on `v*` tags, on dispatch and on pushes to trunk that change code, not
-# on pull requests: a macOS runner per pull request is too much, and a change
-# to packaging proves itself by the dispatch above. Documentation is the set
-# tools/ci_changes.sh skips. A path filter rather than that script: no job
-# here is a required check, and GitHub does not apply path filters to tags.
+# Runs on `v*` tags, on dispatch and on pushes to trunk that change the
+# packaging, not on pull requests: a macOS runner per pull request is too
+# much, and a change to packaging proves itself by the dispatch above. The
+# path list is the packaging itself; the build and the tests of the code run
+# in ci.yml on every pull request. A file that starts to shape a package
+# joins the list. GitHub does not apply path filters to tags.
 on:
   push:
     tags: ["v*"]
     branches: [trunk]
-    paths-ignore: ["docs/**", ".claude/**", "**.md"]
+    paths:
+      - .github/workflows/package.yml
+      - packaging/**
+      - cmake/Install.cmake
+      - tools/package_*.sh
+      - tools/check_bundle.sh
+      - tools/check_appimage.sh
+      - licenses/**
+      - THIRD_PARTY_LICENSES
   workflow_dispatch:
 
 permissions:
