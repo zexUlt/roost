@@ -1,0 +1,58 @@
+# Libraries the AppImage does not carry: every Linux desktop has them
+# (tools/package_linux.sh passes each to `linuxdeploy --exclude-library` and
+# deletes what the Qt plugin of linuxdeploy copied in spite of it;
+# tools/check_appimage.sh fails if one is inside the image). A glob per line,
+# matched against the file name. Decided by whether Ubuntu 24.04 Desktop and
+# Fedora Workstation install the package by default: GLib and its
+# dependencies, D-Bus and systemd (the session), the compression libraries,
+# libpng and Brotli (FreeType, fontconfig), the Kerberos stack (libcups,
+# libcurl), libxkbcommon (every compositor), libX11, libxcb and the extension
+# libraries of libxcb that Mesa's GLX needs.
+#
+# What a stock desktop may lack stays in the image: ICU (the soname of the
+# Qt build), the xcb-util family (cursor, icccm, image, keysyms, render-util,
+# util), libxcb-shape, libxcb-xkb and libxkbcommon-x11.
+
+# GLib
+libglib-2.0.so*
+libgthread-2.0.so*
+libpcre2-8.so*
+# D-Bus, systemd and what they link
+libdbus-1.so*
+libsystemd.so*
+libgcrypt.so*
+libgpg-error.so*
+libcap.so*
+# Compression
+liblzma.so*
+liblz4.so*
+libzstd.so*
+libbz2.so*
+libbrotlicommon.so*
+libbrotlidec.so*
+libexpat.so*
+# Images
+libpng16.so*
+# Kerberos (Qt Network links GSSAPI)
+libkrb5.so*
+libkrb5support.so*
+libk5crypto.so*
+libgssapi_krb5.so*
+libcom_err.so*
+libkeyutils.so*
+# BSD helpers of libxcb's dependencies
+libbsd.so*
+libmd.so*
+# X11 and the libxcb of the core protocol and of Mesa's GLX
+libX11.so*
+libX11-xcb.so*
+libXau.so*
+libXdmcp.so*
+libxcb.so*
+libxcb-glx.so*
+libxcb-randr.so*
+libxcb-render.so*
+libxcb-shm.so*
+libxcb-sync.so*
+libxcb-xfixes.so*
+libxkbcommon.so*

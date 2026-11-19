@@ -2,7 +2,8 @@
 # What the AppImage of tools/package_linux.sh has to be (docs/design/11-build.md):
 #   - every ELF in it finds all its libraries (ldd, with no LD_LIBRARY_PATH),
 #     so it does not lean on the Qt of the machine that built it;
-#   - every shared library in it is in the licence inventory below, and each
+#   - no library of every desktop (packaging/linux/system-libraries.txt) is in
+#     it, and every shared library in it is in the licence inventory below, and each
 #     component of the inventory that is in the AppImage has its heading in the
 #     THIRD_PARTY_LICENSES the AppImage carries: a library nobody has put
 #     through the licence review fails here;
@@ -29,6 +30,18 @@ fail() {
 }
 ok() { echo "ok:   $*"; }
 
+# system_library <file name>: succeeds if the file is a library of every
+# desktop, which the AppImage does not carry (the globs of
+# packaging/linux/system-libraries.txt).
+system_library() {
+    local pattern
+    while IFS= read -r pattern; do
+        # shellcheck disable=SC2053  # the pattern is a glob on purpose
+        [[ $1 == $pattern ]] && return 0
+    done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
+    return 1
+}
+
 # classify <path relative to the AppDir>: the component of the inventory a
 # shared library belongs to, as its heading in THIRD_PARTY_LICENSES; "roost"
 # for our own; nothing for a library that is not in the inventory. A component
@@ -40,26 +53,12 @@ classify() {
         usr/plugins/* | usr/qml/*) echo "Qt 6" ;;
         usr/lib/libQt6*) echo "Qt 6" ;;
         usr/lib/libicu*) echo "ICU" ;;
-        # What linuxdeploy copies from the build machine (Ubuntu 24.04).
-        usr/lib/libglib-2.0.so* | usr/lib/libgthread-2.0.so*) echo "GLib" ;;
-        usr/lib/libpcre2-8.so*) echo "PCRE2" ;;
-        usr/lib/libdbus-1.so*) echo "D-Bus" ;;
-        usr/lib/libsystemd.so*) echo "systemd" ;;
-        usr/lib/libgcrypt.so*) echo "libgcrypt" ;;
-        usr/lib/libcap.so*) echo "libcap" ;;
-        usr/lib/libkrb5.so* | usr/lib/libkrb5support.so* | usr/lib/libk5crypto.so* | \
-            usr/lib/libgssapi_krb5.so*) echo "MIT Kerberos" ;;
-        usr/lib/libkeyutils.so*) echo "keyutils" ;;
-        usr/lib/liblzma.so*) echo "XZ Utils" ;;
-        usr/lib/liblz4.so*) echo "LZ4" ;;
-        usr/lib/libzstd.so*) echo "Zstandard" ;;
-        usr/lib/libbz2.so*) echo "bzip2" ;;
-        usr/lib/libpng16.so*) echo "libpng" ;;
-        usr/lib/libbrotli*.so*) echo "Brotli" ;;
-        usr/lib/libmd.so*) echo "libmd" ;;
-        usr/lib/libbsd.so*) echo "libbsd" ;;
-        usr/lib/libXau.so* | usr/lib/libXdmcp.so* | usr/lib/libxcb-*.so*) echo "X11 and XCB libraries" ;;
-        usr/lib/libxkbcommon*.so*) echo "libxkbcommon" ;;
+        # What linuxdeploy copies from the build machine (Ubuntu 24.04) and a
+        # stock desktop may lack: the xcb-util family, libxcb-shape,
+        # libxcb-xkb and libxkbcommon-x11. The libraries of every desktop are not carried
+        # (packaging/linux/system-libraries.txt): see `system_library`.
+        usr/lib/libxcb-*.so*) echo "X11 and XCB libraries" ;;
+        usr/lib/libxkbcommon-x11.so*) echo "libxkbcommon" ;;
     esac
 }
 
@@ -105,7 +104,9 @@ while IFS= read -r -d '' file; do
         *.so | *.so.*)
             lib_count=$((lib_count + 1))
             component=$(classify "$rel")
-            if [ -z "$component" ]; then
+            if system_library "$(basename "$file")"; then
+                fail "$rel is a library of every desktop (packaging/linux/system-libraries.txt): the AppImage does not carry it"
+            elif [ -z "$component" ]; then
                 fail "$rel is not in the licence inventory of tools/check_appimage.sh"
             else
                 echo "$component" >>"$tmp/components"
@@ -135,12 +136,16 @@ cmp -s "$root/THIRD_PARTY_LICENSES" "$licenses/THIRD_PARTY_LICENSES" ||
 copyrights=$(find "$appdir/usr/share/doc" -name copyright 2>/dev/null | wc -l)
 if [ "$copyrights" -gt 0 ]; then
     ok "$copyrights copyright files of the bundled system libraries in usr/share/doc"
+    # What the licence names of THIRD_PARTY_LICENSES are checked against.
+    for file in "$appdir"/usr/share/doc/*/copyright; do
+        echo "      $(basename "$(dirname "$file")"): $(grep -h '^License:' "$file" | sed 's/^License: *//' | sort -u | tr '\n' ';')"
+    done
 else
     fail "usr/share/doc has no copyright file of the bundled system libraries"
 fi
 
 # --- QML -------------------------------------------------------------------
-for module in QtCore QtQuick/Controls QtQuick/Layouts; do
+for module in QtCore QtQuick/Controls QtQuick/Controls/Basic QtQuick/Layouts; do
     [ -f "$appdir/usr/qml/$module/qmldir" ] ||
         fail "usr/qml/$module/qmldir is missing"
 done

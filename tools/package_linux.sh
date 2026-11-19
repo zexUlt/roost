@@ -117,6 +117,13 @@ for dir in "$root"/plugins/*/qml; do
     qml_sources=$qml_sources:$dir
 done
 
+# The libraries of every desktop (packaging/linux/system-libraries.txt) are
+# not carried: --exclude-library for each of them.
+excludes=()
+while IFS= read -r pattern; do
+    excludes+=(--exclude-library "$pattern")
+done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
+
 # NO_STRIP: the Qt libraries are stripped, and the strip of the runner chokes
 # on what newer linkers write. The libraries of the Qt of the build are in
 # LD_LIBRARY_PATH for the ldd inside linuxdeploy: with no Qt run path nothing
@@ -137,7 +144,8 @@ done
         --library "$appdir/usr/lib/roost/plugins/sessions/qml/RoostSessions/libsessions_qml.so" \
         --desktop-file "$appdir/usr/share/applications/roost.desktop" \
         --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/roost.png" \
-        --custom-apprun "$root/packaging/linux/AppRun"
+        --custom-apprun "$root/packaging/linux/AppRun" \
+        "${excludes[@]}"
 ) || {
     echo "package_linux.sh: linuxdeploy failed; the AppDir:" >&2
     (cd "$appdir" && find . | sort) >&2
@@ -147,6 +155,58 @@ done
 # --library puts a copy of the module into usr/lib for linuxdeploy to follow
 # its dependencies; the window loads the one in lib/roost/plugins/sessions.
 rm -f "$appdir/usr/lib/libsessions_qml.so"
+
+# linuxdeploy-plugin-qt copies the libraries of the xcb platform plugin with
+# no regard for --exclude-library: what is on the list goes out here, and is
+# named, to see that the list is needed.
+while IFS= read -r pattern; do
+    while IFS= read -r -d '' lib; do
+        echo "package_linux.sh: removing ${lib#"$appdir"/}, a library of every desktop" >&2
+        rm -f "$lib"
+    done < <(find "$appdir/usr/lib" -maxdepth 1 -name "$pattern" -print0)
+done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
+
+# The QML modules and Qt plugins that roost does not use. The QML scan of
+# linuxdeploy-plugin-qt copies the whole of every module it meets, with all
+# styles of Qt Quick Controls and what they import, and there is no knob to
+# stop it. The window runs the Basic style (the default of Qt Quick Controls,
+# and the only one it can ask for: no other is imported), with Layouts and
+# Templates; Dialogs, Effects, Particles, Shapes, VectorImage, LocalStorage,
+# XmlListModel and DesignSupport are imported by no QML of roost or of Basic.
+# The image formats and the TLS backends: roost loads no image and makes no
+# TLS connection. The Qt libraries that only these needed go below.
+unused=(
+    usr/qml/QtQuick/Controls/{Fusion,Imagine,Material,Universal,FluentWinUI3,Native,designer,iOS,macOS}
+    usr/qml/QtQuick/{Dialogs,Effects,Particles,Shapes,VectorImage,LocalStorage,tooling}
+    usr/qml/QtQml/{DesignSupport,XmlListModel}
+    usr/plugins/{imageformats,tls}
+)
+for path in "${unused[@]}"; do
+    rm -rf "${appdir:?}/$path"
+done
+
+# A Qt library that no ELF left in the AppDir lists as needed is dead weight
+# now (the style, Dialogs, VectorImage, Svg, Sql libraries): off, until
+# nothing is left to go. Nothing loads a Qt library by name.
+needed() {
+    find "$appdir" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 |
+        xargs -0 -r readelf -d 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u
+}
+while :; do
+    needed >"$out/needed.txt"
+    removed=0
+    for lib in "$appdir"/usr/lib/libQt6*.so*; do
+        name=$(basename "$lib")
+        soname=$(readelf -d "$lib" 2>/dev/null | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')
+        if ! grep -qxF "${soname:-$name}" "$out/needed.txt"; then
+            echo "package_linux.sh: removing $name, nothing needs it" >&2
+            rm -f "$lib"
+            removed=1
+        fi
+    done
+    [ "$removed" = 1 ] || break
+done
+rm -f "$out/needed.txt"
 
 image=$out/roost-$arch.AppImage
 rm -f "$image"
