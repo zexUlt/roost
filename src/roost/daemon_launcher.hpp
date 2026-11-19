@@ -29,8 +29,9 @@ namespace roost {
 // died later comes back.
 //
 // A start that fails (the process does not start, or the timeout passes
-// without a connection) leaves a Failure() text until the next start or
-// connection; the window shows it in the banner.
+// without a connection) leaves a Failure() text until roostd answers
+// (Connected or Refused); later starts keep it, the window shows it in the
+// banner.
 class DaemonLauncher : public QObject {
     Q_OBJECT
 

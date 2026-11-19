@@ -152,6 +152,11 @@ private slots:
         QVERIFY(log.open(QIODevice::ReadOnly));
         const QByteArray text = log.readAll();
         QVERIFY2(text.contains("chmod 700"), text.constData());
+        // The retries start roostd again; the banner keeps the reason.
+        const int startsAtEnd = Starts_;
+        QTRY_VERIFY_WITH_TIMEOUT(Starts_ > startsAtEnd && Launcher_->Starting(),
+                                 TIMEOUT_MS);
+        QCOMPARE(BannerText(), "roostd did not start; see " + startLog);
         // Text only: nothing else of the window changes.
         QVERIFY(
             Root()->findChild<QQuickItem*>("connectionBanner")->isVisible());

@@ -94,7 +94,8 @@ void DaemonLauncher::OnNoListener() {
         SetFailure(QStringLiteral("Could not start roostd: %1").arg(error));
         return;
     }
-    SetFailure({});
+    // A failure stays until roostd answers: the retries keep starting it, and
+    // the banner keeps saying why the previous start failed.
     SetStarting(true);
 }
 

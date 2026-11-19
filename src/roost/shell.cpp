@@ -296,11 +296,11 @@ void Shell::SetConnection(const QString& state, const QString& message) {
     QString shown = state;
     QString shownMessage = message;
     if (Launcher_ != nullptr && IsWaiting()) {
-        if (Launcher_->Starting()) {
-            shown = QStringLiteral("starting");
-        } else if (!Launcher_->Failure().isEmpty()) {
+        if (!Launcher_->Failure().isEmpty()) {
             shown = QStringLiteral("startFailed");
             shownMessage = Launcher_->Failure();
+        } else if (Launcher_->Starting()) {
+            shown = QStringLiteral("starting");
         }
     }
     Root_.setProperty("connection", shown);
