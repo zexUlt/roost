@@ -144,6 +144,10 @@ done
     exit 1
 }
 
+# --library puts a copy of the module into usr/lib for linuxdeploy to follow
+# its dependencies; the window loads the one in lib/roost/plugins/sessions.
+rm -f "$appdir/usr/lib/libsessions_qml.so"
+
 image=$out/roost-$arch.AppImage
 rm -f "$image"
 # --no-appstream: there is no AppStream metadata yet.

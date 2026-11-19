@@ -6,6 +6,8 @@
 | Qt Test | LGPLv3 | только тесты |
 | libghostty-vt | MIT | из исходников, статически |
 | Zig | MIT | только сборка |
+| ICU 73 (из Qt сборки) | ICU (MIT-подобная) | только AppImage, динамически, рядом с Qt |
+| Системные библиотеки AppImage: GLib, PCRE2, D-Bus, systemd, libgcrypt, libcap, MIT Kerberos, keyutils, XZ, LZ4, Zstandard, bzip2, libpng, Brotli, libmd, libbsd, X11/XCB, libxkbcommon | LGPL-2.1+ (GLib, systemd, libgcrypt, keyutils), BSD, MIT, AFL-2.1 | только AppImage: `linuxdeploy` копирует с машины сборки то, что нужно Qt и платформе xcb, и `copyright` пакета; динамически, заменяемые |
 
 Обязательства LGPLv3: динамическая линковка, библиотеки Qt заменяемы, тексты LGPLv3 и GPLv3 и ссылка на исходники Qt лежат рядом. Статической линковки Qt нет.
 

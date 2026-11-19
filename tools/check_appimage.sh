@@ -40,6 +40,26 @@ classify() {
         usr/plugins/* | usr/qml/*) echo "Qt 6" ;;
         usr/lib/libQt6*) echo "Qt 6" ;;
         usr/lib/libicu*) echo "ICU" ;;
+        # What linuxdeploy copies from the build machine (Ubuntu 24.04).
+        usr/lib/libglib-2.0.so* | usr/lib/libgthread-2.0.so*) echo "GLib" ;;
+        usr/lib/libpcre2-8.so*) echo "PCRE2" ;;
+        usr/lib/libdbus-1.so*) echo "D-Bus" ;;
+        usr/lib/libsystemd.so*) echo "systemd" ;;
+        usr/lib/libgcrypt.so*) echo "libgcrypt" ;;
+        usr/lib/libcap.so*) echo "libcap" ;;
+        usr/lib/libkrb5.so* | usr/lib/libkrb5support.so* | usr/lib/libk5crypto.so* | \
+            usr/lib/libgssapi_krb5.so*) echo "MIT Kerberos" ;;
+        usr/lib/libkeyutils.so*) echo "keyutils" ;;
+        usr/lib/liblzma.so*) echo "XZ Utils" ;;
+        usr/lib/liblz4.so*) echo "LZ4" ;;
+        usr/lib/libzstd.so*) echo "Zstandard" ;;
+        usr/lib/libbz2.so*) echo "bzip2" ;;
+        usr/lib/libpng16.so*) echo "libpng" ;;
+        usr/lib/libbrotli*.so*) echo "Brotli" ;;
+        usr/lib/libmd.so*) echo "libmd" ;;
+        usr/lib/libbsd.so*) echo "libbsd" ;;
+        usr/lib/libXau.so* | usr/lib/libXdmcp.so* | usr/lib/libxcb-*.so*) echo "X11 and XCB libraries" ;;
+        usr/lib/libxkbcommon*.so*) echo "libxkbcommon" ;;
     esac
 }
 
@@ -110,6 +130,14 @@ fi
 # The file of the repository is the one the AppImage carries.
 cmp -s "$root/THIRD_PARTY_LICENSES" "$licenses/THIRD_PARTY_LICENSES" ||
     fail "THIRD_PARTY_LICENSES of the AppImage is not the one of the repository"
+
+# Copyright files of the Debian packages that linuxdeploy copied libraries from.
+copyrights=$(find "$appdir/usr/share/doc" -name copyright 2>/dev/null | wc -l)
+if [ "$copyrights" -gt 0 ]; then
+    ok "$copyrights copyright files of the bundled system libraries in usr/share/doc"
+else
+    fail "usr/share/doc has no copyright file of the bundled system libraries"
+fi
 
 # --- QML -------------------------------------------------------------------
 for module in QtCore QtQuick/Controls QtQuick/Layouts; do
