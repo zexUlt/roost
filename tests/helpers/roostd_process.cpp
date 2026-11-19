@@ -124,6 +124,9 @@ bool RoostdProcess::Start(const QString& roostdPath) {
     if (!Lifeline_.Attach(*Process_)) {
         return false;
     }
+    // What roostd says reaches the test's output as it comes, not only when
+    // it does not start.
+    RelayStandardError(*Process_);
     Process_->start(roostdPath, {});
     QElapsedTimer elapsed;
     elapsed.start();
@@ -137,8 +140,7 @@ bool RoostdProcess::Start(const QString& roostdPath) {
         qWarning().noquote()
             << "roostd did not answer hello after" << elapsed.elapsed()
             << "ms; process state" << Process_->state() << "exit code"
-            << Process_->exitCode() << "stderr:"
-            << QString::fromLocal8Bit(Process_->readAllStandardError());
+            << Process_->exitCode();
         return false;
     }
     return true;
