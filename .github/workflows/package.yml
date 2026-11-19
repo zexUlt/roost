@@ -13,9 +13,11 @@ name: Package
 # Runs on `v*` tags, on dispatch and on pushes to trunk that change the
 # packaging, not on pull requests: a macOS runner per pull request is too
 # much, and a change to packaging proves itself by the dispatch above. The
-# path list is the packaging itself; the build and the tests of the code run
-# in ci.yml on every pull request. A file that starts to shape a package
-# joins the list. GitHub does not apply path filters to tags.
+# path list is the files that rarely change and shape a package or its
+# check; the build and the tests of the code run in ci.yml on every pull
+# request. QML of the plugins and the project version are left out: they
+# change often, and the smoke and the version check of a tag catch them.
+# GitHub does not apply path filters to tags.
 on:
   push:
     tags: ["v*"]
@@ -27,8 +29,14 @@ on:
       - tools/package_*.sh
       - tools/check_bundle.sh
       - tools/check_appimage.sh
+      - .github/actions/ccache/**
+      - CMakePresets.json
+      - cmake/ghostty.cmake
       - licenses/**
+      - LICENSE
+      - NOTICE
       - THIRD_PARTY_LICENSES
+      - tests/fixtures/claude_agents.json
   workflow_dispatch:
 
 permissions:
