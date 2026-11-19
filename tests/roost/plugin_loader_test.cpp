@@ -310,6 +310,8 @@ private:
                                          Q_ARG(QVariant, b));
     }
 
+    // A bounded wait, for what must not happen after a restart of roostd or the
+    // destruction of a panel and shows no event to wait on.
     static void Settle() { QTest::qWait(300); }
 
     // A warning of the loader, for each problem the test expects.
@@ -840,12 +842,18 @@ private slots:
                           {{"calls.qml", CALLS_PANEL}}));
         QVERIFY(Boot());
         QQuickItem* panel = Loader_->CreatePanel("a-one.calls");
+        QQuickItem* live = Loader_->CreatePanel("a-one.calls");
         QVERIFY(panel != nullptr);
+        QVERIFY(live != nullptr);
         // The callback belongs to the shell and outlives the panel: only the
         // owner of the call can stop it.
         QVERIFY(Invoke(panel, "run", kind, CallbackOf("panel")));
+        // The control, asked after it: roostd answers in the order it was
+        // asked, so when the control is answered the call of the panel has been
+        // too.
+        QVERIFY(Invoke(live, "run", kind, CallbackOf("control")));
         Loader_->DestroyPanel(panel);
-        Settle();
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("control"), 1, TIMEOUT_MS);
         QCOMPARE(Probe_.Count("panel"), 0);
     }
 
@@ -1083,8 +1091,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("published"), 1, TIMEOUT_MS);
         Loader_->DestroyPanel(panel);
         QVERIFY(QMetaObject::invokeMethod(Shell_, "publish"));
+        // roostd sends the event before it answers the publish, on one
+        // connection: a handler of the destroyed panel would have run by now.
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("published"), 2, TIMEOUT_MS);
-        Settle();
         QCOMPARE(Probe_.Count("bus"), 1);
     }
 

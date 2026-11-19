@@ -7,6 +7,12 @@ set(ROOST_TEST_ENVIRONMENT
     QML_DISABLE_DISK_CACHE=1
 )
 
+# ctest runs the tests in parallel (execution.jobs in CMakePresets.json). Each
+# test uses a temporary directory and a socket path of its own, so none
+# needs a lock today. A test that must share a path, a port or a lock file with
+# another gets RESOURCE_LOCK with a comment on what it shares; RUN_SERIAL is for
+# timing checks only (frame_budget_test).
+
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
     helpers/detached_daemons.cpp
@@ -504,8 +510,10 @@ target_compile_definitions(smoke_sessions_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     ROOST_PATH="$<TARGET_FILE:roost>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
-add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml)
+add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml
+    fixture_backend)
 
 # The window starts roostd when nobody listens on the socket: the launcher with
 # a real Api and the real roostd (detached; the test stops it by its lock).

@@ -106,29 +106,73 @@ bool SessionsWindow::ListWithout(const QStringList& gone) const {
            agents.commit();
 }
 
-// Only the built-in plugins `claude` and `sessions`: no panel
-// terminal.view.
-bool SessionsWindow::LinkPluginsWithoutTerminal() const {
-    if (!QDir().mkpath(Dir_->filePath("plugins"))) {
+// The plugins directory of the case: every built plugin but `claude` (and,
+// when WithoutTerminal_, `terminal`) linked; and `claude` as the built
+// manifest whose adapter is a script that runs the built one with a short
+// --poll-ms. With the default of 3 s every change of the fake claude's list
+// would cost a poll interval.
+bool SessionsWindow::LinkPlugins() const {
+    const QDir plugins(Dir_->filePath("plugins"));
+    const QDir builtPlugins(QStringLiteral(ROOST_PLUGINS_DIR));
+    if (!plugins.mkpath(".")) {
         return false;
     }
     for (const QString& id :
-         {QStringLiteral("claude"), QStringLiteral("sessions")}) {
-        if (!QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
-                         Dir_->filePath("plugins/") + id)) {
+         builtPlugins.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (id == QStringLiteral("claude") ||
+            (id == QStringLiteral("terminal") && WithoutTerminal_)) {
+            continue;
+        }
+        // The daemon may be started again in a case: the links are there.
+        if (!plugins.exists(id) &&
+            !QFile::link(builtPlugins.filePath(id), plugins.filePath(id))) {
             return false;
         }
     }
-    return true;
+    const QDir claude(plugins.filePath("claude"));
+    const QString adapter =
+        QStringLiteral(ROOST_PLUGINS_DIR "/claude/backend/claude-adapter");
+    QFile built(QStringLiteral(ROOST_PLUGINS_DIR "/claude/plugin.json"));
+    if (!claude.mkpath("backend") || !built.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    // The manifest is kept as built; the script stands in for the program
+    // it runs, so a manifest that runs another one is not one this helper
+    // can speed up.
+    const QByteArray manifest = built.readAll();
+    const QJsonArray command = QJsonDocument::fromJson(manifest)
+                                   .object()
+                                   .value("backend")
+                                   .toObject()
+                                   .value("command")
+                                   .toArray();
+    if (command.isEmpty() || command.first().toString() !=
+                                 QStringLiteral("backend/claude-adapter")) {
+        return false;
+    }
+    const QByteArray shell =
+        QStringLiteral("#!/bin/sh\nexec '%1' --poll-ms %2 \"$@\"\n")
+            .arg(adapter)
+            .arg(POLL_MS)
+            .toUtf8();
+    QFile script(claude.filePath("backend/claude-adapter"));
+    QFile json(claude.filePath("plugin.json"));
+    return script.open(QIODevice::WriteOnly) &&
+           script.write(shell) == shell.size() &&
+           script.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
+                                 QFile::ExeOwner) &&
+           json.open(QIODevice::WriteOnly) &&
+           json.write(manifest) == manifest.size();
 }
 
 bool SessionsWindow::StartDaemon() {
+    if (!LinkPlugins()) {
+        return false;
+    }
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert("ROOST_SOCKET", SocketPath());
     environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
-    environment.insert("ROOST_PLUGINS_PATH", WithoutTerminal_
-                                                 ? Dir_->filePath("plugins")
-                                                 : QString(ROOST_PLUGINS_DIR));
+    environment.insert("ROOST_PLUGINS_PATH", Dir_->filePath("plugins"));
     environment.insert(
         "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
     Daemon_ = std::make_unique<QProcess>();
@@ -155,9 +199,6 @@ void SessionsWindow::StopDaemon() {
 // list starts without any).
 void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
     QVERIFY(WriteFakeClaude(claude));
-    if (WithoutTerminal_) {
-        QVERIFY(LinkPluginsWithoutTerminal());
-    }
     if (empty) {
         QVERIFY(ListWithout(ORDER));
     }
