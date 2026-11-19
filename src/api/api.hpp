@@ -29,7 +29,9 @@ struct ApiOptions {
     std::chrono::milliseconds MaxReconnectDelay{30'000};
     // The wait before the sessions are listed again while an agent is
     // unavailable; it doubles with each answer that still has one, up to the
-    // maximum, and an answer with none puts it back.
+    // maximum, and an answer with none puts it back. The retry has no end
+    // while the connection is up and an agent is unavailable (or no list has
+    // come); only the wait is capped.
     std::chrono::milliseconds FirstRelistDelay{500};
     std::chrono::milliseconds MaxRelistDelay{30'000};
 };

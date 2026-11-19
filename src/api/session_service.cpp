@@ -113,8 +113,9 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
         OnAnswer(*answer);
     }
     // The events are put back below, after the decision: the rows they touch
-    // do not change what the answer said of the agents.
-    if (last) {
+    // do not change what the answer said of the agents. A slot of Reset may
+    // have asked for a list already: then that one decides, not this.
+    if (InFlight_ == 0) {
         ScheduleRelist();
     }
     if (!apply) {
@@ -137,11 +138,12 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
 }
 
 void SessionService::ScheduleRelist() {
-    // Without a connection the list that Start asks for after the reconnect
-    // is the next.
-    // A failed list leaves the rows and Unavailable_ as they were; one that
-    // has never been answered leaves the window with no sessions at all, so
-    // it is asked again like an answer with an unavailable agent.
+    // Without a connection the list that Start asks for after the reconnect is
+    // the next. With one, the rows are whole only when a list has been answered
+    // and named no unavailable agent: a failed list leaves the rows and
+    // Unavailable_ as they were, and one that has never been answered leaves
+    // the window with no sessions at all, so it is asked again like an answer
+    // with an unavailable agent.
     if (!Started_) {
         return;
     }

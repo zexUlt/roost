@@ -34,10 +34,11 @@ namespace roost::api {
 // unavailable agent (an adapter whose last run failed, which roostd lists as
 // {agent, reason}) or no answer has come, the list is asked for again after a
 // wait: the first delay, doubled with each answer that still calls for it, up
-// to the maximum, and put back by an answer that does not. One retry is
-// scheduled at a time, and a Refresh started by anyone cancels it: the answer
-// of the last one out decides. Use it from the GUI thread; the signals are
-// emitted there.
+// to the maximum, and put back by an answer that does not. The retry is
+// unbounded while the connection is up and an agent is unavailable (or no list
+// has come); only the wait is capped. One retry is scheduled at a time, and a
+// Refresh started by anyone cancels it: the answer of the last one out decides.
+// Use it from the GUI thread; the signals are emitted there.
 //
 // A restarted adapter does not tell what changed while it was down: roostd
 // announces the restart with session.adapterStarted, and the service lists

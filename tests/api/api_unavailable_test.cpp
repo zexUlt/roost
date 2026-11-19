@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "api/api.hpp"
@@ -279,15 +280,52 @@ private slots:
 
     void TheReconnectListStartsTheRetryAtTheFirstWaitIfAnAgentIsUnavailable() {
         QVERIFY(ConnectApi(std::chrono::milliseconds{40},
-                           std::chrono::milliseconds{160},
+                           std::chrono::milliseconds{640},
                            std::chrono::milliseconds{200}));
-        for (int index = 0; index < 3; ++index) {
+        // The wait grows to 640 ms by the drop: far out of the check below.
+        for (int index = 0; index < 4; ++index) {
             QVERIFY(AnswerDownAndWaitForNext(index));
         }
         Daemon_->Drop();
         QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 1, TIMEOUT_MS);
         QVERIFY(AnswerDownAndWaitForNext(0));
         CheckWait(0, 40);
+    }
+
+    void ARefreshWithoutAConnectionLeavesNoRetryScheduled() {
+        QVERIFY(ConnectApi(std::chrono::milliseconds{500},
+                           std::chrono::milliseconds{1000},
+                           std::chrono::milliseconds{2000}));
+        Daemon_->AnswerList(0, {Row("s1", "idle")}, {});
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().IsLoaded(), TIMEOUT_MS);
+        Daemon_->Drop();
+        QTRY_VERIFY_WITH_TIMEOUT(!Api_->Sessions().IsLoaded(), TIMEOUT_MS);
+
+        // The list fails with no connection; the one that the reconnect asks
+        // for is the next, so no timer is left. There is no other sign of it.
+        auto* retry = Api_->Sessions().findChild<QTimer*>();
+        QVERIFY(retry != nullptr);
+        QVERIFY(WaitFor(Api_->Sessions().Refresh()));
+        QVERIFY(!retry->isActive());
+    }
+
+    void AListAskedByAResetSlotIsTheOneThatDecides() {
+        QVERIFY(ConnectApi(std::chrono::milliseconds{500},
+                           std::chrono::milliseconds{1000}));
+        bool asked = false;
+        connect(&Api_->Sessions(), &api::SessionService::Reset, this, [&] {
+            if (!std::exchange(asked, true)) {
+                Api_->Sessions().Refresh();
+            }
+        });
+        Daemon_->AnswerList(0, {}, Down());
+        QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 2, TIMEOUT_MS);
+        // That list is out: the answer of the first schedules no retry.
+        auto* retry = Api_->Sessions().findChild<QTimer*>();
+        QVERIFY(retry != nullptr);
+        QVERIFY(!retry->isActive());
+        QTest::qWait(700);
+        QCOMPARE(Daemon_->Lists(), 2);
     }
 
     void ARefreshFromOutsideWhileARetryIsScheduledLeavesOneListOut() {
