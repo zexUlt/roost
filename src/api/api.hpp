@@ -94,6 +94,12 @@ signals:
     // has not been said. Connect starts them again.
     void Refused(const roost::rpc::Error& error);
 
+    // An attempt found nobody at the socket: no socket file, or a file that
+    // nobody answers on (a roostd that died). Not said for a server that
+    // answers and refuses (Refused) or a connection that was lost after it
+    // was up. Said again by each such attempt; the retry goes on as before.
+    void NoListener();
+
 private:
     // One attempt: connect and say hello.
     void Attempt();

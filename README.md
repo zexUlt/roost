@@ -27,12 +27,18 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 
 ## Run
 
-Start the daemon, then the window:
-
 ```sh
-build/dev/bin/roostd
 build/dev/bin/roost [--dev]
 ```
+
+When nobody listens on the socket (no socket file, or a stale one), the window
+starts `roostd` itself: the `roostd` next to its own binary (inside an AppImage,
+`$APPIMAGE --roostd`), detached, so it outlives the window and keeps the warm
+sessions. The banner reads "Starting roostd…" meanwhile, and the daemon's output
+goes to `roostd.log` in the directory of the socket. A roostd that answers is
+never started over, and neither is one that refuses the handshake (another
+version): the window shows the refusal. `roost --no-spawn` turns the start off.
+You can still run `build/dev/bin/roostd` by hand first.
 
 roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
 a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A

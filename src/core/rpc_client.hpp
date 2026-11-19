@@ -37,7 +37,8 @@ public:
 
     // Connects and sends hello with the versions of this build. The future
     // yields hello's result or error: VersionMismatch from a roostd of
-    // another build, ConnectionLost if no roostd listens at the path. A
+    // another build, ConnectionLost if no roostd listens at the path (then its
+    // `data` is {"noListener": true}, protocol::NO_LISTENER_KEY). A
     // refused hello drops the connection.
     QFuture<rpc::Result> Connect(const QString& socketPath);
 
@@ -71,7 +72,9 @@ private:
     void OnConnected();
     void Read();
     void Dispatch(const QJsonValue& message);
-    void Lose(const QString& reason);
+    // `data` goes into the ConnectionLost error of the pending requests.
+    void Lose(const QString& reason,
+              const QJsonValue& data = QJsonValue::Undefined);
 
     QLocalSocket* Socket_;
     EState State_ = EState::Idle;

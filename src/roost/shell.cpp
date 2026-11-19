@@ -42,11 +42,12 @@ QString SingleOfType(const QVariantMap& declared, const QString& type,
 }  // namespace
 
 Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
-             QString socketPath)
+             QString socketPath, const DaemonLauncher* launcher)
     : Root_(root),
       Loader_(loader),
       Api_(api),
-      SocketPath_(std::move(socketPath)) {
+      SocketPath_(std::move(socketPath)),
+      Launcher_(launcher) {
     for (auto* item : root.findChildren<QQuickItem*>("panelSlot")) {
         Slots_.append({item, item->property("panelType").toString(), {}, {}});
     }
@@ -73,6 +74,11 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
         }
     });
     connect(&Api_, &api::Api::Refused, this, &Shell::OnRefused);
+    if (Launcher_ != nullptr) {
+        // Only the text of the banner follows the launcher.
+        connect(Launcher_, &DaemonLauncher::StartingChanged, this,
+                [this] { SetConnection(Connection_, ConnectionMessage_); });
+    }
     connect(&Root_, SIGNAL(retryRequested()), this, SLOT(OnRetry()));
 
     SetConnection(Api_.IsConnected() ? QStringLiteral("connected")
@@ -276,9 +282,17 @@ void Shell::OnRetry() {
     Api_.Connect(SocketPath_);
 }
 
+bool Shell::ShowsStarting() const {
+    return Launcher_ != nullptr && Launcher_->Starting() &&
+           (Connection_ == QLatin1String("connecting") ||
+            Connection_ == QLatin1String("disconnected"));
+}
+
 void Shell::SetConnection(const QString& state, const QString& message) {
     Connection_ = state;
-    Root_.setProperty("connection", state);
+    ConnectionMessage_ = message;
+    Root_.setProperty("connection",
+                      ShowsStarting() ? QStringLiteral("starting") : state);
     Root_.setProperty("connectionMessage", message);
     // The placeholders of the empty slots tell the state of the connection.
     for (const Slot& slot : Slots_) {

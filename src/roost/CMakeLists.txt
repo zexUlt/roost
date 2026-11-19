@@ -1,6 +1,8 @@
 # The window's controllers that are not QML types; shared by the executable and
 # the tests.
 add_library(roost_app STATIC
+    daemon_launcher.cpp
+    daemon_launcher.hpp
     plugin_loader.cpp
     plugin_loader.hpp
     plugin_watcher.cpp

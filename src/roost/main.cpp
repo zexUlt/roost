@@ -16,6 +16,7 @@
 #include "core/version.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/daemon_launcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
 #include "roost/shell.hpp"
@@ -182,6 +183,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Developer mode: reload a plugin's QML when its files "
                        "change."));
     parser.addOption(devOption);
+    const QCommandLineOption noSpawnOption(
+        QStringLiteral("no-spawn"),
+        QStringLiteral("Do not start roostd when nobody listens on the "
+                       "socket; wait for one."));
+    parser.addOption(noSpawnOption);
     parser.process(app);
 
     const bool sessionMode = parser.isSet(sessionOption);
@@ -197,8 +203,15 @@ int main(int argc, char* argv[]) {
     // which the engine owns. Only the window of the shell has one: --session
     // mode has no use of its IO thread.
     std::optional<roost::api::Api> api;
+    // Starts roostd on a socket nobody listens on; outlives the shell, which
+    // reads it. None with --no-spawn.
+    std::optional<roost::DaemonLauncher> launcher;
     if (!sessionMode) {
         api.emplace();
+        if (!parser.isSet(noSpawnOption)) {
+            launcher.emplace(*api, roost::DaemonLauncher::DefaultCommand(
+                                       roost::protocol::SocketPath()));
+        }
     }
     QQmlApplicationEngine engine;
     // Declared after the engine, so that they go before it: the panels and
@@ -229,7 +242,8 @@ int main(int argc, char* argv[]) {
     if (!sessionMode) {
         loader.emplace(engine, api->Plugins(), *roostSingleton);
         shell.emplace(*engine.rootObjects().first(), *loader, *api,
-                      roost::protocol::SocketPath());
+                      roost::protocol::SocketPath(),
+                      launcher ? &*launcher : nullptr);
         if (parser.isSet(devOption)) {
             watcher.emplace(*loader);
         }

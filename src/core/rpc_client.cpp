@@ -18,9 +18,10 @@ namespace roost {
 
 namespace {
 
-rpc::Result Lost(const QString& reason) {
-    return std::unexpected(
-        protocol::MakeError(protocol::EErrorCode::ConnectionLost, reason));
+rpc::Result Lost(const QString& reason,
+                 const QJsonValue& data = QJsonValue::Undefined) {
+    return std::unexpected(protocol::MakeError(
+        protocol::EErrorCode::ConnectionLost, reason, data));
 }
 
 void Settle(QPromise<rpc::Result>& promise, rpc::Result result) {
@@ -35,7 +36,18 @@ RpcClient::RpcClient(QObject* parent)
     connect(Socket_, &QLocalSocket::connected, this, &RpcClient::OnConnected);
     connect(Socket_, &QLocalSocket::readyRead, this, &RpcClient::Read);
     connect(Socket_, &QLocalSocket::errorOccurred, this,
-            [this] { Lose(Socket_->errorString()); });
+            [this](QLocalSocket::LocalSocketError error) {
+                // No socket file, or a file nobody listens on.
+                const bool noListener =
+                    error == QLocalSocket::ServerNotFoundError ||
+                    error == QLocalSocket::ConnectionRefusedError;
+                QJsonValue data;
+                if (noListener) {
+                    data = QJsonObject{
+                        {QLatin1String(protocol::NO_LISTENER_KEY), true}};
+                }
+                Lose(Socket_->errorString(), data);
+            });
     connect(Socket_, &QLocalSocket::disconnected, this,
             [this] { Lose(QStringLiteral("roostd closed the connection")); });
 }
@@ -206,7 +218,7 @@ void RpcClient::Dispatch(const QJsonValue& value) {
     Settle(promise, result.isUndefined() ? QJsonValue() : result);
 }
 
-void RpcClient::Lose(const QString& reason) {
+void RpcClient::Lose(const QString& reason, const QJsonValue& data) {
     if (State_ == EState::Lost) {
         return;
     }
@@ -218,7 +230,7 @@ void RpcClient::Lose(const QString& reason) {
     // Request, which must not touch the map being walked.
     auto pending = std::exchange(Pending_, {});
     for (auto& [id, promise] : pending) {
-        Settle(promise, Lost(reason));
+        Settle(promise, Lost(reason, data));
     }
     if (wasUp) {
         emit Disconnected(reason);

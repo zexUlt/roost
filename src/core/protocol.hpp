@@ -21,6 +21,12 @@ enum class EErrorCode : int {
     StoreFailed = -32004,         // reading or writing a plugin's state failed
 };
 
+// The key of the `data` of a ConnectionLost error that says nobody listens at
+// the socket path (no file, or a file nobody answers on): `{"noListener":
+// true}`. A server that answers and then refuses or drops the client is not
+// that, and the window must not start a roostd for it.
+inline constexpr const char* NO_LISTENER_KEY = "noListener";
+
 rpc::Error MakeError(EErrorCode code, QString message,
                      QJsonValue data = QJsonValue::Undefined);
 
