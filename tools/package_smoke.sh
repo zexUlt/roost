@@ -123,7 +123,8 @@ cleanup() {
     for dir in "$work" "$extra_work"; do
         [ -n "$dir" ] && [ -s "$dir/bin/attach.pid" ] && kill "$(cat "$dir/bin/attach.pid")" 2>/dev/null
     done
-    for pid in "${attach_pids[@]}"; do
+    # (the expansion of an empty array fails under `set -u` in bash 3.2)
+    for pid in ${attach_pids[@]+"${attach_pids[@]}"}; do
         kill "$pid" 2>/dev/null
     done
     detach_dmg
@@ -384,6 +385,11 @@ else
     fi
 fi
 
+# The window is ready before the attach has necessarily started: a moment.
+for _ in $(seq 1 100); do
+    [ -s "$work/bin/attach.pid" ] && break
+    sleep 0.1
+done
 attach=$(head -n 1 "$work/bin/attach.pid" 2>/dev/null)
 if [ -z "$attach" ]; then
     fail "the fake claude was never attached: the packaged backend did not run it"
@@ -551,7 +557,7 @@ if [ "$launch_services" = 1 ]; then
             fail "open -n: the window reported a failure:"
             show_tail "$extra_work/open.err"
             show_tail "$extra_work/open.out"
-        elif [ -s "$extra_work/bin/attach.pid" ]; then
+        elif for _ in $(seq 1 100); do [ -s "$extra_work/bin/attach.pid" ] && break; sleep 0.1; done; [ -s "$extra_work/bin/attach.pid" ]; then
             ok "open -n: the window started from LaunchServices attached the fake claude"
         else
             fail "open -n: the fake claude was never attached"
