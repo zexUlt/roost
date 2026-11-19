@@ -506,6 +506,18 @@ target_compile_definitions(daemon_launcher_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(daemon_launcher_test roostd)
 
+# The environment of the roostd that the window starts from the desktop: the
+# login shell (a fake $SHELL script, never the user's) read asynchronously, the
+# bundle variables stripped, and the real roostd finding a fake `claude` only
+# through the login PATH.
+roost_add_qt_test(login_environment_test roost/login_environment_test.cpp
+    roost_app roost_api roost_test_helpers)
+target_compile_definitions(login_environment_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(login_environment_test roostd claude-adapter)
+
 # The same as a process: `roost --smoke-sessions` with no roostd running starts
 # one that outlives the window and that the next window finds.
 roost_add_qt_test(window_spawn_test roost/window_spawn_test.cpp roost_test_helpers)

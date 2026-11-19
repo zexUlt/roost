@@ -28,10 +28,7 @@ DaemonLauncher::Command DaemonLauncher::CommandFor(
     // An APPIMAGE of another app's environment does not count: this
     // executable has to be inside the APPDIR of the running AppImage.
     if (!appImage.isEmpty() && !appDir.isEmpty()) {
-        const QString root = QDir::cleanPath(appDir);
-        const QString executable = QDir::cleanPath(executableDir);
-        if (executable == root ||
-            executable.startsWith(root + QLatin1Char('/'))) {
+        if (LoginEnvironment::InAppImage(appImage, appDir, executableDir)) {
             return {
                 appImage, {QStringLiteral("--roostd"), "--log", log}, startLog};
         }
@@ -46,6 +43,9 @@ bool DaemonLauncher::StartDetached(const Command& command, QString& error) {
     process.setProgram(command.Program);
     process.setArguments(command.Arguments);
     process.setWorkingDirectory(QDir::homePath());
+    if (command.Environment) {
+        process.setProcessEnvironment(*command.Environment);
+    }
     process.setStandardInputFile(QProcess::nullDevice());
     if (!command.StartLog.isEmpty() &&
         QFileInfo(command.StartLog).dir().exists()) {
@@ -67,10 +67,20 @@ bool DaemonLauncher::StartDetached(const Command& command, QString& error) {
     return true;
 }
 
-DaemonLauncher::DaemonLauncher(api::Api& api, Command command,
-                               std::chrono::milliseconds startTimeout,
-                               StartFunction start, QObject* parent)
+DaemonLauncher::DaemonLauncher(
+    api::Api& api, Command command, std::chrono::milliseconds startTimeout,
+    StartFunction start, std::optional<LoginEnvironment::Settings> environment,
+    QObject* parent)
     : QObject(parent), Command_(std::move(command)), Start_(std::move(start)) {
+    if (environment) {
+        Login_ = std::make_unique<LoginEnvironment>(std::move(*environment));
+        connect(Login_.get(), &LoginEnvironment::Finished, this, [this] {
+            // Nobody has answered meanwhile (a connection ends the start).
+            if (Starting_) {
+                StartRoostd();
+            }
+        });
+    }
     Timeout_.setSingleShot(true);
     Timeout_.setInterval(startTimeout);
     connect(&Timeout_, &QTimer::timeout, this, &DaemonLauncher::OnTimeout);
@@ -87,11 +97,28 @@ void DaemonLauncher::OnNoListener() {
     if (Starting_) {
         return;
     }
+    if (Login_ != nullptr && !Login_->Ready()) {
+        // The first start waits for the environment: Finished starts it (at
+        // once, from here, if there is nothing to wait for). The timeout of
+        // the start does not run before that (OnTimeout) and begins with it.
+        SetStarting(true);
+        Login_->Start();
+        return;
+    }
+    StartRoostd();
+}
+
+void DaemonLauncher::StartRoostd() {
+    Command command = Command_;
+    if (Login_ != nullptr) {
+        command.Environment = Login_->Environment();
+    }
     QString error;
-    if (!Start_(Command_, error)) {
+    if (!Start_(command, error)) {
         qWarning("roost: cannot start %s: %s", qPrintable(Command_.Program),
                  qPrintable(error));
         SetFailure(QStringLiteral("Could not start roostd: %1").arg(error));
+        SetStarting(false);
         return;
     }
     // A failure stays until roostd answers: the retries keep starting it, and
@@ -100,6 +127,9 @@ void DaemonLauncher::OnNoListener() {
 }
 
 void DaemonLauncher::OnTimeout() {
+    if (Login_ != nullptr && !Login_->Ready()) {
+        return;  // still reading the environment; the start has not begun
+    }
     QString failure = QStringLiteral("roostd did not start");
     if (!Command_.StartLog.isEmpty() &&
         QFileInfo(Command_.StartLog).dir().exists()) {
