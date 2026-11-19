@@ -9,6 +9,7 @@ set(ROOST_TEST_ENVIRONMENT
 
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
+    helpers/detached_daemons.cpp
     helpers/refusing_server.cpp
     helpers/roostd_process.cpp
     helpers/scoped_env.cpp
@@ -114,6 +115,7 @@ target_compile_definitions(backend_test PRIVATE
 add_dependencies(backend_test fixture_backend)
 
 roost_add_qt_test(dump_test roostd/dump_test.cpp roostd_lib)
+roost_add_qt_test(log_file_test roostd/log_file_test.cpp roostd_lib)
 roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
 target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
@@ -142,16 +144,16 @@ target_compile_definitions(roostd_store_test PRIVATE
 add_dependencies(roostd_store_test roostd)
 
 # The window comes up and renders a frame under the offscreen platform.
-add_test(NAME roost_smoke COMMAND roost --smoke)
+add_test(NAME roost_smoke COMMAND roost --no-spawn --smoke)
 set_tests_properties(roost_smoke PROPERTIES
-    # No roostd to find: the window waits for one, and the real socket of the
-    # user is left alone.
+    # No roostd to find: the window waits for one (--no-spawn: it does not
+    # start one), and the real socket of the user is left alone.
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};ROOST_SOCKET=${CMAKE_CURRENT_BINARY_DIR}/roost_smoke.sock"
     TIMEOUT 30
 )
 
 # The developer mode starts too, with no roostd to find.
-add_test(NAME roost_smoke_dev COMMAND roost --dev --smoke)
+add_test(NAME roost_smoke_dev COMMAND roost --no-spawn --dev --smoke)
 set_tests_properties(roost_smoke_dev PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};ROOST_SOCKET=${CMAKE_CURRENT_BINARY_DIR}/roost_smoke_dev.sock"
     TIMEOUT 30
@@ -462,6 +464,31 @@ target_compile_definitions(sessions_list_test PRIVATE
     SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
 add_dependencies(sessions_list_test sessions_qml)
 
+# The install layout: `cmake --install` of this build into a temporary prefix,
+# and the installed roostd against a fake `claude`. The test installs by itself,
+# so the targets it installs are built first.
+# The directory of Qt that the installed binaries must have in their run path
+# (ROOST_INSTALL_RPATH_TO_QT): where the Qt of the build is, unless that is a
+# directory the linker searches anyway, which CMake leaves out.
+set(ROOST_TEST_QT_RUN_PATH "")
+if(ROOST_INSTALL_RPATH_TO_QT)
+    get_filename_component(_qt_lib_dir "${Qt6Core_DIR}/../.." ABSOLUTE)
+    if(NOT _qt_lib_dir IN_LIST CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES)
+        set(ROOST_TEST_QT_RUN_PATH "${_qt_lib_dir}")
+    endif()
+endif()
+roost_add_qt_test(install_layout_test install/install_layout_test.cpp)
+target_compile_definitions(install_layout_test PRIVATE
+    CMAKE_COMMAND="${CMAKE_COMMAND}"
+    BUILD_DIR="${PROJECT_BINARY_DIR}"
+    SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    PROJECT_VERSION_STRING="${PROJECT_VERSION}"
+    QT_RUN_PATH="${ROOST_TEST_QT_RUN_PATH}"
+    CLAUDE_ADAPTER_FILE="$<TARGET_FILE_NAME:claude-adapter>"
+    SESSIONS_MODULE_FILE="$<TARGET_FILE_NAME:sessions_qml>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_dependencies(install_layout_test roost roostd claude-adapter sessions_qml)
+
 # `roost --smoke-sessions` as a process: the real roostd with the built-in
 # plugins behind a fake `claude`; a sessions plugin without its QML module and
 # a claude with no sessions must fail it.
@@ -472,3 +499,28 @@ target_compile_definitions(smoke_sessions_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml)
+
+# The window starts roostd when nobody listens on the socket: the launcher with
+# a real Api and the real roostd (detached; the test stops it by its lock).
+roost_add_qt_test(daemon_launcher_test roost/daemon_launcher_test.cpp
+    roost_app roost_api roost_test_helpers)
+target_compile_definitions(daemon_launcher_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(daemon_launcher_test roostd)
+
+# The same as a process: `roost --smoke-sessions` with no roostd running starts
+# one that outlives the window and that the next window finds.
+roost_add_qt_test(window_spawn_test roost/window_spawn_test.cpp roost_test_helpers)
+target_compile_definitions(window_spawn_test PRIVATE
+    ROOST_PATH="$<TARGET_FILE:roost>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_dependencies(window_spawn_test roostd roost claude-adapter sessions_qml)
+
+# The banner "Starting roostd…" of the shell while the launcher has a start in
+# flight, and none for a refusal.
+roost_add_qt_test(shell_starting_test roost/shell_starting_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(shell_starting_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(shell_starting_test roostd)

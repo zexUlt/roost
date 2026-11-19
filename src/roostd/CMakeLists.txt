@@ -3,6 +3,7 @@ add_library(roostd_lib STATIC
     adapter_bridge.cpp
     backend.cpp
     dump.cpp
+    log_file.cpp
     manifest.cpp
     plugins.cpp
     server.cpp
@@ -18,3 +19,9 @@ qt_add_executable(roostd
 )
 
 target_link_libraries(roostd PRIVATE roostd_lib)
+
+set_target_properties(roostd PROPERTIES
+    INSTALL_RPATH "${ROOST_INSTALL_RPATH}"
+    INSTALL_RPATH_USE_LINK_PATH ${ROOST_INSTALL_RPATH_TO_QT}
+)
+install(TARGETS roostd RUNTIME DESTINATION ${ROOST_INSTALL_BINDIR} COMPONENT roost)

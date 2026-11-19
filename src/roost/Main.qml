@@ -8,7 +8,9 @@ import QtQuick.Layouts
 Window {
     id: root
 
-    // "connecting", "connected", "disconnected" or "refused"; written by C++.
+    // "connecting", "starting" (roostd is being started by the window),
+    // "startFailed" (the start failed; the message says why), "connected",
+    // "disconnected" or "refused"; written by C++.
     property string connection: "connecting"
     // The reason of the disconnect, or for "refused" the message with the
     // versions and the hint.
@@ -59,6 +61,9 @@ Window {
                         switch (root.connection) {
                         case "connecting":
                             return "Connecting to roostd...";
+                        case "starting":
+                            return "Starting roostd…";
+                        case "startFailed":
                         case "refused":
                             return root.connectionMessage;
                         default:

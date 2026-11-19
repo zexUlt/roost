@@ -57,8 +57,15 @@ void Api::OnHello(const rpc::Result& hello) {
     if (!hello) {
         // A lost connection is reported by IoThread::Disconnected, which
         // schedules the next attempt.
-        if (hello.error().Code !=
+        if (hello.error().Code ==
             static_cast<int>(protocol::EErrorCode::ConnectionLost)) {
+            if (hello.error()
+                    .Data.toObject()
+                    .value(QLatin1String(protocol::NO_LISTENER_KEY))
+                    .toBool()) {
+                emit NoListener();
+            }
+        } else {
             Refused_ = true;
             RefusalTail_ = true;
             RetryTimer_.stop();

@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include "api/api.hpp"
+#include "roost/daemon_launcher.hpp"
 #include "roost/plugin_loader.hpp"
 
 namespace roost {
@@ -20,9 +21,11 @@ namespace roost {
 // C++, made from main() like SingleSession; GUI thread only.
 //
 // The root takes (written by the shell): `connection` ("connecting",
-// "connected", "disconnected", "refused"), `connectionMessage`, `problems`
-// (a list of strings); it gives the signal `retryRequested()`. A slot takes
-// `panel`, `error`, `linkInput`, `linkOutput`.
+// "connected", "disconnected", "refused", "starting" while the launcher has a
+// roostd coming up and "startFailed" (the message is why) after a start that
+// failed, both only while the window is not connected), `connectionMessage`,
+// `problems` (a list of strings); it gives the signal `retryRequested()`. A
+// slot takes `panel`, `error`, `linkInput`, `linkOutput`.
 //
 // The link: the sessions.list panel must declare one output of type
 // SessionRef, the terminal.view panel one input of type SessionRef. None or
@@ -40,10 +43,10 @@ public:
     static constexpr const char* TERMINAL_PANEL = "terminal.view";
     static constexpr const char* SESSION_REF = "SessionRef";
 
-    // `root` is the QML root (the slots are its descendants), `loader` and
-    // `api` are used and not owned.
+    // `root` is the QML root (the slots are its descendants), `loader`,
+    // `api` and `launcher` (none with --no-spawn) are used and not owned.
     Shell(QObject& root, PluginLoader& loader, api::Api& api,
-          QString socketPath);
+          QString socketPath, const DaemonLauncher* launcher = nullptr);
     ~Shell() override;
 
     // Whether the window shows what `roost --smoke-sessions` checks. `Ready`:
@@ -74,6 +77,9 @@ private:
     void OnPanelTypesChanged();
     void OnPanelAboutToBeDestroyed(QQuickItem* panel);
     void OnRefused(const rpc::Error& error);
+    // Whether the connection is being waited for (the banner may say that
+    // roostd is being started, or that its start failed).
+    bool IsWaiting() const;
     // Fills every empty slot; safe to call from a slot of the loader's signals
     // that CreatePanel itself emits.
     void Refill();
@@ -88,8 +94,10 @@ private:
     PluginLoader& Loader_;
     api::Api& Api_;
     QString SocketPath_;
+    const DaemonLauncher* Launcher_;
     QList<Slot> Slots_;
     QString Connection_;
+    QString ConnectionMessage_;
     bool Filling_ = false;
     bool FillAgain_ = false;
 };

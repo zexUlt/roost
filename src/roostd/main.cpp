@@ -13,6 +13,7 @@
 #include "core/store.hpp"
 #include "core/version.hpp"
 #include "roostd/dump.hpp"
+#include "roostd/log_file.hpp"
 #include "roostd/manifest.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
@@ -65,6 +66,7 @@ bool StopOnSignals(QCoreApplication& app) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    roost::OpenClosedStdio();
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("roostd"));
     QCoreApplication::setApplicationVersion(
@@ -80,6 +82,13 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Connect to the running roostd and print every frame "
                        "it sends: answers and all events."));
     parser.addOption(dump);
+    const QCommandLineOption log(
+        QStringLiteral("log"),
+        QStringLiteral("Write stdout and stderr, backends' too, to <file>, "
+                       "keeping the previous one as <file>.1. Opened once "
+                       "roostd holds the socket lock."),
+        QStringLiteral("file"));
+    parser.addOption(log);
     parser.process(app);
 
     if (parser.isSet(dump)) {
@@ -101,6 +110,14 @@ int main(int argc, char* argv[]) {
     if (auto listening = server.Listen(socketPath); !listening) {
         qCritical("roostd: %s", qUtf8Printable(listening.error()));
         return 1;
+    }
+    // Only now: a roostd that lost the lock leaves the log of the winner alone.
+    if (parser.isSet(log)) {
+        if (auto redirected = roost::RedirectToLog(parser.value(log));
+            !redirected) {
+            qCritical("roostd: %s", qUtf8Printable(redirected.error()));
+            return 1;
+        }
     }
     qInfo("roostd: listening on %s", qUtf8Printable(socketPath));
 

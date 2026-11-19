@@ -34,10 +34,14 @@ roost and roostd. Terminal parsing and screen state; no rendering, no PTY.
 Qt 6
 ----
 https://www.qt.io/
-LGPLv3 (Qt Core, Qt Gui, Qt Qml, Qt Quick, Qt Quick Controls, Qt Network).
+LGPLv3 (Qt Core, Qt Gui, Qt Network, Qt OpenGL, Qt Qml, Qt Quick; the QML
+modules QtQuick.Controls and QtQuick.Layouts, loaded by the window at run time).
 
-Linked dynamically and shipped as separate, replaceable libraries inside the
-.app bundle and the AppImage. The LGPLv3 and GPLv3 texts ship next to them.
+Linked dynamically, as separate, replaceable libraries; Qt is not part of this
+repository. `cmake --install` installs our own licence texts (these files,
+LGPL-3.0.txt, GPL-3.0.txt) into Contents/Resources/licenses of roost.app or
+share/licenses/roost; the .app and AppImage packages, which add Qt, carry them
+the same way.
 Qt sources: https://download.qt.io/official_releases/qt/ for the version named
 in the release notes. No GPL-only Qt module is linked.
 

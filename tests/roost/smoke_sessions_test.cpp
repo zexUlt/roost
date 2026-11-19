@@ -141,7 +141,9 @@ private:
         environment.insert("ROOST_CONFIG", Daemon_->ConfigPath());
         Window_.setProcessEnvironment(environment);
         elapsed.start();
-        Window_.start(ROOST_PATH, {"--smoke-sessions"});
+        // --no-spawn: the daemon of the case is up, and a window that lost it
+        // must fail the case, not start a detached roostd that outlives it.
+        Window_.start(ROOST_PATH, {"--no-spawn", "--smoke-sessions"});
         if (!Window_.waitForFinished(waitMs)) {
             Window_.kill();
             Window_.waitForFinished(TIMEOUT_MS);

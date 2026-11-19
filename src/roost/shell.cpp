@@ -42,11 +42,12 @@ QString SingleOfType(const QVariantMap& declared, const QString& type,
 }  // namespace
 
 Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
-             QString socketPath)
+             QString socketPath, const DaemonLauncher* launcher)
     : Root_(root),
       Loader_(loader),
       Api_(api),
-      SocketPath_(std::move(socketPath)) {
+      SocketPath_(std::move(socketPath)),
+      Launcher_(launcher) {
     for (auto* item : root.findChildren<QQuickItem*>("panelSlot")) {
         Slots_.append({item, item->property("panelType").toString(), {}, {}});
     }
@@ -73,6 +74,14 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
         }
     });
     connect(&Api_, &api::Api::Refused, this, &Shell::OnRefused);
+    if (Launcher_ != nullptr) {
+        // Only the text of the banner follows the launcher.
+        const auto refresh = [this] {
+            SetConnection(Connection_, ConnectionMessage_);
+        };
+        connect(Launcher_, &DaemonLauncher::StartingChanged, this, refresh);
+        connect(Launcher_, &DaemonLauncher::FailureChanged, this, refresh);
+    }
     connect(&Root_, SIGNAL(retryRequested()), this, SLOT(OnRetry()));
 
     SetConnection(Api_.IsConnected() ? QStringLiteral("connected")
@@ -276,10 +285,26 @@ void Shell::OnRetry() {
     Api_.Connect(SocketPath_);
 }
 
+bool Shell::IsWaiting() const {
+    return Connection_ == QLatin1String("connecting") ||
+           Connection_ == QLatin1String("disconnected");
+}
+
 void Shell::SetConnection(const QString& state, const QString& message) {
     Connection_ = state;
-    Root_.setProperty("connection", state);
-    Root_.setProperty("connectionMessage", message);
+    ConnectionMessage_ = message;
+    QString shown = state;
+    QString shownMessage = message;
+    if (Launcher_ != nullptr && IsWaiting()) {
+        if (!Launcher_->Failure().isEmpty()) {
+            shown = QStringLiteral("startFailed");
+            shownMessage = Launcher_->Failure();
+        } else if (Launcher_->Starting()) {
+            shown = QStringLiteral("starting");
+        }
+    }
+    Root_.setProperty("connection", shown);
+    Root_.setProperty("connectionMessage", shownMessage);
     // The placeholders of the empty slots tell the state of the connection.
     for (const Slot& slot : Slots_) {
         if (slot.Item && slot.Panel.isNull()) {

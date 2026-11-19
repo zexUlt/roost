@@ -18,3 +18,7 @@ set_target_properties(claude-adapter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ROOST_CLAUDE_PLUGIN_DIR}/backend)
 
 configure_file(plugin.json ${ROOST_CLAUDE_PLUGIN_DIR}/plugin.json COPYONLY)
+
+install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/claude
+    COMPONENT roost)
+roost_install_plugin_binary(claude claude-adapter backend)

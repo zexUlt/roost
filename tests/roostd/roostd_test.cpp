@@ -1,6 +1,7 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
@@ -12,6 +13,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <memory>
@@ -88,8 +91,21 @@ class RoostdTest : public QObject {
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
-    std::unique_ptr<QProcess> Launch(const QStringList& arguments = {}) const {
+    // `workingDirectory` and `closeOutput` (stdout and stderr closed before
+    // exec) are for the tests that need them.
+    std::unique_ptr<QProcess> Launch(const QStringList& arguments = {},
+                                     const QString& workingDirectory = {},
+                                     bool closeOutput = false) const {
         auto process = std::make_unique<QProcess>();
+        if (!workingDirectory.isEmpty()) {
+            process->setWorkingDirectory(workingDirectory);
+        }
+        if (closeOutput) {
+            process->setChildProcessModifier([] {
+                ::close(STDOUT_FILENO);
+                ::close(STDERR_FILENO);
+            });
+        }
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
@@ -98,6 +114,25 @@ private:
         process->setProcessEnvironment(environment);
         process->start(ROOSTD_PATH, arguments);
         return process;
+    }
+
+    QString LogPath() const { return Dir_->filePath("roostd.log"); }
+
+    static QByteArray ReadFile(const QString& path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    }
+
+    static bool WriteFile(const QString& path, const QByteArray& content) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(content) > 0;
+    }
+
+    static ino_t InodeOf(const QString& path) {
+        struct stat status{};
+        return ::stat(QFile::encodeName(path).constData(), &status) == 0
+                   ? status.st_ino
+                   : 0;
     }
 
     // roostd as the package has it: a copy in <dir>/bin, so that
@@ -161,6 +196,7 @@ private:
                 {"id": "fixture.echo", "title": "Echo"},
                 {"id": "fixture.pid", "title": "Process id"},
                 {"id": "fixture.fds", "title": "Open descriptors"},
+                {"id": "fixture.stderr", "title": "Write to stderr"},
                 {"id": "fixture.crash", "title": "Crash"}
             ]}
         })") > 0;
@@ -397,6 +433,161 @@ private slots:
         const QString error = QString::fromUtf8(dump->readAllStandardError());
         QVERIFY2(error.startsWith("roostd --dump: cannot connect to "),
                  qPrintable(error));
+    }
+
+    void LogFileTakesOutputOfRoostdAndBackends() {
+        QVERIFY(AddFixturePlugin());
+        const QString log = LogPath();
+        const auto daemon = Launch({"--log", log});
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        RpcClient client;
+        QFuture<rpc::Result> hello = client.Connect(SocketPath());
+        QVERIFY(
+            QTest::qWaitFor([&] { return hello.isFinished(); }, TIMEOUT_MS));
+        QVERIFY(hello.result());
+        QVERIFY(Call(
+            client, "commands.run",
+            {{"command", "fixture.stderr"}, {"args", "from the backend"}}));
+
+        // roostd's own line and the backend's stderr, nothing on the pipes.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(log).contains("roostd: listening on ") &&
+                ReadFile(log).contains("from the backend\n"),
+            TIMEOUT_MS);
+        QVERIFY(daemon->readAllStandardOutput().isEmpty());
+        QVERIFY(daemon->readAllStandardError().isEmpty());
+        QCOMPARE(QFile::permissions(log) &
+                     (QFileDevice::ReadGroup | QFileDevice::WriteGroup |
+                      QFileDevice::ReadOther | QFileDevice::WriteOther),
+                 QFileDevice::Permissions());
+        QVERIFY(!QFile::exists(log + ".1"));
+
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    void LogFileOfThePreviousRunIsKept() {
+        const QString log = LogPath();
+        const auto first = Launch({"--log", log});
+        QVERIFY(first->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        first->terminate();
+        QVERIFY(first->waitForFinished(TIMEOUT_MS));
+        const QByteArray firstRun = ReadFile(log);
+        QVERIFY(firstRun.contains("roostd: listening on "));
+        // An older .1 goes away.
+        QVERIFY(WriteFile(log + ".1", "stale copy\n"));
+
+        const auto second = Launch({"--log", log});
+        QVERIFY(second->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QCOMPARE(ReadFile(log + ".1"), firstRun);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(log).contains("roostd: listening on "), TIMEOUT_MS);
+        QVERIFY(!ReadFile(log).contains("stale copy"));
+        second->terminate();
+        QVERIFY(second->waitForFinished(TIMEOUT_MS));
+    }
+
+    void SecondDaemonLeavesTheLogAlone() {
+        const QString log = LogPath();
+        const auto first = Launch({"--log", log});
+        QVERIFY(first->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(log).contains("roostd: listening on "), TIMEOUT_MS);
+        const QByteArray content = ReadFile(log);
+        const ino_t inode = InodeOf(log);
+        QVERIFY(inode != 0);
+
+        const auto second = Launch({"--log", log});
+        QVERIFY(second->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(second->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(second->exitCode(), 1);
+        // The error stays on its stderr, not in the log.
+        const QString error = QString::fromUtf8(second->readAllStandardError());
+        QVERIFY2(error.contains("another roostd"), qPrintable(error));
+
+        QCOMPARE(InodeOf(log), inode);
+        QVERIFY(ReadFile(log).startsWith(content));
+        QVERIFY(!ReadFile(log).contains("another roostd"));
+        QVERIFY(!QFile::exists(log + ".1"));
+        first->terminate();
+        QVERIFY(first->waitForFinished(TIMEOUT_MS));
+    }
+
+    void WithoutLogOptionOutputStaysOnItsStreams() {
+        const auto daemon = Launch();
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QByteArray error;
+        QTRY_VERIFY_WITH_TIMEOUT((error += daemon->readAllStandardError())
+                                     .contains("roostd: listening on "),
+                                 TIMEOUT_MS);
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QVERIFY(!QFile::exists(LogPath()));
+        QVERIFY(QDir(Dir_->path()).entryList({"*.log*"}).isEmpty());
+    }
+
+    void LogFileWithClosedStdioStaysSmall() {
+        const QString log = LogPath();
+        const auto daemon = Launch({"--log", log}, {}, true);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(log).contains("roostd: listening on "), TIMEOUT_MS);
+        // Without the descriptors reopened, Qt's wake pipe sits on 1 or 2 and
+        // the log fills with "QThreadPipe: internal error" in no time.
+        QTest::qWait(1000);
+        QCOMPARE(daemon->state(), QProcess::Running);
+        QVERIFY2(QFileInfo(log).size() < 4096,
+                 qPrintable(QString::number(QFileInfo(log).size())));
+        QVERIFY(!ReadFile(log).contains("QThreadPipe"));
+        QVERIFY(Greets(SocketPath()));
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    void LogFileGivenRelativelyLandsInTheWorkingDirectory() {
+        QVERIFY(QDir(Dir_->path()).mkpath("work"));
+        const QString work = Dir_->filePath("work");
+        const auto daemon = Launch({"--log", "rel.log"}, work);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(work + "/rel.log").contains("roostd: listening on "),
+            TIMEOUT_MS);
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    void LogFileInAMissingDirectoryStopsRoostd() {
+        const auto daemon =
+            Launch({"--log", Dir_->filePath("none/roostd.log")});
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(daemon->exitCode(), 1);
+        const QString error = QString::fromUtf8(daemon->readAllStandardError());
+        QVERIFY2(error.contains("cannot open"), qPrintable(error));
+        QVERIFY(!QFile::exists(SocketPath()));
+    }
+
+    void FailedLogOpenKeepsThePreviousLogs() {
+        const QString log = LogPath();
+        QVERIFY(WriteFile(log, "current\n"));
+        QVERIFY(WriteFile(log + ".1", "older\n"));
+        // A directory where the new file goes: the open fails.
+        QVERIFY(QDir(Dir_->path()).mkpath("roostd.log.new"));
+        const auto daemon = Launch({"--log", log});
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitCode(), 1);
+        QVERIFY(QString::fromUtf8(daemon->readAllStandardError())
+                    .contains("cannot open"));
+        QCOMPARE(ReadFile(log), QByteArray("current\n"));
+        QCOMPARE(ReadFile(log + ".1"), QByteArray("older\n"));
+        QVERIFY(!QFile::exists(SocketPath()));
     }
 
     void KilledDaemonIsReplaced() {

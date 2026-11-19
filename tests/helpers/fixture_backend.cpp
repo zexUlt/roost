@@ -4,6 +4,7 @@
 //   fixture.pid      its process id
 //   fixture.cwd      its working directory
 //   fixture.fds      the pipes and sockets it has open besides stdio
+//   fixture.stderr   writes the args, a string, to its stderr, answers null
 //   fixture.crash    exits with code 3 without answering
 //   fixture.garbage  prints a line that is not JSON
 //   fixture.stray    answers a request id nobody sent
@@ -97,6 +98,9 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
             }
         }
         Answer(id, open);
+    } else if (command == "fixture.stderr") {
+        std::cerr << args.toString().toStdString() << std::endl;
+        Answer(id, QJsonValue());
     } else if (command == "fixture.crash") {
         std::_Exit(3);
     } else if (command == "fixture.garbage") {

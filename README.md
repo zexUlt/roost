@@ -25,14 +25,39 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 `tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
 `ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
 
-## Run
-
-Start the daemon, then the window:
+## Install
 
 ```sh
-build/dev/bin/roostd
+cmake --install build/release --prefix <dir> --component roost
+```
+
+lays the build out as the OS expects it (the build tree is not changed). On
+macOS that is `<dir>/roost.app`; on Linux the `usr/` of an AppDir:
+`bin/{roost,roostd}`, `lib/roost/plugins/<id>/`, `share/applications/roost.desktop`,
+an icon and `share/licenses/roost/`. The licences (`LICENSE`, `NOTICE`,
+`THIRD_PARTY_LICENSES`, `LGPL-3.0.txt`, `GPL-3.0.txt`) go along. Qt is not
+copied: the installed binaries load it from where the build found it (run path; `-DROOST_INSTALL_RPATH_TO_QT=OFF` leaves that out, for packaging steps that deploy Qt into the bundle). roostd
+finds the installed plugins next to itself, with no `ROOST_PLUGINS_PATH`.
+
+## Run
+
+```sh
 build/dev/bin/roost [--dev]
 ```
+
+When nobody listens on the socket (no socket file, or a stale one), the window
+starts `roostd` itself: the `roostd` next to its own binary, detached, so it
+outlives the window and keeps the warm sessions. The banner reads "Starting
+roostd…" meanwhile, and the daemon's output goes to `roostd.log` in the
+directory of the socket (what it prints before it holds the socket lock, to
+`roostd.start.log` there). If the start fails, the banner says why. A roostd
+that refuses the handshake (another version) is not started over: the window
+shows the refusal. A live roostd with a full accept backlog also refuses
+connections, so a second one may be started; it loses the socket lock and
+exits. `roost --no-spawn` turns the start off. The start from an AppImage
+(`$APPIMAGE --roostd`, handled by AppRun) arrives with the AppImage packaging
+step and does not work before it.
+You can still run `build/dev/bin/roostd` by hand first.
 
 roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
 a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A
@@ -45,6 +70,11 @@ window reloads a plugin when its files change. It watches the copy under
 `build/dev/roost-plugins`, so after editing `plugins/<id>/qml/*.qml` run
 `cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
 roostd reads manifests at start.
+
+`roostd --log <file>` writes the stdout and stderr of roostd and its backends
+to `<file>` (a new file, mode 0600) and keeps the previous file as `<file>.1`. It
+opens the file only once it holds the socket lock: a second roostd that loses
+the lock exits with code 1 and leaves the log alone.
 
 The window shows the session list on the left and the terminal on the right.
 The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
