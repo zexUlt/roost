@@ -8,7 +8,14 @@ name: Package
 # its branch: gh workflow run package.yml --ref <branch>. A dispatch takes
 # the workflow from that branch, but only a workflow that is on trunk can be
 # dispatched, hence this file before its jobs.
+#
+# Runs on `v*` tags, on dispatch and on pushes to trunk that change code, not
+# on pull requests: a macOS runner per pull request is too much, and a change
+# to packaging proves itself by the dispatch above.
 on:
+  push:
+    tags: ["v*"]
+    branches: [trunk]
   workflow_dispatch:
 
 permissions:
@@ -18,14 +25,106 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Keep in step with ci.yml.
+env:
+  QT_VERSION: 6.12.0
+  ZIG_VERSION: 0.17.1
+
 # Without an explicit shell, run steps get `bash -e` and no pipefail.
 defaults:
   run:
     shell: bash
 
 jobs:
-  placeholder:
+  # Whether this change needs packaging at all (tools/ci_changes.sh); a push
+  # or a dispatch is not a pull request, so the answer is always "yes". If this
+  # job fails, the answer is unknown and the packaging runs.
+  changes:
+    name: changes
     runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
     steps:
-      - name: No packages yet
-        run: echo "the packaging jobs replace this one"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        uses: ./.github/actions/changes
+
+  # The release build, its tests, then the .app and .dmg and their checks. The
+  # Qt, zig and caches are those of the macOS release job of ci.yml.
+  macos:
+    name: macos
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja ccache
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+
+      # setup-zig unpacks zig into a new temporary directory on every run, and
+      # the zig build command line holds the path to zig: ninja would see a
+      # changed command and rebuild libghostty-vt in spite of the cache. A
+      # wrapper at a fixed path, first in PATH, keeps the command the same.
+      - name: Zig at a fixed path
+        run: |
+          real=$(command -v zig)
+          mkdir -p "$HOME/zig-bin"
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$HOME/zig-bin/zig"
+          chmod +x "$HOME/zig-bin/zig"
+          echo "$HOME/zig-bin" >> "$GITHUB_PATH"
+
+      # The entry the release job of ci.yml saves on trunk: the same key.
+      - name: Restore libghostty-vt
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/release/_deps
+            build/release/.ninja_log
+            build/release/.ninja_deps
+          key: libghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}-release-${{ hashFiles('cmake/ghostty.cmake', 'CMakePresets.json') }}
+
+      # Restore only: ci.yml saves the compiler cache, from trunk.
+      - name: Restore the compiler cache
+        uses: ./.github/actions/ccache
+        with:
+          key: release
+
+      - name: Configure
+        run: cmake --preset release
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Compiler cache hits
+        run: ccache --show-stats
+
+      - name: Test
+        run: ctest --preset release
+        env:
+          ROOST_FRAME_BUDGET: report
+
+      - name: Package
+        run: tools/package_macos.sh build/release "$RUNNER_TEMP/package"
+
+      - name: Check the bundle
+        run: tools/check_bundle.sh "$RUNNER_TEMP/package/stage/roost.app"
+
+      - name: Upload the .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: roost-macos-dmg
+          path: ${{ runner.temp }}/package/*.dmg
+          if-no-files-found: error
