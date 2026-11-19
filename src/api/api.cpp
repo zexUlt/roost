@@ -41,6 +41,7 @@ void Api::Connect(const QString& socketPath) {
     }
     Started_ = true;
     Refused_ = false;
+    RefusedPeerPid_ = 0;
     Reported_ = false;
     Delay_ = Options_.FirstReconnectDelay;
     SocketPath_ = socketPath;
@@ -67,6 +68,10 @@ void Api::OnHello(const rpc::Result& hello) {
             }
         } else {
             Refused_ = true;
+            RefusedPeerPid_ = hello.error()
+                                  .Data.toObject()
+                                  .value(QLatin1String(protocol::PEER_PID_KEY))
+                                  .toInteger();
             RefusalTail_ = true;
             RetryTimer_.stop();
             emit Refused(hello.error());

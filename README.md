@@ -53,11 +53,12 @@ directory of the socket (what it prints before it holds the socket lock, to
 `roostd.start.log` there). If the start fails, the banner says why. A roostd
 that refuses the handshake (another version) is not started over: the window
 shows the refusal with a "Restart roostd" button next to Retry. The click sends
-SIGTERM to the roostd named in `<socket>.lock` (only a roostd of this host),
-waits up to 5 s for it to leave and starts the new one; warm terminals close,
-Claude sessions keep running. Nothing is stopped without the click. A live
-roostd with a full accept backlog also refuses connections, so a second one may
-be started; it loses the socket lock and exits. `roost --no-spawn` turns the start off. The start from an AppImage
+SIGTERM to the process that refused the window, if `<socket>.lock` names it as
+a roostd, waits up to 5 s for it to leave and starts the new one; warm
+terminals close, Claude sessions keep running. Nothing is stopped without the
+click. A live roostd with a full accept backlog also refuses connections, so a
+second one may be started; it loses the socket lock and exits. `roost
+--no-spawn` turns the start off. The start from an AppImage
 (`$APPIMAGE --roostd`, handled by AppRun) arrives with the AppImage packaging
 step and does not work before it.
 You can still run `build/dev/bin/roostd` by hand first.

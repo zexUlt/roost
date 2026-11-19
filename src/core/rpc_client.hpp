@@ -57,6 +57,12 @@ public:
 
     bool IsConnected() const { return State_ == EState::Connected; }
 
+    // The pid of the process that accepted the connection, as the system
+    // tells it (LOCAL_PEERPID on macOS, SO_PEERCRED on Linux); 0 before the
+    // socket connects or if it is not known. A refused hello carries it in
+    // the `data` of its error under protocol::PEER_PID_KEY.
+    qint64 PeerPid() const { return PeerPid_; }
+
 signals:
     void NotificationReceived(const QString& method, const QJsonValue& params);
     // Frames of session channels (design.md §4). roostd sending input, or a
@@ -83,6 +89,7 @@ private:
     std::unordered_map<qint64, QPromise<rpc::Result>> Pending_;
     qint64 NextId_ = 1;
     qint64 HelloId_ = 0;
+    qint64 PeerPid_ = 0;
 };
 
 }  // namespace roost

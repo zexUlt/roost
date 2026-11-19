@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QLockFile>
 #include <QProcess>
-#include <QSysInfo>
 #include <QtLogging>
 
 #include <signal.h>
@@ -122,7 +121,7 @@ bool DaemonLauncher::StartProcess() {
     return true;
 }
 
-void DaemonLauncher::Restart(const QString& socketPath) {
+void DaemonLauncher::Restart(const QString& socketPath, qint64 peerPid) {
     if (Restarting_) {
         return;
     }
@@ -133,22 +132,34 @@ void DaemonLauncher::Restart(const QString& socketPath) {
     qint64 pid = 0;
     QString host;
     QString application;
+    // The refused connection tells who answered it; the lock only has to
+    // agree. A pid from the lock alone could be another roostd's, or a reused
+    // one.
+    if (peerPid <= 1 || peerPid == QCoreApplication::applicationPid()) {
+        FailRestart(QStringLiteral("the process that refused the window is "
+                                   "not known (pid %1)")
+                        .arg(peerPid));
+        return;
+    }
     if (!lock.getLockInfo(&pid, &host, &application)) {
         FailRestart(QStringLiteral("%1 names no process").arg(LockPath_));
         return;
     }
-    // Only what roostd wrote itself is signalled: a lock of another program or
-    // of another host (a socket on a shared directory) is not ours to stop.
-    if (host != QSysInfo::machineHostName() ||
-        application != QLatin1String(protocol::DAEMON_APPLICATION_NAME)) {
-        FailRestart(
-            QStringLiteral("%1 is held by %2 (pid %3) on %4, not by "
-                           "roostd of this host")
-                .arg(LockPath_, application, QString::number(pid), host));
+    // Only the process that refused is signalled, and only if the lock is
+    // roostd's and names it. The host of the lock is not compared: a peer of
+    // a local socket is on this host, and the host name changes with the
+    // network.
+    if (application != QLatin1String(protocol::DAEMON_APPLICATION_NAME)) {
+        FailRestart(QStringLiteral("%1 is held by %2 (pid %3), not by roostd")
+                        .arg(LockPath_, application, QString::number(pid)));
         return;
     }
-    if (pid <= 1 || pid == QCoreApplication::applicationPid()) {
-        FailRestart(QStringLiteral("%1 names pid %2").arg(LockPath_).arg(pid));
+    if (pid != peerPid) {
+        FailRestart(QStringLiteral("%1 names pid %2, but the socket was "
+                                   "answered by pid %3")
+                        .arg(LockPath_)
+                        .arg(pid)
+                        .arg(peerPid));
         return;
     }
     // A lock that can be taken is a file left by a roostd that died, and its

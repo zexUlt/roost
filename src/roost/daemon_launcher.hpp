@@ -98,16 +98,18 @@ public:
     bool Restarting() const { return Restarting_; }
 
     // Replaces the roostd of `socketPath`, which refused the window (another
-    // version). Reads `<socketPath>.lock` (QLockFile::getLockInfo) and sends
-    // SIGTERM to its pid only if the lock is held, is of this host and has the
-    // application name of roostd (protocol::DAEMON_APPLICATION_NAME); else
-    // Failure() says why and nothing is killed. Then, without blocking, waits
+    // version); `peerPid` is the pid of the process that refused, as the
+    // connection tells it (Api::RefusedPeerPid). Reads `<socketPath>.lock`
+    // (QLockFile::getLockInfo) and sends SIGTERM only if the lock is held, has
+    // the application name of roostd (protocol::DAEMON_APPLICATION_NAME) and
+    // names `peerPid` (known, above 1, not this process); else Failure() says
+    // why and nothing is killed. Then, without blocking, waits
     // up to the stop timeout for the lock to be released (roostd closes the
     // socket before it releases the lock); if it is not, Failure() says so
     // (no SIGKILL). When it is, starts roostd as OnNoListener does (same
     // in-flight guard and failure texts) and emits Restarted(): the Api has to
     // connect again. Does nothing while a restart waits.
-    void Restart(const QString& socketPath);
+    void Restart(const QString& socketPath, qint64 peerPid);
 
 signals:
     void StartingChanged(bool starting);

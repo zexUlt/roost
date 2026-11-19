@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QtTypes>
 
 #include <chrono>
 
@@ -68,6 +69,11 @@ public:
     void Connect(const QString& socketPath);
     bool IsConnected() const;
 
+    // The pid of the roostd that refused hello in the last Refused (as the
+    // system tells it for the connection); 0 if it is not known or nothing
+    // was refused.
+    qint64 RefusedPeerPid() const { return RefusedPeerPid_; }
+
     // The window's own parts, for what is not a by-name method: the terminal
     // panes show sessions through the warm terminals, and the IO thread carries
     // their channels.
@@ -124,6 +130,7 @@ private:
     bool Connected_ = false;
     // Refused: no attempts until Connect is called.
     bool Refused_ = false;
+    qint64 RefusedPeerPid_ = 0;
     // A refused hello is always followed by the Disconnected of its client;
     // that one schedules nothing, even if Connect was called in between.
     bool RefusalTail_ = false;

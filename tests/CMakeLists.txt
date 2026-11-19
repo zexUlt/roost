@@ -58,6 +58,8 @@ add_test(NAME test_environment_unset
         $<TARGET_FILE:test_environment_test>)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
+roost_add_qt_test(rpc_client_peer_pid_test core/rpc_client_peer_pid_test.cpp
+    roost_test_helpers)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(vt_render_state_test core/vt_render_state_test.cpp)

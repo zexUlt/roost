@@ -7,6 +7,12 @@
 #include <QLocalSocket>
 #include <QSignalBlocker>
 
+#include <sys/socket.h>
+#include <sys/types.h>
+#ifdef __APPLE__
+#include <sys/un.h>
+#endif
+
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -27,6 +33,33 @@ rpc::Result Lost(const QString& reason,
 void Settle(QPromise<rpc::Result>& promise, rpc::Result result) {
     promise.addResult(std::move(result));
     promise.finish();
+}
+
+// The pid of the other end of a connected unix socket; 0 if unknown.
+qint64 PeerPidOf(qintptr descriptor) {
+    if (descriptor < 0) {
+        return 0;
+    }
+#ifdef __APPLE__
+    pid_t pid = 0;
+    socklen_t length = sizeof(pid);
+    if (::getsockopt(static_cast<int>(descriptor), SOL_LOCAL, LOCAL_PEERPID,
+                     &pid, &length) != 0) {
+        return 0;
+    }
+    return pid;
+#elif defined(__linux__)
+    // struct ucred needs _GNU_SOURCE, which clang defines in C++ on Linux.
+    ucred credentials{};
+    socklen_t length = sizeof(credentials);
+    if (::getsockopt(static_cast<int>(descriptor), SOL_SOCKET, SO_PEERCRED,
+                     &credentials, &length) != 0) {
+        return 0;
+    }
+    return credentials.pid;
+#else
+    return 0;
+#endif
 }
 
 }  // namespace
@@ -129,6 +162,7 @@ void RpcClient::Disconnect() {
 
 void RpcClient::OnConnected() {
     State_ = EState::Connected;
+    PeerPid_ = PeerPidOf(Socket_->socketDescriptor());
     Socket_->write(std::exchange(Unsent_, {}));
 }
 
@@ -202,11 +236,20 @@ void RpcClient::Dispatch(const QJsonValue& value) {
     if (error.isObject()) {
         const QJsonObject object = error.toObject();
         const QString text = object.value(QStringLiteral("message")).toString();
+        QJsonValue data = object.value(QStringLiteral("data"));
+        if (*id == HelloId_ && PeerPid_ > 0 &&
+            (data.isObject() || data.isUndefined() || data.isNull())) {
+            // Who refused, as the system knows it: the window may stop
+            // exactly this process.
+            QJsonObject withPeer = data.toObject();
+            withPeer.insert(QLatin1String(protocol::PEER_PID_KEY), PeerPid_);
+            data = withPeer;
+        }
         Settle(promise,
                std::unexpected(rpc::Error{
                    .Code = object.value(QStringLiteral("code")).toInt(),
                    .Message = text,
-                   .Data = object.value(QStringLiteral("data")),
+                   .Data = data,
                }));
         // Nothing else would be served.
         if (*id == HelloId_) {

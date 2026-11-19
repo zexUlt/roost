@@ -33,6 +33,12 @@ inline constexpr const char* DAEMON_APPLICATION_NAME = "roostd";
 // that, and the window must not start a roostd for it.
 inline constexpr const char* NO_LISTENER_KEY = "noListener";
 
+// The key the client adds to the `data` of a refused hello: the pid of the
+// process at the other end of the socket (`{"peerPid": 123}`), read from the
+// connection by the client, not sent by roostd. Absent if the system does not
+// tell it.
+inline constexpr const char* PEER_PID_KEY = "peerPid";
+
 rpc::Error MakeError(EErrorCode code, QString message,
                      QJsonValue data = QJsonValue::Undefined);
 

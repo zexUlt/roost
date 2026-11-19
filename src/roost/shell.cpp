@@ -285,8 +285,8 @@ void Shell::OnRefused(const rpc::Error& error) {
         error.Code == static_cast<int>(protocol::EErrorCode::VersionMismatch);
     if (Mismatch_ && Launcher_ != nullptr) {
         message += QStringLiteral(
-            ". Restarting roostd closes the warm terminals; Claude sessions "
-            "keep running.");
+            "\nRestarting closes the warm terminals; Claude sessions keep "
+            "running.");
     } else {
         message += QStringLiteral(". Restart roostd, then press Retry.");
     }
@@ -304,7 +304,7 @@ void Shell::OnRestartRequested() {
         !Mismatch_) {
         return;
     }
-    Launcher_->Restart(SocketPath_);
+    Launcher_->Restart(SocketPath_, Api_.RefusedPeerPid());
 }
 
 bool Shell::IsWaiting() const {

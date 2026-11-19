@@ -4,7 +4,7 @@
 // hello with VersionMismatch; the window is the real shell with a real launcher
 // and Api, and the new roostd is the real binary, detached (stopped through its
 // lock by DetachedDaemons). Nothing is killed without the click, and on the
-// click only a roostd of this host.
+// click only the process that refused the window, if the lock names it.
 
 #include <QDir>
 #include <QFile>
@@ -12,7 +12,6 @@
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
-#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -284,16 +283,32 @@ private slots:
         QVERIFY(Visible("retryButton"));
     }
 
-    // A lock of another host (a socket directory shared over the network).
-    void ALockOfAnotherHostIsNotSignalled() {
+    // The lock names a different live roostd (another socket, or a reused
+    // pid): the one that refused the window is not the one in the lock, so
+    // nothing is signalled, neither of the two.
+    void ALockThatNamesAnotherLiveProcessIsNotSignalled() {
         StartOld();
+        // The other roostd: its own socket, lock and marker.
+        const QString otherSocket = Dir_->filePath("run/other.sock");
+        QProcess other;
+        other.setProgram(Helper(QString(protocol::DAEMON_APPLICATION_NAME)));
+        other.setArguments(
+            {otherSocket, "--marker", Dir_->filePath("other.marker")});
+        other.start();
+        QVERIFY(other.waitForStarted(TIMEOUT_MS));
+        QTRY_VERIFY_WITH_TIMEOUT(other.canReadLine(), TIMEOUT_MS);
+        QCOMPARE(other.readLine().trimmed(), QByteArray("ready"));
+        const qint64 otherPid = other.processId();
+        QVERIFY(otherPid > 1);
+        QVERIFY(otherPid != Old_->processId());
+        // The lock of the one that serves the socket now names the other.
         QFile file(Lock());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QList<QByteArray> lines = file.readAll().split('\n');
         file.close();
         QVERIFY(lines.size() >= 3);
-        QCOMPARE(QString::fromUtf8(lines[2]), QSysInfo::machineHostName());
-        lines[2] = "some-other-host";
+        QCOMPARE(lines[0].toLongLong(), Old_->processId());
+        lines[0] = QByteArray::number(otherPid);
         QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
         file.write(lines.join('\n'));
         file.close();
@@ -302,12 +317,22 @@ private slots:
         Click("restartButton");
         QTRY_VERIFY_WITH_TIMEOUT(BannerText().contains("Could not restart"),
                                  TIMEOUT_MS);
-        QVERIFY2(BannerText().contains("some-other-host"),
+        QVERIFY2(BannerText().contains(QString::number(otherPid)),
                  qPrintable(BannerText()));
         QTest::qWait(QUIET_MS);
+        const bool otherAlive = other.state() != QProcess::NotRunning &&
+                                testing::DetachedDaemons::IsAlive(otherPid);
+        const bool otherSignalled =
+            QFile::exists(Dir_->filePath("other.marker"));
+        other.kill();
+        other.waitForFinished(TIMEOUT_MS);
+        QVERIFY(otherAlive);
+        QVERIFY(!otherSignalled);
         QVERIFY(OldAlive());
         QVERIFY(!QFile::exists(Marker()));
         QCOMPARE(Starts_, 0);
+        QCOMPARE(Connection(), QString("refused"));
+        QVERIFY(Visible("restartButton"));
     }
 
     // An old roostd that does not leave: after the (short, injected) wait the
