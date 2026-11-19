@@ -42,7 +42,7 @@ window reloads a plugin when its files change. It watches the copy under
 roostd reads manifests at start.
 
 `roostd --log <file>` writes the stdout and stderr of roostd and its backends
-to `<file>` (mode 0600, appending) and keeps the previous file as `<file>.1`. It
+to `<file>` (a new file, mode 0600) and keeps the previous file as `<file>.1`. It
 opens the file only once it holds the socket lock: a second roostd that loses
 the lock exits with code 1 and leaves the log alone.
 

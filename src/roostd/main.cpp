@@ -65,6 +65,7 @@ bool StopOnSignals(QCoreApplication& app) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    roost::OpenClosedStdio();
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("roostd"));
     QCoreApplication::setApplicationVersion(

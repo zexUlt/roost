@@ -1,6 +1,7 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
@@ -13,6 +14,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <memory>
@@ -88,8 +90,21 @@ class RoostdTest : public QObject {
 private:
     QString SocketPath() const { return Dir_->filePath("roostd.sock"); }
 
-    std::unique_ptr<QProcess> Launch(const QStringList& arguments = {}) const {
+    // `workingDirectory` and `closeOutput` (stdout and stderr closed before
+    // exec) are for the tests that need them.
+    std::unique_ptr<QProcess> Launch(const QStringList& arguments = {},
+                                     const QString& workingDirectory = {},
+                                     bool closeOutput = false) const {
         auto process = std::make_unique<QProcess>();
+        if (!workingDirectory.isEmpty()) {
+            process->setWorkingDirectory(workingDirectory);
+        }
+        if (closeOutput) {
+            process->setChildProcessModifier([] {
+                ::close(STDOUT_FILENO);
+                ::close(STDERR_FILENO);
+            });
+        }
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_SOCKET", SocketPath());
@@ -426,6 +441,67 @@ private slots:
                                  TIMEOUT_MS);
         daemon->terminate();
         QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QVERIFY(!QFile::exists(LogPath()));
+        QVERIFY(QDir(Dir_->path()).entryList({"*.log*"}).isEmpty());
+    }
+
+    void LogFileWithClosedStdioStaysSmall() {
+        const QString log = LogPath();
+        const auto daemon = Launch({"--log", log}, {}, true);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(log).contains("roostd: listening on "), TIMEOUT_MS);
+        // Without the descriptors reopened, Qt's wake pipe sits on 1 or 2 and
+        // the log fills with "QThreadPipe: internal error" in no time.
+        QTest::qWait(1000);
+        QCOMPARE(daemon->state(), QProcess::Running);
+        QVERIFY2(QFileInfo(log).size() < 4096,
+                 qPrintable(QString::number(QFileInfo(log).size())));
+        QVERIFY(!ReadFile(log).contains("QThreadPipe"));
+        QVERIFY(Greets(SocketPath()));
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    void LogFileGivenRelativelyLandsInTheWorkingDirectory() {
+        QVERIFY(QDir(Dir_->path()).mkpath("work"));
+        const QString work = Dir_->filePath("work");
+        const auto daemon = Launch({"--log", "rel.log"}, work);
+        QVERIFY(daemon->waitForStarted(TIMEOUT_MS));
+        QVERIFY(Greets(SocketPath()));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(work + "/rel.log").contains("roostd: listening on "),
+            TIMEOUT_MS);
+        daemon->terminate();
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+    }
+
+    void LogFileInAMissingDirectoryStopsRoostd() {
+        const auto daemon =
+            Launch({"--log", Dir_->filePath("none/roostd.log")});
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitStatus(), QProcess::NormalExit);
+        QCOMPARE(daemon->exitCode(), 1);
+        const QString error = QString::fromUtf8(daemon->readAllStandardError());
+        QVERIFY2(error.contains("cannot open"), qPrintable(error));
+        QVERIFY(!QFile::exists(SocketPath()));
+    }
+
+    void FailedLogOpenKeepsThePreviousLogs() {
+        const QString log = LogPath();
+        QVERIFY(WriteFile(log, "current\n"));
+        QVERIFY(WriteFile(log + ".1", "older\n"));
+        // A directory where the new file goes: the open fails.
+        QVERIFY(QDir(Dir_->path()).mkpath("roostd.log.new"));
+        const auto daemon = Launch({"--log", log});
+        QVERIFY(daemon->waitForFinished(TIMEOUT_MS));
+        QCOMPARE(daemon->exitCode(), 1);
+        QVERIFY(QString::fromUtf8(daemon->readAllStandardError())
+                    .contains("cannot open"));
+        QCOMPARE(ReadFile(log), QByteArray("current\n"));
+        QCOMPARE(ReadFile(log + ".1"), QByteArray("older\n"));
+        QVERIFY(!QFile::exists(SocketPath()));
     }
 
     void KilledDaemonIsReplaced() {

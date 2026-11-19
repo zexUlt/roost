@@ -69,6 +69,31 @@ private slots:
         QVERIFY(rotated.error().contains("roostd.log"));
         QCOMPARE(Read(log), QByteArray("x"));
     }
+
+    // Failed opens return before any dup2, so the test's own stdio is safe.
+    void RedirectInAMissingDirectoryFails() {
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto redirected = RedirectToLog(dir.filePath("none/roostd.log"));
+        QVERIFY(!redirected);
+        QVERIFY(redirected.error().contains("cannot open"));
+        QVERIFY(!QFile::exists(dir.filePath("none")));
+    }
+
+    void FailedOpenLeavesTheOldLogsAlone() {
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString log = dir.filePath("roostd.log");
+        QVERIFY(Write(log, "current\n"));
+        QVERIFY(Write(log + ".1", "older\n"));
+        // A directory where the new file goes: open fails.
+        QVERIFY(QDir().mkpath(log + ".new"));
+        const auto redirected = RedirectToLog(log);
+        QVERIFY(!redirected);
+        QVERIFY(redirected.error().contains("cannot open"));
+        QCOMPARE(Read(log), QByteArray("current\n"));
+        QCOMPARE(Read(log + ".1"), QByteArray("older\n"));
+    }
 };
 
 QTEST_GUILESS_MAIN(LogFileTest)
