@@ -303,6 +303,10 @@ jobs:
           dmgs=("$RUNNER_TEMP"/dmg/*.dmg)
           [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ] || { echo "::error::expected one .dmg"; exit 1; }
           tools/package_smoke.sh "${dmgs[0]}" --launch-services
+        env:
+          # The runner has a logged-in GUI session: the windows run on the
+          # platform plugin of a user's Mac, not offscreen.
+          ROOST_SMOKE_QPA: cocoa
 
   # The AppImage in a stock Ubuntu 24.04 with the libraries of a desktop and no
   # Qt: the image of the container, the AppImage artifact and the script. The
@@ -328,11 +332,13 @@ jobs:
         --security-opt apparmor:unconfined
     steps:
       # procps: pgrep and ps, which the script uses and the image lacks.
+      # xvfb and xauth: the window runs on the xcb platform plugin, as on a
+      # desktop, under a virtual display (xvfb-run).
       - name: Install the tools of the script and fuse3
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates procps fuse3 fonts-dejavu-mono
+            ca-certificates procps fuse3 fonts-dejavu-mono xvfb xauth
 
       # What every desktop has is what the AppImage leaves out
       # (packaging/linux/system-libraries.txt); a minimal desktop is the
@@ -379,7 +385,9 @@ jobs:
       - name: Smoke the AppImage
         run: |
           chmod +x "$RUNNER_TEMP/appimage/roost-${{ matrix.arch }}.AppImage"
-          tools/package_smoke.sh "$RUNNER_TEMP/appimage/roost-${{ matrix.arch }}.AppImage"
+          xvfb-run -a tools/package_smoke.sh "$RUNNER_TEMP/appimage/roost-${{ matrix.arch }}.AppImage"
+        env:
+          ROOST_SMOKE_QPA: xcb
 
   # A draft release of the packages that passed their smoke: the .dmg, the two
   # AppImages and SHA256SUMS. On a dispatch it is a dry run: the tag name is
@@ -421,7 +429,7 @@ jobs:
         run: |
           src="https://download.qt.io/official_releases/qt/${QT_VERSION%.*}/${QT_VERSION}/single/qt-everywhere-src-${QT_VERSION}.tar.xz"
           curl -fsIL --retry 3 "$src" >/dev/null || { echo "::error::$src does not exist"; exit 1; }
-          cat >"$RUNNER_TEMP/notes.md" <<'EOF'
+          read -r -d '' notes <<'EOF' || true
           Packages of roost @TAG@.
 
           ## Install
@@ -441,8 +449,14 @@ jobs:
           - Qt @QT@, under the LGPL v3, linked dynamically as separate libraries that can be replaced. Source of this version: @SRC@
           - ICU (the AppImage only, the libraries of the Qt build): the ICU licence, `usr/share/licenses/roost/ICU-LICENSE.txt`.
           EOF
-          sed -i -e "s|@TAG@|$TAG|g" -e "s|@QT@|$QT_VERSION|g" -e "s|@SRC@|$src|g" \
-            "$RUNNER_TEMP/notes.md"
+          # The values go in as they are: a tag may hold `|`, `&` or `\`, which
+          # sed would take for its own. `&` in the replacement is the matched
+          # text in bash 5.2 unless the option is off (and the value quoted).
+          shopt -u patsub_replacement 2>/dev/null || true
+          notes=${notes//@TAG@/"$TAG"}
+          notes=${notes//@QT@/"$QT_VERSION"}
+          notes=${notes//@SRC@/"$src"}
+          printf '%s\n' "$notes" >"$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
       - name: Draft release

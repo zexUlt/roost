@@ -6,10 +6,14 @@
 #   - the window, with an isolated socket and config, a fake `claude` and an
 #     opened session, passes `--smoke-sessions` (it lists the sessions and
 #     attaches to the opened one);
+#   - the Qt of every window (the first, the second, the one of `open -n`)
+#     comes from the package only, and the platform plugin the window ran with
+#     is the package's own;
 #   - after the window exited, roostd is alive, runs from the package (the
 #     .app copied out of the image, the mount of the AppImage: its own
 #     mount, which the window's exit does not take away) and loaded its Qt from
-#     the package only; the fake attach is alive too;
+#     the package only; the fake attach is alive, and still is at the end of
+#     the run, after everything below;
 #   - `roostd --dump` of the package answers;
 #   - `claude-adapter`, killed by pid with no window around, comes back;
 #   - a second window `--smoke-sessions` connects to the same roostd pid;
@@ -19,12 +23,19 @@
 # must start from the app and outlive the window as it does in a direct run.
 # A failure of `open --env` itself is a FAIL: say so in the job, not a skip.
 #
-# The environment is isolated as in tools/check_bundle.sh: a temporary HOME,
-# socket, config and TMPDIR, a $SHELL that does not exist (never the login
-# shell of whoever runs this), a fake `claude` (never the real one), no
-# display. The AppImage runs through FUSE, as a user runs it, not through
-# --appimage-extract-and-run. What the script starts it kills by pid, and it
-# detaches only the image it mounted, at its own mount point.
+# The environment is isolated as in tools/check_bundle.sh: a temporary HOME
+# (CFFIXED_USER_HOME on macOS too, so that no preference lands in the real
+# ~/Library/Preferences), socket, config and TMPDIR, a $SHELL that does not
+# exist (never the login shell of whoever runs this), a fake `claude` (never
+# the real one). The AppImage runs through FUSE, as a user runs it, not
+# through --appimage-extract-and-run. What the script starts it kills by pid,
+# and it detaches only the image it mounted, at its own mount point.
+#
+# The windows run with no display: QT_QPA_PLATFORM=offscreen. A real platform
+# plugin, the one a user's desktop loads, is a window that opens: it is for CI,
+# which sets ROOST_SMOKE_QPA=cocoa on macOS, and xcb under xvfb-run on Linux
+# (DISPLAY and XAUTHORITY of the caller are passed on). A local run opens no
+# window.
 #
 # Every failure is reported before the script ends; the exit code is 1 if
 # there was one.
@@ -32,7 +43,8 @@
 # Usage: tools/package_smoke.sh <roost.dmg | roost-<arch>.AppImage> [--launch-services]
 set -uo pipefail
 
-usage="usage: tools/package_smoke.sh <roost.dmg | roost-<arch>.AppImage> [--launch-services]"
+usage="usage: tools/package_smoke.sh <roost.dmg | roost-<arch>.AppImage> [--launch-services]
+the platform of the windows: ROOST_SMOKE_QPA=offscreen (default) | cocoa | xcb"
 package=${1:?$usage}
 launch_services=0
 case ${2:-} in
@@ -40,6 +52,14 @@ case ${2:-} in
     --launch-services) launch_services=1 ;;
     *)
         echo "$usage" >&2
+        exit 2
+        ;;
+esac
+qpa=${ROOST_SMOKE_QPA:-offscreen}
+case $qpa in
+    offscreen | cocoa | xcb) ;;
+    *)
+        echo "FAIL: ROOST_SMOKE_QPA=$qpa is none of offscreen, cocoa, xcb"
         exit 2
         ;;
 esac
@@ -70,6 +90,18 @@ if [ "$launch_services" = 1 ] && [ "$kind" != macos ]; then
     echo "FAIL: --launch-services is for a .dmg"
     exit 1
 fi
+if [ "$qpa" = cocoa ] && [ "$kind" != macos ]; then
+    echo "FAIL: cocoa is the platform of macOS"
+    exit 1
+fi
+if [ "$qpa" = xcb ] && [ "$kind" != linux ]; then
+    echo "FAIL: xcb is the platform of Linux"
+    exit 1
+fi
+if [ "$qpa" = xcb ] && [ -z "${DISPLAY:-}" ]; then
+    echo "FAIL: ROOST_SMOKE_QPA=xcb needs a display: run under xvfb-run"
+    exit 1
+fi
 
 failed=0
 fail() {
@@ -86,7 +118,6 @@ window_pid=
 helper_pid=
 extra_roostd_pid=
 extra_work=
-attach_pids=()
 
 detach_dmg() {
     if [ -n "$mnt" ]; then
@@ -112,28 +143,53 @@ kill_tree() {
     done
 }
 
+# shellcheck disable=SC2329  # called from cleanup, which runs from the trap
+# appimage_mounted: the FUSE mount of this AppImage is in /proc/mounts (its
+# source is the file).
+appimage_mounted() {
+    awk -v p="$package" '$1 == p && $3 ~ /^fuse/ {found = 1} END {exit !found}' /proc/mounts
+}
+
 # shellcheck disable=SC2329  # runs from the trap
 cleanup() {
-    local pid dir
+    local status=$? pid dir _
     for pid in "$window_pid" "$helper_pid"; do
         [ -n "$pid" ] && kill "$pid" 2>/dev/null
     done
     kill_tree "$roostd_pid"
     kill_tree "$extra_roostd_pid"
+    # Every fake attach the runs started: the fake claude records its pid in
+    # bin/attach.all, one line per attach.
     for dir in "$work" "$extra_work"; do
-        [ -n "$dir" ] && [ -s "$dir/bin/attach.pid" ] && kill "$(cat "$dir/bin/attach.pid")" 2>/dev/null
-    done
-    # (the expansion of an empty array fails under `set -u` in bash 3.2)
-    for pid in ${attach_pids[@]+"${attach_pids[@]}"}; do
-        kill "$pid" 2>/dev/null
+        [ -n "$dir" ] && [ -s "$dir/bin/attach.all" ] || continue
+        while read -r pid; do
+            case $pid in
+                '' | *[!0-9]*) ;;
+                *) kill "$pid" 2>/dev/null ;;
+            esac
+        done <"$dir/bin/attach.all"
     done
     detach_dmg
     # The FUSE mount of the AppImage goes away with the last process that
-    # runs from it.
-    [ "$kind" = linux ] && sleep 1
+    # runs from it: wait for it to go, a failure to go is a failure.
+    if [ "$kind" = linux ] && [ -n "$work" ]; then
+        for _ in $(seq 1 100); do
+            appimage_mounted || break
+            sleep 0.1
+        done
+        if appimage_mounted; then
+            echo "FAIL: the FUSE mount of $package did not go away in 10 s" >&2
+            failed=1
+        fi
+    fi
     for dir in "$work" "$extra_work"; do
         [ -n "$dir" ] && rm -rf "$dir"
     done
+    # A failure found here counts as much as one found before: the exit status
+    # of the script was settled before this trap ran.
+    if [ "$status" -eq 0 ] && [ "$failed" -ne 0 ]; then
+        exit 1
+    fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -151,7 +207,7 @@ make_env() {
 dir=$(dirname "$0")
 case "$1" in
 agents) cat "$dir/agents.json" ;;
-attach) echo $$ > "$dir/attach.pid.new" && mv "$dir/attach.pid.new" "$dir/attach.pid"; exec sleep 600 ;;
+attach) echo $$ >> "$dir/attach.all"; echo $$ > "$dir/attach.pid.new" && mv "$dir/attach.pid.new" "$dir/attach.pid"; exec sleep 600 ;;
 *) exit 2 ;;
 esac
 FAKE
@@ -166,29 +222,47 @@ FAKE
 window_env() {
     printf '%s\n' \
         "HOME=$1/home" \
+        "CFFIXED_USER_HOME=$1/home" \
         "TMPDIR=$1/" \
         "PATH=$1/bin:/usr/bin:/bin" \
         "SHELL=$1/no-such-shell" \
         "ROOST_SOCKET=$1/run/roostd.sock" \
         "ROOST_CONFIG=$1/config" \
-        "QT_QPA_PLATFORM=offscreen" \
+        "QT_QPA_PLATFORM=$qpa" \
         "QML_DISABLE_DISK_CACHE=1"
+    if [ "$qpa" = xcb ]; then
+        printf '%s\n' "DISPLAY=${DISPLAY:-}"
+        [ -n "${XAUTHORITY:-}" ] && printf '%s\n' "XAUTHORITY=$XAUTHORITY"
+    fi
+}
+
+# window_extra: what only a window gets, VAR=value one per line, so that the
+# check of its Qt and its platform plugin has something to read. macOS: dyld
+# names every library it loads. Linux: ld.so does, to a file per process
+# (the roostd the first window starts inherits it, and is read as well).
+# window_extra <dir> <name>
+window_extra() {
+    if [ "$kind" = macos ]; then
+        printf '%s\n' "DYLD_PRINT_LIBRARIES=1"
+    else
+        printf '%s\n' "LD_DEBUG=libs" "LD_DEBUG_OUTPUT=$1/$2.ld"
+    fi
 }
 
 # The same as `env -i` with window_env, for a command run directly. On Linux
 # no TMPDIR: the runtime of the AppImage mounts under it, and a mount in the
 # directory this script removes at the end would be in the way of the unmount.
+# run_window <dir> <output file> <name of this window>
 run_window() {
-    local dir=$1 out=$2 extra=${3:-}
+    local dir=$1 out=$2 name=$3 line
     local vars=()
     while IFS= read -r line; do
         case $kind:$line in
             linux:TMPDIR=*) ;;
             *) vars+=("$line") ;;
         esac
-    done < <(window_env "$dir")
-    # shellcheck disable=SC2086  # $extra is at most one VAR=value
-    env -i "${vars[@]}" $extra "${window_cmd[@]}" --smoke-sessions \
+    done < <(window_env "$dir"; window_extra "$dir" "$name")
+    env -i "${vars[@]}" "${window_cmd[@]}" --smoke-sessions \
         >"$out" 2>&1 </dev/null &
     window_pid=$!
 }
@@ -294,11 +368,49 @@ fi
 # ---------------------------------------------------------------------------
 # The window.
 
-# macOS: dyld names every library it loads, so the Qt that is not the
-# bundle's shows up for the window as well as for roostd.
-dyld_env=
-[ "$kind" = macos ] && dyld_env=DYLD_PRINT_LIBRARIES=1
-run_window "$work" "$work/window.out" "$dyld_env"
+# check_window_qt <label> <name of the window> <output file>...: the Qt that
+# the window (and what it started) loaded is the package's, and the platform
+# plugin it ran with, the one asked for, is the package's. macOS: dyld names
+# every library it loads, in the output of the window. Linux: ld.so names
+# them, to the files <work>/<name>.ld.<pid>; a library under a `.mount_`
+# directory is one of the AppImage mount. A check that saw no QtCore of the
+# package saw nothing: a failure.
+check_window_qt() {
+    local label=$1 name=$2 outside inside platform where
+    shift 2
+    if [ "$kind" = macos ]; then
+        outside=$(cat "$@" | grep -E '/Qt[A-Za-z0-9]*(\.framework/| |$)|libQt' |
+            grep -vF "$app/" || true)
+        inside=$(cat "$@" | grep -F "$app/" | grep -cE '/QtCore(\.framework/| |$)' || true)
+        where="$app/"
+        platform=$(cat "$@" | grep -E "^dyld\[[0-9]+\]: .*/platforms/libq$qpa\.dylib\$" | grep -F "$app/" | head -n 1 || true)
+    else
+        local loaded
+        loaded=$(cat "$work/$name".ld.* 2>/dev/null | sed -n 's/.*calling init: //p' || true)
+        outside=$(printf '%s\n' "$loaded" | grep -E '/libQt6[A-Za-z0-9]*\.so' |
+            grep -v '/\.mount_' || true)
+        inside=$(printf '%s\n' "$loaded" | grep -E '/\.mount_.*/libQt6Core\.so' | grep -c . || true)
+        where="the AppImage mount"
+        platform=$(cat "$work/$name".ld.* 2>/dev/null | grep -E "calling init: .*/\.mount_.*/platforms/libq$qpa\.so\$" | head -n 1 || true)
+    fi
+    if [ -n "$outside" ]; then
+        fail "$label loaded Qt from outside the package:"
+        printf '%s\n' "$outside" | head -n 10 | sed 's/^/    /'
+    elif [ "$inside" -eq 0 ]; then
+        fail "$label: no QtCore of $where in the list of loaded libraries: the check saw nothing"
+    else
+        ok "$label loaded QtCore from the package and no Qt from outside it"
+    fi
+    if [ -n "$platform" ]; then
+        ok "$label ran on the platform plugin $qpa of the package"
+        echo "      $platform"
+    else
+        fail "$label: no platform plugin $qpa of the package loaded"
+        grep -hiE 'qpa|xcb|cocoa|display|could not' "$@" 2>/dev/null | head -n 10 | sed 's/^/    /'
+    fi
+}
+
+run_window "$work" "$work/window.out" win1
 wait_window
 if [ -z "$window_status" ]; then
     fail "roost --smoke-sessions did not end in 2 minutes"
@@ -309,21 +421,7 @@ elif [ "$window_status" -ne 0 ]; then
 else
     ok "roost --smoke-sessions"
 fi
-
-if [ "$kind" = macos ]; then
-    # Qt that the window loaded: from the bundle only.
-    outside=$(grep -E '/Qt[A-Za-z0-9]*(\.framework/| |$)|libQt' "$work/window.out" |
-        grep -vF "$app/" || true)
-    inside=$(grep -F "$app/" "$work/window.out" | grep -cE '/QtCore(\.framework/| |$)' || true)
-    if [ -n "$outside" ]; then
-        fail "the window loaded Qt from outside the bundle:"
-        printf '%s\n' "$outside" | head -n 10 | sed 's/^/    /'
-    elif [ "$inside" -eq 0 ]; then
-        fail "DYLD_PRINT_LIBRARIES showed no QtCore of the bundle: the check saw nothing"
-    else
-        ok "the window loaded QtCore from the bundle and no Qt from outside it"
-    fi
-fi
+check_window_qt "the window" win1 "$work/window.out"
 
 # ---------------------------------------------------------------------------
 # After the window: roostd and the attach.
@@ -385,36 +483,20 @@ else
     fi
 fi
 
-# The window is ready without waiting for the attach of the opened session:
-# one that exits first leaves no attach to find. A moment for it, then another
-# window against the same roostd, at most twice (a note says so): what is
-# proved is that the attach of a packaged backend outlives the window that
-# asked for it.
-attach_wait() {
-    local _
-    for _ in $(seq 1 50); do
-        [ -s "$1/bin/attach.pid" ] && return 0
-        sleep 0.1
-    done
-    return 1
-}
-retries=0
-while ! attach_wait "$work" && [ "$retries" -lt 2 ]; do
-    retries=$((retries + 1))
-    echo "note: the window exited before the attach started; another window ($retries)"
-    run_window "$work" "$work/window-retry.out" "$dyld_env"
-    wait_window
-done
-attach=$(head -n 1 "$work/bin/attach.pid" 2>/dev/null)
+# The window waits for the attach of the session it opens, and fails when it
+# cannot be opened: the first window, once it exited with 0, has left the
+# attach of the fake claude behind. None is a FAIL, not a reason for another
+# window. What is proved is that the attach of a packaged backend outlives the
+# window that asked for it.
+attach=
+[ -s "$work/bin/attach.pid" ] && attach=$(head -n 1 "$work/bin/attach.pid")
 if [ -z "$attach" ]; then
-    fail "the fake claude was never attached: the packaged backend did not run it"
+    fail "the window exited ($window_status) and the fake claude was never attached: the packaged backend did not run it"
+    show_tail "$work/run/roostd.log"
+elif kill -0 "$attach" 2>/dev/null; then
+    ok "the attach $attach is alive after the window exited"
 else
-    attach_pids+=("$attach")
-    if kill -0 "$attach" 2>/dev/null; then
-        ok "the attach $attach is alive after the window exited"
-    else
-        fail "the attach $attach is gone after the window exited"
-    fi
+    fail "the attach $attach is gone after the window exited"
 fi
 
 # ---------------------------------------------------------------------------
@@ -502,7 +584,7 @@ fi
 # ---------------------------------------------------------------------------
 # A second window finds the same roostd.
 
-run_window "$work" "$work/window2.out" "$dyld_env"
+run_window "$work" "$work/window2.out" win2
 wait_window
 if [ -z "$window_status" ]; then
     fail "the second roost --smoke-sessions did not end in 2 minutes"
@@ -518,12 +600,19 @@ else
         fail "the second window ran against roostd '$second', not $roostd_pid"
     fi
 fi
-if [ "$kind" = macos ]; then
-    outside=$(grep -E '/Qt[A-Za-z0-9]*(\.framework/| |$)|libQt' "$work/window2.out" |
-        grep -vF "$app/" || true)
-    if [ -n "$outside" ]; then
-        fail "the second window loaded Qt from outside the bundle:"
-        printf '%s\n' "$outside" | head -n 10 | sed 's/^/    /'
+check_window_qt "the second window" win2 "$work/window2.out"
+
+# The attach of the fake claude, alive at the end of the run, after the
+# restart of the adapter and the second window: the check right after it
+# started proves little (the fake lives for a moment in any case). A moment
+# for what would end it.
+if [ -n "$attach" ]; then
+    sleep 3
+    if kill -0 "$attach" 2>/dev/null; then
+        ok "the attach $attach is still alive at the end of the run"
+    else
+        fail "the attach $attach is gone at the end of the run"
+        show_tail "$work/run/roostd.log"
     fi
 fi
 
@@ -539,35 +628,29 @@ if [ "$launch_services" = 1 ]; then
     open_args=(-n -W --stdout "$extra_work/open.out" --stderr "$extra_work/open.err")
     while IFS= read -r line; do
         open_args+=(--env "$line")
-    done < <(window_env "$extra_work")
-    # One `open -n` runs one window; as above, a window that exits before the
-    # attach started is followed by one more, at most twice.
+    done < <(window_env "$extra_work"; window_extra "$extra_work" open)
+    # One `open -n` runs one window, which waits for the attach as any window.
+    open "${open_args[@]}" "$app" --args --smoke-sessions >"$extra_work/open.log" 2>&1 </dev/null &
+    helper_pid=$!
     opened=
-    for attempt in 1 2 3; do
-        open "${open_args[@]}" "$app" --args --smoke-sessions >"$extra_work/open.log" 2>&1 </dev/null &
-        helper_pid=$!
-        opened=
-        for _ in $(seq 1 600); do
-            if ! kill -0 "$helper_pid" 2>/dev/null; then
-                wait "$helper_pid"
-                opened=$?
-                helper_pid=
-                break
-            fi
-            sleep 0.2
-        done
-        if [ -z "$opened" ]; then
-            fail "open -n -W did not return in 2 minutes: the app did not exit"
-            kill "$helper_pid" 2>/dev/null
+    for _ in $(seq 1 600); do
+        if ! kill -0 "$helper_pid" 2>/dev/null; then
+            wait "$helper_pid"
+            opened=$?
             helper_pid=
             break
-        elif [ "$opened" -ne 0 ]; then
-            fail "open -n --env failed with $opened (does this macOS pass the environment?): $(tr '\n' ' ' <"$extra_work/open.log")"
-            break
         fi
-        attach_wait "$extra_work" && break
-        echo "note: open -n: the window exited before the attach started (attempt $attempt)"
+        sleep 0.2
     done
+    if [ -z "$opened" ]; then
+        fail "open -n -W did not return in 2 minutes: the app did not exit"
+        kill "$helper_pid" 2>/dev/null
+        helper_pid=
+    elif [ "$opened" -ne 0 ]; then
+        fail "open -n --env failed with $opened (does this macOS pass the environment?): $(tr '\n' ' ' <"$extra_work/open.log")"
+    else
+        check_window_qt "the window of open -n" open "$extra_work/open.out" "$extra_work/open.err"
+    fi
     extra_roostd_pid=$(lock_pid "$extra_work")
     if [ -z "$extra_roostd_pid" ]; then
         fail "open -n: no roostd under $extra_work/run: the environment did not reach the app"
@@ -582,16 +665,29 @@ if [ "$launch_services" = 1 ]; then
             show_tail "$extra_work/open.err"
             show_tail "$extra_work/open.out"
         elif [ -s "$extra_work/bin/attach.pid" ]; then
-            ok "open -n: the window started from LaunchServices attached the fake claude"
+            open_attach=$(head -n 1 "$extra_work/bin/attach.pid")
+            if kill -0 "$open_attach" 2>/dev/null; then
+                ok "open -n: the window started from LaunchServices attached the fake claude ($open_attach)"
+            else
+                fail "open -n: the attach $open_attach is gone after the window exited"
+            fi
         else
             fail "open -n: the fake claude was never attached"
         fi
-        # launchd may end what an app leaves when it quits: look a while after.
+        # launchd may end what an app leaves when it quits: look a while after,
+        # at roostd and at the attach.
         sleep 3
         if kill -0 "$extra_roostd_pid" 2>/dev/null; then
             ok "open -n: roostd outlived the window"
         else
             fail "open -n: roostd $extra_roostd_pid did not outlive the window"
+        fi
+        if [ -n "${open_attach:-}" ]; then
+            if kill -0 "$open_attach" 2>/dev/null; then
+                ok "open -n: the attach $open_attach is still alive at the end"
+            else
+                fail "open -n: the attach $open_attach is gone at the end"
+            fi
         fi
     fi
 fi
