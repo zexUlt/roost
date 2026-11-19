@@ -12,7 +12,7 @@
 
 namespace roost {
 
-// The controller of the window's fixed layout (design.md §6, until M5): the
+// The controller of the window's fixed layout (design.md §6, until M6): the
 // QML root (Main.qml) has PanelSlots, objectName "panelSlot", with a
 // panelType each; the shell asks the loader for a panel of that type, hands
 // it to the slot, works out the one link between the list and the terminal,

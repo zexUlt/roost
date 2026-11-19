@@ -1010,7 +1010,7 @@ void SessionsListTest::
 
 // 06-panels.md, [APPROVAL 3]: query, tab, archive, compact and opened are in
 // the shared document; the last whole-document writer wins, the view's state
-// with it (two list panels are M5).
+// with it (two list panels are M6).
 void SessionsListTest::AForeignDocumentTakesTheViewAndTheOpenedSessionAlong() {
     Env env;
     env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));

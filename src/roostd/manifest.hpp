@@ -36,7 +36,7 @@ struct PluginAgent {
 };
 
 // The part of the "native" key that roost loads today: the QML module of the
-// plugin. "library" and "sdk" come with the SDK (13-plan.md, M5) and are
+// plugin. "library" and "sdk" come with the SDK (13-plan.md, M6) and are
 // refused until then.
 struct PluginNative {
     // As declared, "6.N"; empty if the manifest leaves it out.
@@ -90,7 +90,7 @@ QStringList FindPluginDirectories(const QStringList& searchPath);
 // loaded, and a command id, an agent id or a key that is taken stays with its
 // first owner, and so do the keys bound to it. Every refusal is kept as a
 // problem for the user to see. Keys are compared ignoring case; their full
-// normal form comes with the keymap (M5).
+// normal form comes with the keymap (M6).
 //
 // The pointers and the reference it hands out are good until the next Add.
 class PluginRegistry {

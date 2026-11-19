@@ -73,7 +73,7 @@ FocusScope {
     property var forgetPending: []
 
     // The colours of the categories, by the `colorIndex` of the model, and of
-    // the states, hard-coded until the palette of the layout (M5).
+    // the states, hard-coded until the palette of the layout (M6).
     readonly property var categoryColors: ["#0087d7", "#d70000", "#008700", "#d75f00", "#8700d7", "#008787", "#d700af", "#875f00"]
     readonly property string textColor: "#e0e0e0"
     readonly property var tabs: [

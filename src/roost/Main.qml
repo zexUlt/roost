@@ -20,7 +20,7 @@ Window {
     signal retryRequested
 
     // The width of the list slot in pixels: a step of `<` or `>` in the list
-    // panel, and its bounds. Not saved until the layout is (M5).
+    // panel, and its bounds. Not saved until the layout is (M6).
     readonly property int listWidthStep: 20
     readonly property int listWidthMin: 200
     readonly property int listWidthMax: 560
