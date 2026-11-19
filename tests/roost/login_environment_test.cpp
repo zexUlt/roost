@@ -275,7 +275,10 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(
             ReadFile(Path("child.pid")).trimmed().toLongLong() > 1, 1900);
         QVERIFY(finished.wait(TIMEOUT_MS));
-        QVERIFY(started.elapsed() >= 1900);
+        // The timeout ended it, not the shell: a coarse QTimer fires up to 5%
+        // early, so 2000 ms may be 1900 ms after Start.
+        QVERIFY2(started.elapsed() >= 1800,
+                 qPrintable(QString::number(started.elapsed())));
         QVERIFY2(ticks >= 5, qPrintable(QString::number(ticks)));
         QVERIFY(login.Ready());
         QVERIFY(!login.FromLoginShell());
