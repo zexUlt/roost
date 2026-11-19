@@ -1,7 +1,8 @@
 name: Package
 
 # The packages of a release: the macOS .app and .dmg, the x86_64 and aarch64
-# AppImages, and their smoke on machines with no Qt. The jobs come with the
+# AppImages, and their smoke (it runs on the build runner, which has Qt; a clean
+# machine is a later step). The jobs come with the
 # packaging scripts (tools/package_*.sh).
 #
 # A change to the workflow or to the packaging is proved by dispatching it on

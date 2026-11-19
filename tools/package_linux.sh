@@ -21,6 +21,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 LINUXDEPLOY_TAG=1-alpha-20251107-1
 LINUXDEPLOY_QT_TAG=1-alpha-20250213-1
 APPIMAGETOOL_TAG=1.9.1
+# The runtime appimagetool puts in front of the squashfs: it fetches the
+# floating `continuous` one by itself, so it is given this one.
+RUNTIME_TAG=20251108
 
 case $(uname -m) in
     x86_64)
@@ -28,12 +31,14 @@ case $(uname -m) in
         linuxdeploy_sha256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
         linuxdeploy_qt_sha256=15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724
         appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+        runtime_sha256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
         ;;
     aarch64 | arm64)
         arch=aarch64
         linuxdeploy_sha256=620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
         linuxdeploy_qt_sha256=bf1c24aff6d749b5cf423afad6f15abd4440f81dec1aab95706b25f6667cdcf1
         appimagetool_sha256=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+        runtime_sha256=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
         ;;
     *)
         echo "package_linux.sh: no AppImage tools for $(uname -m)" >&2
@@ -83,6 +88,8 @@ fetch "$github/linuxdeploy/linuxdeploy-plugin-qt/releases/download/$LINUXDEPLOY_
     "$linuxdeploy_qt_sha256" "$tools/linuxdeploy-plugin-qt.AppImage"
 fetch "$github/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-$arch.AppImage" \
     "$appimagetool_sha256" "$tools/appimagetool.AppImage"
+fetch "$github/AppImage/type2-runtime/releases/download/$RUNTIME_TAG/runtime-$arch" \
+    "$runtime_sha256" "$tools/runtime-$arch"
 extract "$tools/linuxdeploy.AppImage" "$tools/linuxdeploy"
 extract "$tools/linuxdeploy-plugin-qt.AppImage" "$tools/linuxdeploy-plugin-qt"
 extract "$tools/appimagetool.AppImage" "$tools/appimagetool"
@@ -104,6 +111,14 @@ qt_libs=$("$qmake" -query QT_INSTALL_LIBS)
 
 # The install puts the directories of the Qt it was built with into the run
 # path of every binary; a package carries its own Qt, so not.
+# The option goes back to what the tree had when the script ends, so a local
+# release tree is left as it was.
+rpath_to_qt=$(sed -n 's/^ROOST_INSTALL_RPATH_TO_QT:[A-Z]*=//p' "$build/CMakeCache.txt")
+# shellcheck disable=SC2329  # runs from the EXIT trap
+restore_rpath_option() {
+    [ -z "$rpath_to_qt" ] || cmake -DROOST_INSTALL_RPATH_TO_QT="$rpath_to_qt" "$build" >/dev/null
+}
+trap restore_rpath_option EXIT
 cmake -DROOST_INSTALL_RPATH_TO_QT=OFF "$build" >/dev/null
 rm -rf "$appdir"
 cmake --install "$build" --prefix "$appdir/usr" --component roost >/dev/null
@@ -196,8 +211,15 @@ needed() {
 }
 while :; do
     needed >"$out/needed.txt"
+    # No NEEDED at all: readelf is missing or failing, and every Qt library
+    # would look dead.
+    [ -s "$out/needed.txt" ] || {
+        echo "package_linux.sh: readelf found no NEEDED entry in the AppDir" >&2
+        exit 1
+    }
     removed=0
     for lib in "$appdir"/usr/lib/libQt6*.so*; do
+        [ -e "$lib" ] || continue
         name=$(basename "$lib")
         soname=$({ readelf -d "$lib" 2>/dev/null || true; } | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')
         if ! grep -qxF "${soname:-$name}" "$out/needed.txt"; then
@@ -222,10 +244,16 @@ for doc in "$appdir"/usr/share/doc/*/; do
     [ "$keep" = 1 ] || rm -rf "${doc:?}"
 done
 
+# The text of the ICU licence, next to the others (the Qt of the image links
+# ICU as separate libraries; the macOS bundle has none). Committed, not
+# fetched: a licence text needs no network and is reviewed in the diff.
+install -m 644 "$root/licenses/ICU-LICENSE.txt" "$appdir/usr/share/licenses/roost/ICU-LICENSE.txt"
+
 image=$out/roost-$arch.AppImage
 rm -f "$image"
 # --no-appstream: there is no AppStream metadata yet.
+# --runtime-file: the pinned runtime, so appimagetool downloads nothing.
 ARCH=$arch "$tools/appimagetool/squashfs-root/AppRun" --no-appstream \
-    "$appdir" "$image" >&2
+    --runtime-file "$tools/runtime-$arch" "$appdir" "$image" >&2
 [ -x "$image" ] || chmod +x "$image"
 echo "$image"

@@ -56,7 +56,8 @@ Version 73, as in the Qt the AppImage is built with.
 
 AppImage only: libicuuc, libicui18n and libicudata, the libraries Qt Core of
 the Qt build links; copied in with Qt, as separate libraries. The licence text
-is https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE.
+is usr/share/licenses/roost/ICU-LICENSE.txt of the AppImage (icu4c/LICENSE of
+the release-73-2 tag, https://github.com/unicode-org/icu).
 
 Libraries copied into the AppImage from the build machine (Ubuntu 24.04)
 -------------------------------------------------------------------------

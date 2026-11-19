@@ -2,6 +2,9 @@
 # What the AppImage of tools/package_linux.sh has to be (docs/design/11-build.md):
 #   - every ELF in it finds all its libraries (ldd, with no LD_LIBRARY_PATH),
 #     so it does not lean on the Qt of the machine that built it;
+#   - every RPATH/RUNPATH entry of every ELF is relative to $ORIGIN: one that
+#     is not (a path of the build machine's Qt) is resolved by ldd on that
+#     machine and by nobody else;
 #   - no library of every desktop (packaging/linux/system-libraries.txt) is in
 #     it, and every shared library in it is in the licence inventory below, and each
 #     component of the inventory that is in the AppImage has its heading in the
@@ -21,7 +24,8 @@ set -uo pipefail
 
 appimage=${1:?usage: tools/check_appimage.sh <AppImage>}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-appimage=$(cd "$(dirname "$appimage")" && pwd)/$(basename "$appimage")
+# pwd -P: the runtime puts the real path into APPIMAGE.
+appimage=$(cd "$(dirname "$appimage")" && pwd -P)/$(basename "$appimage")
 failed=0
 
 fail() {
@@ -91,6 +95,7 @@ appdir=$tmp/extract/squashfs-root
 # --- libraries -------------------------------------------------------------
 elf_count=0
 lib_count=0
+rpath_count=0
 while IFS= read -r -d '' file; do
     [ "$(head -c4 "$file" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ] || continue
     rel=${file#"$appdir"/}
@@ -100,6 +105,16 @@ while IFS= read -r -d '' file; do
         fail "$rel: ldd does not find"
         printf '%s\n' "$missing" | sed 's/^/        /'
     fi
+    # RPATH and RUNPATH entries: each one $ORIGIN-relative.
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        case $entry in
+            "\$ORIGIN" | "\$ORIGIN/"*) ;;
+            *) fail "$rel: RPATH/RUNPATH entry '$entry' is not relative to \$ORIGIN" ;;
+        esac
+        rpath_count=$((rpath_count + 1))
+    done < <(readelf -d "$file" 2>/dev/null |
+        sed -n 's/.*(\(RPATH\|RUNPATH\)).*\[\(.*\)\]/\2/p' | tr ':' '\n')
     case $(basename "$file") in
         *.so | *.so.*)
             lib_count=$((lib_count + 1))
@@ -115,10 +130,16 @@ while IFS= read -r -d '' file; do
     esac
 done < <(find "$appdir" -type f -print0)
 ok "$elf_count ELF files, $lib_count of them shared libraries, were checked"
+# Our own binaries have run paths: none found means readelf did not work.
+if [ "$rpath_count" -gt 0 ]; then
+    ok "$rpath_count RPATH/RUNPATH entries were checked, each relative to \$ORIGIN unless FAILed above"
+else
+    fail "no RPATH/RUNPATH entry found in any ELF: readelf failed?"
+fi
 
 # --- licences --------------------------------------------------------------
 licenses=$appdir/usr/share/licenses/roost
-for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt; do
+for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt ICU-LICENSE.txt; do
     [ -s "$licenses/$name" ] || fail "usr/share/licenses/roost/$name is missing"
 done
 if [ -f "$tmp/components" ]; then
@@ -127,6 +148,11 @@ if [ -f "$tmp/components" ]; then
         grep -qxF "$component" "$licenses/THIRD_PARTY_LICENSES" 2>/dev/null ||
             fail "'$component' is in the AppImage, but has no heading in its THIRD_PARTY_LICENSES"
     done < <(sort -u "$tmp/components")
+fi
+if cmp -s "$root/licenses/ICU-LICENSE.txt" "$licenses/ICU-LICENSE.txt"; then
+    ok "usr/share/licenses/roost/ICU-LICENSE.txt is the ICU licence text of the repository"
+else
+    fail "ICU-LICENSE.txt of the AppImage is not licenses/ICU-LICENSE.txt"
 fi
 # The file of the repository is the one the AppImage carries.
 cmp -s "$root/THIRD_PARTY_LICENSES" "$licenses/THIRD_PARTY_LICENSES" ||
