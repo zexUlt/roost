@@ -6,7 +6,11 @@
 #include <QLocalSocket>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
+
+#include <memory>
+#include <utility>
 
 namespace roost::testing {
 
@@ -28,16 +32,40 @@ public:
     // Cuts every connection the proxy has now, as a daemon that is gone would
     // while it is in fact still running; later connections work as usual.
     void DropClients();
+    // Holds back the answers to the requests of the method that the clients
+    // send from now on, and every frame the daemon sends after such an answer
+    // on the same connection, so that the order stays as the daemon made it.
+    // A request made before the call is answered as usual. The answers wait
+    // until ReleaseAnswers; this makes an in-flight request last as long as
+    // the test needs, not as long as the daemon takes.
+    void HoldAnswers(QString method);
+    // Passes on what is held, and holds nothing more.
+    void ReleaseAnswers();
 
 private:
+    // What the proxy knows of one connection, for holding answers.
+    struct Connection {
+        QByteArray FromDaemon;
+        // The ids of the held method's requests that have no answer yet.
+        QSet<qint64> HeldIds;
+        // Whole frames waiting for the release, in the order they came.
+        QList<QByteArray> Held;
+    };
+
     void Accept();
     // Takes the whole frames off the front of what the client sent.
-    void Count(QByteArray& buffer);
+    void Count(QByteArray& buffer, Connection& connection);
+    // Passes on the whole frames of what the daemon sent, but those held.
+    void Forward(QLocalSocket& client, Connection& connection,
+                 const QByteArray& bytes);
 
     QLocalServer Server_;
     QString Listen_;
     QString Upstream_;
     QList<QPointer<QLocalSocket>> Clients_;
+    QList<std::pair<QPointer<QLocalSocket>, std::shared_ptr<Connection>>>
+        Connections_;
+    QString HeldMethod_;
     int OpenRequests_ = 0;
     int SizedOpenRequests_ = 0;
     int ResizeRequests_ = 0;
