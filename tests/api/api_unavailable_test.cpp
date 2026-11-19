@@ -31,11 +31,11 @@ namespace {
 
 const QString AGENT = QStringLiteral("scripted-agent");
 
-// The waits are small so that the tests are quick; the bounds the tests check
-// are tight below, where a timer cannot fire early, and loose above, where a
-// slow runner adds to the wait.
+// The waits are small so that the tests are quick. The wait the service chose
+// is read from its timer; the wall clock only shows that the next list does not
+// come earlier than that wait, give or take the coarseness of a timer. There is
+// no upper bound: a slow runner stalls for as long as it likes.
 constexpr int EARLY_MS = 5;
-constexpr int LATE_MS = 150;
 
 QJsonObject Row(const QString& id, const QString& state) {
     return {{"agent", AGENT},
@@ -155,24 +155,37 @@ private:
                                TIMEOUT_MS);
     }
 
-    // Answers the index-th list with the agent unavailable and waits until the
-    // next list comes.
-    bool AnswerDownAndWaitForNext(int index) {
+    // Answers the index-th list with the agent unavailable, waits until the
+    // next list comes and checks the wait that the service chose for it. The
+    // timer keeps its interval after it has fired and nothing restarts it
+    // before the next answer, so the interval is read without a race.
+    bool AnswerDownAndWaitForNext(int index, int expectedMs) {
         Daemon_->AnswerList(index, {}, Down());
-        return QTest::qWaitFor(
-            [this, index] { return Daemon_->Lists() == index + 2; },
-            TIMEOUT_MS);
-    }
-
-    // The wait after the index-th answer is about this long.
-    void CheckWait(int index, int expectedMs) {
+        if (!QTest::qWaitFor(
+                [this, index] { return Daemon_->Lists() == index + 2; },
+                TIMEOUT_MS)) {
+            return false;
+        }
+        auto* retry = Api_->Sessions().findChild<QTimer*>();
+        if (retry == nullptr) {
+            return false;
+        }
         const qint64 waited = Daemon_->WaitAfter(index);
-        QVERIFY2(
-            waited >= expectedMs - EARLY_MS && waited <= expectedMs + LATE_MS,
-            qPrintable(QString("waited %1 ms after answer %2, expected %3")
-                           .arg(waited)
-                           .arg(index)
-                           .arg(expectedMs)));
+        [&] {
+            QVERIFY2(retry->interval() == expectedMs,
+                     qPrintable(QString("wait chosen after answer %1: %2 ms, "
+                                        "expected %3")
+                                    .arg(index)
+                                    .arg(retry->interval())
+                                    .arg(expectedMs)));
+            QVERIFY2(waited >= expectedMs - EARLY_MS,
+                     qPrintable(QString("next list came %1 ms after answer "
+                                        "%2, expected at least %3")
+                                    .arg(waited)
+                                    .arg(index)
+                                    .arg(expectedMs)));
+        }();
+        return !QTest::currentTestFailed();
     }
 
     std::unique_ptr<ScriptedDaemon> Daemon_;
@@ -200,7 +213,10 @@ private slots:
         // Not asked at once, but after the first wait.
         QCOMPARE(Daemon_->Lists(), 1);
         QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 2, TIMEOUT_MS);
-        CheckWait(0, 40);
+        auto* retry = Api_->Sessions().findChild<QTimer*>();
+        QVERIFY(retry != nullptr);
+        QCOMPARE(retry->interval(), 40);
+        QVERIFY(Daemon_->WaitAfter(0) >= 40 - EARLY_MS);
 
         Daemon_->AnswerList(1, {Row("s2", "working")}, {});
         QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().Unavailable().isEmpty(),
@@ -215,22 +231,19 @@ private slots:
     void TheWaitDoublesWhileTheAgentStaysUnavailableAndStopsAtTheCap() {
         QVERIFY(ConnectApi(std::chrono::milliseconds{40},
                            std::chrono::milliseconds{160}));
+        const int expected[] = {40, 80, 160, 160, 160};
         for (int index = 0; index < 5; ++index) {
-            QVERIFY(AnswerDownAndWaitForNext(index));
+            QVERIFY(AnswerDownAndWaitForNext(index, expected[index]));
         }
-        CheckWait(0, 40);
-        CheckWait(1, 80);
-        CheckWait(2, 160);
-        CheckWait(3, 160);
-        CheckWait(4, 160);
     }
 
     void AfterAGoodAnswerTheWaitIsTheFirstAgain() {
         QVERIFY(ConnectApi(std::chrono::milliseconds{40},
                            std::chrono::milliseconds{640}));
         // 40, 80 and 160 ms are waited; the next would be 320.
+        const int grown[] = {40, 80, 160, 320};
         for (int index = 0; index < 4; ++index) {
-            QVERIFY(AnswerDownAndWaitForNext(index));
+            QVERIFY(AnswerDownAndWaitForNext(index, grown[index]));
         }
         Daemon_->AnswerList(4, {Row("s1", "idle")}, {});
         QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().Unavailable().isEmpty(),
@@ -239,10 +252,8 @@ private slots:
         // The agent goes away again, as it is found by a list from outside.
         Api_->Sessions().Refresh();
         QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 6, TIMEOUT_MS);
-        QVERIFY(AnswerDownAndWaitForNext(5));
-        CheckWait(5, 40);
-        QVERIFY(AnswerDownAndWaitForNext(6));
-        CheckWait(6, 80);
+        QVERIFY(AnswerDownAndWaitForNext(5, 40));
+        QVERIFY(AnswerDownAndWaitForNext(6, 80));
     }
 
     void ALostConnectionEndsTheRetryAndTheReconnectStartsItAnew() {
@@ -251,8 +262,9 @@ private slots:
         QVERIFY(ConnectApi(std::chrono::milliseconds{40},
                            std::chrono::milliseconds{160},
                            std::chrono::milliseconds{600}));
+        const int grown[] = {40, 80, 160};
         for (int index = 0; index < 3; ++index) {
-            QVERIFY(AnswerDownAndWaitForNext(index));
+            QVERIFY(AnswerDownAndWaitForNext(index, grown[index]));
         }
         Daemon_->AnswerList(3, {}, Down());
         auto* retry = Api_->Sessions().findChild<QTimer*>();
@@ -283,13 +295,13 @@ private slots:
                            std::chrono::milliseconds{640},
                            std::chrono::milliseconds{200}));
         // The wait grows to 640 ms by the drop: far out of the check below.
+        const int grown[] = {40, 80, 160, 320};
         for (int index = 0; index < 4; ++index) {
-            QVERIFY(AnswerDownAndWaitForNext(index));
+            QVERIFY(AnswerDownAndWaitForNext(index, grown[index]));
         }
         Daemon_->Drop();
         QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Lists(), 1, TIMEOUT_MS);
-        QVERIFY(AnswerDownAndWaitForNext(0));
-        CheckWait(0, 40);
+        QVERIFY(AnswerDownAndWaitForNext(0, 40));
     }
 
     void ARefreshWithoutAConnectionLeavesNoRetryScheduled() {
