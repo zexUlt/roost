@@ -504,8 +504,10 @@ target_compile_definitions(smoke_sessions_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     ROOST_PATH="$<TARGET_FILE:roost>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
-add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml)
+add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml
+    fixture_backend)
 
 # The window starts roostd when nobody listens on the socket: the launcher with
 # a real Api and the real roostd (detached; the test stops it by its lock).
