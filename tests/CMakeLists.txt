@@ -12,10 +12,11 @@ add_library(roost_test_helpers STATIC
     helpers/refusing_server.cpp
     helpers/roostd_process.cpp
     helpers/scoped_env.cpp
+    helpers/window_teardown.cpp
 )
 target_include_directories(roost_test_helpers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(roost_test_helpers PUBLIC
-    roost::compile_options roost_core Qt6::Core Qt6::Test)
+    roost::compile_options roost_core Qt6::Core Qt6::Gui Qt6::Test)
 
 # Helpers for the tests of terminal channels; apart, so the others do not link
 # roost_terminal.
@@ -80,7 +81,8 @@ roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_t
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
 # RHI, so Qt Quick draws in software, whose render thread exists only with
 # QSG_RENDER_LOOP=threaded (prior-art section 5.1).
-roost_add_qt_test(frame_budget_test bench/frame_budget_test.cpp roost_qml_api)
+roost_add_qt_test(frame_budget_test bench/frame_budget_test.cpp roost_qml_api
+    roost_test_helpers)
 set_tests_properties(frame_budget_test PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
     TIMEOUT 120

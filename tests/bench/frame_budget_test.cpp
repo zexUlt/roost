@@ -27,6 +27,7 @@
 // blocked while the render thread runs updatePaintNode, and the slots that
 // handle the Updated signals. Rendering proper is not in it.
 
+#include "helpers/window_teardown.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "terminal/renderer.hpp"
 #include "terminal/terminal_session.hpp"
@@ -620,8 +621,7 @@ private:
         const auto teardown = qScopeGuard([&] {
             feed.Stop();
             QObject::disconnect(&feed, &Feed::Updated, &window, nullptr);
-            window.hide();
-            QCoreApplication::removePostedEvents(&window);
+            roost::testing::QuiesceWindow(&window);
         });
         std::vector<BenchItem*> items;
 

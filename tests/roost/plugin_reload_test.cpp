@@ -28,6 +28,7 @@
 #include "api/api.hpp"
 #include "api/api_test_support.hpp"
 #include "helpers/roostd_process.hpp"
+#include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
@@ -264,6 +265,9 @@ private slots:
         Watcher_.reset();
         Shell_.reset();
         Loader_.reset();
+        // The window stops rendering before it is destroyed.
+        roost::testing::QuiesceWindows(Engine_ ? Engine_->rootObjects()
+                                               : QObjectList{});
         Engine_.reset();
         Singleton_ = nullptr;
         Api_.reset();

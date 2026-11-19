@@ -10,3 +10,20 @@
 # Write: https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L792
 # Read:  https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L345-L352
 race_top:QSGSoftwareThreadedRenderLoop::handleExposure
+
+# Qt 6.12, macOS, QFileSystemWatcher (FSEvents engine): QFileSystemWatcher::addPaths
+# in the GUI thread builds the engine's own strings (QFileInfo::canonicalFilePath,
+# then the keys of watchingState.watchedDirectories) under the engine's lock; the
+# FSEvents callback on the engine's libdispatch queue then reads them in
+# processEvent -> checkDir (QFile::encodeName of the key, a reference count taken
+# on the shared string). The hand-over goes through FSEvents and libdispatch,
+# which TSan does not see, so the reference count (atomic) against the header
+# written when the string was made (plain) is reported. Every address in the
+# reports is a heap block allocated inside QtCore by addPaths; roost only calls
+# the public addPaths from the GUI thread (PluginWatcher::Sync). The symbolizer
+# names the top frame of the callback side QString::normalized, the nearest
+# exported symbol; the other side's top frame is QArrayData::allocate2, so the
+# rule is matched by the first.
+# Write: https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L316-L325
+# Read:  https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L51-L58
+race_top:QString::normalized
