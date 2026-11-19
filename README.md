@@ -37,7 +37,8 @@ build/dev/bin/roost [--dev]
 roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
 a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A
 plugin there with the id of a built-in one is not loaded; `plugins.list` tells
-why. `ROOST_PLUGINS_PATH` (absolute paths, separated by `:`) overrides the
+why. `ROOST_PLUGINS_PATH` (absolute paths, separated by `:`; unset, empty or
+without an absolute path it is ignored) overrides the
 built-in directory: roostd searches the listed directories instead, so list the
 built-in one too to keep its plugins. With `--dev` the
 window reloads a plugin when its files change. It watches the copy under

@@ -509,8 +509,8 @@ private slots:
             << QByteArray("::/a::") << QStringList{"/a", config};
         QTest::newRow("relative entries are skipped")
             << QByteArray("rel:/a:./x") << QStringList{"/a", config};
-        QTest::newRow("only relative entries leave the config directory")
-            << QByteArray("rel:./x") << QStringList{config};
+        QTest::newRow("only relative entries act as an unset variable")
+            << QByteArray("rel:./x") << QStringList{"/bundled", config};
         QTest::newRow("each directory once")
             << QByteArray("/a:/a/:/config/plugins:/b:/a")
             << QStringList{"/a", config, "/b"};
@@ -590,9 +590,10 @@ private slots:
         QVERIFY(dir.isValid());
         const QDir root(dir.path());
         QVERIFY(root.mkpath("bin"));
-        // A file of that name is not a plugins directory; the next
+        // A file at a candidate path is not a plugins directory; the next
         // candidate is.
-        WriteFile(root.filePath("Resources"), "");
+        QVERIFY(root.mkpath("Resources"));
+        WriteFile(root.filePath("Resources/roost-plugins"), "");
         QVERIFY(root.mkpath("roost-plugins"));
         QCOMPARE(BundledPluginsDirectory(root.filePath("bin")),
                  root.filePath("roost-plugins"));

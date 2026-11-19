@@ -83,7 +83,8 @@ QString BundledPluginsDirectory(const QString& applicationDirectory);
 
 // Where plugins are looked for, in load order: each absolute entry of
 // ROOST_PLUGINS_PATH (separated by ':'), or `bundledDirectory` if the variable
-// is empty or unset (an empty `bundledDirectory` adds nothing), then
+// is unset, empty or has no absolute entry (an empty `bundledDirectory` adds
+// nothing), then
 // <config directory>/plugins. Each directory is listed once, where it first
 // comes.
 QStringList PluginSearchPath(const QString& configDirectory,

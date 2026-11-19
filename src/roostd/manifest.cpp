@@ -383,17 +383,15 @@ QStringList PluginSearchPath(const QString& configDirectory,
                              const QString& bundledDirectory) {
     QStringList path;
     const QString variable = qEnvironmentVariable("ROOST_PLUGINS_PATH");
-    if (variable.isEmpty()) {
-        if (!bundledDirectory.isEmpty()) {
-            path.append(QDir::cleanPath(bundledDirectory));
+    for (const QString& entry :
+         variable.split(QDir::listSeparator(), Qt::SkipEmptyParts)) {
+        if (QDir::isAbsolutePath(entry)) {
+            path.append(QDir::cleanPath(entry));
         }
-    } else {
-        for (const QString& entry :
-             variable.split(QDir::listSeparator(), Qt::SkipEmptyParts)) {
-            if (QDir::isAbsolutePath(entry)) {
-                path.append(QDir::cleanPath(entry));
-            }
-        }
+    }
+    // A variable without an absolute entry is as good as unset.
+    if (path.isEmpty() && !bundledDirectory.isEmpty()) {
+        path.append(QDir::cleanPath(bundledDirectory));
     }
     path.append(QDir::cleanPath(configDirectory + QStringLiteral("/plugins")));
     // A directory searched twice would hold every plugin twice.
