@@ -14,6 +14,7 @@
 #include "core/version.hpp"
 #include "roostd/dump.hpp"
 #include "roostd/log_file.hpp"
+#include "roostd/manifest.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
 #include "roostd/session_channels.hpp"
@@ -122,7 +123,9 @@ int main(int argc, char* argv[]) {
 
     // Gone before the server.
     roost::PluginHost plugins(server);
-    plugins.Load(roost::PluginSearchPath(*config));
+    plugins.Load(roost::PluginSearchPath(
+        *config, roost::BundledPluginsDirectory(
+                     QCoreApplication::applicationDirPath())));
     for (const QString& problem : plugins.Registry().Problems()) {
         qWarning("roostd: %s", qUtf8Printable(problem));
     }

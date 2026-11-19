@@ -27,15 +27,20 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 
 ## Run
 
-Start the daemon with the built-in plugins, then the window:
+Start the daemon, then the window:
 
 ```sh
-ROOST_PLUGINS_PATH=$PWD/build/dev/roost-plugins build/dev/bin/roostd
+build/dev/bin/roostd
 build/dev/bin/roost [--dev]
 ```
 
-roostd looks for plugins in `ROOST_PLUGINS_PATH` (absolute paths, separated by
-`:`), then in `<ROOST_CONFIG or ~/.config/roost>/plugins`. With `--dev` the
+roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
+a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A
+plugin there with the id of a built-in one is not loaded; `plugins.list` tells
+why. `ROOST_PLUGINS_PATH` (absolute paths, separated by `:`; unset, empty or
+without an absolute path it is ignored) overrides the
+built-in directory: roostd searches the listed directories instead, so list the
+built-in one too to keep its plugins. With `--dev` the
 window reloads a plugin when its files change. It watches the copy under
 `build/dev/roost-plugins`, so after editing `plugins/<id>/qml/*.qml` run
 `cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
