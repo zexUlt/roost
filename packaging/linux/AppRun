@@ -1,0 +1,32 @@
+#!/bin/sh
+# The entry point of the AppImage. `--roostd` as the first argument runs the
+# daemon of the same AppDir, with the rest of the arguments; anything else runs
+# the window. The window starts its daemon as `$APPIMAGE --roostd`
+# (src/roost/daemon_launcher.cpp), so the daemon keeps a mount of its own after
+# the window is gone.
+#
+# APPDIR is the directory this file is in (the runtime sets it to the same):
+# the window takes the daemon next to itself only when it runs under APPDIR
+# (LoginEnvironment::InAppImage), and the daemon takes the bundled plugins from
+# ../lib/roost/plugins of its own directory.
+set -e
+
+here=$(dirname "$(readlink -f "$0")")
+APPDIR=$here
+export APPDIR
+
+# Environment of the deployed Qt (QT_PLUGIN_PATH, QML2_IMPORT_PATH), written by
+# the linuxdeploy plugin. The window and roostd strip them again from what
+# they start (LoginEnvironment).
+for hook in "$APPDIR"/apprun-hooks/*.sh; do
+    if [ -r "$hook" ]; then
+        # shellcheck disable=SC1090
+        . "$hook"
+    fi
+done
+
+if [ "${1:-}" = "--roostd" ]; then
+    shift
+    exec "$APPDIR/usr/bin/roostd" "$@"
+fi
+exec "$APPDIR/usr/bin/roost" "$@"
