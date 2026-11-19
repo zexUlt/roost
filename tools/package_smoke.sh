@@ -133,12 +133,15 @@ detach_dmg() {
     fi
 }
 
-# kill_tree <pid>: the pid and its children, by pid (the plugin backends).
-# shellcheck disable=SC2329  # called from cleanup, which runs from the trap
+# kill_tree <pid>: the pid and the children it had, by pid (the plugin
+# backends; inside an AppImage the real roost under the runtime). The parent
+# goes first, so it cannot restart a child that was killed before it.
 kill_tree() {
-    local pid
+    local pid children
     [ -n "$1" ] || return 0
-    for pid in $(pgrep -P "$1" 2>/dev/null) "$1"; do
+    children=$(pgrep -P "$1" 2>/dev/null)
+    kill "$1" 2>/dev/null
+    for pid in $children; do
         kill "$pid" 2>/dev/null
     done
 }
@@ -153,9 +156,8 @@ appimage_mounted() {
 # shellcheck disable=SC2329  # runs from the trap
 cleanup() {
     local status=$? pid dir _
-    for pid in "$window_pid" "$helper_pid"; do
-        [ -n "$pid" ] && kill "$pid" 2>/dev/null
-    done
+    kill_tree "$window_pid"
+    [ -n "$helper_pid" ] && kill "$helper_pid" 2>/dev/null
     kill_tree "$roostd_pid"
     kill_tree "$extra_roostd_pid"
     # Every fake attach the runs started: the fake claude records its pid in
@@ -282,8 +284,24 @@ wait_window() {
         fi
         sleep 0.2
     done
-    kill "$window_pid" 2>/dev/null
+    kill_tree "$window_pid"
     window_pid=
+}
+
+# note_crash <status>: a window that died of a signal (status above 128):
+# which one, and on what CPU, so that a repeat of a crash seen once (SIGILL of
+# the window under xcb on x86_64) can be told apart. The FAIL stays.
+note_crash() {
+    local sig cpu
+    [ "$1" -gt 128 ] || return 0
+    sig=$(kill -l $(($1 - 128)) 2>/dev/null)
+    if [ "$kind" = linux ]; then
+        cpu=$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
+        cpu="$cpu, $(awk '/^flags/ {print NF - 2; exit}' /proc/cpuinfo) flags"
+    else
+        cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
+    fi
+    echo "note: the window died of SIG$sig ($1); cpu: ${cpu:-unknown}"
 }
 
 # lock_pid <dir>: who holds the socket of the run in <dir>: the first line of
@@ -353,9 +371,11 @@ if [ "$kind" = macos ]; then
     app=$work/Applications/roost.app
     window_cmd=("$app/Contents/MacOS/roost")
     ok "roost.app copied out of the image to $app"
-    if [ -e /opt/homebrew/opt/qtbase ]; then
-        fail "/opt/homebrew/opt/qtbase exists: this machine has a Qt, the smoke proves nothing"
-    fi
+    for qt in /opt/homebrew/opt/qtbase /opt/homebrew/opt/qt; do
+        if [ -e "$qt" ]; then
+            fail "$qt exists: this machine has a Qt, the smoke proves nothing"
+        fi
+    done
 else
     chmod +x "$package"
     window_cmd=("$package")
@@ -417,6 +437,7 @@ if [ -z "$window_status" ]; then
     show_tail "$work/window.out"
 elif [ "$window_status" -ne 0 ]; then
     fail "roost --smoke-sessions exited with $window_status"
+    note_crash "$window_status"
     show_tail "$work/window.out"
 else
     ok "roost --smoke-sessions"
@@ -591,6 +612,7 @@ if [ -z "$window_status" ]; then
     show_tail "$work/window2.out"
 elif [ "$window_status" -ne 0 ]; then
     fail "the second roost --smoke-sessions exited with $window_status"
+    note_crash "$window_status"
     show_tail "$work/window2.out"
 else
     second=$(lock_pid "$work")
@@ -660,7 +682,7 @@ if [ "$launch_services" = 1 ]; then
             "$app/Contents/MacOS/roostd"*) ok "open -n: roostd $extra_roostd_pid is $app/Contents/MacOS/roostd" ;;
             *) fail "open -n: the roostd that runs is not the one of the app: $exe" ;;
         esac
-        if grep -q 'smoke-sessions' "$extra_work/open.err" "$extra_work/open.out"; then
+        if grep -qF 'roost --smoke-sessions:' "$extra_work/open.err" "$extra_work/open.out"; then
             fail "open -n: the window reported a failure:"
             show_tail "$extra_work/open.err"
             show_tail "$extra_work/open.out"

@@ -420,7 +420,8 @@ jobs:
             echo "::error::expected one .dmg and the two AppImages, got: ${files[*]}"
             exit 1
           fi
-          sha256sum -- * | tee SHA256SUMS
+          sha256sum -- "${files[@]}" >SHA256SUMS
+          cat SHA256SUMS
 
       # The source of the Qt of the packages must be where the notes say.
       - name: Notes
