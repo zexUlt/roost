@@ -868,7 +868,8 @@ private slots:
         QVERIFY(Calls().isEmpty());
         QCOMPARE(activated.count(), 0);
         QCOMPARE(TabNowOfList(), QString("unread"));
-        QCOMPARE(CursorId(), cursorId);
+        // The tab was empty, so its only row is where the cursor has to be.
+        QCOMPARE(CursorId(), STARTED);
         QVERIFY(ListView()->hasActiveFocus());
     }
 
