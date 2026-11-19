@@ -2,6 +2,7 @@
 
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -208,7 +209,23 @@ bool RoostdProcess::Start(const QString& roostdPath) {
         });
     Process_->start(roostdPath, {});
     ::close(watcherEnd);
-    return Process_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath());
+    QElapsedTimer elapsed;
+    elapsed.start();
+    if (!Process_->waitForStarted(TIMEOUT_MS)) {
+        qWarning().noquote()
+            << "roostd did not start after" << elapsed.elapsed()
+            << "ms:" << Process_->errorString();
+        return false;
+    }
+    if (!Greets(SocketPath())) {
+        qWarning().noquote()
+            << "roostd did not answer hello after" << elapsed.elapsed()
+            << "ms; process state" << Process_->state() << "exit code"
+            << Process_->exitCode() << "stderr:"
+            << QString::fromLocal8Bit(Process_->readAllStandardError());
+        return false;
+    }
+    return true;
 }
 
 bool RoostdProcess::Stop() {

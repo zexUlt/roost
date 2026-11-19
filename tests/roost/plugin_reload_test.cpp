@@ -5,6 +5,7 @@
 // directories that RoostdProcess made; roostd does not re-read them.
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJSEngine>
@@ -130,8 +131,20 @@ private:
     // the loader and the watcher; the Shell only with `withShell`.
     bool Boot(std::chrono::milliseconds debounce = DEBOUNCE, int maxPaths = 256,
               bool withShell = false) {
-        if (!Daemon_->IsValid() || !Daemon_->Start(ROOSTD_PATH)) {
+        // Names the step that failed and how long Boot took, so that a failure
+        // in CI says whether it was fast (a start) or a wait that ran out.
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const auto fail = [&](const char* step) {
+            qWarning().noquote() << "Boot failed at" << step << "after"
+                                 << elapsed.elapsed() << "ms";
             return false;
+        };
+        if (!Daemon_->IsValid()) {
+            return fail("the temporary directory of roostd");
+        }
+        if (!Daemon_->Start(ROOSTD_PATH)) {
+            return fail("the start of roostd (process or hello)");
         }
         Api_ = std::make_unique<api::Api>();
         Engine_ = std::make_unique<QQmlApplicationEngine>();
@@ -141,7 +154,7 @@ private:
         Singleton_ =
             Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
         if (Singleton_ == nullptr) {
-            return false;
+            return fail("the Roost singleton");
         }
         Singleton_->setApi(*Api_);
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
@@ -149,13 +162,15 @@ private:
         if (withShell) {
             Engine_->loadFromModule("Roost.Shell", "Main");
             if (Engine_->rootObjects().isEmpty()) {
-                return false;
+                return fail("the load of the shell");
             }
         }
-        if (!connected.wait(TIMEOUT_MS) ||
-            !QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
+        if (!connected.wait(TIMEOUT_MS)) {
+            return fail("the Connected signal of the Api");
+        }
+        if (!QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
                              TIMEOUT_MS)) {
-            return false;
+            return fail("the plugin list of the Api");
         }
         Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
                                                  *Singleton_);
