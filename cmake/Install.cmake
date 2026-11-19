@@ -22,9 +22,9 @@
 #   ROOST_INSTALL_RPATH            the INSTALL_RPATH of roost and roostd
 #   ROOST_INSTALL_RPATH_TO_QT      option, ON by default: the directories of the
 #                                  Qt the build linked go into the run path of
-#                                  every installed target, in front of ours. A
-#                                  packaging step that deploys Qt into the
-#                                  bundle sets it OFF.
+#                                  every installed target (before ours on
+#                                  macOS, after on Linux). A packaging step
+#                                  that deploys Qt sets it OFF.
 #   roost_install_plugin_binary()  installs a target of a plugin
 
 option(ROOST_INSTALL_RPATH_TO_QT
@@ -101,7 +101,7 @@ function(roost_install_plugin_binary id target subdir)
     set(plugin_dir ${ROOST_INSTALL_PLUGINS_DIR}/${id})
     get_target_property(type ${target} TYPE)
     # Sets the INSTALL_RPATH, replacing any the target had. With
-    # ROOST_INSTALL_RPATH_TO_QT the directories of the Qt it linked come first.
+    # ROOST_INSTALL_RPATH_TO_QT the directories of the Qt it linked are added.
     if(NOT APPLE)
         file(RELATIVE_PATH to_lib /p/${plugin_dir}/${subdir}
             /p/lib)

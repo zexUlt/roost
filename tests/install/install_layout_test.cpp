@@ -46,18 +46,19 @@ constexpr bool IS_MACOS = true;
 constexpr bool IS_MACOS = false;
 #endif
 
-// The run path of each installed binary, in order: the directory of the Qt of
-// the build first when ROOST_INSTALL_RPATH_TO_QT is on (QT_RUN_PATH is empty
-// when it is off, or when Qt is in a directory the linker searches anyway),
-// then ours. On Linux the plugin binaries sit deeper in lib/roost; on macOS
+// The run path of each installed binary, in order: ours and, when
+// ROOST_INSTALL_RPATH_TO_QT is on, the directory of the Qt of the build
+// (QT_RUN_PATH is empty when it is off, or when Qt is in a directory the
+// linker searches anyway). CMake puts the Qt directory first on macOS and last
+// on Linux. On Linux the plugin binaries sit deeper in lib/roost; on macOS
 // the QML module, which is loaded through a symlink, has the paths for both
 // ways dyld may resolve @loader_path.
 QStringList WithQtRunPath(const QStringList& ours) {
-    QStringList all;
-    if (const QString qt = QStringLiteral(QT_RUN_PATH); !qt.isEmpty()) {
-        all.append(qt);
+    const QString qt = QStringLiteral(QT_RUN_PATH);
+    if (qt.isEmpty()) {
+        return ours;
     }
-    return all + ours;
+    return IS_MACOS ? QStringList{qt} + ours : ours + QStringList{qt};
 }
 const QStringList BINARY_RUN_PATH =
     WithQtRunPath({IS_MACOS ? QStringLiteral("@executable_path/../Frameworks")
