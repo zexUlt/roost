@@ -106,23 +106,26 @@ bool SessionsWindow::ListWithout(const QStringList& gone) const {
            agents.commit();
 }
 
-// The plugins directory of the case: the built plugins `sessions` and, unless
-// WithoutTerminal_, `terminal`, linked; and `claude` as a copy of the built
-// one behind a script that runs the adapter with a short --poll-ms. With the
-// default of 3 s every change of the fake claude's list would cost a poll
-// interval.
+// The plugins directory of the case: every built plugin but `claude` (and,
+// when WithoutTerminal_, `terminal`) linked; and `claude` as the built
+// manifest whose adapter is a script that runs the built one with a short
+// --poll-ms. With the default of 3 s every change of the fake claude's list
+// would cost a poll interval.
 bool SessionsWindow::LinkPlugins() const {
     const QDir plugins(Dir_->filePath("plugins"));
+    const QDir builtPlugins(QStringLiteral(ROOST_PLUGINS_DIR));
     if (!plugins.mkpath(".")) {
         return false;
     }
     for (const QString& id :
-         {QStringLiteral("sessions"), QStringLiteral("terminal")}) {
+         builtPlugins.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (id == QStringLiteral("claude") ||
+            (id == QStringLiteral("terminal") && WithoutTerminal_)) {
+            continue;
+        }
         // The daemon may be started again in a case: the links are there.
-        if ((id != QStringLiteral("terminal") || !WithoutTerminal_) &&
-            !plugins.exists(id) &&
-            !QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
-                         plugins.filePath(id))) {
+        if (!plugins.exists(id) &&
+            !QFile::link(builtPlugins.filePath(id), plugins.filePath(id))) {
             return false;
         }
     }
@@ -133,10 +136,20 @@ bool SessionsWindow::LinkPlugins() const {
     if (!claude.mkpath("backend") || !built.open(QIODevice::ReadOnly)) {
         return false;
     }
-    QJsonObject manifest = QJsonDocument::fromJson(built.readAll()).object();
-    manifest.insert(
-        "backend",
-        QJsonObject{{"command", QJsonArray{"backend/claude-adapter"}}});
+    // The manifest is kept as built; the script stands in for the program
+    // it runs, so a manifest that runs another one is not one this helper
+    // can speed up.
+    const QByteArray manifest = built.readAll();
+    const QJsonArray command = QJsonDocument::fromJson(manifest)
+                                   .object()
+                                   .value("backend")
+                                   .toObject()
+                                   .value("command")
+                                   .toArray();
+    if (command.isEmpty() || command.first().toString() !=
+                                 QStringLiteral("backend/claude-adapter")) {
+        return false;
+    }
     const QByteArray shell =
         QStringLiteral("#!/bin/sh\nexec '%1' --poll-ms %2 \"$@\"\n")
             .arg(adapter)
@@ -149,7 +162,7 @@ bool SessionsWindow::LinkPlugins() const {
            script.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
                                  QFile::ExeOwner) &&
            json.open(QIODevice::WriteOnly) &&
-           json.write(QJsonDocument(manifest).toJson()) > 0;
+           json.write(manifest) == manifest.size();
 }
 
 bool SessionsWindow::StartDaemon() {

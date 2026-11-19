@@ -351,7 +351,7 @@ private slots:
         // when it has: the delay is what keeps A out. It is long enough for
         // the events and the crash, which take milliseconds, and each of the
         // two lists waits it out.
-        QVERIFY(SetSlowListing(1500));
+        QVERIFY(SetSlowListing(3000));
         QSignalSpy reset(&Api_->Sessions(), &api::SessionService::Reset);
         QSignalSpy inserted(&Api_->Sessions(),
                             &api::SessionService::RowInserted);
