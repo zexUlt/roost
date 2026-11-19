@@ -2,6 +2,7 @@
 
 #include <QtLogging>
 
+#include <algorithm>
 #include <utility>
 
 #include "api/thread_check.hpp"
@@ -15,8 +16,19 @@ const QString ID = QStringLiteral("id");
 
 }  // namespace
 
-SessionService::SessionService(IoThread& io, BusService& bus, QObject* parent)
-    : QObject(parent), Io_(io), Bus_(bus) {
+SessionService::SessionService(IoThread& io, BusService& bus,
+                               std::chrono::milliseconds firstRelistDelay,
+                               std::chrono::milliseconds maxRelistDelay,
+                               QObject* parent)
+    : QObject(parent),
+      Io_(io),
+      Bus_(bus),
+      Delay_(firstRelistDelay),
+      FirstRelistDelay_(firstRelistDelay),
+      MaxRelistDelay_(maxRelistDelay),
+      RelistTimer_(this) {
+    RelistTimer_.setSingleShot(true);
+    connect(&RelistTimer_, &QTimer::timeout, this, [this] { Refresh(); });
     connect(&Io_, &IoThread::Disconnected, this,
             &SessionService::OnDisconnected);
 }
@@ -67,6 +79,9 @@ QFuture<rpc::Result> SessionService::Refresh() {
     if (!CheckThread(*this, "SessionService::Refresh")) {
         return rpc::Ready(std::unexpected(WrongThread()));
     }
+    // The answer of this list decides about the next; a retry scheduled
+    // before is dropped, so a retry never adds a list to one that is out.
+    RelistTimer_.stop();
     // From now until the answer, the events are kept: roostd answers when
     // every adapter has, and an adapter that was quick may have said more than
     // its part of the list does.
@@ -89,14 +104,22 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
         replay = Kept_;
     }
     // The kept events reach back to the earliest request still out.
-    if (--InFlight_ == 0) {
+    const bool last = --InFlight_ == 0;
+    if (last) {
         Kept_.clear();
+    }
+    if (apply) {
+        Applied_ = order;
+        OnAnswer(*answer);
+    }
+    // The events are put back below, after the decision: the rows they touch
+    // do not change what the answer said of the agents.
+    if (last) {
+        ScheduleRelist();
     }
     if (!apply) {
         return;
     }
-    Applied_ = order;
-    OnAnswer(*answer);
     // Each event carries a whole row, so one that the answer already knows of
     // changes nothing, and one that is newer than the answer's row wins. The
     // rows are told one by one, as they are for an event that is live; a
@@ -111,6 +134,23 @@ void SessionService::OnSettled(std::uint64_t order, const rpc::Result& answer) {
             ApplyRow(event.Row);
         }
     }
+}
+
+void SessionService::ScheduleRelist() {
+    // Without a connection the list that Start asks for after the reconnect
+    // is the next.
+    // A failed list leaves the rows and Unavailable_ as they were; one that
+    // has never been answered leaves the window with no sessions at all, so
+    // it is asked again like an answer with an unavailable agent.
+    if (!Started_) {
+        return;
+    }
+    if (Loaded_ && Unavailable_.isEmpty()) {
+        Delay_ = FirstRelistDelay_;
+        return;
+    }
+    RelistTimer_.start(Delay_);
+    Delay_ = std::min(Delay_ * 2, MaxRelistDelay_);
 }
 
 void SessionService::OnAnswer(const QJsonValue& answer) {
@@ -203,6 +243,8 @@ void SessionService::ApplyRow(const QJsonObject& row) {
 
 void SessionService::OnDisconnected() {
     ++Epoch_;
+    RelistTimer_.stop();
+    Delay_ = FirstRelistDelay_;
     InFlight_ = 0;
     Kept_.clear();
     Started_ = false;

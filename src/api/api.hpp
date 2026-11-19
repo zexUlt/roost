@@ -27,6 +27,11 @@ struct ApiOptions {
     // with each failed attempt, and a successful hello puts it back.
     std::chrono::milliseconds FirstReconnectDelay{500};
     std::chrono::milliseconds MaxReconnectDelay{30'000};
+    // The wait before the sessions are listed again while an agent is
+    // unavailable; it doubles with each answer that still has one, up to the
+    // maximum, and an answer with none puts it back.
+    std::chrono::milliseconds FirstRelistDelay{500};
+    std::chrono::milliseconds MaxRelistDelay{30'000};
 };
 
 // The root of the window's API (design.md §5, "Один API"): one connection to

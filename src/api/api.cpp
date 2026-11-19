@@ -17,7 +17,7 @@ Api::Api(ApiOptions options, QObject* parent)
       Bus_(Io_),
       Commands_(Io_),
       Plugins_(Io_),
-      Sessions_(Io_, Bus_),
+      Sessions_(Io_, Bus_, options.FirstRelistDelay, options.MaxRelistDelay),
       Store_(Io_, Bus_),
       Dispatch_(Bus_, Commands_, Plugins_, Sessions_, Store_),
       Delay_(options.FirstReconnectDelay) {

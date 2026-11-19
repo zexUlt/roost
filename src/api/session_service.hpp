@@ -10,6 +10,9 @@
 #include <QString>
 #include <QStringList>
 
+#include <QTimer>
+
+#include <chrono>
 #include <cstdint>
 #include <utility>
 
@@ -27,7 +30,13 @@ namespace roost::api {
 //
 // Kept fresh by the session.stateChanged events, which carry a whole row, and
 // the session.removed events {agent, id}, which drop one. Refresh replaces all
-// the rows; there is no polling. Use it from the GUI thread; the signals are
+// the rows. There is no polling, but while the answer of a Refresh has an
+// unavailable agent (an adapter whose last run failed, which roostd lists as
+// {agent, reason}) or no answer has come, the list is asked for again after a
+// wait: the first delay, doubled with each answer that still calls for it, up
+// to the maximum, and put back by an answer that does not. One retry is
+// scheduled at a time, and a Refresh started by anyone cancels it: the answer
+// of the last one out decides. Use it from the GUI thread; the signals are
 // emitted there.
 //
 // A restarted adapter does not tell what changed while it was down: roostd
@@ -52,7 +61,11 @@ public:
         QStringLiteral("title"), QStringLiteral("cwd"),
         QStringLiteral("state"), QStringLiteral("startedAt")};
 
-    SessionService(IoThread& io, BusService& bus, QObject* parent = nullptr);
+    // The delays are those of the retry above (ApiOptions).
+    SessionService(IoThread& io, BusService& bus,
+                   std::chrono::milliseconds firstRelistDelay,
+                   std::chrono::milliseconds maxRelistDelay,
+                   QObject* parent = nullptr);
 
     // The connection is up: subscribes to the events and fetches the list.
     // Api calls it after each hello; a second call with no loss in between
@@ -108,6 +121,8 @@ private:
     void RemoveRow(const Key& key);
     // The connection is lost: the rows were a copy of what is gone.
     void OnDisconnected();
+    // Once no list is out: schedules the next one if the rows are not whole.
+    void ScheduleRelist();
 
     IoThread& Io_;
     BusService& Bus_;
@@ -127,6 +142,11 @@ private:
     // Counts the connections lost; an answer of an older one is not ours.
     std::uint64_t Epoch_ = 0;
     BusService::LocalId Subscription_ = 0;
+    // The retry of the list: the wait of the next, its bounds, the timer.
+    std::chrono::milliseconds Delay_;
+    const std::chrono::milliseconds FirstRelistDelay_;
+    const std::chrono::milliseconds MaxRelistDelay_;
+    QTimer RelistTimer_;
 };
 
 }  // namespace roost::api
