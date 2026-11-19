@@ -190,14 +190,15 @@ done
 # nothing is left to go. Nothing loads a Qt library by name.
 needed() {
     find "$appdir" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 |
-        xargs -0 -r readelf -d 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u
+        { xargs -0 -r readelf -d 2>/dev/null || true; } |
+        sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u
 }
 while :; do
     needed >"$out/needed.txt"
     removed=0
     for lib in "$appdir"/usr/lib/libQt6*.so*; do
         name=$(basename "$lib")
-        soname=$(readelf -d "$lib" 2>/dev/null | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')
+        soname=$({ readelf -d "$lib" 2>/dev/null || true; } | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')
         if ! grep -qxF "${soname:-$name}" "$out/needed.txt"; then
             echo "package_linux.sh: removing $name, nothing needs it" >&2
             rm -f "$lib"
