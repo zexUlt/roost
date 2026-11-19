@@ -74,6 +74,12 @@ done
 echo "== macdeployqt"
 macdeployqt "$app" -verbose=1 "${executable_args[@]}" "${qmldir_args[@]}"
 
+# macdeployqt copies every SQL driver of the Qt (QtSql comes with the QML module
+# QtQuick.LocalStorage, which the window does not import). The drivers lean on
+# database client libraries of the build machine (PostgreSQL, ODBC, Mimer) that
+# are not in the bundle and that roost has no use for.
+rm -rf "$contents/PlugIns/sqldrivers"
+
 # The install sets the run path of every binary from the Qt of the build
 # (ROOST_INSTALL_RPATH_TO_QT), and macdeployqt finds the frameworks to copy
 # through it. The bundle carries its own Qt now: a path to the build machine's

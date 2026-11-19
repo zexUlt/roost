@@ -51,7 +51,9 @@ while IFS= read -r file; do
     deps=$(otool -L "$file" | sed -n '2,$p' | awk '{print $1}')
     while IFS= read -r dep; do
         [ -n "$dep" ] || continue
-        [ "$dep" = "$id" ] && continue
+        # A bundle (a Qt plugin) lists its own path where a dylib lists its
+        # install name.
+        [ "$dep" = "$id" ] || [ "$dep" = "$file" ] && continue
         case $dep in
             @executable_path/* | @loader_path/* | /usr/lib/* | /System/Library/*) ;;
             @rpath/*)
