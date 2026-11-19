@@ -60,7 +60,8 @@ void ExitAfterFirstFrame(QQuickWindow* window, roost::SingleSession* session) {
 // was swapped after that; with 1 and the reason as soon as the shell cannot
 // become ready (a problem of the loader, such as a QML import a panel lacks),
 // or with the reason of the last check if it is not ready within
-// SMOKE_SESSIONS_TIMEOUT. It only looks: nothing is opened or written.
+// SMOKE_SESSIONS_TIMEOUT. It opens no session and changes nothing beyond what
+// the window writes when it shows the list.
 void ExitWhenSessionsShown(QQuickWindow* window, const roost::Shell* shell) {
     struct State {
         bool Ready = false;
@@ -184,6 +185,10 @@ int main(int argc, char* argv[]) {
     parser.process(app);
 
     const bool sessionMode = parser.isSet(sessionOption);
+    if (parser.isSet(smoke) && parser.isSet(smokeSessions)) {
+        qCritical("roost: --smoke does not go with --smoke-sessions");
+        return 1;
+    }
     if (sessionMode && parser.isSet(smokeSessions)) {
         qCritical("roost: --smoke-sessions does not go with --session");
         return 1;

@@ -69,40 +69,59 @@ private:
                WriteFile(bin + "/agents.json", agents);
     }
 
-    // The built-in plugins in the plugin directory of the daemon, by link;
-    // the sessions plugin as a copy of plugin.json and its panel, without the
-    // QML module, if `withoutModule`.
-    bool LinkPlugins(bool withoutModule) const {
+    // The built-in plugins in the plugin directory of the daemon, by link.
+    // The plugin `broken` is a copy of plugin.json and the panel of the plugin
+    // without something it needs: `sessions` without its QML module, `terminal`
+    // with a QML file that does not parse. `badManifest` adds a directory
+    // whose plugin.json is not JSON, which roostd reports as a problem.
+    enum class EFault {
+        None,
+        SessionsWithoutModule,
+        BrokenTerminal,
+        BadManifest
+    };
+
+    bool LinkPlugins(EFault fault) const {
         const QString plugins = Daemon_->PluginsPath();
         if (!QDir().mkpath(plugins)) {
             return false;
         }
         const QString source = QStringLiteral(ROOST_PLUGINS_DIR);
+        const QString copied =
+            fault == EFault::SessionsWithoutModule ? QStringLiteral("sessions")
+            : fault == EFault::BrokenTerminal      ? QStringLiteral("terminal")
+                                                   : QString();
         for (const QString& id :
              {QStringLiteral("claude"), QStringLiteral("terminal"),
               QStringLiteral("sessions")}) {
-            if (id == QLatin1String("sessions") && withoutModule) {
-                continue;
-            }
-            if (!QFile::link(source + "/" + id, plugins + "/" + id)) {
+            if (id != copied &&
+                !QFile::link(source + "/" + id, plugins + "/" + id)) {
                 return false;
             }
         }
-        if (!withoutModule) {
+        if (fault == EFault::BadManifest) {
+            return WriteFile(plugins + "/garbled/plugin.json", "{ not json");
+        }
+        if (copied.isEmpty()) {
             return true;
         }
-        const QString sessions = source + "/sessions";
-        return WriteFile(plugins + "/sessions/plugin.json",
-                         ReadFile(sessions + "/plugin.json")) &&
-               WriteFile(plugins + "/sessions/qml/SessionsPanel.qml",
-                         ReadFile(sessions + "/qml/SessionsPanel.qml"));
+        const QString from = source + "/" + copied;
+        const QString panel = copied == QLatin1String("sessions")
+                                  ? QStringLiteral("SessionsPanel.qml")
+                                  : QStringLiteral("TerminalPanel.qml");
+        return WriteFile(plugins + "/" + copied + "/plugin.json",
+                         ReadFile(from + "/plugin.json")) &&
+               WriteFile(plugins + "/" + copied + "/qml/" + panel,
+                         fault == EFault::BrokenTerminal
+                             ? QByteArray("import QtQuick\nItem { ][ }\n")
+                             : ReadFile(from + "/qml/" + panel));
     }
 
     // roostd with the plugins and the fake claude; false if any step failed.
-    bool Prepare(bool withoutModule, const QByteArray& agents) {
+    bool Prepare(EFault fault, const QByteArray& agents) {
         Daemon_ = std::make_unique<testing::RoostdProcess>();
         return Bin_.isValid() && Daemon_->IsValid() && WriteClaude(agents) &&
-               LinkPlugins(withoutModule) && StartDaemon();
+               LinkPlugins(fault) && StartDaemon();
     }
 
     bool StartDaemon() {
@@ -150,8 +169,9 @@ private slots:
     }
 
     void ExitsZeroWhenTheSessionsAreListed() {
-        QVERIFY(Prepare(false, ReadFile(QStringLiteral(
-                                   FIXTURES_DIR "/claude_agents.json"))));
+        QVERIFY(Prepare(
+            EFault::None,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json"))));
         QElapsedTimer elapsed;
         RunWindow(TIMEOUT_MS * 3, elapsed);
         QVERIFY2(Window_.exitCode() == 0, qPrintable(Errors_));
@@ -161,8 +181,9 @@ private slots:
     // A package that lacks the QML module of the sessions plugin: --smoke
     // passes such a window, --smoke-sessions must not.
     void FailsWhenTheSessionsQmlModuleIsMissing() {
-        QVERIFY(Prepare(true, ReadFile(QStringLiteral(FIXTURES_DIR
-                                                      "/claude_agents.json"))));
+        QVERIFY(Prepare(
+            EFault::SessionsWithoutModule,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json"))));
         QElapsedTimer elapsed;
         RunWindow(TIMEOUT_MS * 3, elapsed);
         QCOMPARE(Window_.exitCode(), 1);
@@ -172,8 +193,56 @@ private slots:
         qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
     }
 
+    // The terminal panel does not load: the reason names terminal.view.
+    void FailsWhenTheTerminalPanelDoesNotLoad() {
+        QVERIFY(Prepare(
+            EFault::BrokenTerminal,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json"))));
+        QElapsedTimer elapsed;
+        RunWindow(TIMEOUT_MS * 3, elapsed);
+        QCOMPARE(Window_.exitCode(), 1);
+        QVERIFY2(Errors_.contains("roost --smoke-sessions: plugin terminal") &&
+                     Errors_.contains("terminal.view"),
+                 qPrintable(Errors_));
+        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
+    }
+
+    // A plugin roostd could not read: its problem is the reason.
+    void FailsWhenRoostdReportsAPluginProblem() {
+        QVERIFY(Prepare(
+            EFault::BadManifest,
+            ReadFile(QStringLiteral(FIXTURES_DIR "/claude_agents.json"))));
+        QElapsedTimer elapsed;
+        RunWindow(TIMEOUT_MS * 3, elapsed);
+        QCOMPARE(Window_.exitCode(), 1);
+        QVERIFY2(Errors_.contains("roost --smoke-sessions: roostd: ") &&
+                     Errors_.contains("garbled"),
+                 qPrintable(Errors_));
+        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
+    }
+
+    // Both check modes at once is a mistake of the caller; no daemon needed.
+    void RejectsSmokeTogetherWithSmokeSessions() {
+        QProcessEnvironment environment =
+            QProcessEnvironment::systemEnvironment();
+        environment.insert("QT_QPA_PLATFORM", "offscreen");
+        Window_.setProcessEnvironment(environment);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        Window_.start(ROOST_PATH, {"--smoke", "--smoke-sessions"});
+        QVERIFY(Window_.waitForFinished(TIMEOUT_MS));
+        QCOMPARE(Window_.exitStatus(), QProcess::NormalExit);
+        Errors_ = QString::fromUtf8(Window_.readAllStandardError());
+        QCOMPARE(Window_.exitCode(), 1);
+        QVERIFY2(Errors_.contains("--smoke does not go with --smoke-sessions"),
+                 qPrintable(Errors_));
+        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+    }
+
     void FailsAfterTheTimeoutWhenThereAreNoSessions() {
-        QVERIFY(Prepare(false, "[]"));
+        QVERIFY(Prepare(EFault::None, "[]"));
         QElapsedTimer elapsed;
         RunWindow(NOT_READY_WAIT_MS, elapsed);
         QCOMPARE(Window_.exitCode(), 1);

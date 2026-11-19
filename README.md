@@ -54,7 +54,8 @@ exits 0 once the window is connected, both panels (`sessions.list`,
 least one row and a frame was drawn after that. It exits 1 with the reason on
 stderr at once on a loader problem (for example a missing QML import such as
 `QtCore` or `RoostSessions`), or after 20 s if it is still not ready. It opens
-no session and writes nothing.
+no session and changes nothing beyond what the window writes when it shows
+the list.
 
 ## License
 

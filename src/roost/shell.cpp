@@ -6,6 +6,7 @@
 #include <QVariant>
 #include <QtLogging>
 
+#include <algorithm>
 #include <utility>
 
 #include "core/protocol.hpp"
@@ -112,8 +113,21 @@ Shell::Readiness Shell::CheckReadiness() const {
     if (Connection_ == QLatin1String("refused")) {
         failures.append(QStringLiteral("roostd refused the connection"));
     }
-    if (Slots_.isEmpty()) {
-        failures.append(QStringLiteral("the window has no panel slot"));
+    // What roostd found wrong with the plugins (a manifest it could not read).
+    const auto listed = Api_.Plugins().Plugins().value("problems").toArray();
+    for (const auto& problem : listed) {
+        failures.append(QStringLiteral("roostd: %1").arg(problem.toString()));
+    }
+    // A missing slot cannot appear by waiting.
+    for (const char* type : {LIST_PANEL, TERMINAL_PANEL}) {
+        const bool present =
+            std::ranges::any_of(Slots_, [type](const Slot& slot) {
+                return slot.Type == QLatin1String(type);
+            });
+        if (!present) {
+            failures.append(
+                QStringLiteral("the window has no panel %1").arg(type));
+        }
     }
     if (!failures.isEmpty()) {
         return {false, true, failures.join(QStringLiteral("; "))};
@@ -125,7 +139,7 @@ Shell::Readiness Shell::CheckReadiness() const {
             QStringLiteral("not connected to roostd at %1").arg(SocketPath_));
     }
     for (const Slot& slot : Slots_) {
-        if (slot.Item && slot.Panel.isNull()) {
+        if (slot.Panel.isNull()) {
             waiting.append(QStringLiteral("panel %1 is not created (%2)")
                                .arg(slot.Type, ErrorFor(slot.Type)));
         }
