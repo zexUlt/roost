@@ -42,11 +42,13 @@ target_link_libraries(sessions_qml PRIVATE sessions_list_lib Qt6::Qml)
 
 # What the build tree holds, minus the .qrc that is a build artefact: the
 # manifest, the panel, qmldir and qmltypes of the module, and its library.
-install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions)
+install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions
+    COMPONENT roost)
 install(FILES qml/SessionsPanel.qml
-    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions/qml)
+    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions/qml COMPONENT roost)
 install(FILES
     ${ROOST_SESSIONS_PLUGIN_DIR}/qml/RoostSessions/qmldir
     ${ROOST_SESSIONS_PLUGIN_DIR}/qml/RoostSessions/sessions_qml.qmltypes
-    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions/qml/RoostSessions)
+    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/sessions/qml/RoostSessions
+    COMPONENT roost)
 roost_install_plugin_binary(sessions sessions_qml qml/RoostSessions)

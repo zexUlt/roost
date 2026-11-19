@@ -6,6 +6,7 @@ configure_file(plugin.json ${ROOST_TERMINAL_PLUGIN_DIR}/plugin.json COPYONLY)
 configure_file(qml/TerminalPanel.qml
     ${ROOST_TERMINAL_PLUGIN_DIR}/qml/TerminalPanel.qml COPYONLY)
 
-install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/terminal)
+install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/terminal
+    COMPONENT roost)
 install(FILES qml/TerminalPanel.qml
-    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/terminal/qml)
+    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/terminal/qml COMPONENT roost)

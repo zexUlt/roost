@@ -12,14 +12,23 @@
 # roostd finds the built-in plugins from its own location
 # (BundledPluginsDirectory in src/roostd/manifest.cpp): ../Resources/roost-plugins
 # or ../lib/roost/plugins. Qt is not copied; the installed binaries load it from
-# where it is installed (INSTALL_RPATH_USE_LINK_PATH) until a deploy tool
-# copies it in.
+# where it is installed (INSTALL_RPATH_USE_LINK_PATH, option
+# ROOST_INSTALL_RPATH_TO_QT) until a deploy tool copies it in. Everything is in
+# the install component `roost`.
 #
 # Defines, for src/ and plugins/:
 #   ROOST_INSTALL_BINDIR           the directory of roost and roostd
 #   ROOST_INSTALL_PLUGINS_DIR      the directory with one directory per plugin id
 #   ROOST_INSTALL_RPATH            the INSTALL_RPATH of roost and roostd
+#   ROOST_INSTALL_RPATH_TO_QT      option, ON by default: the directories of the
+#                                  Qt the build linked go into the run path of
+#                                  every installed target, in front of ours. A
+#                                  packaging step that deploys Qt into the
+#                                  bundle sets it OFF.
 #   roost_install_plugin_binary()  installs a target of a plugin
+
+option(ROOST_INSTALL_RPATH_TO_QT
+    "Put the directories of the linked Qt into the run path of installed binaries" ON)
 
 # Fixed names, not GNUInstallDirs: on Debian with the prefix /usr it would put
 # libraries in lib/<triplet>, where roostd does not look.
@@ -62,13 +71,13 @@ if(APPLE)
     configure_file(packaging/macos/Info.plist.in
         ${PROJECT_BINARY_DIR}/packaging/Info.plist @ONLY)
     install(FILES ${PROJECT_BINARY_DIR}/packaging/Info.plist
-        DESTINATION ${_roost_app})
+        DESTINATION ${_roost_app} COMPONENT roost)
 else()
     install(FILES packaging/linux/roost.desktop
-        DESTINATION share/applications)
+        DESTINATION share/applications COMPONENT roost)
     # A placeholder until there is an icon.
     install(FILES packaging/linux/roost.png
-        DESTINATION share/icons/hicolor/256x256/apps)
+        DESTINATION share/icons/hicolor/256x256/apps COMPONENT roost)
 endif()
 
 install(FILES
@@ -77,7 +86,8 @@ install(FILES
     THIRD_PARTY_LICENSES
     licenses/LGPL-3.0.txt
     licenses/GPL-3.0.txt
-    DESTINATION ${_roost_licenses_dir})
+    DESTINATION ${_roost_licenses_dir}
+    COMPONENT roost)
 
 # roost_install_plugin_binary(<id> <target> <subdir>)
 #
@@ -90,18 +100,19 @@ install(FILES
 function(roost_install_plugin_binary id target subdir)
     set(plugin_dir ${ROOST_INSTALL_PLUGINS_DIR}/${id})
     get_target_property(type ${target} TYPE)
-    # A target with an own INSTALL_RPATH keeps it; the rest look for Qt where
-    # the build found it, and for libraries of the prefix.
+    # The INSTALL_RPATH is set here, over any a target had: and
+    # with ROOST_INSTALL_RPATH_TO_QT the directories of the Qt it linked come
+    # in front of it.
     if(NOT APPLE)
         file(RELATIVE_PATH to_lib /p/${plugin_dir}/${subdir}
             /p/lib)
         string(REGEX REPLACE "/+$" "" to_lib "${to_lib}")
         set_target_properties(${target} PROPERTIES
             INSTALL_RPATH "\$ORIGIN/${to_lib}"
-            INSTALL_RPATH_USE_LINK_PATH TRUE)
+            INSTALL_RPATH_USE_LINK_PATH ${ROOST_INSTALL_RPATH_TO_QT})
         install(TARGETS ${target}
-            RUNTIME DESTINATION ${plugin_dir}/${subdir}
-            LIBRARY DESTINATION ${plugin_dir}/${subdir})
+            RUNTIME DESTINATION ${plugin_dir}/${subdir} COMPONENT roost
+            LIBRARY DESTINATION ${plugin_dir}/${subdir} COMPONENT roost)
         return()
     endif()
 
@@ -122,10 +133,10 @@ function(roost_install_plugin_binary id target subdir)
     endif()
     set_target_properties(${target} PROPERTIES
         INSTALL_RPATH "${rpath}"
-        INSTALL_RPATH_USE_LINK_PATH TRUE)
+        INSTALL_RPATH_USE_LINK_PATH ${ROOST_INSTALL_RPATH_TO_QT})
     install(TARGETS ${target}
-        RUNTIME DESTINATION ${code_dir}
-        LIBRARY DESTINATION ${code_dir})
+        RUNTIME DESTINATION ${code_dir} COMPONENT roost
+        LIBRARY DESTINATION ${code_dir} COMPONENT roost)
 
     file(RELATIVE_PATH link_to_code /p/${plugin_dir}/${subdir}
         /p/${code_dir})
@@ -136,5 +147,5 @@ function(roost_install_plugin_binary id target subdir)
             \"${link_to_code}/$<TARGET_FILE_NAME:${target}>\"
             \"${link_dir}/$<TARGET_FILE_NAME:${target}>\"
             SYMBOLIC)
-    ")
+    " COMPONENT roost)
 endfunction()

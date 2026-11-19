@@ -2,7 +2,8 @@
 // prefix gives the files of the OS (a roost.app on macOS, the usr/ of an AppDir
 // on Linux), the licence texts and no other file; then the installed roostd,
 // with no ROOST_PLUGINS_PATH and a fake `claude` first on PATH, finds the
-// built-in plugins next to itself and lists the sessions of the fake claude.
+// built-in plugins next to itself and lists the sessions of the fake claude,
+// and the installed window (`roost --smoke-sessions`) shows them.
 //
 // The test installs by itself (cmake and the build directory come in as
 // compile definitions) instead of reading a prefix that an earlier ctest step
@@ -36,6 +37,8 @@ namespace {
 
 constexpr int TIMEOUT_MS = 10000;
 constexpr int INSTALL_TIMEOUT_MS = 120000;
+// The mode gives up after 20 s (src/roost/main.cpp), and the window starts.
+constexpr int WINDOW_TIMEOUT_MS = 60000;
 
 #ifdef Q_OS_MACOS
 constexpr bool IS_MACOS = true;
@@ -43,17 +46,31 @@ constexpr bool IS_MACOS = true;
 constexpr bool IS_MACOS = false;
 #endif
 
-// The run path each installed binary must carry, and the one it must not
-// (the build tree). On Linux the plugin binaries sit deeper in lib/roost.
-const QString BINARY_RUN_PATH =
-    IS_MACOS ? QStringLiteral("@executable_path/../Frameworks")
-             : QStringLiteral("$ORIGIN/../lib");
-const QString ADAPTER_RUN_PATH =
-    IS_MACOS ? QStringLiteral("@executable_path/../Frameworks")
-             : QStringLiteral("$ORIGIN/../../../..");
-const QString MODULE_RUN_PATH =
-    IS_MACOS ? QStringLiteral("@loader_path/../../Frameworks")
-             : QStringLiteral("$ORIGIN/../../../../..");
+// The run path of each installed binary, in order: the directory of the Qt of
+// the build first when ROOST_INSTALL_RPATH_TO_QT is on (QT_RUN_PATH is empty
+// when it is off, or when Qt is in a directory the linker searches anyway),
+// then ours. On Linux the plugin binaries sit deeper in lib/roost; on macOS
+// the QML module, which is loaded through a symlink, has the paths for both
+// ways dyld may resolve @loader_path.
+QStringList WithQtRunPath(const QStringList& ours) {
+    QStringList all;
+    if (const QString qt = QStringLiteral(QT_RUN_PATH); !qt.isEmpty()) {
+        all.append(qt);
+    }
+    return all + ours;
+}
+const QStringList BINARY_RUN_PATH =
+    WithQtRunPath({IS_MACOS ? QStringLiteral("@executable_path/../Frameworks")
+                            : QStringLiteral("$ORIGIN/../lib")});
+const QStringList ADAPTER_RUN_PATH =
+    WithQtRunPath({IS_MACOS ? QStringLiteral("@executable_path/../Frameworks")
+                            : QStringLiteral("$ORIGIN/../../../..")});
+const QStringList MODULE_RUN_PATH = WithQtRunPath(
+    IS_MACOS
+        ? QStringList{QStringLiteral("@executable_path/../Frameworks"),
+                      QStringLiteral("@loader_path/../../Frameworks"),
+                      QStringLiteral("@loader_path/../../../../../Frameworks")}
+        : QStringList{QStringLiteral("$ORIGIN/../../../../..")});
 
 // A fake `claude` that prints agents.json next to it for `agents`.
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
@@ -105,6 +122,39 @@ std::optional<QString> Output(const QString& program,
         return std::nullopt;
     }
     return QString::fromUtf8(process.readAllStandardOutput());
+}
+
+// The run path entries of a binary, in order: the LC_RPATH commands of
+// `otool -l` on macOS, the RUNPATH or RPATH of `readelf -d` on Linux.
+QStringList ParseRunPath(const QString& dump) {
+    QStringList entries;
+    const QStringList lines = dump.split(u'\n');
+    if (IS_MACOS) {
+        static const QRegularExpression PATH(
+            R"(^\s*path (.+) \(offset \d+\)$)");
+        bool inRpath = false;
+        for (const QString& line : lines) {
+            if (line.trimmed() == QLatin1String("cmd LC_RPATH")) {
+                inRpath = true;
+            } else if (inRpath) {
+                const auto match = PATH.match(line);
+                if (match.hasMatch()) {
+                    entries.append(match.captured(1));
+                    inRpath = false;
+                }
+            }
+        }
+    } else {
+        static const QRegularExpression RUNPATH(
+            R"(\((RUNPATH|RPATH)\).*\[(.*)\])");
+        for (const QString& line : lines) {
+            const auto match = RUNPATH.match(line);
+            if (match.hasMatch()) {
+                entries += match.captured(2).split(u':', Qt::SkipEmptyParts);
+            }
+        }
+    }
+    return entries;
 }
 
 }  // namespace
@@ -178,17 +228,16 @@ private:
         return files;
     }
 
-    // The installed binary with its run path: nothing of the build tree, and
-    // the entry that finds the libraries of the prefix.
+    // The run path of the installed binary is exactly the expected list.
     static void CheckRunPath(const QString& tool, const QString& binary,
-                             const QString& expected) {
+                             const QStringList& expected) {
         const auto dump = Output(tool, IS_MACOS ? QStringList{"-l", binary}
                                                 : QStringList{"-d", binary});
         QVERIFY2(dump, qPrintable(binary));
-        QVERIFY2(dump->contains(expected),
-                 qPrintable(binary + " lacks " + expected));
-        QVERIFY2(!dump->contains(BUILD_DIR),
-                 qPrintable(binary + " refers to the build tree"));
+        const QStringList actual = ParseRunPath(*dump);
+        QVERIFY2(actual == expected,
+                 qPrintable(binary + ": run path [" + actual.join(u'|') +
+                            "], expected [" + expected.join(u'|') + "]"));
     }
 
     // The ids of the background sessions of the fixture the fake claude prints.
@@ -213,8 +262,8 @@ private slots:
         QVERIFY(Prefix_.isValid());
         QProcess install;
         install.setProcessChannelMode(QProcess::MergedChannels);
-        install.start(CMAKE_COMMAND,
-                      {"--install", BUILD_DIR, "--prefix", Prefix()});
+        install.start(CMAKE_COMMAND, {"--install", BUILD_DIR, "--prefix",
+                                      Prefix(), "--component", "roost"});
         QVERIFY(install.waitForFinished(INSTALL_TIMEOUT_MS));
         const QString log = QString::fromUtf8(install.readAll());
         QVERIFY2(install.exitStatus() == QProcess::NormalExit &&
@@ -326,7 +375,7 @@ private slots:
                  QStringLiteral(PROJECT_VERSION_STRING));
         QCOMPARE(plist.value("CFBundleVersion").toString(),
                  QStringLiteral(PROJECT_VERSION_STRING));
-        QVERIFY2(QRegularExpression(R"(^\d+\.\d+$)")
+        QVERIFY2(QRegularExpression(R"(^\d+(\.\d+)*$)")
                      .match(plist.value("LSMinimumSystemVersion").toString())
                      .hasMatch(),
                  qPrintable(plist.value("LSMinimumSystemVersion").toString()));
@@ -355,9 +404,8 @@ private slots:
     void BinariesCarryTheirRunPaths() {
         const QString tool =
             QStandardPaths::findExecutable(IS_MACOS ? "otool" : "readelf");
-        if (tool.isEmpty()) {
-            QSKIP("no otool or readelf to read the run paths");
-        }
+        // A missing tool fails: a CI image without it must be noticed.
+        QVERIFY2(!tool.isEmpty(), "no otool or readelf to read the run paths");
         CheckRunPath(tool, BinDir() + "/roost", BINARY_RUN_PATH);
         CheckRunPath(tool, BinDir() + "/roostd", BINARY_RUN_PATH);
         CheckRunPath(
@@ -462,6 +510,24 @@ private slots:
             }(),
             TIMEOUT_MS);
         QVERIFY(!sessions.isEmpty());
+
+        // The installed window, against this daemon: it loads the sessions
+        // QML module from the install (on macOS through the symlink to
+        // Contents/PlugIns) and shows the sessions. Exit 0 or the reason.
+        QProcessEnvironment windowEnvironment = environment;
+        windowEnvironment.insert("QT_QPA_PLATFORM", "offscreen");
+        windowEnvironment.insert("QML_DISABLE_DISK_CACHE", "1");
+        QProcess window;
+        window.setProcessEnvironment(windowEnvironment);
+        window.start(BinDir() + "/roost", {"--smoke-sessions"});
+        if (!window.waitForFinished(WINDOW_TIMEOUT_MS)) {
+            window.kill();
+            window.waitForFinished(TIMEOUT_MS);
+            QFAIL("the installed roost --smoke-sessions did not end");
+        }
+        QCOMPARE(window.exitStatus(), QProcess::NormalExit);
+        QVERIFY2(window.exitCode() == 0,
+                 qPrintable(QString::fromUtf8(window.readAllStandardError())));
     }
 };
 

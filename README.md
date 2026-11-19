@@ -28,7 +28,7 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 ## Install
 
 ```sh
-cmake --install build/release --prefix <dir>
+cmake --install build/release --prefix <dir> --component roost
 ```
 
 lays the build out as the OS expects it (the build tree is not changed). On
@@ -36,7 +36,7 @@ macOS that is `<dir>/roost.app`; on Linux the `usr/` of an AppDir:
 `bin/{roost,roostd}`, `lib/roost/plugins/<id>/`, `share/applications/roost.desktop`,
 an icon and `share/licenses/roost/`. The licences (`LICENSE`, `NOTICE`,
 `THIRD_PARTY_LICENSES`, `LGPL-3.0.txt`, `GPL-3.0.txt`) go along. Qt is not
-copied: the installed binaries load it from where the build found it. roostd
+copied: the installed binaries load it from where the build found it (run path; `-DROOST_INSTALL_RPATH_TO_QT=OFF` leaves that out, for packaging steps that deploy Qt into the bundle). roostd
 finds the installed plugins next to itself, with no `ROOST_PLUGINS_PATH`.
 
 ## Run
