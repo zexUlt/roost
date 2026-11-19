@@ -47,6 +47,15 @@ In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and mov
 the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS) moves it
 back to the list.
 
+Two check modes exit by themselves, for CI and packages. `roost --smoke` exits
+0 after the first frame. `roost --smoke-sessions` needs a running roostd: it
+exits 0 once the window is connected, both panels (`sessions.list`,
+`terminal.view`) are created with no loader problem, the session list has at
+least one row and a frame was drawn after that. It exits 1 with the reason on
+stderr at once on a loader problem (for example a missing QML import such as
+`QtCore` or `RoostSessions`), or after 20 s if it is still not ready. It opens
+no session and writes nothing.
+
 ## License
 
 Apache-2.0, see `LICENSE`. Third-party components and their licences are listed

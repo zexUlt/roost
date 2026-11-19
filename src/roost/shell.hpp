@@ -46,6 +46,18 @@ public:
           QString socketPath);
     ~Shell() override;
 
+    // Whether the window shows what `roost --smoke-sessions` checks. `Ready`:
+    // connected, both panels created, no problem of the loader or of a link,
+    // sessions.list answered with at least one session. `Failed`: it cannot
+    // become ready by waiting (a problem of the loader or of a link, the
+    // connection refused). `Reason` names what is missing; empty when Ready.
+    struct Readiness {
+        bool Ready = false;
+        bool Failed = false;
+        QString Reason;
+    };
+    Readiness CheckReadiness() const;
+
 private slots:
     // The root's retryRequested(), connected by name: the signal is a QML one.
     void OnRetry();

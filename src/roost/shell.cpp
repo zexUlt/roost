@@ -94,6 +94,54 @@ Shell::~Shell() {
     }
 }
 
+Shell::Readiness Shell::CheckReadiness() const {
+    QStringList failures;
+    for (const auto& problem : Loader_.Problems()) {
+        failures.append(
+            problem.Panel.isEmpty()
+                ? QStringLiteral("plugin %1: %2")
+                      .arg(problem.Plugin, problem.Message)
+                : QStringLiteral("plugin %1, panel %2: %3")
+                      .arg(problem.Plugin, problem.Panel, problem.Message));
+    }
+    for (const Slot& slot : Slots_) {
+        if (!slot.LinkProblem.isEmpty()) {
+            failures.append(slot.LinkProblem);
+        }
+    }
+    if (Connection_ == QLatin1String("refused")) {
+        failures.append(QStringLiteral("roostd refused the connection"));
+    }
+    if (Slots_.isEmpty()) {
+        failures.append(QStringLiteral("the window has no panel slot"));
+    }
+    if (!failures.isEmpty()) {
+        return {false, true, failures.join(QStringLiteral("; "))};
+    }
+
+    QStringList waiting;
+    if (!Api_.IsConnected()) {
+        waiting.append(
+            QStringLiteral("not connected to roostd at %1").arg(SocketPath_));
+    }
+    for (const Slot& slot : Slots_) {
+        if (slot.Item && slot.Panel.isNull()) {
+            waiting.append(QStringLiteral("panel %1 is not created (%2)")
+                               .arg(slot.Type, ErrorFor(slot.Type)));
+        }
+    }
+    const auto& sessions = Api_.Sessions();
+    if (!sessions.IsLoaded()) {
+        waiting.append(QStringLiteral("sessions are not loaded"));
+    } else if (sessions.Rows().isEmpty()) {
+        waiting.append(QStringLiteral("roostd lists no sessions"));
+    }
+    if (!waiting.isEmpty()) {
+        return {false, false, waiting.join(QStringLiteral("; "))};
+    }
+    return {true, false, {}};
+}
+
 void Shell::OnPanelTypesChanged() {
     Refill();
     UpdateProblems();
