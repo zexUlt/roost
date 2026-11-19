@@ -518,6 +518,9 @@ private slots:
         QProcessEnvironment windowEnvironment = environment;
         windowEnvironment.insert("QT_QPA_PLATFORM", "offscreen");
         windowEnvironment.insert("QML_DISABLE_DISK_CACHE", "1");
+        // A window that lost the daemon would read the login environment
+        // (no tty on stdin): never from the shell of the developer.
+        windowEnvironment.insert("SHELL", "/nonexistent/shell");
         QProcess window;
         window.setProcessEnvironment(windowEnvironment);
         window.start(BinDir() + "/roost", {"--smoke-sessions"});

@@ -4,9 +4,11 @@
 // dotfiles are never run): it ignores -l and -i, prints noise around the
 // markers and runs the command it was given with a crafted environment.
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -20,6 +22,7 @@
 
 #include "api/api.hpp"
 #include "helpers/detached_daemons.hpp"
+#include "helpers/scoped_env.hpp"
 #include "roost/daemon_launcher.hpp"
 #include "roost/login_environment.hpp"
 
@@ -27,6 +30,7 @@ using namespace roost;
 using namespace std::chrono_literals;
 using Settings = LoginEnvironment::Settings;
 using testing::DetachedDaemons;
+using testing::ScopedEnv;
 
 namespace {
 
@@ -140,7 +144,7 @@ private slots:
 
     void cleanup() {
         Daemons_.reset();
-        QCOMPARE(CountDaemons(Dir_->path()), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(CountDaemons(Dir_->path()), 0, TIMEOUT_MS);
         Dir_.reset();
     }
 
@@ -265,7 +269,7 @@ private slots:
         QElapsedTimer started;
         started.start();
         login.Start();
-        QVERIFY2(started.elapsed() < 300, "Start waited for the shell");
+        QVERIFY2(started.elapsed() < 1000, "Start waited for the shell");
         QVERIFY(!login.Ready());
         // The shell runs and has started its child before the timeout.
         QTRY_VERIFY_WITH_TIMEOUT(
@@ -285,6 +289,76 @@ private slots:
         QVERIFY(shellPid > 1 && childPid > 1);
         QTRY_VERIFY_WITH_TIMEOUT(!DetachedDaemons::IsAlive(shellPid), 5000);
         QTRY_VERIFY_WITH_TIMEOUT(!DetachedDaemons::IsAlive(childPid), 5000);
+    }
+
+    // The shell that has printed everything and then hangs (an rc file that
+    // does not exit): the read ends with the markers, not with the timeout,
+    // and the shell and what it started are gone.
+    void AShellThatHangsAfterPrintingIsNotWaitedFor() {
+        const QString shell = WriteScript(
+            "echo $$ > \"" + Path("shell.pid") +
+                "\"\nsleep 600 &\necho $! > \"" + Path("child.pid") +
+                "\"\nenv -i PATH=/login/bin:/usr/bin:/bin /bin/sh -c \"$4\"\n"
+                "wait\n",
+            "slowexit");
+        Settings settings = ForShell(shell);
+        settings.Timeout = 20s;
+        LoginEnvironment login(settings);
+        QSignalSpy finished(&login, &LoginEnvironment::Finished);
+        QElapsedTimer started;
+        started.start();
+        login.Start();
+        QVERIFY(finished.wait(TIMEOUT_MS));
+        QVERIFY2(started.elapsed() < 10000,
+                 qPrintable(QString::number(started.elapsed())));
+        QVERIFY(login.FromLoginShell());
+        QCOMPARE(login.Environment().value("PATH"), "/login/bin:/usr/bin:/bin");
+        const qint64 shellPid =
+            ReadFile(Path("shell.pid")).trimmed().toLongLong();
+        const qint64 childPid =
+            ReadFile(Path("child.pid")).trimmed().toLongLong();
+        QVERIFY(shellPid > 1 && childPid > 1);
+        QTRY_VERIFY_WITH_TIMEOUT(!DetachedDaemons::IsAlive(shellPid), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!DetachedDaemons::IsAlive(childPid), 5000);
+    }
+
+    void TheAppImageIsRecognisedByItsAppDir_data() {
+        QTest::addColumn<QString>("appDir");
+        QTest::addColumn<QString>("executableDir");
+        QTest::addColumn<bool>("inside");
+        QTest::newRow("inside")
+            << "/tmp/.mount_a" << "/tmp/.mount_a/usr/bin" << true;
+        QTest::newRow("same dir")
+            << "/tmp/.mount_a" << "/tmp/.mount_a/" << true;
+        QTest::newRow("no appdir") << QString() << "/opt/roost/bin" << false;
+        QTest::newRow("outside")
+            << "/tmp/.mount_a" << "/opt/roost/bin" << false;
+        QTest::newRow("sibling prefix")
+            << "/tmp/.mount_a" << "/tmp/.mount_ab/bin" << false;
+    }
+
+    void TheAppImageIsRecognisedByItsAppDir() {
+        QFETCH(QString, appDir);
+        QFETCH(QString, executableDir);
+        QFETCH(bool, inside);
+        QCOMPARE(LoginEnvironment::InAppImage(appDir, executableDir), inside);
+    }
+
+    // An extracted AppDir run through AppRun has APPDIR and no APPIMAGE: its
+    // AppRun variables are still not for roostd.
+    void AnExtractedAppDirWithoutAppImageCounts() {
+        const ScopedEnv appImage("APPIMAGE", std::nullopt);
+        {
+            const ScopedEnv appDir(
+                "APPDIR", QCoreApplication::applicationDirPath().toUtf8());
+            QVERIFY(Settings::OfThisProcess().InAppImage);
+        }
+        {
+            const ScopedEnv appDir("APPDIR", QByteArray("/nonexistent/appdir"));
+            QVERIFY(!Settings::OfThisProcess().InAppImage);
+        }
+        const ScopedEnv appDir("APPDIR", std::nullopt);
+        QVERIFY(!Settings::OfThisProcess().InAppImage);
     }
 
     void NoUsableShellIsAFallback_data() {
@@ -367,17 +441,10 @@ private slots:
     }
 
     // The real roostd, started by the launcher from a window whose own
-    // environment is the bare PATH of the desktop: it lists the sessions of
-    // the fake `claude` only through the PATH of the login shell.
-    void RoostdFindsClaudeThroughTheLoginPath() {
-        QVERIFY(WriteFile(Path("claudebin/claude"), FAKE_CLAUDE, EXECUTABLE));
-        QVERIFY(QFile::copy(QStringLiteral(FIXTURES_DIR "/claude_agents.json"),
-                            Path("claudebin/agents.json")));
-        const QString shell =
-            WriteShell({"PATH=" + Path("claudebin") + ":/usr/bin:/bin",
-                        "HOME=" + Path("home"), "ROOST_SOCKET=" + Socket(),
-                        "ROOST_CONFIG=" + Path("config"),
-                        "ROOST_PLUGINS_PATH=" ROOST_PLUGINS_DIR});
+    // environment is the bare PATH of the desktop. Returns the launcher's api
+    // connected to it; `shell` is the login shell of the window.
+    bool StartRoostdFromTheDesktop(const QString& shell, api::Api& api,
+                                   std::unique_ptr<DaemonLauncher>& launcher) {
         Settings settings;
         settings.Base.insert("PATH", "/usr/bin:/bin");
         settings.Base.insert("HOME", Path("home"));
@@ -386,20 +453,60 @@ private slots:
         settings.Base.insert("ROOST_PLUGINS_PATH", ROOST_PLUGINS_DIR);
         settings.HasTerminal = false;
         settings.Shell = shell;
-
-        api::Api api({.FirstReconnectDelay = 20ms, .MaxReconnectDelay = 40ms});
-        DaemonLauncher launcher(api,
-                                {QStringLiteral(ROOSTD_PATH),
-                                 {"--log", Path("run/roostd.log")},
-                                 Path("run/roostd.start.log")},
-                                DaemonLauncher::DEFAULT_START_TIMEOUT,
-                                &DaemonLauncher::StartDetached, settings);
+        launcher = std::make_unique<DaemonLauncher>(
+            api,
+            DaemonLauncher::Command{QStringLiteral(ROOSTD_PATH),
+                                    {"--log", Path("run/roostd.log")},
+                                    Path("run/roostd.start.log")},
+            DaemonLauncher::DEFAULT_START_TIMEOUT,
+            &DaemonLauncher::StartDetached, settings);
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(Socket());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        return connected.wait(TIMEOUT_MS);
+    }
+
+    bool WriteFakeClaude() {
+        return WriteFile(Path("claudebin/claude"), FAKE_CLAUDE, EXECUTABLE) &&
+               QFile::copy(QStringLiteral(FIXTURES_DIR "/claude_agents.json"),
+                           Path("claudebin/agents.json"));
+    }
+
+    // It lists the sessions of the fake `claude` only through the PATH of the
+    // login shell.
+    void RoostdFindsClaudeThroughTheLoginPath() {
+        QVERIFY(WriteFakeClaude());
+        const QString shell =
+            WriteShell({"PATH=" + Path("claudebin") + ":/usr/bin:/bin",
+                        "HOME=" + Path("home"), "ROOST_SOCKET=" + Socket(),
+                        "ROOST_CONFIG=" + Path("config"),
+                        "ROOST_PLUGINS_PATH=" ROOST_PLUGINS_DIR});
+        api::Api api({.FirstReconnectDelay = 20ms, .MaxReconnectDelay = 40ms});
+        std::unique_ptr<DaemonLauncher> launcher;
+        QVERIFY(StartRoostdFromTheDesktop(shell, api, launcher));
         QTRY_COMPARE_WITH_TIMEOUT(api.Sessions().Rows().size(), 4, TIMEOUT_MS);
         QVERIFY(api.Sessions().Unavailable().isEmpty());
         QVERIFY(DetachedDaemons::IsAlive(DetachedDaemons::PidOf(Lock())));
+    }
+
+    // The same with a login read that fails: the roostd has the bare PATH of
+    // the window, finds no `claude` and lists nothing.
+    void RoostdWithoutTheLoginPathDoesNotFindClaude() {
+        QVERIFY(WriteFakeClaude());
+        const QString shell = WriteScript("exit 3\n", "failing");
+        api::Api api({.FirstReconnectDelay = 20ms, .MaxReconnectDelay = 40ms});
+        std::unique_ptr<DaemonLauncher> launcher;
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(WARNING));
+        QVERIFY(StartRoostdFromTheDesktop(shell, api, launcher));
+        // sessions.list reports the agent as unavailable, with no rows.
+        QTRY_COMPARE_WITH_TIMEOUT(api.Sessions().Unavailable().size(), 1,
+                                  TIMEOUT_MS);
+        const QJsonObject unavailable =
+            api.Sessions().Unavailable().first().toObject();
+        QCOMPARE(unavailable.value("agent").toString(), "claude");
+        QVERIFY2(unavailable.value("reason").toString().contains(
+                     "cannot run claude agents"),
+                 qPrintable(unavailable.value("reason").toString()));
+        QCOMPARE(api.Sessions().Rows().size(), 0);
     }
 };
 

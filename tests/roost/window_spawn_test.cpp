@@ -83,6 +83,10 @@ private:
         environment.insert("ROOST_CONFIG", Path("config"));
         environment.remove("ROOST_PLUGINS_PATH");
         environment.remove("APPIMAGE");
+        // stdin is not a tty, so the window reads the login environment: from
+        // a $SHELL that does not exist (a warning, then its own environment,
+        // which has the fake claude), never from the shell of the developer.
+        environment.insert("SHELL", Path("no-such-shell"));
         QProcess window;
         window.setProcessEnvironment(environment);
         window.start(ROOST_PATH, arguments);

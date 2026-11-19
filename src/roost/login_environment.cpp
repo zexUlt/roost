@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace roost {
@@ -35,10 +36,9 @@ const QStringList& LoginEnvironment::AppImageLibraryVariables() {
     return VARIABLES;
 }
 
-bool LoginEnvironment::InAppImage(const QString& appImage,
-                                  const QString& appDir,
+bool LoginEnvironment::InAppImage(const QString& appDir,
                                   const QString& executableDir) {
-    if (appImage.isEmpty() || appDir.isEmpty()) {
+    if (appDir.isEmpty()) {
         return false;
     }
     const QString root = QDir::cleanPath(appDir);
@@ -91,7 +91,6 @@ LoginEnvironment::Settings LoginEnvironment::Settings::OfThisProcess() {
         ::isatty(0) != 0;
     settings.Shell = settings.Base.value(QStringLiteral("SHELL"));
     settings.InAppImage = LoginEnvironment::InAppImage(
-        settings.Base.value(QStringLiteral("APPIMAGE")),
         settings.Base.value(QStringLiteral("APPDIR")),
         QCoreApplication::applicationDirPath());
     return settings;
@@ -163,7 +162,20 @@ void LoginEnvironment::OnOutput() {
     if (Shell_ == nullptr) {
         return;
     }
+    // The end marker may be split between two reads.
+    const qsizetype scanFrom =
+        std::max<qsizetype>(0, Output_.size() - End_.size() + 1);
     Output_ += Shell_->readAllStandardOutput();
+    if (Output_.indexOf(End_, scanFrom) >= 0) {
+        // All there is to read: a shell whose rc hangs on exit is not waited
+        // for. A marker in the echo of the script parses to nothing; then the
+        // read goes on.
+        if (const auto parsed = Parse(Output_, Begin_, End_)) {
+            KillShell();
+            Succeed(*parsed);
+            return;
+        }
+    }
     if (Output_.size() > MAX_OUTPUT) {
         Fail(QStringLiteral("the shell printed too much"));
     }

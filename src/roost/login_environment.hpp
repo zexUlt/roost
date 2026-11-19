@@ -22,6 +22,9 @@ namespace roost {
 // rc files print is ignored), asynchronously: the GUI thread never waits. With
 // a terminal the window's own environment is the one to pass on.
 //
+// The read ends as soon as the end marker is in the output: the shell and what
+// it started (its process group) are killed then, not waited for.
+//
 // Either way the variables of a bundle are stripped (see Strip). If the shell
 // cannot be read (no SHELL, does not start, the timeout, no markers) the shell
 // is killed, a warning is logged and the window's own environment is used.
@@ -56,11 +59,11 @@ public:
     // Variables of the bundle itself: always dropped.
     static const QStringList& BundleVariables();
 
-    // The window runs inside the AppImage `appImage` unpacked at `appDir`: both
-    // set and the executable directory inside `appDir`. (An APPIMAGE of another
-    // app's environment does not count.)
-    static bool InAppImage(const QString& appImage, const QString& appDir,
-                           const QString& executableDir);
+    // The window runs inside an AppImage or an extracted AppDir run through
+    // AppRun (which sets APPDIR but no APPIMAGE): `appDir` set and the
+    // executable directory inside it. (An APPDIR of another app's environment
+    // does not count.)
+    static bool InAppImage(const QString& appDir, const QString& executableDir);
 
     // `environment` without the variables of the bundle: BundleVariables
     // always, AppImageLibraryVariables when `inAppImage`.

@@ -26,12 +26,11 @@ DaemonLauncher::Command DaemonLauncher::CommandFor(
     const QString log = dir + QStringLiteral("/roostd.log");
     const QString startLog = dir + QStringLiteral("/roostd.start.log");
     // An APPIMAGE of another app's environment does not count: this
-    // executable has to be inside the APPDIR of the running AppImage.
-    if (!appImage.isEmpty() && !appDir.isEmpty()) {
-        if (LoginEnvironment::InAppImage(appImage, appDir, executableDir)) {
-            return {
-                appImage, {QStringLiteral("--roostd"), "--log", log}, startLog};
-        }
+    // executable has to be inside the APPDIR of the running AppImage. An
+    // extracted AppDir has no APPIMAGE: its sibling roostd is the one.
+    if (!appImage.isEmpty() &&
+        LoginEnvironment::InAppImage(appDir, executableDir)) {
+        return {appImage, {QStringLiteral("--roostd"), "--log", log}, startLog};
     }
     return {executableDir + QStringLiteral("/roostd"),
             {QStringLiteral("--log"), log},
