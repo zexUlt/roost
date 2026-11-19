@@ -82,8 +82,9 @@ The Qt libraries and plugins of the packages contain code of other projects,
 named in Qt 6.12.0's own attribution files (qt_attribution.json of qtbase and
 qtdeclarative, tag v6.12.0, https://doc.qt.io/qt-6/licenses-used-in-qt.html).
 Listed: what is compiled into the Qt modules that go into the packages, for
-each OS. The copyright lines and licence texts are those of the attribution
-files, unchanged. "Source" is the project's site and the directory of the
+each OS. Each entry carries the "Copyright:" lines of its attribution file
+verbatim (LibJPEG-turbo has none there) and the text of the file's
+LicenseFile, unchanged. "Source" is the project's site and the directory of the
 attribution file in the Qt sources.
 
 The binaries of the Qt that CI installs are Qt's own; how they were configured
@@ -95,13 +96,16 @@ system FreeType or zlib) is not ours to list.
 The .app is what macdeployqt copies for the QML the window imports (all
 styles of Qt Quick Controls, Qt Svg and others included), the AppImage is
 pruned by tools/package_linux.sh; the list covers the wider of the two.
+The .app carries the image plugins qgif, qico, qjpeg and qsvg only (no Qt Image Formats module, so no libtiff or
+libwebp), and Qt Svg and Qt Quick Vector Image have no attribution file of
+their own in Qt 6.12.0.
 
 Not listed, because the code is not in the packages: Qt modules the packages
 do not carry (Qt Quick 3D, Qt Multimedia, Qt WebEngine, Qt Charts and the
 rest); components used on other platforms only (Windows, Android, WebAssembly,
 Wayland protocols); Pixman (compiled only for 32-bit ARM NEON); the Vulkan API
-registry (input of Qt's code generator); test and build tooling; the libjpeg and
-TLS plugins of the AppImage (removed by tools/package_linux.sh); the SQLite
+registry (input of Qt's code generator); the D3D12 mipmap shader (Windows
+only); test and build tooling; the libjpeg and TLS plugins of the AppImage (removed by tools/package_linux.sh); the SQLite
 drivers of the .app (removed by tools/package_macos.sh).
 
 Efficient Binary-Decimal and Decimal-Binary Conversion Routines for IEEE Doubles, 3.4.0
@@ -109,6 +113,9 @@ Efficient Binary-Decimal and Decimal-Binary Conversion Routines for IEEE Doubles
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/google/double-conversion ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/double-conversion
+
+Copyright:
+    Copyright 2006-2012, the V8 project authors
 
     Copyright 2006-2011, the V8 project authors. All rights reserved.
     Redistribution and use in source and binary forms, with or without
@@ -142,6 +149,11 @@ PCRE2, 10.48
 Licence: BSD 3-clause "New" or "Revised" License with PCRE2 binary-like Packages Exception (SPDX: LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception).
 In: AppImage and macOS .app; Qt Core.
 Source: http://www.pcre.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/pcre2
+
+Copyright:
+    Copyright (c) 1997-2007 University of Cambridge
+    Copyright (c) 2007-2024 Philip Hazel
+    Copyright (c) 2010-2024 Zoltan Herczeg
 
     PCRE2 Licence
     =============
@@ -254,6 +266,9 @@ Licence: BSD 2-clause "Simplified" License (SPDX: BSD-2-Clause).
 In: AppImage and macOS .app; Qt Core.
 Source: http://www.pcre.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/pcre2
 
+Copyright:
+    Copyright Zoltan Herczeg
+
     /*
      *    Stack-less Just-In-Time compiler
      *
@@ -285,6 +300,9 @@ Data Compression Library (zlib), 1.3.2
 Licence: zlib License (SPDX: Zlib).
 In: AppImage and macOS .app; Qt Core.
 Source: https://zlib.net/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/zlib
+
+Copyright:
+    (C) 1995-2026 Jean-loup Gailly and Mark Adler
 
       This software is provided 'as-is', without any express or implied
       warranty.  In no event will the authors be held liable for any damages
@@ -320,8 +338,11 @@ Licence: Creative Commons Zero v1.0 Universal or Apache License 2.0 (SPDX: CC0-1
 Used under: CC0 1.0.
 In: AppImage and macOS .app; Qt Core.
 Source: https://blake2.net/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/blake2
+Version: ed1974ea83433eba7b2d95c5dcd9ac33cb847913
 
+Copyright:
     Copyright 2012, Samuel Neves <sneves@dei.uc.pt>
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 MD4
@@ -330,7 +351,9 @@ Licence: Public Domain (SPDX: CC0-1.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/md4
 
+Copyright:
     Written by Alexander Peslyak - better known as Solar Designer <solar@openwall.com> - in 2001, and placed in the public domain. There's absolutely no warranty.
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 MD5
@@ -339,7 +362,9 @@ Licence: Public Domain (SPDX: CC0-1.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/md5
 
+Copyright:
     Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 Secure Hash Algorithm SHA-1
@@ -348,8 +373,10 @@ Licence: Public Domain (SPDX: LicenseRef-SHA1-Public-Domain).
 In: AppImage and macOS .app; Qt Core.
 Source: http://www.dominik-reichl.de/projects/csha1/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/sha1
 
+Copyright:
     Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>
     Copyright (C) 2016 The Qt Company Ltd
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 Secure Hash Algorithm SHA-3 - Keccak, 3.2
@@ -358,9 +385,11 @@ Licence: Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/sha3
 
+Copyright:
     Guido Bertoni, Joan Daemen, Michaël Peeters and Gilles Van Assche.
     To the extent possible under law, the implementers have waived all copyright
     and related or neighboring rights to the source code in this file.
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 Secure Hash Algorithm SHA-3 - brg_endian, 1.0.0
@@ -368,6 +397,9 @@ Secure Hash Algorithm SHA-3 - brg_endian, 1.0.0
 Licence: BSD 2-clause "Simplified" License (SPDX: BSD-2-Clause).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/sha3
+
+Copyright:
+    Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
 
     Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
 
@@ -389,6 +421,9 @@ Secure Hash Algorithms SHA-384 and SHA-512
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/rfc6234
+
+Copyright:
+    Copyright (c) 2011 IETF Trust and the persons identified as authors of the code.
 
     Copyright (c) 2011 IETF Trust and the persons identified as
     authors of the code.  All rights reserved.
@@ -431,9 +466,11 @@ Licence: Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://131002.net/siphash/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/siphash
 
+Copyright:
     Copyright (C) 2012-2014 Jean-Philippe Aumasson
     Copyright (C) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>
     Copyright (C) 2016 Intel Corporation
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 Easing Equations by Robert Penner
@@ -441,6 +478,9 @@ Easing Equations by Robert Penner
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: AppImage and macOS .app; Qt Core.
 Source: http://robertpenner.com/easing/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/easing
+
+Copyright:
+    Copyright (c) 2001 Robert Penner
 
     Copyright (c) 2001 Robert Penner
     All rights reserved.
@@ -474,6 +514,9 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/intel/tinycbor ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/tinycbor
 
+Copyright:
+    Copyright (C) 2015-2025 Intel Corporation
+
     MIT License
 
     Copyright (c) 2017 Intel Corporation
@@ -502,6 +545,10 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/forkfd
 
+Copyright:
+    Copyright (C) 2016 Intel Corporation
+    Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com
+
     Copyright (C) 2016 Intel Corporation.
     Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com
 
@@ -528,8 +575,11 @@ tl::expected
 Licence: Creative Commons Zero v1.0 Universal (SPDX: CC0-1.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/TartanLlama/expected/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/corelib/global
+Version: 41d3e1f48d682992a2230b2a715bca38b848b269
 
+Copyright:
     To the extent possible under law, Sy Brand has waived all copyright and related or neighboring rights to the expected library. This work is published from: United Kingdom.
+
     (public domain dedication or CC0; no notice is required, kept for completeness)
 
 QEventDispatcher on macOS
@@ -537,6 +587,9 @@ QEventDispatcher on macOS
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: macOS .app only; Qt Core.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/corelib/kernel
+
+Copyright:
+    Copyright (c) 2007-2008, Apple, Inc.
 
     Copyright (c) 2007-2008, Apple, Inc.
 
@@ -573,9 +626,12 @@ Apache Tika MimeType Definitions
 Licence: Apache License 2.0 (SPDX: Apache-2.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://github.com/apache/tika/tree/main/tika-core/src/main/resources/org/apache/tika/mime ; https://github.com/qt/qtbase/tree/v6.12.0/src/corelib/mimetypes/3rdparty
+Version: c29724782854bb5a319f4a1940d0828a58ace3f9
 
+Copyright:
     Copyright 2026 The Apache Software Foundation
-    Licence text: Apache-2.0, reproduced once at the end of this section.
+
+    Licence text: Apache-2.0, in the section "Licence texts shared by the entries above" below.
 
 Unicode Character Database (UCD), 36
 ------------------------------------
@@ -583,8 +639,10 @@ Licence: Unicode License Agreement - Data Files and Software (2016) (SPDX: Unico
 In: AppImage and macOS .app; Qt Core.
 Source: https://www.unicode.org/ucd/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/corelib/text
 
+Copyright:
     Copyright (C) 1991-2025 Unicode, Inc.
-    Licence text: Unicode-3.0, reproduced once at the end of this section.
+
+    Licence text: Unicode-3.0, in the section "Licence texts shared by the entries above" below.
 
 Unicode Common Locale Data Repository (CLDR), v48.2
 ---------------------------------------------------
@@ -592,14 +650,20 @@ Licence: Unicode License v3 (SPDX: Unicode-3.0).
 In: AppImage and macOS .app; Qt Core.
 Source: https://cldr.unicode.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/corelib/text
 
+Copyright:
     Copyright (C) 2004-2025 Unicode, Inc.
-    Licence text: Unicode-3.0, reproduced once at the end of this section.
+
+    Licence text: Unicode-3.0, in the section "Licence texts shared by the entries above" below.
 
 libpsl - C library to handle the Public Suffix List
 ---------------------------------------------------
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: AppImage and macOS .app; Qt Network.
 Source: https://github.com/rockdaboot/libpsl ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/libpsl
+Version: 664f3dc85259ec65e30248a61fa1c45b7b0e4c3f
+
+Copyright:
+    Copyright 2014-2016 The Chromium Authors. All rights reserved.
 
     * The following License is for the source code files
       psl-make-dafsa and lookup_string_in_fixed_set.c.
@@ -637,10 +701,13 @@ The Public Suffix List
 Licence: Mozilla Public License 2.0 (SPDX: MPL-2.0).
 In: AppImage and macOS .app; Qt Network.
 Source: http://publicsuffix.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/libpsl
+Version: 2026-05-14_08-35-31_UTC
 
+Copyright:
     The list was originally provided by Jo Hermans <jo.hermans@gmail.com>.
     It is now maintained on github (https://github.com/publicsuffix/list).
-    Licence text: MPL-2.0, reproduced once at the end of this section.
+
+    Licence text: MPL-2.0, in the section "Licence texts shared by the entries above" below.
 
 libdbus-1 headers, 1.13.12
 --------------------------
@@ -649,15 +716,20 @@ Used under: the Academic Free License 2.1.
 In: AppImage only; Qt D-Bus.
 Source: https://www.freedesktop.org/wiki/Software/dbus/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/dbus
 
+Copyright:
     Copyright (C) 2002, 2003 CodeFactory AB
     Copyright (C) 2004, 2005 Red Hat, Inc.
-    Licence text: AFL-2.1, reproduced once at the end of this section.
+
+    Licence text: AFL-2.1, in the section "Licence texts shared by the entries above" below.
 
 Adobe Glyph List For New Fonts, 1.7
 -----------------------------------
 Licence: BSD 3-Clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://github.com/adobe-type-tools/agl-aglfn ; https://github.com/qt/qtbase/tree/v6.12.0/src/gui/text
+
+Copyright:
+    Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems
 
     Redistribution and use in source and binary forms, with or without
     modification, are permitted provided that the following conditions are
@@ -692,8 +764,10 @@ Licence: Apache License 2.0 (SPDX: Apache-2.0).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://github.com/google/emoji-segmenter ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/emoji-segmenter
 
+Copyright:
     Copyright 2019 Google LLC
-    Licence text: Apache-2.0, reproduced once at the end of this section.
+
+    Licence text: Apache-2.0, in the section "Licence texts shared by the entries above" below.
 
 Anti-aliasing rasterizer from FreeType 2
 ----------------------------------------
@@ -701,6 +775,9 @@ Licence: Freetype Project License or GNU General Public License v2.0 only (SPDX:
 Used under: the FreeType Project License.
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: http://www.freetype.org ; https://github.com/qt/qtbase/tree/v6.12.0/src/gui/painting
+
+Copyright:
+    Copyright 2000-2016 by David Turner, Robert Wilhelm, and Werner Lemberg.
 
     FREETYPE LICENSES
     -----------------
@@ -914,7 +991,6 @@ Source: http://www.freetype.org ; https://github.com/qt/qtbase/tree/v6.12.0/src/
 
     --- end of FTL.TXT ---
 
-
 Freetype 2, 2.14.3
 ------------------
 Licence: Freetype Project License or GNU General Public License v2.0 only (SPDX: FTL OR GPL-2.0-only).
@@ -922,6 +998,7 @@ Used under: the FreeType Project License.
 In: AppImage only; Qt Gui, platform plugins.
 Source: http://www.freetype.org ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/freetype
 
+Copyright:
     Copyright (c) 2007-2014 Adobe Systems Incorporated
     Copyright (c) 2004-2026 Albert Chin-A-Young
     Copyright (c) 2018-2026 Armin Hasitzka, David Turner, Robert Wilhelm, and Werner Lemberg
@@ -952,6 +1029,18 @@ Source: http://www.freetype.org ; https://github.com/qt/qtbase/tree/v6.12.0/src/
     Copyright (c) 2019 nyorain
     Copyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, George Williams, and Dominik Röttsches
     Copyright (C) 2009, 2023  Red Hat, Inc.
+
+Copyright (Freetype 2 - zlib, SPDX: Zlib):
+    Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+Copyright (Freetype 2 - Bitmap Distribution Format (BDF) support, SPDX: MIT):
+    Copyright (c) 2000 Computing Research Labs, New Mexico State University
+    Copyright (c) 2001-2014 Francesco Zappa Nardelli
+
+Copyright (Freetype 2 - Portable Compiled Format (PCF) support, SPDX: MIT AND MIT-open-group):
+    Copyright (c) 2001, 2012 David Turner, Robert Wilhelm, and Werner Lemberg
+    Copyright (c) 2000-2014 Francesco Zappa Nardelli
+    Copyright (c) 1990, 1994, 1998 The Open Group
 
     Licence: the FreeType Project License, whose text is under the entry
     "Anti-aliasing rasterizer from FreeType 2" above, and, for the parts named in
@@ -1085,6 +1174,25 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: http://harfbuzz.org ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/harfbuzz-ng
 
+Copyright:
+    Copyright © 2010-2022  Google, Inc.
+    Copyright © 2015-2020  Ebrahim Byagowi
+    Copyright © 2019,2020  Facebook, Inc.
+    Copyright © 2012,2015  Mozilla Foundation
+    Copyright © 2011  Codethink Limited
+    Copyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)
+    Copyright © 2009  Keith Stribley
+    Copyright © 2011  Martin Hosken and SIL International
+    Copyright © 2007  Chris Wilson
+    Copyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod
+    Copyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.
+    Copyright © 1998-2005  David Turner and Werner Lemberg
+    Copyright © 2016  Igalia S.L.
+    Copyright © 2022  Matthias Clasen
+    Copyright © 2018,2021  Khaled Hosny
+    Copyright © 2018,2019,2020  Adobe, Inc
+    Copyright © 2013-2015  Alexei Podtelezhnikov
+
     HarfBuzz is licensed under the so-called "Old MIT" license.  Details follow.
     For parts of HarfBuzz that are licensed under different licenses see individual
     files names COPYING in subdirectories where applicable.
@@ -1133,6 +1241,30 @@ LibPNG, 1.6.58
 Licence: libpng License and PNG Reference Library version 2 (SPDX: Libpng AND libpng-2.0).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: http://www.libpng.org/pub/png/libpng.html ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/libpng
+
+Copyright:
+    Copyright (c) 1995-2026 The PNG Reference Library Authors
+    Copyright (c) 2000-2026 Cosmin Truta
+    Copyright (c) 1998-2018 Glenn Randers-Pehrson
+    Copyright (c) 1996-1997 Andreas Dilger
+    Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+    Copyright (c) 2000-2017 Simon-Pierre Cadieux
+    Copyright (c) 2000-2017 Eric S. Raymond
+    Copyright (c) 2000-2017 Mans Rullgard
+    Copyright (c) 2000-2017 Gilles Vollant
+    Copyright (c) 2000-2017 James Yu
+    Copyright (c) 2000-2017 Mandar Sahastrabuddhe
+    Copyright (c) 1998-2000 Tom Lane
+    Copyright (c) 1998-2000 Willem van Schaik
+    Copyright (c) 1996-1997 John Bowler
+    Copyright (c) 1996-1997 Kevin Bracey
+    Copyright (c) 1996-1997 Sam Bushell
+    Copyright (c) 1996-1997 Magnus Holmgren
+    Copyright (c) 1996-1997 Greg Roelofs
+    Copyright (c) 1996-1997 Tom Tanner
+    Copyright (c) 1995-1996 Dave Martindale
+    Copyright (c) 1995-1996 Paul Schmidt
+    Copyright (c) 1995-1996 Tim Wegner
 
     COPYRIGHT NOTICE, DISCLAIMER, and LICENSE
     =========================================
@@ -1480,6 +1612,8 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://github.com/mity/md4c ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/md4c
 
+Copyright:
+    Copyright © 2016-2024 Martin Mitáš
 
     # The MIT License (MIT)
 
@@ -1509,6 +1643,9 @@ Licence: International Color Consortium License (SPDX: LicenseRef-ICC-License).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: http://www.color.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/icc
 
+Copyright:
+    Copyright International Color Consortium, 2015
+
     For the file sRGB2014.icc:
 
     Copyright International Color Consortium, 2015
@@ -1525,6 +1662,11 @@ Smooth Scaling Algorithm
 Licence: BSD 2-clause "Simplified" License and Imlib2 License (SPDX: BSD-2-Clause AND Imlib2).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/gui/painting
+
+Copyright:
+    Copyright (C) 2004, 2005 Daniel M. Duley.
+    (C) Carsten Haitzler and various contributors.
+    (C) Willem Monsuwe <willem@stack.nl>
 
     qimagetransform.cpp was contributed by Daniel M. Duley based on code from Imlib2.
 
@@ -1593,6 +1735,10 @@ Licence: X11 License and Historical Permission Notice and Disclaimer (SPDX: X11 
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://www.x.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/gui/painting
 
+Copyright:
+    Copyright (c) 1987, 1988 X Consortium
+    Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
+
     Copyright (c) 1987, 1988  X Consortium
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1643,6 +1789,9 @@ Licence: Historical Permission Notice and Disclaimer - sell variant (SPDX: HPND-
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/gui/util
 
+Copyright:
+    Copyright 2002 USC/Information Sciences Institute
+
     Copyright  2002 USC/Information Sciences Institute
 
     Permission to use, copy, modify, distribute, and sell this software
@@ -1672,6 +1821,9 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Gui, platform plugins.
 Source: https://webgradients.com/ ; https://github.com/qt/qtbase/tree/v6.12.0/util/gradientgen
 
+Copyright:
+    Copyright (c) 2017 itmeo
+
     MIT License
 
     Copyright (c) 2017 itmeo
@@ -1699,6 +1851,10 @@ OpenGL Headers
 Licence: MIT License (SPDX: MIT).
 In: AppImage only; Qt Gui, platform plugins.
 Source: https://www.khronos.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/gui/opengl
+Version: Revision 27684
+
+Copyright:
+    Copyright (c) 2013-2014 The Khronos Group Inc.
 
     Copyright (c) 2013-2014 The Khronos Group Inc.
 
@@ -1726,6 +1882,10 @@ OpenGL ES 2 Headers
 Licence: MIT License (SPDX: MIT).
 In: AppImage only; Qt Gui, platform plugins.
 Source: https://www.khronos.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/gui/opengl
+Version: Revision 27673
+
+Copyright:
+    Copyright (c) 2013-2014 The Khronos Group Inc.
 
     Copyright and licence: see the OpenGL Headers entry above.
 
@@ -1734,6 +1894,9 @@ Vulkan Memory Allocator, 3.3.0
 Licence: MIT License (SPDX: MIT).
 In: AppImage only; Qt Gui, platform plugins.
 Source: https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/VulkanMemoryAllocator
+
+Copyright:
+    Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
 
     Copyright (c) 2017-2019 Advanced Micro Devices, Inc. All rights reserved.
 
@@ -1760,6 +1923,11 @@ XCB-XInput
 Licence: MIT License (SPDX: MIT).
 In: AppImage only; Qt Gui, platform plugins.
 Source: https://xcb.freedesktop.org/ ; https://github.com/qt/qtbase/tree/v6.12.0/src/3rdparty/xcb
+
+Copyright:
+    Copyright (C) 2001-2006 Bart Massey, Jamey Sharp, and Josh Triplett.
+    Copyright (C) 2006 Peter Hutterer
+    Copyright (C) 2013 Daniel Martin
 
     Permission is hereby granted, free of charge, to any person
     obtaining a copy of this software and associated documentation
@@ -1790,6 +1958,9 @@ Cocoa Platform Plugin
 Licence: BSD 3-clause "New" or "Revised" License (SPDX: BSD-3-Clause).
 In: macOS .app only; Qt Gui, platform plugins.
 Source: https://github.com/qt/qtbase/tree/v6.12.0/src/plugins/platforms/cocoa
+
+Copyright:
+    Copyright (c) 2007-2008, Apple, Inc.
 
     Copyright (c) 2007-2008, Apple, Inc.
 
@@ -1827,6 +1998,21 @@ Licence: BSD 2-clause "Simplified" License (SPDX: BSD-2-Clause).
 In: AppImage and macOS .app; Qt Qml, Qt Quick, Qt Quick Controls.
 Source: https://trac.webkit.org/wiki/JavaScriptCore ; https://github.com/qt/qtdeclarative/tree/v6.12.0/src/3rdparty/masm
 
+Copyright:
+    Copyright (C) 2003-2018 Apple Inc. All rights reserved.
+    Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
+    Copyright (C) 2007-2009 Torch Mobile, Inc. All rights reserved. (http://www.torchmobile.com/)
+    Copyright (C) 2009, 2010 University of Szeged
+    Copyright (C) 2009-2011 STMicroelectronics. All rights reserved.
+    Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+    Copyright (C) 2010 Peter Varga (pvarga@inf.u-szeged.hu), University of Szeged
+    Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+    Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved.
+    Copyright (C) 2011 Google Inc. All rights reserved.
+    Copyright (C) 2013 Samsung Electronics. All rights reserved.
+    Copyright (C) 2015 Cisco Systems, Inc. All rights reserved.
+    Copyright (c) 2002-2009 Vivek Thampi
+
     Copyright (C) 2012 Apple Inc. All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -1856,6 +2042,10 @@ Licence: MIT License (SPDX: MIT).
 In: AppImage and macOS .app; Qt Qml, Qt Quick, Qt Quick Controls.
 Source: https://www.yogalayout.dev/ ; https://github.com/qt/qtdeclarative/tree/v6.12.0/src/3rdparty/yoga
 
+Copyright:
+    Copyright (c) Facebook, Inc. and its affiliates.
+    Copyright (c) Meta Platforms, Inc. and affiliates.
+
     MIT License
 
     Copyright (c) Facebook, Inc. and its affiliates.
@@ -1883,6 +2073,9 @@ Shadow values from Angular Material
 Licence: MIT License (SPDX: MIT).
 In: macOS .app only; Qt Qml, Qt Quick, Qt Quick Controls.
 Source: https://angularjs.org/ ; https://github.com/qt/qtdeclarative/tree/v6.12.0/src/quickcontrols/material
+
+Copyright:
+    Copyright (c) 2014-2016 Google, Inc
 
     Copyright (c) 2014-2016 Google, Inc. http://angularjs.org
 
@@ -2704,6 +2897,9 @@ the object code of the runtime and its build recipe are the ones of the URL
 above, the AppImage can be taken apart with `./roost-<arch>.AppImage
 --appimage-extract` and packed again with a runtime built from those sources
 (appimagetool --runtime-file).
+The complete corresponding source is available from the same place: the libfuse
+3.15.0 release and the type2-runtime tag 20251108 with its mount.c patch; the
+runtime can be replaced as described above.
 
     FUSE: Filesystem in Userspace
     Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
