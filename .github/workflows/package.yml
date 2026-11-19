@@ -11,11 +11,14 @@ name: Package
 #
 # Runs on `v*` tags, on dispatch and on pushes to trunk that change code, not
 # on pull requests: a macOS runner per pull request is too much, and a change
-# to packaging proves itself by the dispatch above.
+# to packaging proves itself by the dispatch above. Documentation is the set
+# tools/ci_changes.sh skips. A path filter rather than that script: no job
+# here is a required check, and GitHub does not apply path filters to tags.
 on:
   push:
     tags: ["v*"]
     branches: [trunk]
+    paths-ignore: ["docs/**", ".claude/**", "**.md"]
   workflow_dispatch:
 
 permissions:
@@ -36,27 +39,10 @@ defaults:
     shell: bash
 
 jobs:
-  # Whether this change needs packaging at all (tools/ci_changes.sh); a push
-  # or a dispatch is not a pull request, so the answer is always "yes". If this
-  # job fails, the answer is unknown and the packaging runs.
-  changes:
-    name: changes
-    runs-on: ubuntu-24.04
-    outputs:
-      code: ${{ steps.changes.outputs.code }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: changes
-        uses: ./.github/actions/changes
-
   # The release build, its tests, then the .app and .dmg and their checks. The
   # Qt, zig and caches are those of the macOS release job of ci.yml.
   macos:
     name: macos
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
