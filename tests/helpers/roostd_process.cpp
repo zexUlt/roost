@@ -101,8 +101,15 @@ void RoostdProcess::CloseLifelineOfWatcher() {
 bool RoostdProcess::AddFixturePlugin(const QString& id,
                                      const QString& fixtureBackendPath) {
     const QDir directory(PluginsPath() + u'/' + id);
-    if (!directory.mkpath(".") ||
-        !QFile::link(fixtureBackendPath, directory.filePath("backend"))) {
+    if (!directory.mkpath(".")) {
+        qWarning().noquote()
+            << "AddFixturePlugin: cannot make" << directory.path();
+        return false;
+    }
+    if (!QFile::link(fixtureBackendPath, directory.filePath("backend"))) {
+        qWarning().noquote()
+            << "AddFixturePlugin: cannot link" << directory.filePath("backend")
+            << "to" << fixtureBackendPath;
         return false;
     }
     QJsonArray commands;
@@ -132,10 +139,18 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
                                        {"id", "s1"}, {"state", "idle"}}}}}}}}};
     QFile manifestFile(directory.filePath("plugin.json"));
     QFile answersFile(directory.filePath("agent.json"));
-    return manifestFile.open(QIODevice::WriteOnly) &&
-           manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
-           answersFile.open(QIODevice::WriteOnly) &&
-           answersFile.write(QJsonDocument(answers).toJson()) > 0;
+    const bool written =
+        manifestFile.open(QIODevice::WriteOnly) &&
+        manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
+        answersFile.open(QIODevice::WriteOnly) &&
+        answersFile.write(QJsonDocument(answers).toJson()) > 0;
+    if (!written) {
+        qWarning().noquote()
+            << "AddFixturePlugin: cannot write the manifest or the answers in"
+            << directory.path() << ":" << manifestFile.errorString() << ";"
+            << answersFile.errorString();
+    }
+    return written;
 }
 
 bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,
