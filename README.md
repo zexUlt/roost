@@ -41,6 +41,11 @@ window reloads a plugin when its files change. It watches the copy under
 `cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
 roostd reads manifests at start.
 
+`roostd --log <file>` writes the stdout and stderr of roostd and its backends
+to `<file>` (mode 0600, appending) and keeps the previous file as `<file>.1`. It
+opens the file only once it holds the socket lock: a second roostd that loses
+the lock exits with code 1 and leaves the log alone.
+
 The window shows the session list on the left and the terminal on the right.
 The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
 In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and moves
