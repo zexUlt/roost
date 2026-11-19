@@ -701,15 +701,15 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/beta")));
         QCOMPARE(BgRan().value(1), QString("[--bg][--][do it]"));
-        // The session is listed with the next list of the agent, is under
-        // "Ops", and is opened in the terminal.
-        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{STARTED}, TIMEOUT_MS);
-        QVERIFY(activated.count() >= 1);
-        const int row = List()->property("cursorRow").toInt();
-        QCOMPARE(Role(row, "id").toString(), STARTED);
+        // The session is listed with the next list of the agent and is under
+        // "Ops"; it is not opened.
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        const int row = ViewRow(static_cast<int>(Ids().indexOf(STARTED)));
         QCOMPARE(Role(row, "category").toString(), QString("Ops"));
+        QCOMPARE(CursorId(), BETA);
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(activated.count(), 0);
         QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
                                       .value("categories")
                                       .toObject()
@@ -749,22 +749,9 @@ private slots:
                                   QJsonValue("Ops"), TIMEOUT_MS);
     }
 
-    // The agents list with STARTED and one more session.
-    static QByteArray AgentsWithStartedAndAnother(const QString& id) {
-        QJsonArray all = QJsonDocument::fromJson(AgentsWithStarted()).array();
-        all.append(QJsonObject{{"id", id},
-                               {"cwd", "/work/beta"},
-                               {"kind", "background"},
-                               {"startedAt", qint64{1790150500000}},
-                               {"name", "Another"},
-                               {"state", "working"},
-                               {"status", "busy"}});
-        return QJsonDocument(all).toJson(QJsonDocument::Compact);
-    }
-
-    // In the archive view the new session is not shown: nothing is opened, the
-    // view is not switched, and nothing happens later either.
-    void NInTheArchiveViewOpensNothingNowOrLater() {
+    // n starts the session and announces it; the panel does not open it, move
+    // the cursor or take the keyboard.
+    void NStartsASessionAndLeavesTheCursorSelectionAndFocusAlone() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -773,112 +760,30 @@ private slots:
         QVERIFY(Put("bg.stdout",
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
         QVERIFY(Put("bg.agents", AgentsWithStarted()));
-        Press(Qt::Key_V);
-        QTRY_COMPARE_WITH_TIMEOUT(Ids(), QStringList{}, TIMEOUT_MS);
-
-        StartNewSession("do it");
-
-        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        QTest::qWait(500);
-        QVERIFY(SelectedId().isEmpty());
-        QVERIFY(Calls().isEmpty());
-        QVERIFY(List()->property("viewArchive").toBool());
-        QVERIFY(ListView()->hasActiveFocus());
-        // Back in the list view the session is there and was not opened.
-        Press(Qt::Key_V);
-        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        QTest::qWait(500);
-        QVERIFY(SelectedId().isEmpty());
-        QVERIFY(Calls().isEmpty());
-        QVERIFY(CursorId() != STARTED);
-        QVERIFY(ListView()->hasActiveFocus());
-    }
-
-    // Once n has opened its session, later changes of the list do not take the
-    // cursor or the keyboard back to it.
-    void NOpensOnceAndLaterChangesLeaveTheCursorAlone() {
-        FailOnWarnings();
-        Start();
-        if (QTest::currentTestFailed()) {
-            return;
-        }
-        const QString another = "bg-9a8b7c6d";
-        QVERIFY(Put("bg.stdout",
-                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
-        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
         Watch();
+        MoveTo(BETA);
+        const int cursor = Cursor();
 
         StartNewSession("do it");
-        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
-        BackToList();
-        // The cursor is on the new session; ALPHA is above it.
-        for (int step = 0; step < 8 && CursorId() != ALPHA; ++step) {
-            Press(Qt::Key_Up);
-        }
-        QCOMPARE(CursorId(), ALPHA);
-
-        QVERIFY(Put("agents.json", AgentsWithStartedAndAnother(another)));
-        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(another), TIMEOUT_MS);
-        QTest::qWait(500);
-
-        QCOMPARE(CursorId(), ALPHA);
-        QCOMPARE(SelectedId(), STARTED);
-        QVERIFY(ListView()->hasActiveFocus());
-        QCOMPARE(Calls(), QStringList{STARTED});
-    }
-
-    // On the Unread tab the new session (working, not unread) is not shown:
-    // nothing is opened, and when it becomes unread later it is not opened
-    // either.
-    void NOnTheUnreadTabOpensNothingNowOrLater() {
-        FailOnWarnings();
-        Start();
-        if (QTest::currentTestFailed()) {
-            return;
-        }
-        QVERIFY(Put("bg.stdout",
-                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
-        QVERIFY(Put("bg.agents", AgentsWithStarted()));
-        Press(Qt::Key_A);
-        Press(Qt::Key_A);
-        QTRY_COMPARE_WITH_TIMEOUT(TabNowOfList(), QString("unread"),
-                                  TIMEOUT_MS);
-        const QString cursor = CursorId();
-
-        StartNewSession("do it");
-
-        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        QTest::qWait(500);
-        QVERIFY(!Ids().contains(STARTED));
-        QVERIFY(SelectedId().isEmpty());
-        QVERIFY(Calls().isEmpty());
-        QCOMPARE(CursorId(), cursor);
-        QVERIFY(ListView()->hasActiveFocus());
-
-        // The session finishes: unread, so the tab shows it now.
-        QVERIFY(Put(
-            "agents.json",
-            AgentsWithout({}, QJsonObject{{"id", STARTED},
-                                          {"cwd", "/work/beta"},
-                                          {"kind", "background"},
-                                          {"startedAt", qint64{1790150400000}},
-                                          {"name", "Do it"},
-                                          {"state", "done"},
-                                          {"status", "idle"}})));
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        // The session is in the list of the panel itself, not only in
+        // Roost.sessions.
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        QTest::qWait(500);
+        QTest::qWait(300);
 
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
-        QCOMPARE(TabNowOfList(), QString("unread"));
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(CursorId(), BETA);
+        QCOMPARE(Cursor(), cursor);
         QVERIFY(ListView()->hasActiveFocus());
     }
 
     // The search prompt opened before the session of n appears: the session
-    // shows up while the prompt is open, and the prompt keeps its text and the
-    // keyboard.
-    void NThenSearchPromptSurvivesTheLateSession() {
+    // shows up while the prompt is open, the prompt keeps its text and the
+    // keyboard, and nothing is opened.
+    void ASessionThatAppearsUnderAnOpenPromptDoesNotTakeItOrOpen() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -886,6 +791,7 @@ private slots:
         }
         QVERIFY(Put("bg.stdout",
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
 
         StartNewSession("do it");
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
@@ -894,23 +800,24 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
                                  TIMEOUT_MS);
-        Type("al");
-        QCOMPARE(PromptText(), QString("al"));
+        // A text the new session matches, so that the panel's list has it.
+        Type("do");
+        QCOMPARE(PromptText(), QString("do"));
 
         QVERIFY(Put("agents.json", AgentsWithStarted()));
-        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        QTest::qWait(500);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTest::qWait(300);
 
         QVERIFY(Prompting());
-        QCOMPARE(PromptText(), QString("al"));
+        QCOMPARE(PromptText(), QString("do"));
         QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
+        QCOMPARE(activated.count(), 0);
     }
 
-    // The session of n is not listed yet; the user opens another row: the late
-    // session does not take its place.
-    void EnterOnAnotherRowCancelsThePendingOpen() {
+    // The user opens the new session like any other: cursor on it, Enter.
+    void TheNewSessionOpensWhenTheUserMovesToItAndPressesEnter() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -918,22 +825,20 @@ private slots:
         }
         QVERIFY(Put("bg.stdout",
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        Watch();
 
         StartNewSession("do it");
-        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTest::qWait(300);
         QVERIFY(SelectedId().isEmpty());
-        MoveTo(BETA);
-        OpenAndBack(1);
-        QCOMPARE(SelectedId(), BETA);
 
-        QVERIFY(Put("agents.json", AgentsWithStarted()));
-        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        QTest::qWait(500);
+        MoveTo(STARTED);
+        Press(Qt::Key_Return);
 
-        QCOMPARE(SelectedId(), BETA);
-        QCOMPARE(Calls(), QStringList{BETA});
-        QVERIFY(ListView()->hasActiveFocus());
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{STARTED}, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
     }
 
     // A folded header: n takes its category, and there is no session, so the
@@ -964,7 +869,6 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)),
                  Canonical(Dir_->filePath("home")));
-        QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
                                       .value("categories")
                                       .toObject()

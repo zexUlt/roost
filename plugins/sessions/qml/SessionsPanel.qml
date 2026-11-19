@@ -71,11 +71,6 @@ FocusScope {
     // they are forgotten by the list only when they have, or the list would
     // take the session that is still listed for a new one.
     property var forgetPending: []
-    // The session started by n that is not shown yet: opened once the list has
-    // it. Dropped when it is opened, when the user opens something else, starts
-    // a prompt or changes the view, and at once in the archive view, which
-    // never shows a new session.
-    property var openPending: null
 
     // The colours of the categories, by the `colorIndex` of the model, and of
     // the states, hard-coded until the palette of the layout (M5).
@@ -222,9 +217,6 @@ FocusScope {
             }
             return;
         }
-        // A session of n that is not open yet does not take the place of the
-        // one the user chose.
-        openPending = null;
         if (!isSame(selected, ref)) {
             selected = ref;
         }
@@ -286,7 +278,6 @@ FocusScope {
     // Opens the prompt of the footer with its text. The keys then go to the
     // text field, not to the list.
     function openPrompt(kind, ref, text) {
-        openPending = null;
         promptKind = kind;
         promptRef = ref;
         promptInput.text = text;
@@ -723,7 +714,6 @@ FocusScope {
         const ref = sessionsList.cursorSession;
         const data = ref === null ? null : sessionData(ref);
         const category = sessionsList.cursorCategory;
-        openPending = null;
         promptNew = {
             "agent": ref === null ? "" : ref.agent,
             "cwd": data && data.cwd ? data.cwd : homeDirectory(),
@@ -782,42 +772,8 @@ FocusScope {
                 if (category !== "") {
                     sessionsList.setCategory(ref, category);
                 }
-                openPending = ref;
-                openStarted();
             });
         });
-    }
-
-    // Opens the session of n once the list has it: it shows after the answer
-    // of the command, with the next list of the agent, and the list takes it
-    // after that. The archive view does not show it: the view is not switched
-    // and nothing is opened. Nor is it opened if the list has it but the view
-    // does not show it (the Unread tab): the open is decided once, when the
-    // list first has the session, or it would take the cursor and the keyboard
-    // when the session shows later. `inList` is set by the list's own signals,
-    // that come after its sync; the call from the answer of the command may
-    // come before it.
-    function openStarted(inList) {
-        const ref = openPending;
-        if (ref === null) {
-            return;
-        }
-        if (sessionsList.viewArchive) {
-            openPending = null;
-            return;
-        }
-        if (!listed(ref)) {
-            return;
-        }
-        if (!sessionsList.reveal(ref)) {
-            if (inList === true) {
-                openPending = null;
-            }
-            return;
-        }
-        openPending = null;
-        selected = ref;
-        activated();
     }
 
     // The stored document: read on creation if connected and at every
@@ -860,15 +816,6 @@ FocusScope {
         onReadyChanged: root.restoreOpened()
         onSourceLoadedChanged: root.restoreOpened()
         onCursorChanged: root.syncCursor()
-        // The session of n is in the list after the sync of the source, which
-        // comes after the row of Roost.sessions: the rows and the counts of
-        // the list are what to wait for.
-        onCountsChanged: root.openStarted(true)
-        // Not inside the insert: the view has not built its rows yet.
-        onRowsInserted: Qt.callLater(root.openStarted, true)
-        // A change of the view is the user's: the open of n is not wanted.
-        onViewArchiveChanged: root.openPending = null
-        onTabChanged: root.openPending = null
     }
 
     Timer {
@@ -927,7 +874,6 @@ FocusScope {
         dropGone();
         restoreOpened();
         drainForget();
-        openStarted();
     }
 
     // The head: the title and the query, and the tabs with the counts of the
