@@ -29,6 +29,7 @@
 #include "core/version.hpp"
 #include "helpers/refusing_server.hpp"
 #include "helpers/roostd_process.hpp"
+#include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
@@ -227,6 +228,9 @@ private slots:
         // The shell before the loader, the loader before the engine.
         Shell_.reset();
         Loader_.reset();
+        // The window stops rendering before it is destroyed.
+        roost::testing::QuiesceWindows(Engine_ ? Engine_->rootObjects()
+                                               : QObjectList{});
         Engine_.reset();
         Singleton_ = nullptr;
         Api_.reset();

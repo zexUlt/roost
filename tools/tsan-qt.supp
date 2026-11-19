@@ -10,3 +10,23 @@
 # Write: https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L792
 # Read:  https://github.com/qt/qtdeclarative/blob/6.8/src/quick/scenegraph/adaptations/software/qsgsoftwarethreadedrenderloop.cpp#L345-L352
 race_top:QSGSoftwareThreadedRenderLoop::handleExposure
+
+# Qt 6.12, macOS, QFileSystemWatcher (FSEvents engine): QFileSystemWatcher::addPaths
+# in the GUI thread makes the engine's own strings (QFileInfo::canonicalFilePath,
+# then the keys of watchingState.watchedDirectories) under the engine's lock, and
+# the engine's libdispatch queue reads them in the FSEvents callback (processEvent
+# -> checkDir, the hash lookups of the keys, QFile::encodeName). The hand-over
+# goes through FSEvents and libdispatch, which TSan does not see, so each of the
+# GCD thread's reads of the strings is reported against the plain writes that
+# made them. Every address in the reports is a heap block allocated inside QtCore
+# by addPaths; roost only calls the public addPaths from the GUI thread
+# (PluginWatcher::Sync).
+# Unlike the rule above this is `race:`, not `race_top:`: the top frame on the
+# callback side varies with the inlining and the symbolizer (QString::normalized,
+# QtPrivate::equalStrings, QHash buckets of DirInfo, ...), and one rule per
+# top frame is a new nightly failure per frame. It cannot hide a race in roost
+# code: the engine calls no code of roost, its signals to the GUI thread are
+# queued, and only the engine's own frames are matched.
+# Write: https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L316-L325
+# Read:  https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L51-L58
+race:QFseventsFileSystemWatcherEngine

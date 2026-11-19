@@ -15,6 +15,7 @@
 #include <algorithm>
 
 #include "core/rpc_client.hpp"
+#include "helpers/window_teardown.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "terminal/session_pane.hpp"
 
@@ -232,6 +233,8 @@ void SessionsWindow::CloseWindow() {
     SelectedSpy_.reset();
     Shell_.reset();
     Loader_.reset();
+    // The window stops rendering before it is destroyed.
+    QuiesceWindows(Engine_ ? Engine_->rootObjects() : QObjectList{});
     Engine_.reset();
     Singleton_ = nullptr;
     Api_.reset();

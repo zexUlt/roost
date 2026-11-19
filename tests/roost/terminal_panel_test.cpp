@@ -31,6 +31,7 @@
 
 #include "api/api.hpp"
 #include "core/rpc_client.hpp"
+#include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "roost/plugin_loader.hpp"
@@ -344,6 +345,9 @@ private slots:
         // holds the terminal that closes its session through the API.
         Shell_.reset();
         Loader_.reset();
+        // The window stops rendering before it is destroyed.
+        roost::testing::QuiesceWindows(Engine_ ? Engine_->rootObjects()
+                                               : QObjectList{});
         Engine_.reset();
         Singleton_ = nullptr;
         Api_.reset();
