@@ -25,6 +25,20 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 `tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
 `ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
 
+## Install
+
+```sh
+cmake --install build/release --prefix <dir>
+```
+
+lays the build out as the OS expects it (the build tree is not changed). On
+macOS that is `<dir>/roost.app`; on Linux the `usr/` of an AppDir:
+`bin/{roost,roostd}`, `lib/roost/plugins/<id>/`, `share/applications/roost.desktop`,
+an icon and `share/licenses/roost/`. The licences (`LICENSE`, `NOTICE`,
+`THIRD_PARTY_LICENSES`, `LGPL-3.0.txt`, `GPL-3.0.txt`) go along. Qt is not
+copied: the installed binaries load it from where the build found it. roostd
+finds the installed plugins next to itself, with no `ROOST_PLUGINS_PATH`.
+
 ## Run
 
 Start the daemon, then the window:

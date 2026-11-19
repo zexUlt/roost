@@ -18,3 +18,9 @@ qt_add_executable(roostd
 )
 
 target_link_libraries(roostd PRIVATE roostd_lib)
+
+set_target_properties(roostd PROPERTIES
+    INSTALL_RPATH "${ROOST_INSTALL_RPATH}"
+    INSTALL_RPATH_USE_LINK_PATH TRUE
+)
+install(TARGETS roostd RUNTIME DESTINATION ${ROOST_INSTALL_BINDIR})

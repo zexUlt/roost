@@ -37,7 +37,9 @@ https://www.qt.io/
 LGPLv3 (Qt Core, Qt Gui, Qt Qml, Qt Quick, Qt Quick Controls, Qt Network).
 
 Linked dynamically and shipped as separate, replaceable libraries inside the
-.app bundle and the AppImage. The LGPLv3 and GPLv3 texts ship next to them.
+.app bundle and the AppImage. The LGPLv3 and GPLv3 texts (LGPL-3.0.txt and
+GPL-3.0.txt) ship with this file: in Contents/Resources/licenses of the .app,
+in usr/share/licenses/roost of the AppImage.
 Qt sources: https://download.qt.io/official_releases/qt/ for the version named
 in the release notes. No GPL-only Qt module is linked.
 

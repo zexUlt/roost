@@ -459,3 +459,17 @@ roost_add_qt_test(sessions_list_test plugins/sessions_list_test.cpp
 target_compile_definitions(sessions_list_test PRIVATE
     SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
 add_dependencies(sessions_list_test sessions_qml)
+
+# The install layout: `cmake --install` of this build into a temporary prefix,
+# and the installed roostd against a fake `claude`. The test installs by itself,
+# so the targets it installs are built first.
+roost_add_qt_test(install_layout_test install/install_layout_test.cpp)
+target_compile_definitions(install_layout_test PRIVATE
+    CMAKE_COMMAND="${CMAKE_COMMAND}"
+    BUILD_DIR="${PROJECT_BINARY_DIR}"
+    SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    PROJECT_VERSION_STRING="${PROJECT_VERSION}"
+    CLAUDE_ADAPTER_FILE="$<TARGET_FILE_NAME:claude-adapter>"
+    SESSIONS_MODULE_FILE="$<TARGET_FILE_NAME:sessions_qml>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_dependencies(install_layout_test roost roostd claude-adapter sessions_qml)
