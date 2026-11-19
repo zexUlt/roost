@@ -1,14 +1,20 @@
 name: Package
 
 # The packages of a release: the macOS .app and .dmg, the x86_64 and aarch64
-# AppImages, and their smoke (it runs on the build runner, which has Qt; a clean
-# machine is a later step). The jobs come with the
-# packaging scripts (tools/package_*.sh).
+# AppImages, their check on the build runner (which has Qt), their smoke on a
+# clean machine, and the draft release. The jobs come with the packaging
+# scripts (tools/package_*.sh, tools/package_smoke.sh).
 #
 # A change to the workflow or to the packaging is proved by dispatching it on
 # its branch: gh workflow run package.yml --ref <branch>. A dispatch takes
 # the workflow from that branch, but only a workflow that is on trunk can be
 # dispatched, hence this file before its jobs.
+#
+# The smoke jobs (smoke-macos, smoke-linux) run the packages on machines that
+# did not build them and have no Qt; the release job makes a draft release of
+# the packages that passed, on a `v*` tag and on a dispatch with draft_release
+# (a dry run: the draft is named dryrun-<run id>, no git tag is made, and the
+# draft is deleted after review). Publishing is a manual step.
 #
 # Runs on `v*` tags, on dispatch and on pushes to trunk that change code, not
 # on pull requests: a macOS runner per pull request is too much, and a change
@@ -21,6 +27,11 @@ on:
     branches: [trunk]
     paths-ignore: ["docs/**", ".claude/**", "**.md"]
   workflow_dispatch:
+    inputs:
+      draft_release:
+        description: "Also make a draft release (dryrun-<run id>, no git tag) of the packages"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -245,3 +256,239 @@ jobs:
           path: build/package/roost-${{ matrix.arch }}.AppImage
           if-no-files-found: error
           retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 7 }}
+
+  # The .dmg on a macOS with no Qt: the runner image, the .dmg artifact and the
+  # script, nothing built here. It fails if a Qt is on the machine (the smoke
+  # would prove nothing) or if the app loads one from outside itself, and
+  # starts the app once through LaunchServices (`open -n`).
+  smoke-macos:
+    name: smoke (macos)
+    needs: macos
+    runs-on: macos-15
+    steps:
+      # The script and the fixture of the fake claude only.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools
+            tests/fixtures
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: roost-macos-dmg
+          path: ${{ runner.temp }}/dmg
+
+      - name: No Qt on this machine
+        run: |
+          found=0
+          for path in /opt/homebrew/opt/qtbase /opt/homebrew/opt/qt /usr/local/opt/qtbase \
+            /usr/local/opt/qt /Library/Frameworks/QtCore.framework "$HOME/Qt"; do
+            if [ -e "$path" ]; then
+              echo "::error::$path exists: this image has a Qt"
+              found=1
+            fi
+          done
+          if command -v qmake >/dev/null 2>&1 || command -v macdeployqt >/dev/null 2>&1; then
+            echo "::error::qmake or macdeployqt is in PATH: this image has a Qt"
+            found=1
+          fi
+          if brew list --formula 2>/dev/null | grep -i '^qt'; then
+            echo "::error::a Qt formula of Homebrew is installed"
+            found=1
+          fi
+          exit "$found"
+
+      - name: Smoke the .dmg
+        run: |
+          dmgs=("$RUNNER_TEMP"/dmg/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ] || { echo "::error::expected one .dmg"; exit 1; }
+          tools/package_smoke.sh "${dmgs[0]}" --launch-services
+
+  # The AppImage in a stock Ubuntu 24.04 with the libraries of a desktop and no
+  # Qt: the image of the container, the AppImage artifact and the script. The
+  # AppImage runs through FUSE (/dev/fuse and the capability that mounts it),
+  # as a user runs it. On the machine of its arch, as the build.
+  #
+  # The libraries of a desktop: first ubuntu-desktop-minimal, with no
+  # recommended packages (what every desktop has is what the AppImage leaves
+  # out: packaging/linux/system-libraries.txt); if it does not install in a
+  # container within the time given, the explicit list of those libraries. The
+  # summary of the job says which set the run used.
+  smoke-linux:
+    name: smoke (${{ matrix.arch }})
+    needs: linux
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    container:
+      image: ubuntu:24.04
+      options: >-
+        --device /dev/fuse --cap-add SYS_ADMIN
+        --security-opt apparmor:unconfined
+    steps:
+      # procps: pgrep and ps, which the script uses and the image lacks.
+      - name: Install the tools of the script and fuse3
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates procps fuse3 fonts-dejavu-mono
+
+      - name: Install the libraries of a desktop (ubuntu-desktop-minimal)
+        id: desktop
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          # No service starts inside the container.
+          printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
+          chmod +x /usr/sbin/policy-rc.d
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ubuntu-desktop-minimal
+
+      - name: Install the libraries of a desktop (the explicit list)
+        if: steps.desktop.outcome != 'success'
+        run: |
+          dpkg --configure -a || true
+          # packaging/linux/system-libraries.txt, by package, and the
+          # libraries Qt links in a window: FreeType, fontconfig, GL, EGL.
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            libglib2.0-0t64 libpcre2-8-0 libdbus-1-3 libsystemd0 libgcrypt20 \
+            libgpg-error0 libcap2 liblzma5 liblz4-1 libzstd1 libbz2-1.0 \
+            libbrotli1 libexpat1 libpng16-16t64 libkrb5-3 libkrb5support0 \
+            libk5crypto3 libgssapi-krb5-2 libcom-err2 libkeyutils1 libbsd0 \
+            libmd0 libx11-6 libx11-xcb1 libxau6 libxdmcp6 libxcb1 libxcb-glx0 \
+            libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 \
+            libxcb-xfixes0 libxkbcommon0 libfreetype6 libfontconfig1 libgl1 \
+            libegl1
+
+      - name: Which libraries
+        run: |
+          if [ "${{ steps.desktop.outcome }}" = success ]; then
+            set=ubuntu-desktop-minimal
+          else
+            set="the explicit list (ubuntu-desktop-minimal did not install)"
+          fi
+          echo "Libraries of a desktop: $set"
+          echo "Libraries of a desktop: $set" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(dpkg-query -W | wc -l) packages are installed"
+
+      # The container has no git: the action takes the archive of the commit.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools
+            tests/fixtures
+            packaging/linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: roost-${{ matrix.arch }}.AppImage
+          path: ${{ runner.temp }}/appimage
+
+      - name: No Qt on this machine
+        run: |
+          found=0
+          for path in /usr/lib/*/libQt6Core.so* /usr/lib/libQt6Core.so* /usr/lib/qt6 /opt/Qt "$HOME/Qt"; do
+            if [ -e "$path" ]; then
+              echo "::error::$path exists: this image has a Qt 6"
+              found=1
+            fi
+          done
+          if command -v qmake6 >/dev/null 2>&1 || command -v qmake >/dev/null 2>&1; then
+            echo "::error::qmake is in PATH: this image has a Qt"
+            found=1
+          fi
+          dpkg-query -W 'libqt*' 'qt6*' 2>/dev/null || true
+          exit "$found"
+
+      - name: Smoke the AppImage
+        run: |
+          chmod +x "$RUNNER_TEMP/appimage/roost-${{ matrix.arch }}.AppImage"
+          tools/package_smoke.sh "$RUNNER_TEMP/appimage/roost-${{ matrix.arch }}.AppImage"
+
+  # A draft release of the packages that passed their smoke: the .dmg, the two
+  # AppImages and SHA256SUMS. On a dispatch it is a dry run: the tag name is
+  # dryrun-<run id> and the draft makes no git tag (a draft does not, until it
+  # is published). Never published here: that is by hand, after the notes and
+  # the assets are read. The only job with the right to write.
+  release:
+    name: release (draft)
+    needs: [smoke-macos, smoke-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.draft_release)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: roost-*
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Assets and SHA256SUMS
+        run: |
+          mkdir "$RUNNER_TEMP/release"
+          find "$RUNNER_TEMP/artifacts" -type f \( -name '*.dmg' -o -name '*.AppImage' \) \
+            -exec cp {} "$RUNNER_TEMP/release/" \;
+          cd "$RUNNER_TEMP/release"
+          files=(*)
+          dmgs=(*.dmg)
+          if [ "${#files[@]}" -ne 3 ] || [ "${#dmgs[@]}" -ne 1 ] ||
+            [ ! -f roost-x86_64.AppImage ] || [ ! -f roost-aarch64.AppImage ]; then
+            echo "::error::expected one .dmg and the two AppImages, got: ${files[*]}"
+            exit 1
+          fi
+          sha256sum -- * | tee SHA256SUMS
+
+      # The source of the Qt of the packages must be where the notes say.
+      - name: Notes
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
+        run: |
+          src="https://download.qt.io/official_releases/qt/${QT_VERSION%.*}/${QT_VERSION}/single/qt-everywhere-src-${QT_VERSION}.tar.xz"
+          curl -fsIL --retry 3 "$src" >/dev/null || { echo "::error::$src does not exist"; exit 1; }
+          cat >"$RUNNER_TEMP/notes.md" <<'EOF'
+          Packages of roost @TAG@.
+
+          ## Install
+
+          macOS (Apple silicon): open the `.dmg`, drag roost to Applications. The app is signed ad hoc, not with a Developer ID, so Gatekeeper refuses it on the first start. Remove the quarantine attribute once:
+
+              xattr -dr com.apple.quarantine /Applications/roost.app
+
+          Linux: `chmod +x roost-<arch>.AppImage`, then run it. It needs FUSE 3 (the `fuse3` package) to mount itself. Built on Ubuntu 24.04: needs glibc 2.39 or newer and the libstdc++ of GCC 14. The window runs on X11 or XWayland (the AppImage carries the xcb platform plugin, not the Wayland one).
+
+          Check the files against `SHA256SUMS`: `sha256sum -c SHA256SUMS --ignore-missing`.
+
+          ## Licences
+
+          roost is under the licence in `LICENSE`; the licence texts of the packages are in the packages (`Contents/Resources/licenses` of the app, `usr/share/licenses/roost` of the AppImage), with `THIRD_PARTY_LICENSES`.
+
+          - Qt @QT@, under the LGPL v3, linked dynamically as separate libraries that can be replaced. Source of this version: @SRC@
+          - ICU (the AppImage only, the libraries of the Qt build): the ICU licence, `usr/share/licenses/roost/ICU-LICENSE.txt`.
+          EOF
+          sed -i -e "s|@TAG@|$TAG|g" -e "s|@QT@|$QT_VERSION|g" -e "s|@SRC@|$src|g" \
+            "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY" --draft --notes-file "$RUNNER_TEMP/notes.md")
+          if [ "$IS_TAG" = true ]; then
+            args+=(--verify-tag --title "roost $TAG")
+          else
+            # A name that is no release, on the commit of the run; the draft
+            # makes no git tag.
+            args+=(--target "$GITHUB_SHA" --title "dry run $TAG (delete me)")
+          fi
+          gh release create "$TAG" "${args[@]}" "$RUNNER_TEMP"/release/*
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName,assets \
+            --jq '"draft=\(.isDraft) tag=\(.tagName) assets: \([.assets[].name] | join(", "))"'
