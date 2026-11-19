@@ -11,6 +11,8 @@
 #include <QProcessEnvironment>
 #include <QTest>
 
+#include <utility>
+
 #include "core/rpc_client.hpp"
 
 namespace roost::testing {
@@ -43,8 +45,15 @@ RoostdProcess::~RoostdProcess() { Stop(); }
 bool RoostdProcess::AddFixturePlugin(const QString& id,
                                      const QString& fixtureBackendPath) {
     const QDir directory(PluginsPath() + u'/' + id);
-    if (!directory.mkpath(".") ||
-        !QFile::link(fixtureBackendPath, directory.filePath("backend"))) {
+    if (!directory.mkpath(".")) {
+        qWarning().noquote()
+            << "AddFixturePlugin: cannot make" << directory.path();
+        return false;
+    }
+    if (!QFile::link(fixtureBackendPath, directory.filePath("backend"))) {
+        qWarning().noquote()
+            << "AddFixturePlugin: cannot link" << directory.filePath("backend")
+            << "to" << fixtureBackendPath;
         return false;
     }
     QJsonArray commands;
@@ -74,10 +83,17 @@ bool RoostdProcess::AddFixturePlugin(const QString& id,
                                        {"id", "s1"}, {"state", "idle"}}}}}}}}};
     QFile manifestFile(directory.filePath("plugin.json"));
     QFile answersFile(directory.filePath("agent.json"));
-    return manifestFile.open(QIODevice::WriteOnly) &&
-           manifestFile.write(QJsonDocument(manifest).toJson()) > 0 &&
-           answersFile.open(QIODevice::WriteOnly) &&
-           answersFile.write(QJsonDocument(answers).toJson()) > 0;
+    for (auto [file, json] : {std::pair{&manifestFile, &manifest},
+                              std::pair{&answersFile, &answers}}) {
+        if (!file->open(QIODevice::WriteOnly) ||
+            file->write(QJsonDocument(*json).toJson()) <= 0) {
+            qWarning().noquote()
+                << "AddFixturePlugin: cannot write" << file->fileName() << ":"
+                << file->errorString();
+            return false;
+        }
+    }
+    return true;
 }
 
 bool RoostdProcess::AddQmlPlugin(const QString& id, const QJsonArray& panels,
