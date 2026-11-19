@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QProcessEnvironment>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -9,8 +10,11 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <optional>
 
 #include "api/api.hpp"
+#include "roost/login_environment.hpp"
 
 namespace roost {
 
@@ -30,6 +34,12 @@ namespace roost {
 // another. A NoListener after the end starts again, which is how a roostd that
 // died later comes back.
 //
+// The environment of the new roostd is the one of LoginEnvironment (the login
+// shell's when the window has no terminal). Given the settings for it, the
+// launcher waits for the first read of it before its first start: a NoListener
+// in the meantime starts nothing, "Starting" is true, and the start follows the
+// read. Without settings the process is started with the environment as it is.
+//
 // Restart() is the button of the banner for a roostd of another version: it
 // stops the old one by SIGTERM and starts a new one (below).
 //
@@ -48,6 +58,8 @@ public:
         // (after it roostd writes its own --log): appended to this file if its
         // directory exists, else /dev/null. Empty: /dev/null.
         QString StartLog;
+        // The environment of the process; none: the one of this process.
+        std::optional<QProcessEnvironment> Environment = std::nullopt;
     };
 
     // Starts the process; false, with `error` set, if it did not start. The
@@ -79,11 +91,14 @@ public:
     // failure false and the reason in `error`.
     static bool StartDetached(const Command& command, QString& error);
 
-    // `api` is listened to, not owned.
+    // `api` is listened to, not owned. `environment`: how to get the
+    // environment of roostd (the window passes LoginEnvironment::Settings::
+    // OfThisProcess()); none: `command` as it is.
     DaemonLauncher(
         api::Api& api, Command command,
         std::chrono::milliseconds startTimeout = DEFAULT_START_TIMEOUT,
         StartFunction start = &DaemonLauncher::StartDetached,
+        std::optional<LoginEnvironment::Settings> environment = std::nullopt,
         std::chrono::milliseconds stopTimeout = DEFAULT_STOP_TIMEOUT,
         QObject* parent = nullptr);
 
@@ -121,8 +136,11 @@ signals:
 private:
     void OnNoListener();
     void OnTimeout();
-    // Starts the process; sets Starting_ or Failure_. False if it did not
-    // start.
+    // Starts roostd, or the read of the environment it waits for; false if
+    // the process did not start.
+    bool BeginStart();
+    // Starts the process with the environment ready; sets Starting_ or
+    // Failure_. False if it did not start.
     bool StartProcess();
     void PollStop();
     void FailRestart(const QString& reason);
@@ -131,6 +149,8 @@ private:
     void SetFailure(QString failure);
 
     Command Command_;
+    // None without settings; read at the first start.
+    std::unique_ptr<LoginEnvironment> Login_;
     StartFunction Start_;
     QTimer Timeout_;
     QTimer StopPoll_;

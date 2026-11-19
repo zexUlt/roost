@@ -61,6 +61,17 @@ second one may be started; it loses the socket lock and exits. `roost
 --no-spawn` turns the start off. The start from an AppImage
 (`$APPIMAGE --roostd`, handled by AppRun) arrives with the AppImage packaging
 step and does not work before it.
+A window started from the desktop (no `TERM` in its environment, or stdin is not
+a tty) has the bare desktop `PATH`, so before the first start it reads the
+environment of your login shell once (`$SHELL -l -i -c 'env -0'` between two
+markers, 10 s timeout, in the background; the shell's process group is killed on the timeout and as soon as the environment is read, a shell that exited by itself is not chased) and starts roostd with it, `claude`
+on `PATH` included. If that fails, roostd gets the window's own environment and
+the window logs a warning. From a terminal the window's environment is used as
+it is. `APPDIR`, `APPIMAGE`, `ARGV0` and `OWD` are never passed on, and inside
+an AppImage or an extracted AppDir run through AppRun (`APPDIR` set, the window
+inside it) neither are `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH` and
+`QML2_IMPORT_PATH`: AppRun's values, with anything a user appended, are
+dropped. Outside an AppImage a user's own values stay.
 You can still run `build/dev/bin/roostd` by hand first.
 
 roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for

@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
@@ -19,6 +20,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "api/api.hpp"
@@ -27,6 +29,7 @@
 #include "helpers/scoped_env.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/daemon_launcher.hpp"
+#include "roost/login_environment.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
 
@@ -82,9 +85,11 @@ private:
                testing::DetachedDaemons::IsAlive(Old_->processId());
     }
 
-    void Boot(bool withLauncher = true,
-              std::chrono::milliseconds stopTimeout =
-                  DaemonLauncher::DEFAULT_STOP_TIMEOUT) {
+    void Boot(
+        bool withLauncher = true,
+        std::chrono::milliseconds stopTimeout =
+            DaemonLauncher::DEFAULT_STOP_TIMEOUT,
+        std::optional<LoginEnvironment::Settings> environment = std::nullopt) {
         Api_ = std::make_unique<api::Api>(api::ApiOptions{
             .FirstReconnectDelay = 20ms, .MaxReconnectDelay = 40ms});
         if (withLauncher) {
@@ -96,9 +101,10 @@ private:
                 *Api_, command, 15s,
                 [this](const DaemonLauncher::Command& toStart, QString& error) {
                     ++Starts_;
+                    Started_ = toStart.Environment;
                     return DaemonLauncher::StartDetached(toStart, error);
                 },
-                stopTimeout);
+                std::move(environment), stopTimeout);
         }
         Engine_ = std::make_unique<QQmlApplicationEngine>();
         Singleton_ =
@@ -144,6 +150,7 @@ private:
     std::unique_ptr<PluginLoader> Loader_;
     std::unique_ptr<Shell> Shell_;
     int Starts_ = 0;
+    std::optional<QProcessEnvironment> Started_;
 
 private slots:
     void init() {
@@ -168,6 +175,7 @@ private slots:
                 std::make_unique<testing::ScopedEnv>(name, value.toUtf8()));
         }
         Starts_ = 0;
+        Started_.reset();
         Daemons_ =
             std::make_unique<testing::DetachedDaemons>(QStringList{Lock()});
     }
@@ -262,6 +270,42 @@ private slots:
         QVERIFY(newPid != oldPid);
         QVERIFY(testing::DetachedDaemons::IsAlive(newPid));
         QCOMPARE(Starts_, 1);
+    }
+
+    // A window from the desktop has not read the login environment when the
+    // roostd it meets refuses it: the click reads it, then starts roostd with
+    // it.
+    void TheClickWaitsForTheLoginEnvironment() {
+        // Not the user's shell: runs the command with one variable more, and
+        // leaves a file to say it ran.
+        const QString ran = Dir_->filePath("shell-ran");
+        const QString shell = Dir_->filePath("bin/login-shell");
+        QFile file(shell);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QStringLiteral("#!/bin/sh\n"
+                                  ": > '%1'\n"
+                                  "while [ \"$1\" != -c ]; do shift; done\n"
+                                  "LOGIN_MARK=1 exec /bin/sh -c \"$2\"\n")
+                       .arg(ran)
+                       .toUtf8());
+        file.close();
+        QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
+                                    QFile::ExeOwner));
+        LoginEnvironment::Settings settings;
+        settings.Base = QProcessEnvironment::systemEnvironment();
+        settings.HasTerminal = false;
+        settings.Shell = shell;
+        StartOld();
+        Boot(true, DaemonLauncher::DEFAULT_STOP_TIMEOUT, settings);
+        WaitRefused();
+        QVERIFY(!QFile::exists(ran));
+        Click("restartButton");
+        QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("connected"),
+                                  TIMEOUT_MS);
+        QVERIFY(QFile::exists(ran));
+        QCOMPARE(Starts_, 1);
+        QVERIFY(Started_.has_value());
+        QCOMPARE(Started_->value("LOGIN_MARK"), QString("1"));
     }
 
     // A lock of another program: nothing is killed, the banner says why.

@@ -209,8 +209,13 @@ int main(int argc, char* argv[]) {
     if (!sessionMode) {
         api.emplace();
         if (!parser.isSet(noSpawnOption)) {
-            launcher.emplace(*api, roost::DaemonLauncher::DefaultCommand(
-                                       roost::protocol::SocketPath()));
+            launcher.emplace(
+                *api,
+                roost::DaemonLauncher::DefaultCommand(
+                    roost::protocol::SocketPath()),
+                roost::DaemonLauncher::DEFAULT_START_TIMEOUT,
+                &roost::DaemonLauncher::StartDetached,
+                roost::LoginEnvironment::Settings::OfThisProcess());
         }
     }
     QQmlApplicationEngine engine;
