@@ -4,7 +4,8 @@
 
 namespace roost::testing {
 
-// Makes a window safe to destroy: hides it and drops its posted events.
+// Makes a window safe to destroy: hides it, destroys its platform window and
+// drops its posted events.
 // A window of the software scene graph under the threaded render loop (the
 // loop of the offscreen platform, and of the tsan-qt run) has a render thread
 // that reads the window while it draws. Destroying the window under it is a
