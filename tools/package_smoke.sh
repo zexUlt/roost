@@ -385,10 +385,25 @@ else
     fi
 fi
 
-# The window is ready before the attach has necessarily started: a moment.
-for _ in $(seq 1 100); do
-    [ -s "$work/bin/attach.pid" ] && break
-    sleep 0.1
+# The window is ready without waiting for the attach of the opened session:
+# one that exits first leaves no attach to find. A moment for it, then another
+# window against the same roostd, at most twice (a note says so): what is
+# proved is that the attach of a packaged backend outlives the window that
+# asked for it.
+attach_wait() {
+    local _
+    for _ in $(seq 1 50); do
+        [ -s "$1/bin/attach.pid" ] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+retries=0
+while ! attach_wait "$work" && [ "$retries" -lt 2 ]; do
+    retries=$((retries + 1))
+    echo "note: the window exited before the attach started; another window ($retries)"
+    run_window "$work" "$work/window-retry.out" "$dyld_env"
+    wait_window
 done
 attach=$(head -n 1 "$work/bin/attach.pid" 2>/dev/null)
 if [ -z "$attach" ]; then
@@ -525,25 +540,34 @@ if [ "$launch_services" = 1 ]; then
     while IFS= read -r line; do
         open_args+=(--env "$line")
     done < <(window_env "$extra_work")
-    open "${open_args[@]}" "$app" --args --smoke-sessions >"$extra_work/open.log" 2>&1 </dev/null &
-    helper_pid=$!
+    # One `open -n` runs one window; as above, a window that exits before the
+    # attach started is followed by one more, at most twice.
     opened=
-    for _ in $(seq 1 600); do
-        if ! kill -0 "$helper_pid" 2>/dev/null; then
-            wait "$helper_pid"
-            opened=$?
+    for attempt in 1 2 3; do
+        open "${open_args[@]}" "$app" --args --smoke-sessions >"$extra_work/open.log" 2>&1 </dev/null &
+        helper_pid=$!
+        opened=
+        for _ in $(seq 1 600); do
+            if ! kill -0 "$helper_pid" 2>/dev/null; then
+                wait "$helper_pid"
+                opened=$?
+                helper_pid=
+                break
+            fi
+            sleep 0.2
+        done
+        if [ -z "$opened" ]; then
+            fail "open -n -W did not return in 2 minutes: the app did not exit"
+            kill "$helper_pid" 2>/dev/null
             helper_pid=
             break
+        elif [ "$opened" -ne 0 ]; then
+            fail "open -n --env failed with $opened (does this macOS pass the environment?): $(tr '\n' ' ' <"$extra_work/open.log")"
+            break
         fi
-        sleep 0.2
+        attach_wait "$extra_work" && break
+        echo "note: open -n: the window exited before the attach started (attempt $attempt)"
     done
-    if [ -z "$opened" ]; then
-        fail "open -n -W did not return in 2 minutes: the app did not exit"
-        kill "$helper_pid" 2>/dev/null
-        helper_pid=
-    elif [ "$opened" -ne 0 ]; then
-        fail "open -n --env failed with $opened (does this macOS pass the environment?): $(tr '\n' ' ' <"$extra_work/open.log")"
-    fi
     extra_roostd_pid=$(lock_pid "$extra_work")
     if [ -z "$extra_roostd_pid" ]; then
         fail "open -n: no roostd under $extra_work/run: the environment did not reach the app"
@@ -557,7 +581,7 @@ if [ "$launch_services" = 1 ]; then
             fail "open -n: the window reported a failure:"
             show_tail "$extra_work/open.err"
             show_tail "$extra_work/open.out"
-        elif for _ in $(seq 1 100); do [ -s "$extra_work/bin/attach.pid" ] && break; sleep 0.1; done; [ -s "$extra_work/bin/attach.pid" ]; then
+        elif [ -s "$extra_work/bin/attach.pid" ]; then
             ok "open -n: the window started from LaunchServices attached the fake claude"
         else
             fail "open -n: the fake claude was never attached"
