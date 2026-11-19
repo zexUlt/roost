@@ -169,14 +169,15 @@ done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
 # The QML modules and Qt plugins that roost does not use. The QML scan of
 # linuxdeploy-plugin-qt copies the whole of every module it meets, with all
 # styles of Qt Quick Controls and what they import, and there is no knob to
-# stop it. The window runs the Basic style (the default of Qt Quick Controls,
-# and the only one it can ask for: no other is imported), with Layouts and
-# Templates; Dialogs, Effects, Particles, Shapes, VectorImage, LocalStorage,
-# XmlListModel and DesignSupport are imported by no QML of roost or of Basic.
-# The image formats and the TLS backends: roost loads no image and makes no
-# TLS connection. The Qt libraries that only these needed go below.
+# stop it. The window runs Fusion (what Qt Quick Controls picks on Linux; the
+# smoke fails without QtQuick.Controls.Fusion) and Basic (its base), with
+# Layouts and Templates; the other styles, Dialogs, Effects, Particles,
+# Shapes, VectorImage, LocalStorage, XmlListModel and DesignSupport are
+# imported by no QML of roost, Fusion or Basic. The image formats and the TLS
+# backends: roost loads no image and makes no TLS connection. The Qt libraries
+# that only these needed go below.
 unused=(
-    usr/qml/QtQuick/Controls/{Fusion,Imagine,Material,Universal,FluentWinUI3,Native,designer,iOS,macOS}
+    usr/qml/QtQuick/Controls/{Imagine,Material,Universal,FluentWinUI3,Native,designer,iOS,macOS}
     usr/qml/QtQuick/{Dialogs,Effects,Particles,Shapes,VectorImage,LocalStorage,tooling}
     usr/qml/QtQml/{DesignSupport,XmlListModel}
     usr/plugins/{imageformats,tls}
@@ -208,6 +209,18 @@ while :; do
     [ "$removed" = 1 ] || break
 done
 rm -f "$out/needed.txt"
+
+# linuxdeploy copied the Debian copyright file of every library it copied,
+# those of the libraries that are not carried now too: only the packages that
+# have a library left in usr/lib keep theirs.
+for doc in "$appdir"/usr/share/doc/*/; do
+    pkg=$(basename "$doc")
+    keep=0
+    while IFS= read -r file; do
+        [ -e "$appdir/usr/lib/$(basename "$file")" ] && keep=1
+    done < <(dpkg -L "$pkg" 2>/dev/null | grep '\.so')
+    [ "$keep" = 1 ] || rm -rf "${doc:?}"
+done
 
 image=$out/roost-$arch.AppImage
 rm -f "$image"

@@ -138,7 +138,13 @@ if [ "$copyrights" -gt 0 ]; then
     ok "$copyrights copyright files of the bundled system libraries in usr/share/doc"
     # What the licence names of THIRD_PARTY_LICENSES are checked against.
     for file in "$appdir"/usr/share/doc/*/copyright; do
-        echo "      $(basename "$(dirname "$file")"): $(grep -h '^License:' "$file" | sed 's/^License: *//' | sort -u | tr '\n' ';')"
+        pkg=$(basename "$(dirname "$file")")
+        names=$(grep -h '^License:' "$file" | sed 's/^License: *//' | sort -u | tr '\n' ';')
+        if [ -n "$names" ]; then
+            echo "      $pkg: $names"
+        else
+            echo "      $pkg (no License: fields): $(grep -i -m4 -e 'licen[cs]e' -e 'permission is hereby' "$file" | tr -s ' ' | tr '\n' '|')"
+        fi
     done
 else
     fail "usr/share/doc has no copyright file of the bundled system libraries"
