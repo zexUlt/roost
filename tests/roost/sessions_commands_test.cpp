@@ -729,6 +729,8 @@ private slots:
         QVERIFY(Put("bg.stdout",
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
         QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        Watch();
         MoveTo(ALPHA);
 
         Press(Qt::Key_N);
@@ -747,6 +749,10 @@ private slots:
                                       .toObject()
                                       .value(KeyOf(STARTED)),
                                   QJsonValue("Ops"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        QTest::qWait(300);
+        QVERIFY(SelectedId().isEmpty());
+        QCOMPARE(activated.count(), 0);
     }
 
     // n starts the session and announces it; the panel does not open it, move
@@ -777,6 +783,92 @@ private slots:
         QCOMPARE(activated.count(), 0);
         QCOMPARE(CursorId(), BETA);
         QCOMPARE(Cursor(), cursor);
+        QVERIFY(ListView()->hasActiveFocus());
+    }
+
+    // In the archive view the new session is not in the panel's list: it is
+    // started and announced, and nothing is opened or switched.
+    void NInTheArchiveViewStartsASessionAndOpensNothing() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        Watch();
+        Press(Qt::Key_V);
+        QTRY_COMPARE_WITH_TIMEOUT(Ids(), QStringList{}, TIMEOUT_MS);
+        const int cursor = Cursor();
+
+        StartNewSession("do it");
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        // The session reached Roost.sessions; the view does not list it.
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(300);
+
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(activated.count(), 0);
+        QVERIFY(List()->property("viewArchive").toBool());
+        QCOMPARE(Cursor(), cursor);
+        QVERIFY(ListView()->hasActiveFocus());
+    }
+
+    // On the Unread tab the new session (working) is not listed; it is
+    // started, and when it turns unread and shows up, it is still not opened.
+    void NOnTheUnreadTabStartsASessionAndOpensNothing() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        Watch();
+        Press(Qt::Key_A);
+        Press(Qt::Key_A);
+        QTRY_COMPARE_WITH_TIMEOUT(TabNowOfList(), QString("unread"),
+                                  TIMEOUT_MS);
+        const int cursor = Cursor();
+        const QString cursorId = CursorId();
+
+        StartNewSession("do it");
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        QTest::qWait(300);
+
+        QVERIFY(!Ids().contains(STARTED));
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(TabNowOfList(), QString("unread"));
+        QCOMPARE(Cursor(), cursor);
+        QCOMPARE(CursorId(), cursorId);
+        QVERIFY(ListView()->hasActiveFocus());
+
+        // The session finishes: unread, so the tab lists it now.
+        QVERIFY(Put(
+            "agents.json",
+            AgentsWithout({}, QJsonObject{{"id", STARTED},
+                                          {"cwd", "/work/beta"},
+                                          {"kind", "background"},
+                                          {"startedAt", qint64{1790150400000}},
+                                          {"name", "Do it"},
+                                          {"state", "done"},
+                                          {"status", "idle"}})));
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTest::qWait(300);
+
+        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(Calls().isEmpty());
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(TabNowOfList(), QString("unread"));
+        QCOMPARE(CursorId(), cursorId);
         QVERIFY(ListView()->hasActiveFocus());
     }
 
@@ -853,6 +945,8 @@ private slots:
         QVERIFY(Put("bg.stdout",
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
         QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
+        Watch();
         MoveTo(BETA);
         Press(Qt::Key_Z);
         QTRY_COMPARE_WITH_TIMEOUT(Cursor(), ON_HEADER, TIMEOUT_MS);
@@ -874,6 +968,11 @@ private slots:
                                       .toObject()
                                       .value(KeyOf(STARTED)),
                                   QJsonValue("Ops"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        QTest::qWait(300);
+        QVERIFY(SelectedId().isEmpty());
+        QCOMPARE(activated.count(), 0);
+        QCOMPARE(Cursor(), ON_HEADER);
     }
 
     void ThePromptKeepsItsTargetAcrossAPoll() {
