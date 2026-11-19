@@ -112,6 +112,7 @@ target_compile_definitions(backend_test PRIVATE
 add_dependencies(backend_test fixture_backend)
 
 roost_add_qt_test(dump_test roostd/dump_test.cpp roostd_lib)
+roost_add_qt_test(log_file_test roostd/log_file_test.cpp roostd_lib)
 roost_add_qt_test(plugins_test roostd/plugins_test.cpp roostd_lib)
 target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
@@ -459,3 +460,14 @@ roost_add_qt_test(sessions_list_test plugins/sessions_list_test.cpp
 target_compile_definitions(sessions_list_test PRIVATE
     SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
 add_dependencies(sessions_list_test sessions_qml)
+
+# `roost --smoke-sessions` as a process: the real roostd with the built-in
+# plugins behind a fake `claude`; a sessions plugin without its QML module and
+# a claude with no sessions must fail it.
+roost_add_qt_test(smoke_sessions_test roost/smoke_sessions_test.cpp roost_test_helpers)
+target_compile_definitions(smoke_sessions_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    ROOST_PATH="$<TARGET_FILE:roost>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml)

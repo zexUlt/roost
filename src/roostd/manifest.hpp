@@ -75,10 +75,20 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
 // Reads and checks <directory>/plugin.json.
 std::expected<PluginManifest, QString> LoadManifest(const QString& directory);
 
+// The directory with the built-in plugins of the package that roostd runs
+// from, given the directory of the roostd binary: the first that exists of
+// <dir>/../Resources/roost-plugins (.app), <dir>/../lib/roost/plugins
+// (AppImage, FHS) and <dir>/../roost-plugins (build tree). Empty if none does.
+QString BundledPluginsDirectory(const QString& applicationDirectory);
+
 // Where plugins are looked for, in load order: each absolute entry of
-// ROOST_PLUGINS_PATH (separated by ':'), then <config directory>/plugins.
-// Each directory is listed once, where it first comes.
-QStringList PluginSearchPath(const QString& configDirectory);
+// ROOST_PLUGINS_PATH (separated by ':'), or `bundledDirectory` if the variable
+// is unset, empty or has no absolute entry (an empty `bundledDirectory` adds
+// nothing), then
+// <config directory>/plugins. Each directory is listed once, where it first
+// comes.
+QStringList PluginSearchPath(const QString& configDirectory,
+                             const QString& bundledDirectory);
 
 // The subdirectories with a plugin.json, of each search directory in turn,
 // by name within one, case first: "Zed" comes before "alpha". Missing search

@@ -27,25 +27,45 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 
 ## Run
 
-Start the daemon with the built-in plugins, then the window:
+Start the daemon, then the window:
 
 ```sh
-ROOST_PLUGINS_PATH=$PWD/build/dev/roost-plugins build/dev/bin/roostd
+build/dev/bin/roostd
 build/dev/bin/roost [--dev]
 ```
 
-roostd looks for plugins in `ROOST_PLUGINS_PATH` (absolute paths, separated by
-`:`), then in `<ROOST_CONFIG or ~/.config/roost>/plugins`. With `--dev` the
+roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
+a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A
+plugin there with the id of a built-in one is not loaded; `plugins.list` tells
+why. `ROOST_PLUGINS_PATH` (absolute paths, separated by `:`; unset, empty or
+without an absolute path it is ignored) overrides the
+built-in directory: roostd searches the listed directories instead, so list the
+built-in one too to keep its plugins. With `--dev` the
 window reloads a plugin when its files change. It watches the copy under
 `build/dev/roost-plugins`, so after editing `plugins/<id>/qml/*.qml` run
 `cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
 roostd reads manifests at start.
+
+`roostd --log <file>` writes the stdout and stderr of roostd and its backends
+to `<file>` (a new file, mode 0600) and keeps the previous file as `<file>.1`. It
+opens the file only once it holds the socket lock: a second roostd that loses
+the lock exits with code 1 and leaves the log alone.
 
 The window shows the session list on the left and the terminal on the right.
 The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
 In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and moves
 the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS) moves it
 back to the list.
+
+Two check modes exit by themselves, for CI and packages. `roost --smoke` exits
+0 after the first frame. `roost --smoke-sessions` needs a running roostd: it
+exits 0 once the window is connected, both panels (`sessions.list`,
+`terminal.view`) are created with no loader problem, the session list has at
+least one row and a frame was drawn after that. It exits 1 with the reason on
+stderr at once on a loader problem (for example a missing QML import such as
+`QtCore` or `RoostSessions`), or after 20 s if it is still not ready. It opens
+no session and changes nothing beyond what the window writes when it shows
+the list.
 
 ## License
 

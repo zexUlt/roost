@@ -503,28 +503,142 @@ private slots:
         QTest::addColumn<QByteArray>("variable");
         QTest::addColumn<QStringList>("expected");
         const QString config = "/config/plugins";
-        QTest::newRow("empty") << QByteArray() << QStringList{config};
         QTest::newRow("two")
             << QByteArray("/a:/b/") << QStringList{"/a", "/b", config};
         QTest::newRow("empty entries")
             << QByteArray("::/a::") << QStringList{"/a", config};
         QTest::newRow("relative entries are skipped")
             << QByteArray("rel:/a:./x") << QStringList{"/a", config};
+        QTest::newRow("only relative entries act as an unset variable")
+            << QByteArray("rel:./x") << QStringList{"/bundled", config};
         QTest::newRow("each directory once")
             << QByteArray("/a:/a/:/config/plugins:/b:/a")
             << QStringList{"/a", config, "/b"};
+        // The variable replaces the bundled directory; listing it keeps it.
+        QTest::newRow("the bundled directory is not added")
+            << QByteArray("/a") << QStringList{"/a", config};
+        QTest::newRow("the bundled directory listed by hand")
+            << QByteArray("/a:/bundled")
+            << QStringList{"/a", "/bundled", config};
     }
 
     void SearchPathComesFromTheEnvironment() {
         QFETCH(QByteArray, variable);
         QFETCH(QStringList, expected);
         const ScopedEnv path("ROOST_PLUGINS_PATH", variable);
-        QCOMPARE(PluginSearchPath("/config"), expected);
+        QCOMPARE(PluginSearchPath("/config", "/bundled"), expected);
     }
 
-    void SearchPathWithoutTheVariable() {
+    void SearchPathStartsWithTheBundledDirectoryWithoutTheVariable_data() {
+        QTest::addColumn<std::optional<QByteArray>>("variable");
+        QTest::newRow("unset") << std::optional<QByteArray>();
+        QTest::newRow("empty") << std::optional<QByteArray>(QByteArray());
+    }
+
+    void SearchPathStartsWithTheBundledDirectoryWithoutTheVariable() {
+        QFETCH(std::optional<QByteArray>, variable);
+        const ScopedEnv path("ROOST_PLUGINS_PATH", variable);
+        QCOMPARE(PluginSearchPath("/config", "/bundled/"),
+                 (QStringList{"/bundled", "/config/plugins"}));
+    }
+
+    void SearchPathWithoutTheVariableAndTheBundledDirectory() {
         const ScopedEnv path("ROOST_PLUGINS_PATH", std::nullopt);
-        QCOMPARE(PluginSearchPath("/config"), QStringList{"/config/plugins"});
+        QCOMPARE(PluginSearchPath("/config", QString()),
+                 QStringList{"/config/plugins"});
+    }
+
+    void BundledDirectoryIsThatOfThePackage_data() {
+        QTest::addColumn<QString>("layout");
+        QTest::newRow(".app") << "Resources/roost-plugins";
+        QTest::newRow("AppImage") << "lib/roost/plugins";
+        QTest::newRow("build tree") << "roost-plugins";
+    }
+
+    void BundledDirectoryIsThatOfThePackage() {
+        QFETCH(QString, layout);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath("bin"));
+        QVERIFY(root.mkpath(layout));
+        QCOMPARE(BundledPluginsDirectory(root.filePath("bin")),
+                 QDir::cleanPath(root.filePath(layout)));
+    }
+
+    void BundledDirectoryIsTheFirstThatExists() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const QString applicationDirectory = root.filePath("bin");
+        QVERIFY(root.mkpath("bin"));
+        QCOMPARE(BundledPluginsDirectory(applicationDirectory), QString());
+
+        QVERIFY(root.mkpath("roost-plugins"));
+        QCOMPARE(BundledPluginsDirectory(applicationDirectory),
+                 root.filePath("roost-plugins"));
+        QVERIFY(root.mkpath("lib/roost/plugins"));
+        QCOMPARE(BundledPluginsDirectory(applicationDirectory),
+                 root.filePath("lib/roost/plugins"));
+        QVERIFY(root.mkpath("Resources/roost-plugins"));
+        QCOMPARE(BundledPluginsDirectory(applicationDirectory),
+                 root.filePath("Resources/roost-plugins"));
+    }
+
+    void BundledDirectoryIsADirectory() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath("bin"));
+        // A file at a candidate path is not a plugins directory; the next
+        // candidate is.
+        QVERIFY(root.mkpath("Resources"));
+        WriteFile(root.filePath("Resources/roost-plugins"), "");
+        QVERIFY(root.mkpath("roost-plugins"));
+        QCOMPARE(BundledPluginsDirectory(root.filePath("bin")),
+                 root.filePath("roost-plugins"));
+    }
+
+    // The earlier directory wins a plugin id, so a plugin of the user with
+    // the id of a built-in one is not loaded and the user is told.
+    void BuiltInPluginBeatsOneOfTheUserWithTheSameId() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        for (const char* path :
+             {"bundled/same", "bundled/own", "config/plugins/same",
+              "config/plugins/mine"}) {
+            QVERIFY(root.mkpath(path));
+        }
+        WriteFile(root.filePath("bundled/same/plugin.json"),
+                  Json(Minimal("same")));
+        WriteFile(root.filePath("bundled/own/plugin.json"),
+                  Json(Minimal("own")));
+        WriteFile(root.filePath("config/plugins/same/plugin.json"),
+                  Json(Minimal("same")));
+        WriteFile(root.filePath("config/plugins/mine/plugin.json"),
+                  Json(Minimal("mine")));
+
+        const ScopedEnv path("ROOST_PLUGINS_PATH", std::nullopt);
+        PluginRegistry registry;
+        for (const QString& directory : FindPluginDirectories(PluginSearchPath(
+                 root.filePath("config"), root.filePath("bundled")))) {
+            auto manifest = LoadManifest(directory);
+            QVERIFY2(manifest, qPrintable(Why(manifest)));
+            registry.Add(*std::move(manifest));
+        }
+        QStringList ids;
+        for (const PluginManifest& plugin : registry.Plugins()) {
+            ids.append(plugin.Id);
+        }
+        QCOMPARE(ids, (QStringList{"own", "same", "mine"}));
+        QCOMPARE(registry.Find("same")->Directory,
+                 root.filePath("bundled/same"));
+        QCOMPARE(registry.Problems().size(), 1);
+        QVERIFY2(registry.Problems().front().contains(
+                     "in " + root.filePath("config/plugins/same") +
+                     " is not loaded"),
+                 qPrintable(registry.Problems().front()));
     }
 
     void PluginsAreFoundInOrder() {
