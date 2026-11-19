@@ -21,8 +21,9 @@ namespace roost {
 // C++, made from main() like SingleSession; GUI thread only.
 //
 // The root takes (written by the shell): `connection` ("connecting",
-// "connected", "disconnected", "refused", and "starting" while the launcher
-// has a roostd coming up and the window is not connected), `connectionMessage`,
+// "connected", "disconnected", "refused", "starting" while the launcher has a
+// roostd coming up and "startFailed" (the message is why) after a start that
+// failed, both only while the window is not connected), `connectionMessage`,
 // `problems` (a list of strings); it gives the signal `retryRequested()`. A
 // slot takes `panel`, `error`, `linkInput`, `linkOutput`.
 //
@@ -76,9 +77,9 @@ private:
     void OnPanelTypesChanged();
     void OnPanelAboutToBeDestroyed(QQuickItem* panel);
     void OnRefused(const rpc::Error& error);
-    // Whether the banner says "starting" instead of the state of the
-    // connection.
-    bool ShowsStarting() const;
+    // Whether the connection is being waited for (the banner may say that
+    // roostd is being started, or that its start failed).
+    bool IsWaiting() const;
     // Fills every empty slot; safe to call from a slot of the loader's signals
     // that CreatePanel itself emits.
     void Refill();

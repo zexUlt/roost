@@ -494,3 +494,6 @@ add_dependencies(window_spawn_test roostd roost claude-adapter sessions_qml)
 roost_add_qt_test(shell_starting_test roost/shell_starting_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_apiplugin
     roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(shell_starting_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(shell_starting_test roostd)

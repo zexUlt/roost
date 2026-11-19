@@ -64,14 +64,16 @@ private:
 
     DaemonLauncher::Command Command() const {
         return {QStringLiteral(ROOSTD_PATH),
-                {"--log", Dir_->filePath("run/roostd.log")}};
+                {"--log", Dir_->filePath("run/roostd.log")},
+                Dir_->filePath("run/roostd.start.log")};
     }
 
     // Counts the starts, and starts for real unless `spawn` is off.
     DaemonLauncher::StartFunction Counting(bool spawn = true) {
-        return [this, spawn](const DaemonLauncher::Command& command) {
+        return [this, spawn](const DaemonLauncher::Command& command,
+                             QString& error) {
             ++Starts_;
-            return !spawn || DaemonLauncher::StartDetached(command);
+            return !spawn || DaemonLauncher::StartDetached(command, error);
         };
     }
 
@@ -249,6 +251,106 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(CountDaemons(Dir_->path()), 1, TIMEOUT_MS);
         QCOMPARE(testing::DetachedDaemons::PidOf(Lock()), pid);
         QVERIFY(testing::DetachedDaemons::IsAlive(pid));
+    }
+
+    // A roostd that dies before it holds the socket lock (here: the directory
+    // of the socket is open to others) says why in roostd.start.log, and the
+    // launcher names that file when the start times out.
+    void ARoostdThatDiesEarlySaysWhyInTheStartLog() {
+        QVERIFY(QFile::setPermissions(Dir_->filePath("run"),
+                                      QFile::ReadOwner | QFile::WriteOwner |
+                                          QFile::ExeOwner | QFile::ReadGroup |
+                                          QFile::ExeGroup | QFile::ReadOther |
+                                          QFile::ExeOther));
+        api::Api api(FastRetry());
+        DaemonLauncher launcher(api, Command(), 500ms, Counting());
+        QSignalSpy failed(&launcher, &DaemonLauncher::FailureChanged);
+        api.Connect(Socket());
+        QTRY_VERIFY_WITH_TIMEOUT(!launcher.Failure().isEmpty(), TIMEOUT_MS);
+        QVERIFY2(launcher.Failure().contains("roostd.start.log"),
+                 qPrintable(launcher.Failure()));
+        QFile log(Dir_->filePath("run/roostd.start.log"));
+        QVERIFY(log.open(QIODevice::ReadOnly));
+        const QByteArray text = log.readAll();
+        QVERIFY2(text.contains("chmod 700"), text.constData());
+        QVERIFY(!QFile::exists(Dir_->filePath("run/roostd.log")));
+        QVERIFY(!QFile::exists(Lock()));
+    }
+
+    // The program that does not exist: a failed start with the reason, no
+    // start in flight, and the next NoListener tries again.
+    void AProgramThatCannotStartIsAFailure() {
+        api::Api api(FastRetry());
+        DaemonLauncher launcher(
+            api, {QStringLiteral("/nonexistent/roostd"), {}, QString()},
+            DaemonLauncher::DEFAULT_START_TIMEOUT,
+            [this](const DaemonLauncher::Command& command, QString& error) {
+                ++Starts_;
+                return DaemonLauncher::StartDetached(command, error);
+            });
+        api.Connect(Socket());
+        QTRY_VERIFY_WITH_TIMEOUT(Starts_.load() >= 2, TIMEOUT_MS);
+        QVERIFY2(launcher.Failure().startsWith("Could not start roostd: "),
+                 qPrintable(launcher.Failure()));
+        QVERIFY(!launcher.Starting());
+    }
+
+    // A success clears the failure.
+    void AConnectionClearsTheFailure() {
+        api::Api api(FastRetry());
+        int calls = 0;
+        DaemonLauncher launcher(
+            api, Command(), DaemonLauncher::DEFAULT_START_TIMEOUT,
+            [&calls](const DaemonLauncher::Command& command, QString& error) {
+                if (++calls == 1) {
+                    error = "first one fails";
+                    return false;
+                }
+                return DaemonLauncher::StartDetached(command, error);
+            });
+        QSignalSpy connected(&api, &api::Api::Connected);
+        api.Connect(Socket());
+        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(calls >= 2);
+        QVERIFY2(launcher.Failure().isEmpty(), qPrintable(launcher.Failure()));
+    }
+
+    void TheAppImageIsUsedOnlyInsideItsAppDir_data() {
+        QTest::addColumn<QString>("appImage");
+        QTest::addColumn<QString>("appDir");
+        QTest::addColumn<QString>("executableDir");
+        QTest::addColumn<bool>("viaAppImage");
+        QTest::newRow("inside") << "/x/Roost.AppImage" << "/tmp/.mount_a"
+                                << "/tmp/.mount_a/usr/bin" << true;
+        QTest::newRow("same dir") << "/x/Roost.AppImage" << "/tmp/.mount_a"
+                                  << "/tmp/.mount_a/" << true;
+        QTest::newRow("no appdir")
+            << "/x/Roost.AppImage" << QString() << "/opt/roost/bin" << false;
+        QTest::newRow("no appimage") << QString() << "/tmp/.mount_a"
+                                     << "/tmp/.mount_a/usr/bin" << false;
+        QTest::newRow("outside") << "/x/Roost.AppImage" << "/tmp/.mount_a"
+                                 << "/opt/roost/bin" << false;
+        QTest::newRow("sibling prefix")
+            << "/x/Roost.AppImage" << "/tmp/.mount_a" << "/tmp/.mount_ab/bin"
+            << false;
+    }
+
+    void TheAppImageIsUsedOnlyInsideItsAppDir() {
+        QFETCH(QString, appImage);
+        QFETCH(QString, appDir);
+        QFETCH(QString, executableDir);
+        QFETCH(bool, viaAppImage);
+        const auto command = DaemonLauncher::CommandFor(
+            "/run/roostd.sock", appImage, appDir, executableDir);
+        if (viaAppImage) {
+            QCOMPARE(command.Program, appImage);
+            QCOMPARE(command.Arguments.first(), QString("--roostd"));
+        } else {
+            QCOMPARE(command.Program, executableDir + "/roostd");
+            QVERIFY(!command.Arguments.contains("--roostd"));
+        }
+        QVERIFY(command.Arguments.contains("/run/roostd.log"));
+        QCOMPARE(command.StartLog, QString("/run/roostd.start.log"));
     }
 
     // --no-spawn is the absence of a launcher: nobody is started.

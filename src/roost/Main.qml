@@ -9,7 +9,8 @@ Window {
     id: root
 
     // "connecting", "starting" (roostd is being started by the window),
-    // "connected", "disconnected" or "refused"; written by C++.
+    // "startFailed" (the start failed; the message says why), "connected",
+    // "disconnected" or "refused"; written by C++.
     property string connection: "connecting"
     // The reason of the disconnect, or for "refused" the message with the
     // versions and the hint.
@@ -62,6 +63,7 @@ Window {
                             return "Connecting to roostd...";
                         case "starting":
                             return "Starting roostd…";
+                        case "startFailed":
                         case "refused":
                             return root.connectionMessage;
                         default:

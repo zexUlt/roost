@@ -76,8 +76,11 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
     connect(&Api_, &api::Api::Refused, this, &Shell::OnRefused);
     if (Launcher_ != nullptr) {
         // Only the text of the banner follows the launcher.
-        connect(Launcher_, &DaemonLauncher::StartingChanged, this,
-                [this] { SetConnection(Connection_, ConnectionMessage_); });
+        const auto refresh = [this] {
+            SetConnection(Connection_, ConnectionMessage_);
+        };
+        connect(Launcher_, &DaemonLauncher::StartingChanged, this, refresh);
+        connect(Launcher_, &DaemonLauncher::FailureChanged, this, refresh);
     }
     connect(&Root_, SIGNAL(retryRequested()), this, SLOT(OnRetry()));
 
@@ -282,18 +285,26 @@ void Shell::OnRetry() {
     Api_.Connect(SocketPath_);
 }
 
-bool Shell::ShowsStarting() const {
-    return Launcher_ != nullptr && Launcher_->Starting() &&
-           (Connection_ == QLatin1String("connecting") ||
-            Connection_ == QLatin1String("disconnected"));
+bool Shell::IsWaiting() const {
+    return Connection_ == QLatin1String("connecting") ||
+           Connection_ == QLatin1String("disconnected");
 }
 
 void Shell::SetConnection(const QString& state, const QString& message) {
     Connection_ = state;
     ConnectionMessage_ = message;
-    Root_.setProperty("connection",
-                      ShowsStarting() ? QStringLiteral("starting") : state);
-    Root_.setProperty("connectionMessage", message);
+    QString shown = state;
+    QString shownMessage = message;
+    if (Launcher_ != nullptr && IsWaiting()) {
+        if (Launcher_->Starting()) {
+            shown = QStringLiteral("starting");
+        } else if (!Launcher_->Failure().isEmpty()) {
+            shown = QStringLiteral("startFailed");
+            shownMessage = Launcher_->Failure();
+        }
+    }
+    Root_.setProperty("connection", shown);
+    Root_.setProperty("connectionMessage", shownMessage);
     // The placeholders of the empty slots tell the state of the connection.
     for (const Slot& slot : Slots_) {
         if (slot.Item && slot.Panel.isNull()) {
