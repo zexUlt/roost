@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "api/api.hpp"
+#include "helpers/process_lifeline.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "roost/plugin_loader.hpp"
@@ -263,6 +264,7 @@ protected:
     bool SpySelected_ = false;
     std::unique_ptr<QSignalSpy> SelectedSpy_;
     std::unique_ptr<QTemporaryDir> Dir_;
+    ProcessLifeline Lifeline_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<api::Api> Api_;
     std::unique_ptr<QQmlApplicationEngine> Engine_;

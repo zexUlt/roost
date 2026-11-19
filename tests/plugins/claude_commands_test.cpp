@@ -27,8 +27,11 @@
 #include <optional>
 
 #include "core/rpc_client.hpp"
+#include "helpers/process_lifeline.hpp"
 
 using namespace roost;
+using roost::testing::ProcessLifeline;
+using roost::testing::RelayStandardError;
 
 namespace {
 
@@ -878,9 +881,11 @@ private slots:
         environment.insert("ROOST_PLUGINS_PATH", ROOST_PLUGINS_DIR);
         environment.insert(
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
+        ProcessLifeline lifeline;
         QProcess daemon;
         daemon.setProcessEnvironment(environment);
-        daemon.setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        RelayStandardError(daemon);
+        QVERIFY(lifeline.Attach(daemon));
         daemon.start(ROOSTD_PATH, {});
         QVERIFY(daemon.waitForStarted(TIMEOUT_MS));
 
