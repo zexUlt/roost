@@ -7,6 +7,12 @@ set(ROOST_TEST_ENVIRONMENT
     QML_DISABLE_DISK_CACHE=1
 )
 
+# ctest runs the tests in parallel (execution.jobs in CMakePresets.json). Each
+# test uses a temporary directory and a socket path of its own, so none
+# needs a lock today. A test that must share a path, a port or a lock file with
+# another gets RESOURCE_LOCK with a comment on what it shares; RUN_SERIAL is for
+# timing checks only (frame_budget_test).
+
 # Shared by several tests.
 add_library(roost_test_helpers STATIC
     helpers/detached_daemons.cpp

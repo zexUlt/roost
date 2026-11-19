@@ -78,8 +78,9 @@
     {
       "name": "base",
       "hidden": true,
+      "description": "Three tests at a time: the core count of the smallest CI runner (macos-15), and few enough that the window and daemon tests are not starved on a developer machine",
       "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
+      "execution": { "noTestsAction": "error", "jobs": 3 }
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
     {
@@ -101,7 +102,8 @@
         "QTEST_DISABLE_STACK_DUMP": "1"
       },
       "filter": { "include": { "label": "threads_std" } },
-      "execution": { "noTestsAction": "error", "timeout": 900 }
+      "description": "Serial: under TSan the tests are several times slower, and a report has to name one test, not a neighbour's load",
+      "execution": { "noTestsAction": "error", "timeout": 900, "jobs": 1 }
     },
     {
       "name": "tsan-qt",

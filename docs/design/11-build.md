@@ -2,6 +2,7 @@
 
 - CMake с пресетами, Qt 6 (в CI одна версия, ставится через aqtinstall), C++23, clang, Zig для libghostty-vt.
 - Тесты: Qt Test для демона и моделей; Qt Quick Test для QML с `QT_QPA_PLATFORM=offscreen`; адаптеры — на записанном выводе `claude agents --json` плюс тест на настоящем `claude`, который включается явно.
+- `ctest` по пресету идёт по три теста сразу (`execution.jobs` в `base` у пресетов тестов; три — ядра macos-15), пресет `tsan` — по одному. Параллельность безопасна, пока тест берёт только свои временный каталог и сокет (`ROOST_SOCKET`). Тест, которому нужен общий ресурс, получает `RESOURCE_LOCK` с комментарием, чем делится; `RUN_SERIAL` — только замерам времени (`frame_budget_test`).
 - CI на GitHub Actions: сборка и тесты на macOS arm64 и Linux x64, гейты format и tidy.
 - Упаковка: macOS — `.app` через `macdeployqt` в `.dmg`; Linux — AppImage через `linuxdeploy-plugin-qt`.
 - Раскладка `cmake --install` (`cmake/Install.cmake`), одна на ОС; дерево сборки (`build/<preset>/bin`, `build/<preset>/roost-plugins`) не меняется, `roost` в нём не `MACOSX_BUNDLE`, `.app` собирается при установке:
