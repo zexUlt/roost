@@ -32,9 +32,12 @@
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
+#include "helpers/process_lifeline.hpp"
 #include "terminal/io_thread.hpp"
 
 using namespace roost;
+using roost::testing::ProcessLifeline;
+using roost::testing::RelayStandardError;
 
 namespace {
 
@@ -247,7 +250,10 @@ private:
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
         Daemon_ = std::make_unique<QProcess>();
         Daemon_->setProcessEnvironment(environment);
-        Daemon_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        RelayStandardError(*Daemon_);
+        if (!Lifeline_.Attach(*Daemon_)) {
+            return false;
+        }
         Daemon_->start(ROOSTD_PATH, {});
         return Daemon_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath());
     }
@@ -283,6 +289,7 @@ private:
     }
 
     std::unique_ptr<QTemporaryDir> Dir_;
+    ProcessLifeline Lifeline_;
     std::unique_ptr<QProcess> Daemon_;
     OpenedSession Opened_;
 

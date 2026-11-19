@@ -31,6 +31,7 @@
 
 #include "api/api.hpp"
 #include "core/rpc_client.hpp"
+#include "helpers/process_lifeline.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
@@ -40,6 +41,8 @@
 #include "terminal/terminal_session.hpp"
 
 using namespace roost;
+using roost::testing::ProcessLifeline;
+using roost::testing::RelayStandardError;
 
 // The static plugins of the modules Roost.Api and Roost.Shell, linked into this
 // executable.
@@ -211,7 +214,10 @@ private:
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
         Daemon_ = std::make_unique<QProcess>();
         Daemon_->setProcessEnvironment(environment);
-        Daemon_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        RelayStandardError(*Daemon_);
+        if (!Lifeline_.Attach(*Daemon_)) {
+            return false;
+        }
         Daemon_->start(ROOSTD_PATH, {});
         return Daemon_->waitForStarted(TIMEOUT_MS) && Greets(SocketPath());
     }
@@ -327,6 +333,7 @@ private:
 
     QStringList Changes_;
     std::unique_ptr<QTemporaryDir> Dir_;
+    ProcessLifeline Lifeline_;
     std::unique_ptr<QProcess> Daemon_;
     std::unique_ptr<api::Api> Api_;
     std::unique_ptr<QQmlApplicationEngine> Engine_;
