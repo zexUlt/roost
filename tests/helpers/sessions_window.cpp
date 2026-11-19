@@ -106,29 +106,60 @@ bool SessionsWindow::ListWithout(const QStringList& gone) const {
            agents.commit();
 }
 
-// Only the built-in plugins `claude` and `sessions`: no panel
-// terminal.view.
-bool SessionsWindow::LinkPluginsWithoutTerminal() const {
-    if (!QDir().mkpath(Dir_->filePath("plugins"))) {
+// The plugins directory of the case: the built plugins `sessions` and, unless
+// WithoutTerminal_, `terminal`, linked; and `claude` as a copy of the built
+// one behind a script that runs the adapter with a short --poll-ms. With the
+// default of 3 s every change of the fake claude's list would cost a poll
+// interval.
+bool SessionsWindow::LinkPlugins() const {
+    const QDir plugins(Dir_->filePath("plugins"));
+    if (!plugins.mkpath(".")) {
         return false;
     }
     for (const QString& id :
-         {QStringLiteral("claude"), QStringLiteral("sessions")}) {
-        if (!QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
-                         Dir_->filePath("plugins/") + id)) {
+         {QStringLiteral("sessions"), QStringLiteral("terminal")}) {
+        // The daemon may be started again in a case: the links are there.
+        if ((id != QStringLiteral("terminal") || !WithoutTerminal_) &&
+            !plugins.exists(id) &&
+            !QFile::link(QStringLiteral(ROOST_PLUGINS_DIR "/") + id,
+                         plugins.filePath(id))) {
             return false;
         }
     }
-    return true;
+    const QDir claude(plugins.filePath("claude"));
+    const QString adapter =
+        QStringLiteral(ROOST_PLUGINS_DIR "/claude/backend/claude-adapter");
+    QFile built(QStringLiteral(ROOST_PLUGINS_DIR "/claude/plugin.json"));
+    if (!claude.mkpath("backend") || !built.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    QJsonObject manifest = QJsonDocument::fromJson(built.readAll()).object();
+    manifest.insert(
+        "backend",
+        QJsonObject{{"command", QJsonArray{"backend/claude-adapter"}}});
+    const QByteArray shell =
+        QStringLiteral("#!/bin/sh\nexec '%1' --poll-ms %2 \"$@\"\n")
+            .arg(adapter)
+            .arg(POLL_MS)
+            .toUtf8();
+    QFile script(claude.filePath("backend/claude-adapter"));
+    QFile json(claude.filePath("plugin.json"));
+    return script.open(QIODevice::WriteOnly) &&
+           script.write(shell) == shell.size() &&
+           script.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
+                                 QFile::ExeOwner) &&
+           json.open(QIODevice::WriteOnly) &&
+           json.write(QJsonDocument(manifest).toJson()) > 0;
 }
 
 bool SessionsWindow::StartDaemon() {
+    if (!LinkPlugins()) {
+        return false;
+    }
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert("ROOST_SOCKET", SocketPath());
     environment.insert("ROOST_CONFIG", Dir_->filePath("config"));
-    environment.insert("ROOST_PLUGINS_PATH", WithoutTerminal_
-                                                 ? Dir_->filePath("plugins")
-                                                 : QString(ROOST_PLUGINS_DIR));
+    environment.insert("ROOST_PLUGINS_PATH", Dir_->filePath("plugins"));
     environment.insert(
         "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
     Daemon_ = std::make_unique<QProcess>();
@@ -155,9 +186,6 @@ void SessionsWindow::StopDaemon() {
 // list starts without any).
 void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
     QVERIFY(WriteFakeClaude(claude));
-    if (WithoutTerminal_) {
-        QVERIFY(LinkPluginsWithoutTerminal());
-    }
     if (empty) {
         QVERIFY(ListWithout(ORDER));
     }
