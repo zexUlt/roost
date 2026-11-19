@@ -5,16 +5,22 @@
 # import are deployed, the licences are in it, the signature verifies, and the
 # bundled window starts the bundled roostd and shows the sessions.
 #
+# With a .dmg as the second argument the image is checked too: it verifies, it
+# holds roost.app (whose signature verifies), the link to /Applications and the
+# licences. It is mounted read-only, with no browse and no Finder, at a
+# temporary mount point, and detached on every way out.
+#
 # The smoke runs in a temporary directory with its own HOME, socket and
 # config, a $SHELL that does not exist (never the login shell of whoever runs
 # this) and a fake `claude` (never the real one). It leaves the roostd it
 # started running, as the window does, and kills that roostd and the fake
 # attach by pid at the end.
 #
-# Usage: tools/check_bundle.sh <roost.app>
+# Usage: tools/check_bundle.sh <roost.app> [<roost.dmg>]
 set -uo pipefail
 
-app=${1:?usage: tools/check_bundle.sh <roost.app>}
+app=${1:?usage: tools/check_bundle.sh <roost.app> [<roost.dmg>]}
+dmg=${2:-}
 if [ ! -d "$app/Contents" ]; then
     echo "FAIL: $app is not an application bundle"
     exit 1
@@ -28,8 +34,106 @@ fail() {
     failed=1
 }
 
+work=
+mnt=
+roostd_pid=
+window_pid=
+
+detach_dmg() {
+    if [ -n "$mnt" ]; then
+        # Only the mount this script made, at its own mount point.
+        if hdiutil detach -quiet "$mnt" 2>/dev/null ||
+            { sleep 2 && hdiutil detach -quiet -force "$mnt" 2>/dev/null; }; then
+            rmdir "$mnt" 2>/dev/null
+            mnt=
+        else
+            echo "FAIL: could not detach $mnt" >&2
+            failed=1
+        fi
+    fi
+}
+
+# shellcheck disable=SC2329  # runs from the trap
+cleanup() {
+    if [ -n "$window_pid" ]; then
+        kill "$window_pid" 2>/dev/null
+    fi
+    local pid
+    # The roostd the window started, its children (the plugin backends) and
+    # the fake attach: found by the pid files, not by name.
+    if [ -n "$roostd_pid" ]; then
+        for pid in $(pgrep -P "$roostd_pid" 2>/dev/null) "$roostd_pid"; do
+            kill "$pid" 2>/dev/null
+        done
+    fi
+    if [ -n "$work" ] && [ -s "$work/bin/attach.pid" ]; then
+        kill "$(cat "$work/bin/attach.pid")" 2>/dev/null
+    fi
+    detach_dmg
+    if [ -n "$work" ]; then
+        rm -rf "$work"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# The way dyld resolves a dependency of $1 named $2, given the run paths $3
+# of $1: @loader_path is the directory of $1, @executable_path is
+# Contents/MacOS, @rpath is each run path in turn (a run path may itself start
+# with @loader_path or @executable_path). dyld also tries the run paths of the
+# executable that started the load (a Homebrew dylib names @rpath/libwebp but
+# carries only @loader_path/../lib, and finds it through the run path of the
+# executable): $3 is followed by those of the executables of the bundle,
+# already resolved. Succeeds when one of the resulting paths exists and,
+# symlinks resolved, lies inside the bundle.
+expand_path() {
+    case $2 in
+        @loader_path/*) printf '%s\n' "$(dirname "$1")/${2#@loader_path/}" ;;
+        @executable_path/*) printf '%s\n' "$app/Contents/MacOS/${2#@executable_path/}" ;;
+        *) printf '%s\n' "$2" ;;
+    esac
+}
+
+in_bundle() {
+    local dir
+    [ -e "$1" ] || return 1
+    dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
+    case $dir/ in
+        "$app"/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+resolve_in_bundle() {
+    local file=$1 dep=$2 runpaths=$3 candidate runpath
+    case $dep in
+        @rpath/*)
+            while IFS= read -r runpath; do
+                [ -n "$runpath" ] || continue
+                candidate=$(expand_path "$file" "$runpath")/${dep#@rpath/}
+                if in_bundle "$candidate"; then
+                    return 0
+                fi
+            done <<<"$runpaths"
+            return 1
+            ;;
+        *) in_bundle "$(expand_path "$file" "$dep")" ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Every Mach-O names only the bundle and the system.
+
+exe_runpaths=
+while IFS= read -r -d '' exe; do
+    if file -b "$exe" | grep -q '^Mach-O'; then
+        while IFS= read -r runpath; do
+            [ -n "$runpath" ] || continue
+            exe_runpaths+=$(expand_path "$exe" "$runpath")$'\n'
+        done < <(otool -l "$exe" | awk '/cmd LC_RPATH/ {r = 1} r && $1 == "path" {print $2; r = 0}')
+    fi
+done < <(find "$app/Contents/MacOS" -type f -print0)
 
 macho=$(find "$app" -type f -print0 | xargs -0 file |
     sed -n 's/: *Mach-O .*//p')
@@ -49,17 +153,18 @@ while IFS= read -r file; do
     # copies; nothing depends on them once the dependents name @rpath.)
     id=$(otool -D "$file" | sed -n '2p')
     deps=$(otool -L "$file" | sed -n '2,$p' | awk '{print $1}')
+    runpaths=$(otool -l "$file" | awk '/cmd LC_RPATH/ {r = 1} r && $1 == "path" {print $2; r = 0}')
     while IFS= read -r dep; do
         [ -n "$dep" ] || continue
         # A bundle (a Qt plugin) lists its own path where a dylib lists its
         # install name.
-        [ "$dep" = "$id" ] || [ "$dep" = "$file" ] && continue
+        if [ "$dep" = "$id" ] || [ "$dep" = "$file" ]; then
+            continue
+        fi
         case $dep in
-            @executable_path/* | @loader_path/* | /usr/lib/* | /System/Library/*) ;;
-            @rpath/*)
-                # Not just the prefix: the library is in the bundle.
-                if [ ! -e "$app/Contents/Frameworks/${dep#@rpath/}" ] &&
-                    [ -z "$(find "$app" -name "$(basename "$dep")" -print -quit)" ]; then
+            /usr/lib/* | /System/Library/*) ;;
+            @executable_path/* | @loader_path/* | @rpath/*)
+                if ! resolve_in_bundle "$file" "$dep" "$runpaths"$'\n'"$exe_runpaths"; then
                     fail "$rel needs $dep, which is not in the bundle"
                 fi
                 ;;
@@ -68,7 +173,6 @@ while IFS= read -r file; do
     done <<<"$deps"
     # A run path outside the bundle would let a machine with Qt installed
     # load that one when the bundle's own copy is missing.
-    runpaths=$(otool -l "$file" | awk '/cmd LC_RPATH/ {r = 1} r && $1 == "path" {print $2; r = 0}')
     while IFS= read -r runpath; do
         [ -n "$runpath" ] || continue
         case $runpath in
@@ -111,31 +215,54 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The .dmg.
+
+if [ -n "$dmg" ]; then
+    if [ ! -f "$dmg" ]; then
+        fail "$dmg is not a file"
+    elif ! hdiutil verify -quiet "$dmg" >/dev/null 2>&1; then
+        fail "hdiutil verify does not accept $dmg"
+    else
+        echo "ok:   hdiutil verify"
+        mnt=$(mktemp -d "${TMPDIR:-/tmp}/roost-dmg.XXXXXX") || exit 1
+        if ! hdiutil attach -readonly -nobrowse -noautoopen -quiet \
+            -mountpoint "$mnt" "$dmg" >/dev/null 2>&1; then
+            fail "hdiutil attach of $dmg failed"
+            rmdir "$mnt" 2>/dev/null
+            mnt=
+        else
+            if [ -d "$mnt/roost.app/Contents" ]; then
+                echo "ok:   dmg: roost.app"
+                if verify=$(codesign --verify --deep --strict --verbose=2 "$mnt/roost.app" 2>&1); then
+                    echo "ok:   dmg: codesign --verify --deep --strict"
+                else
+                    printf '%s\n' "$verify" | sed 's/^/    /'
+                    fail "codesign does not verify roost.app in $dmg"
+                fi
+            else
+                fail "$dmg has no roost.app"
+            fi
+            if [ -L "$mnt/Applications" ] && [ "$(readlink "$mnt/Applications")" = /Applications ]; then
+                echo "ok:   dmg: Applications -> /Applications"
+            else
+                fail "$dmg has no Applications link to /Applications"
+            fi
+            for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt; do
+                if [ -s "$mnt/Licenses/$name" ]; then
+                    echo "ok:   dmg: Licenses/$name"
+                else
+                    fail "Licenses/$name is missing or empty in $dmg"
+                fi
+            done
+            detach_dmg
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # The window starts the roostd of the bundle.
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/roost-bundle.XXXXXX") || exit 1
-roostd_pid=
-window_pid=
-
-# shellcheck disable=SC2329  # runs from the trap
-cleanup() {
-    if [ -n "$window_pid" ]; then
-        kill "$window_pid" 2>/dev/null
-    fi
-    local pid
-    # The roostd the window started, its children (the plugin backends) and
-    # the fake attach: found by the pid files, not by name.
-    if [ -n "$roostd_pid" ]; then
-        for pid in $(pgrep -P "$roostd_pid" 2>/dev/null) "$roostd_pid"; do
-            kill "$pid" 2>/dev/null
-        done
-    fi
-    if [ -s "$work/bin/attach.pid" ]; then
-        kill "$(cat "$work/bin/attach.pid")" 2>/dev/null
-    fi
-    rm -rf "$work"
-}
-trap cleanup EXIT
 
 # The directory of the socket must be private: roostd takes over only that.
 mkdir -p "$work/run" "$work/home" "$work/bin" "$work/config"
@@ -206,14 +333,19 @@ else
             ;;
         *) fail "the roostd that runs is not the bundled one: $command" ;;
     esac
-    # Qt that this roostd has loaded comes from the bundle.
-    outside=$(lsof -p "$roostd_pid" 2>/dev/null | awk '{print $NF}' |
-        grep -iE '/Qt[A-Za-z]*(\.framework|$)|libQt' | grep -vF "$app/" || true)
+    # Qt that this roostd has loaded comes from the bundle, and it has loaded
+    # QtCore from there (an empty answer of lsof is a failure, not a pass).
+    # -Fn: one `n<path>` line per file, so that a path with spaces is whole.
+    loaded=$(lsof -Fn -p "$roostd_pid" 2>/dev/null | sed -n 's/^n//p')
+    qt=$(printf '%s\n' "$loaded" | grep -iE '/Qt[A-Za-z]*(\.framework/|$)|libQt' || true)
+    outside=$(printf '%s\n' "$qt" | grep -vF "$app/" | grep -v '^$' || true)
     if [ -n "$outside" ]; then
         fail "roostd loaded Qt from outside the bundle:"
         printf '%s\n' "$outside" | sed 's/^/    /'
+    elif printf '%s\n' "$qt" | grep -F "$app/" | grep -qE '/QtCore(\.framework/|$)'; then
+        echo "ok:   roostd loaded QtCore from the bundle and no Qt from outside it"
     else
-        echo "ok:   roostd loaded no Qt from outside the bundle"
+        fail "roostd has no QtCore from $app/ loaded (lsof saw $(printf '%s\n' "$loaded" | grep -c .) files)"
     fi
 fi
 

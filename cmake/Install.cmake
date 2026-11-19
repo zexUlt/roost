@@ -23,8 +23,11 @@
 #   ROOST_INSTALL_RPATH_TO_QT      option, ON by default: the directories of the
 #                                  Qt the build linked go into the run path of
 #                                  every installed target (before ours on
-#                                  macOS, after on Linux). A packaging step
-#                                  that deploys Qt sets it OFF.
+#                                  macOS, after on Linux). tools/package_macos.sh
+#                                  leaves it ON (macdeployqt finds the
+#                                  frameworks to copy through those paths) and
+#                                  deletes the run paths that are not @... from
+#                                  the bundle after macdeployqt.
 #   roost_install_plugin_binary()  installs a target of a plugin
 
 option(ROOST_INSTALL_RPATH_TO_QT

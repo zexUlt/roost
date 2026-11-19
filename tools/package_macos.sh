@@ -10,7 +10,8 @@
 #
 # `macdeployqt` and `qmake` come from the PATH: the Qt the build was configured
 # with must be the first Qt there (install-qt-action puts it there). The last
-# line printed is the path of the .dmg. tools/check_bundle.sh checks the app.
+# line printed is the path of the .dmg. tools/check_bundle.sh checks the app
+# and the .dmg.
 #
 # Usage: tools/package_macos.sh <build dir> <out dir>
 set -euo pipefail
@@ -138,9 +139,23 @@ dmg=$out/roost-$version-macos-$arch.dmg
 ditto "$app" "$dmg_root/roost.app"
 ln -s /Applications "$dmg_root/Applications"
 ditto "$contents/Resources/licenses" "$dmg_root/Licenses"
-rm -f "$dmg"
-hdiutil create -quiet -volname roost -srcfolder "$dmg_root" -fs HFS+ \
-    -format UDZO -ov "$dmg"
+# hdiutil create now and then fails with "Resource busy" on a CI runner: try
+# again, from no partial image.
+created=
+for attempt in 1 2 3; do
+    rm -f "$dmg"
+    if hdiutil create -quiet -volname roost -srcfolder "$dmg_root" -fs HFS+ \
+        -format UDZO -ov "$dmg"; then
+        created=1
+        break
+    fi
+    echo "hdiutil create failed (attempt $attempt of 3)" >&2
+    sleep 5
+done
+if [ -z "$created" ]; then
+    rm -f "$dmg"
+    exit 1
+fi
 rm -rf "$dmg_root"
 
 echo "$dmg"
