@@ -112,8 +112,9 @@ private slots:
     void cleanup() {
         Daemons_.reset();
         Env_.clear();
-        // Nothing of this case is left running.
-        QCOMPARE(CountDaemons(Dir_->path()), 0);
+        // Nothing of this case is left running. A roostd that dies early may
+        // still be exiting when the case ends: it has to be gone in time.
+        QTRY_COMPARE_WITH_TIMEOUT(CountDaemons(Dir_->path()), 0, TIMEOUT_MS);
         Owned_.reset();
     }
 

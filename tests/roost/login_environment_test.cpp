@@ -251,7 +251,8 @@ private slots:
                                               Path("child.pid") + "\"\nwait\n",
                                           "hang");
         Settings settings = ForShell(shell);
-        settings.Timeout = 600ms;
+        // Long enough for a loaded machine to run the script up to `wait`.
+        settings.Timeout = 2000ms;
         settings.Base.insert("APPDIR", "/mnt/app");
         LoginEnvironment login(settings);
         QSignalSpy finished(&login, &LoginEnvironment::Finished);
@@ -266,8 +267,11 @@ private slots:
         login.Start();
         QVERIFY2(started.elapsed() < 300, "Start waited for the shell");
         QVERIFY(!login.Ready());
+        // The shell runs and has started its child before the timeout.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ReadFile(Path("child.pid")).trimmed().toLongLong() > 1, 1900);
         QVERIFY(finished.wait(TIMEOUT_MS));
-        QVERIFY(started.elapsed() >= 500);
+        QVERIFY(started.elapsed() >= 1900);
         QVERIFY2(ticks >= 5, qPrintable(QString::number(ticks)));
         QVERIFY(login.Ready());
         QVERIFY(!login.FromLoginShell());
