@@ -5,6 +5,7 @@
 // alone, and that a torn-down panel leaves no call and no subscription behind.
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJSEngine>
 #include <QJsonArray>
@@ -213,12 +214,47 @@ private:
     // asked for, and Boot returns without running the event loop after that:
     // the list has not arrived and cannot arrive before the test looks.
     bool Boot(bool listLoaded = true) {
-        if (!Daemon_->IsValid() ||
-            !Daemon_->AddFixturePlugin("fixture", FIXTURE_BACKEND_PATH) ||
-            !Daemon_->Start(ROOSTD_PATH)) {
+        // Names the step that failed and what the Api saw until then, so that
+        // a failure in CI says whether a start failed or a wait ran out, and
+        // whether the connection never came or the list never did.
+        QElapsedTimer elapsed;
+        elapsed.start();
+        // Shared with the slots, which outlive Boot as long as the Api does.
+        const auto seen = std::make_shared<QStringList>();
+        const auto fail = [&](const char* step) {
+            qWarning().noquote()
+                << "Boot failed at" << step << "after" << elapsed.elapsed()
+                << "ms; roostd running:" << Daemon_->IsRunning()
+                << "; Api connected:" << (Api_ && Api_->IsConnected())
+                << "; plugin list loaded:"
+                << (Api_ && Api_->Plugins().IsLoaded()) << "; Api signals:"
+                << (seen->isEmpty() ? "none" : seen->join(", "));
             return false;
+        };
+        if (!Daemon_->IsValid()) {
+            return fail("the temporary directory of roostd");
+        }
+        if (!Daemon_->AddFixturePlugin("fixture", FIXTURE_BACKEND_PATH)) {
+            return fail("the fixture plugin");
+        }
+        if (!Daemon_->Start(ROOSTD_PATH)) {
+            return fail(
+                "the start of roostd (Start returned false; its warnings "
+                "above, if any)");
         }
         Api_ = std::make_unique<api::Api>();
+        connect(Api_.get(), &api::Api::Disconnected, this,
+                [seen](const QString& reason) {
+                    *seen << QStringLiteral("Disconnected(%1)").arg(reason);
+                });
+        connect(Api_.get(), &api::Api::Refused, this,
+                [seen](const roost::rpc::Error& error) {
+                    *seen << QStringLiteral("Refused(%1 %2)")
+                                 .arg(error.Code)
+                                 .arg(error.Message);
+                });
+        connect(Api_.get(), &api::Api::NoListener, this,
+                [seen] { *seen << QStringLiteral("NoListener"); });
         Engine_ = std::make_unique<QQmlEngine>();
         Engine_->globalObject().setProperty("roostProbe",
                                             Engine_->newQObject(&Probe_));
@@ -226,7 +262,7 @@ private:
         Singleton_ =
             Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
         if (Singleton_ == nullptr) {
-            return false;
+            return fail("the Roost singleton");
         }
         Singleton_->setApi(*Api_);
         QQmlComponent shell(Engine_.get());
@@ -234,7 +270,7 @@ private:
         Shell_ = shell.create();
         if (Shell_ == nullptr) {
             qWarning("%s", qPrintable(shell.errorString()));
-            return false;
+            return fail("the shell component");
         }
         QJSEngine::setObjectOwnership(Shell_, QJSEngine::CppOwnership);
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
@@ -242,13 +278,21 @@ private:
             Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
                                                      *Singleton_);
             Api_->Connect(Daemon_->SocketPath());
-            return !Api_->Plugins().IsLoaded();
+            if (Api_->Plugins().IsLoaded()) {
+                return fail("the check that the list has not arrived yet");
+            }
+            return true;
         }
         Api_->Connect(Daemon_->SocketPath());
-        if (!connected.wait(TIMEOUT_MS) ||
-            !QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
+        // Connected may come before the wait: the answer of hello can be there
+        // before Api::Connect returns, and then the signal is said inside it.
+        if (connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
+            return fail("the Connected signal of the Api");
+        }
+        *seen << QStringLiteral("Connected at %1 ms").arg(elapsed.elapsed());
+        if (!QTest::qWaitFor([&] { return Api_->Plugins().IsLoaded(); },
                              TIMEOUT_MS)) {
-            return false;
+            return fail("the plugin list of the Api");
         }
         Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
                                                  *Singleton_);
