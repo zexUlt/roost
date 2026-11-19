@@ -23,9 +23,13 @@ namespace roost {
 // The root takes (written by the shell): `connection` ("connecting",
 // "connected", "disconnected", "refused", "starting" while the launcher has a
 // roostd coming up and "startFailed" (the message is why) after a start that
-// failed, both only while the window is not connected), `connectionMessage`,
-// `problems` (a list of strings); it gives the signal `retryRequested()`. A
-// slot takes `panel`, `error`, `linkInput`, `linkOutput`.
+// failed, both only while the window is not connected, and "restarting" while
+// the launcher waits for the old roostd of a refusal to go),
+// `connectionMessage`, `restartOffered` (the refusal is VersionMismatch and
+// there is a launcher), `problems` (a list of strings); it gives the signals
+// `retryRequested()` and `restartRequested()` (the launcher replaces the
+// roostd, nothing else of the window moves). A slot takes `panel`, `error`,
+// `linkInput`, `linkOutput`.
 //
 // The link: the sessions.list panel must declare one output of type
 // SessionRef, the terminal.view panel one input of type SessionRef. None or
@@ -46,7 +50,7 @@ public:
     // `root` is the QML root (the slots are its descendants), `loader`,
     // `api` and `launcher` (none with --no-spawn) are used and not owned.
     Shell(QObject& root, PluginLoader& loader, api::Api& api,
-          QString socketPath, const DaemonLauncher* launcher = nullptr);
+          QString socketPath, DaemonLauncher* launcher = nullptr);
     ~Shell() override;
 
     // Whether the window shows what `roost --smoke-sessions` checks. `Ready`:
@@ -64,6 +68,8 @@ public:
 private slots:
     // The root's retryRequested(), connected by name: the signal is a QML one.
     void OnRetry();
+    // The root's restartRequested(): the Restart roostd button.
+    void OnRestartRequested();
 
 private:
     struct Slot {
@@ -94,10 +100,12 @@ private:
     PluginLoader& Loader_;
     api::Api& Api_;
     QString SocketPath_;
-    const DaemonLauncher* Launcher_;
+    DaemonLauncher* Launcher_;
     QList<Slot> Slots_;
     QString Connection_;
     QString ConnectionMessage_;
+    // The last refusal was a VersionMismatch.
+    bool Mismatch_ = false;
     bool Filling_ = false;
     bool FillAgain_ = false;
 };

@@ -8,6 +8,7 @@
 #include <map>
 
 #include "core/frame.hpp"
+#include "core/protocol.hpp"
 
 namespace roost::testing {
 
@@ -26,6 +27,10 @@ public:
     // does. Off by default.
     void SetOmitData(bool omit) { OmitData_ = omit; }
 
+    // The code of the refusal, VersionMismatch by default: any other is a
+    // refusal the window must not offer a restart for.
+    void SetCode(protocol::EErrorCode code) { Code_ = code; }
+
     // The hellos answered so far, over all connections.
     int Hellos() const { return Hellos_; }
 
@@ -42,6 +47,7 @@ private:
     std::map<QLocalSocket*, FrameDecoder> Decoders_;
     int Hellos_ = 0;
     bool OmitData_ = false;
+    protocol::EErrorCode Code_ = protocol::EErrorCode::VersionMismatch;
 };
 
 }  // namespace roost::testing

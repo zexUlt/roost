@@ -89,6 +89,11 @@ set_tests_properties(frame_budget_test PROPERTIES
     RUN_SERIAL TRUE
 )
 
+# A roostd of another version as a process, with the socket lock of roostd, for
+# daemon_restart_test.
+add_executable(refusing_daemon helpers/refusing_daemon.cpp)
+target_link_libraries(refusing_daemon PRIVATE roost_test_helpers)
+
 # A TUI that draws, asks its terminal questions and counts the answers.
 add_executable(fake_tui helpers/fake_tui.cpp)
 target_link_libraries(fake_tui PRIVATE roost::compile_options)
@@ -522,3 +527,14 @@ roost_add_qt_test(shell_starting_test roost/shell_starting_test.cpp
 target_compile_definitions(shell_starting_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(shell_starting_test roostd)
+
+# The Restart roostd button of the banner on VersionMismatch: the old roostd (a
+# helper that holds the lock like roostd) gets SIGTERM only on the click and
+# only if the lock is roostd's of this host; then the real roostd is started.
+roost_add_qt_test(daemon_restart_test roost/daemon_restart_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(daemon_restart_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    REFUSING_DAEMON_PATH="$<TARGET_FILE:refusing_daemon>")
+add_dependencies(daemon_restart_test roostd refusing_daemon)

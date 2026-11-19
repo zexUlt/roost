@@ -42,7 +42,7 @@ QString SingleOfType(const QVariantMap& declared, const QString& type,
 }  // namespace
 
 Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
-             QString socketPath, const DaemonLauncher* launcher)
+             QString socketPath, DaemonLauncher* launcher)
     : Root_(root),
       Loader_(loader),
       Api_(api),
@@ -81,8 +81,13 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
         };
         connect(Launcher_, &DaemonLauncher::StartingChanged, this, refresh);
         connect(Launcher_, &DaemonLauncher::FailureChanged, this, refresh);
+        connect(Launcher_, &DaemonLauncher::RestartingChanged, this, refresh);
+        // The new roostd is coming up: connect as Retry does.
+        connect(Launcher_, &DaemonLauncher::Restarted, this, &Shell::OnRetry);
     }
     connect(&Root_, SIGNAL(retryRequested()), this, SLOT(OnRetry()));
+    connect(&Root_, SIGNAL(restartRequested()), this,
+            SLOT(OnRestartRequested()));
 
     SetConnection(Api_.IsConnected() ? QStringLiteral("connected")
                                      : QStringLiteral("connecting"),
@@ -276,13 +281,30 @@ void Shell::OnRefused(const rpc::Error& error) {
                             QString::number(protocol::VERSION),
                             QString::fromStdString(GhosttyVtVersion()));
     }
-    message += QStringLiteral(". Restart roostd, then press Retry.");
+    Mismatch_ =
+        error.Code == static_cast<int>(protocol::EErrorCode::VersionMismatch);
+    if (Mismatch_ && Launcher_ != nullptr) {
+        message += QStringLiteral(
+            ". Restarting roostd closes the warm terminals; Claude sessions "
+            "keep running.");
+    } else {
+        message += QStringLiteral(". Restart roostd, then press Retry.");
+    }
     SetConnection(QStringLiteral("refused"), message);
 }
 
 void Shell::OnRetry() {
     SetConnection(QStringLiteral("connecting"), {});
     Api_.Connect(SocketPath_);
+}
+
+void Shell::OnRestartRequested() {
+    // The button is there only for this state; a stray signal does nothing.
+    if (Launcher_ == nullptr || Connection_ != QLatin1String("refused") ||
+        !Mismatch_) {
+        return;
+    }
+    Launcher_->Restart(SocketPath_);
 }
 
 bool Shell::IsWaiting() const {
@@ -295,7 +317,18 @@ void Shell::SetConnection(const QString& state, const QString& message) {
     ConnectionMessage_ = message;
     QString shown = state;
     QString shownMessage = message;
-    if (Launcher_ != nullptr && IsWaiting()) {
+    bool offerRestart = false;
+    if (Launcher_ != nullptr && state == QLatin1String("refused")) {
+        if (Launcher_->Restarting()) {
+            shown = QStringLiteral("restarting");
+        } else {
+            offerRestart = Mismatch_;
+            if (!Launcher_->Failure().isEmpty()) {
+                shownMessage =
+                    Launcher_->Failure() + QLatin1Char('\n') + message;
+            }
+        }
+    } else if (Launcher_ != nullptr && IsWaiting()) {
         if (!Launcher_->Failure().isEmpty()) {
             shown = QStringLiteral("startFailed");
             shownMessage = Launcher_->Failure();
@@ -305,6 +338,7 @@ void Shell::SetConnection(const QString& state, const QString& message) {
     }
     Root_.setProperty("connection", shown);
     Root_.setProperty("connectionMessage", shownMessage);
+    Root_.setProperty("restartOffered", offerRestart);
     // The placeholders of the empty slots tell the state of the connection.
     for (const Slot& slot : Slots_) {
         if (slot.Item && slot.Panel.isNull()) {

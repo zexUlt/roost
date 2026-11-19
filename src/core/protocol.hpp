@@ -21,6 +21,12 @@ enum class EErrorCode : int {
     StoreFailed = -32004,         // reading or writing a plugin's state failed
 };
 
+// The name of the roostd executable. QLockFile writes the name of the running
+// executable into the lock of the socket (not
+// QCoreApplication::applicationName), and the window sends SIGTERM to the pid
+// in the lock only if it is this name.
+inline constexpr const char* DAEMON_APPLICATION_NAME = "roostd";
+
 // The key of the `data` of a ConnectionLost error that says nobody listens at
 // the socket path (no file, or a file nobody answers on): `{"noListener":
 // true}`. A server that answers and then refuses or drops the client is not

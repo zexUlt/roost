@@ -9,17 +9,23 @@ Window {
     id: root
 
     // "connecting", "starting" (roostd is being started by the window),
-    // "startFailed" (the start failed; the message says why), "connected",
-    // "disconnected" or "refused"; written by C++.
+    // "startFailed" (the start failed; the message says why), "restarting"
+    // (the old roostd is being stopped), "connected", "disconnected" or
+    // "refused"; written by C++.
     property string connection: "connecting"
     // The reason of the disconnect, or for "refused" the message with the
     // versions and the hint.
     property string connectionMessage: ""
+    // Whether the refusal is a version mismatch the window can fix by
+    // restarting roostd (there is a launcher); written by C++.
+    property bool restartOffered: false
     // Strings: the problems of roostd's plugins, of the panels and of links.
     property var problems: []
 
     // The Retry button of a refused connection.
     signal retryRequested
+    // The Restart roostd button of a version mismatch.
+    signal restartRequested
 
     // The width of the list slot in pixels: a step of `<` or `>` in the list
     // panel, and its bounds. Not saved until the layout is (M6).
@@ -63,6 +69,8 @@ Window {
                             return "Connecting to roostd...";
                         case "starting":
                             return "Starting roostd…";
+                        case "restarting":
+                            return "Restarting roostd…";
                         case "startFailed":
                         case "refused":
                             return root.connectionMessage;
@@ -77,6 +85,13 @@ Window {
                     visible: root.connection === "refused"
                     text: "Retry"
                     onClicked: root.retryRequested()
+                }
+
+                Button {
+                    objectName: "restartButton"
+                    visible: root.connection === "refused" && root.restartOffered
+                    text: "Restart roostd"
+                    onClicked: root.restartRequested()
                 }
             }
         }

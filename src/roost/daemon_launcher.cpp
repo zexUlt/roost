@@ -3,14 +3,24 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QLockFile>
 #include <QProcess>
+#include <QSysInfo>
 #include <QtLogging>
 
+#include <signal.h>
+
+#include <cerrno>
+#include <cstring>
 #include <utility>
 
 #include "core/protocol.hpp"
 
 namespace roost {
+
+namespace {
+constexpr int STOP_POLL_MS = 50;
+}  // namespace
 
 DaemonLauncher::Command DaemonLauncher::DefaultCommand(
     const QString& socketPath) {
@@ -69,8 +79,15 @@ bool DaemonLauncher::StartDetached(const Command& command, QString& error) {
 
 DaemonLauncher::DaemonLauncher(api::Api& api, Command command,
                                std::chrono::milliseconds startTimeout,
-                               StartFunction start, QObject* parent)
-    : QObject(parent), Command_(std::move(command)), Start_(std::move(start)) {
+                               StartFunction start,
+                               std::chrono::milliseconds stopTimeout,
+                               QObject* parent)
+    : QObject(parent),
+      Command_(std::move(command)),
+      Start_(std::move(start)),
+      StopTimeout_(stopTimeout) {
+    StopPoll_.setInterval(STOP_POLL_MS);
+    connect(&StopPoll_, &QTimer::timeout, this, &DaemonLauncher::PollStop);
     Timeout_.setSingleShot(true);
     Timeout_.setInterval(startTimeout);
     connect(&Timeout_, &QTimer::timeout, this, &DaemonLauncher::OnTimeout);
@@ -84,19 +101,110 @@ DaemonLauncher::DaemonLauncher(api::Api& api, Command command,
 }
 
 void DaemonLauncher::OnNoListener() {
-    if (Starting_) {
+    // A restart starts the new roostd itself, when the old one has gone.
+    if (Starting_ || Restarting_) {
         return;
     }
+    StartProcess();
+}
+
+bool DaemonLauncher::StartProcess() {
     QString error;
     if (!Start_(Command_, error)) {
         qWarning("roost: cannot start %s: %s", qPrintable(Command_.Program),
                  qPrintable(error));
         SetFailure(QStringLiteral("Could not start roostd: %1").arg(error));
-        return;
+        return false;
     }
     // A failure stays until roostd answers: the retries keep starting it, and
     // the banner keeps saying why the previous start failed.
     SetStarting(true);
+    return true;
+}
+
+void DaemonLauncher::Restart(const QString& socketPath) {
+    if (Restarting_) {
+        return;
+    }
+    SetFailure({});
+    LockPath_ = socketPath + QStringLiteral(".lock");
+    QLockFile lock(LockPath_);
+    lock.setStaleLockTime(0);
+    qint64 pid = 0;
+    QString host;
+    QString application;
+    if (!lock.getLockInfo(&pid, &host, &application)) {
+        FailRestart(QStringLiteral("%1 names no process").arg(LockPath_));
+        return;
+    }
+    // Only what roostd wrote itself is signalled: a lock of another program or
+    // of another host (a socket on a shared directory) is not ours to stop.
+    if (host != QSysInfo::machineHostName() ||
+        application != QLatin1String(protocol::DAEMON_APPLICATION_NAME)) {
+        FailRestart(
+            QStringLiteral("%1 is held by %2 (pid %3) on %4, not by "
+                           "roostd of this host")
+                .arg(LockPath_, application, QString::number(pid), host));
+        return;
+    }
+    if (pid <= 1 || pid == QCoreApplication::applicationPid()) {
+        FailRestart(QStringLiteral("%1 names pid %2").arg(LockPath_).arg(pid));
+        return;
+    }
+    // A lock that can be taken is a file left by a roostd that died, and its
+    // pid may be anybody's by now.
+    if (lock.tryLock(0)) {
+        lock.unlock();
+        FailRestart(QStringLiteral("%1 is not held by a running process")
+                        .arg(LockPath_));
+        return;
+    }
+    if (::kill(static_cast<pid_t>(pid), SIGTERM) != 0) {
+        FailRestart(QStringLiteral("cannot signal pid %1: %2")
+                        .arg(pid)
+                        .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        return;
+    }
+    StopPid_ = pid;
+    StopClock_.start();
+    SetRestarting(true);
+    StopPoll_.start();
+}
+
+void DaemonLauncher::PollStop() {
+    QLockFile probe(LockPath_);
+    probe.setStaleLockTime(0);
+    if (probe.tryLock(0)) {
+        // Released: the socket is closed. The probe lets go before the new
+        // roostd takes the lock.
+        probe.unlock();
+        StopPoll_.stop();
+        SetRestarting(false);
+        if (StartProcess()) {
+            emit Restarted();
+        }
+        return;
+    }
+    if (StopClock_.hasExpired(StopTimeout_.count())) {
+        StopPoll_.stop();
+        FailRestart(
+            QStringLiteral("roostd (pid %1) did not exit in %2 s; stop "
+                           "it yourself and press Retry")
+                .arg(StopPid_)
+                .arg(std::chrono::duration<double>(StopTimeout_).count(), 0,
+                     'g', 3));
+    }
+}
+
+void DaemonLauncher::FailRestart(const QString& reason) {
+    SetFailure(QStringLiteral("Could not restart roostd: %1").arg(reason));
+    SetRestarting(false);
+}
+
+void DaemonLauncher::SetRestarting(bool restarting) {
+    if (std::exchange(Restarting_, restarting) != restarting) {
+        emit RestartingChanged(restarting);
+    }
 }
 
 void DaemonLauncher::OnTimeout() {

@@ -37,7 +37,7 @@ void RefusingServer::OnReadyRead(QLocalSocket* socket) {
             QJsonDocument::fromJson(frame->Body).object();
         ++Hellos_;
         const rpc::Error error = protocol::MakeError(
-            protocol::EErrorCode::VersionMismatch,
+            Code_,
             QStringLiteral("roostd speaks protocol %1 with libghostty-vt %2; "
                            "restart roostd")
                 .arg(PROTOCOL)
