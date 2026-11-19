@@ -13,7 +13,7 @@ name: Retry on no runner
 # workflow_run takes this file from trunk: a change to it works once merged.
 on:
   workflow_run:
-    workflows: [CI, Nightly sanitizers]
+    workflows: [CI, Nightly sanitizers, Package]
     types: [completed]
 
 permissions:

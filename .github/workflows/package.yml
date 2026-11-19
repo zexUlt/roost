@@ -1,0 +1,31 @@
+name: Package
+
+# The packages of a release: the macOS .app and .dmg, the x86_64 and aarch64
+# AppImages, and their smoke on machines with no Qt. The jobs come with the
+# packaging scripts (tools/package_*.sh).
+#
+# A change to the workflow or to the packaging is proved by dispatching it on
+# its branch: gh workflow run package.yml --ref <branch>. A dispatch takes
+# the workflow from that branch, but only a workflow that is on trunk can be
+# dispatched, hence this file before its jobs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Without an explicit shell, run steps get `bash -e` and no pipefail.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: No packages yet
+        run: echo "the packaging jobs replace this one"
