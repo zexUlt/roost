@@ -100,9 +100,8 @@ install(FILES
 function(roost_install_plugin_binary id target subdir)
     set(plugin_dir ${ROOST_INSTALL_PLUGINS_DIR}/${id})
     get_target_property(type ${target} TYPE)
-    # The INSTALL_RPATH is set here, over any a target had: and
-    # with ROOST_INSTALL_RPATH_TO_QT the directories of the Qt it linked come
-    # in front of it.
+    # Sets the INSTALL_RPATH, replacing any the target had. With
+    # ROOST_INSTALL_RPATH_TO_QT the directories of the Qt it linked come first.
     if(NOT APPLE)
         file(RELATIVE_PATH to_lib /p/${plugin_dir}/${subdir}
             /p/lib)
