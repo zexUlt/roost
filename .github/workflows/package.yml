@@ -236,7 +236,9 @@ jobs:
         run: tools/package_linux.sh build/${{ env.PRESET }} build/package
 
       - name: Check the AppImage
-        run: tools/check_appimage.sh build/package/roost-${{ matrix.arch }}.AppImage
+        run: |
+          command -v objdump >/dev/null || { sudo apt-get update && sudo apt-get install -y binutils; }
+          tools/check_appimage.sh build/package/roost-${{ matrix.arch }}.AppImage
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
