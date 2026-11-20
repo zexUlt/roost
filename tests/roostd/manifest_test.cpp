@@ -49,7 +49,8 @@ PluginManifest Plugin(const QString& id, const QStringList& commands,
         manifest.Commands.append({.Id = command, .Title = command});
     }
     for (const QString& key : keys) {
-        manifest.Keybindings.append({.Command = id + ".x", .Key = key});
+        manifest.Keybindings.append(
+            {.Command = id + ".x", .Key = key, .Mac = {}, .When = {}});
     }
     return manifest;
 }
@@ -96,7 +97,10 @@ private slots:
         QCOMPARE(manifest->Keybindings.size(), 1);
         QCOMPARE(manifest->Keybindings.front().Command,
                  QString("claude.newSession"));
-        QCOMPARE(manifest->Keybindings.front().Key, QString("Ctrl+N"));
+        QCOMPARE(manifest->Keybindings.front().Key.value_or(QString()),
+                 QString("Ctrl+N"));
+        QVERIFY(!manifest->Keybindings.front().Mac);
+        QVERIFY(manifest->Keybindings.front().When.isEmpty());
         QCOMPARE(manifest->Contributes.value("settings").toString(),
                  QString("qml/Settings.qml"));
         QCOMPARE(manifest->Contributes.value("panels").toArray().size(), 1);
@@ -392,15 +396,21 @@ private slots:
             << contributes("keybindings",
                            QJsonArray{QJsonObject{{"key", "Ctrl+N"}}})
             << "a keybinding needs";
-        QTest::newRow("keybinding with a blank key")
-            << Json(With(
-                   Minimal(), "contributes",
-                   QJsonObject{
-                       {"commands",
-                        QJsonArray{QJsonObject{{"id", "a.b"}, {"title", "T"}}}},
-                       {"keybindings", QJsonArray{QJsonObject{
-                                           {"command", "a.b"}, {"key", " "}}}},
-                   }))
+        QTest::newRow("keybinding with a key that is not a string")
+            << contributes("keybindings", QJsonArray{QJsonObject{
+                                              {"command", "a.b"}, {"key", 5}}})
+            << "a keybinding needs";
+        QTest::newRow("keybinding with a mac that is not a string")
+            << contributes("keybindings",
+                           QJsonArray{QJsonObject{{"command", "a.b"},
+                                                  {"key", "Ctrl+N"},
+                                                  {"mac", QJsonArray{}}}})
+            << "a keybinding needs";
+        QTest::newRow("keybinding with a when that is not a string")
+            << contributes(
+                   "keybindings",
+                   QJsonArray{QJsonObject{
+                       {"command", "a.b"}, {"key", "Ctrl+N"}, {"when", 1}}})
             << "a keybinding needs";
         QTest::newRow("keybinding to another plugin's command")
             << contributes("keybindings",
@@ -731,8 +741,18 @@ private slots:
         QCOMPARE(registry.KeyOwner("Ctrl+M")->Id, QString("two"));
         QVERIFY(!registry.KeyOwner("Ctrl+K"));
         QCOMPARE(registry.Problems(),
-                 QStringList{"key ctrl+n of plugin two is ignored: plugin one "
+                 QStringList{"key Ctrl+N of plugin two is ignored: plugin one "
                              "binds it"});
+    }
+
+    void KeysAreComparedParsed() {
+        PluginRegistry registry;
+        QVERIFY(registry.Add(Plugin("one", {"one.x"}, {"Ctrl+Shift+K"})));
+        QVERIFY(registry.Add(Plugin("two", {"two.x"}, {"shift+CTRL+k"})));
+        QCOMPARE(registry.KeyOwner("Shift+Ctrl+K")->Id, QString("one"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"key Ctrl+Shift+K of plugin two is ignored: "
+                             "plugin one binds it"});
     }
 
     void KeyBoundTwiceInOnePluginIsAProblem() {
@@ -740,15 +760,149 @@ private slots:
         QVERIFY(registry.Add(Plugin("one", {"one.x"}, {"Ctrl+N", "ctrl+N"})));
         QCOMPARE(registry.KeyOwner("Ctrl+N")->Id, QString("one"));
         QCOMPARE(registry.Problems(),
-                 QStringList{"key ctrl+N of plugin one is ignored: plugin one "
+                 QStringList{"key Ctrl+N of plugin one is ignored: plugin one "
                              "binds it"});
+    }
+
+    void SameKeyInDifferentPanelsBothRegister() {
+        PluginRegistry registry;
+        PluginManifest one = Plugin("one", {"one.x"});
+        one.Keybindings.append({.Command = "one.x",
+                                .Key = "J",
+                                .Mac = {},
+                                .When = "sessions.list"});
+        PluginManifest two = Plugin("two", {"two.x"});
+        two.Keybindings.append({.Command = "two.x",
+                                .Key = "J",
+                                .Mac = {},
+                                .When = "claude.transcript"});
+        PluginManifest three = Plugin("three", {"three.x"}, {"J"});
+        QVERIFY(registry.Add(one));
+        QVERIFY(registry.Add(two));
+        QVERIFY(registry.Add(three));
+        QCOMPARE(registry.KeyOwner("j", "sessions.list")->Id, QString("one"));
+        QCOMPARE(registry.KeyOwner("J", "claude.transcript")->Id,
+                 QString("two"));
+        QCOMPARE(registry.KeyOwner("J")->Id, QString("three"));
+        QVERIFY(!registry.KeyOwner("J", "other.panel"));
+        QVERIFY(registry.Problems().isEmpty());
+    }
+
+    void SamePairGoesToTheFirstPlugin() {
+        PluginRegistry registry;
+        const auto bind = [](const QString& id) {
+            PluginManifest plugin = Plugin(id, {id + ".x"});
+            plugin.Keybindings.append({.Command = id + ".x",
+                                       .Key = "J",
+                                       .Mac = {},
+                                       .When = "sessions.list"});
+            return plugin;
+        };
+        QVERIFY(registry.Add(bind("one")));
+        QVERIFY(registry.Add(bind("two")));
+        QCOMPARE(registry.KeyOwner("J", "sessions.list")->Id, QString("one"));
+        QCOMPARE(registry.Problems(),
+                 QStringList{"key J (when sessions.list) of plugin two is "
+                             "ignored: plugin one binds it"});
+    }
+
+    void MacReplacesKeyOnMacOnly() {
+        PluginManifest plugin = Plugin("one", {"one.x"});
+        plugin.Keybindings.append({.Command = "one.x",
+                                   .Key = "Ctrl+Shift+N",
+                                   .Mac = "Cmd+N",
+                                   .When = {}});
+        plugin.Keybindings.append({.Command = "one.x",
+                                   .Key = std::nullopt,
+                                   .Mac = "Cmd+W",
+                                   .When = {}});
+
+        PluginRegistry mac(EPlatform::Mac);
+        QVERIFY(mac.Add(plugin));
+        QCOMPARE(mac.KeyOwner("Cmd+N")->Id, QString("one"));
+        QCOMPARE(mac.KeyOwner("Cmd+W")->Id, QString("one"));
+        QVERIFY(!mac.KeyOwner("Ctrl+Shift+N"));
+        QVERIFY(mac.Problems().isEmpty());
+
+        PluginRegistry linux(EPlatform::Linux);
+        QVERIFY(linux.Add(plugin));
+        QCOMPARE(linux.KeyOwner("Ctrl+Shift+N")->Id, QString("one"));
+        // Only `mac`: not for this platform, and not a problem.
+        QVERIFY(!linux.KeyOwner("Cmd+W"));
+        QVERIFY(linux.Problems().isEmpty());
+    }
+
+    void UnparsableKeyIsAProblemAndTheRestLoads() {
+        PluginRegistry registry(EPlatform::Linux);
+        PluginManifest plugin = Plugin("one", {"one.x"}, {"Ctrl+N"});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = "Ctrl+Nope", .Mac = {}, .When = {}});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = "Cmd+K", .Mac = {}, .When = {}});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = " ", .Mac = {}, .When = {}});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = "Ctrl+M", .Mac = {}, .When = {}});
+        QVERIFY(registry.Add(plugin));
+        QVERIFY(registry.Find("one"));
+        QCOMPARE(registry.KeyOwner("Ctrl+N")->Id, QString("one"));
+        QCOMPARE(registry.KeyOwner("Ctrl+M")->Id, QString("one"));
+        QCOMPARE(registry.Problems().size(), 3);
+        QCOMPARE(registry.Problems()[0],
+                 QString("keybinding 1 of plugin one is ignored: \"key\": "
+                         "unknown key name \"Nope\" in \"Ctrl+Nope\""));
+        QVERIFY2(registry.Problems()[1].startsWith(
+                     "keybinding 2 of plugin one is ignored: \"key\": Cmd "
+                     "works on macOS only"),
+                 qPrintable(registry.Problems()[1]));
+        QCOMPARE(registry.Problems()[2],
+                 QString("keybinding 3 of plugin one is ignored: \"key\": "
+                         "the key is empty"));
+    }
+
+    void ManifestWithMacAndWhenIsReadAndRegistered() {
+        const QByteArray json = R"({
+          "id": "one", "version": "0.1.0", "api": "0",
+          "contributes": {
+            "commands": [{ "id": "one.x", "title": "X" }],
+            "keybindings": [
+              { "command": "one.x", "key": "Ctrl+Shift+N", "mac": "Cmd+N" },
+              { "command": "one.x", "key": "J", "when": "sessions.list" },
+              { "command": "one.x", "key": "Cmd+Oops" },
+              { "command": "one.x", "mac": "Cmd+W" }
+            ]
+          }
+        })";
+        const auto manifest = ParseManifest(json, "/plugins/one");
+        QVERIFY2(manifest, qPrintable(Why(manifest)));
+        QCOMPARE(manifest->Keybindings.size(), 4);
+        QCOMPARE(manifest->Keybindings[0].Key.value_or(QString()),
+                 QString("Ctrl+Shift+N"));
+        QCOMPARE(manifest->Keybindings[0].Mac.value_or(QString()),
+                 QString("Cmd+N"));
+        QVERIFY(manifest->Keybindings[0].When.isEmpty());
+        QCOMPARE(manifest->Keybindings[1].When, QString("sessions.list"));
+        QVERIFY(!manifest->Keybindings[1].Mac);
+        QVERIFY(!manifest->Keybindings[3].Key);
+        QCOMPARE(manifest->Keybindings[3].Mac.value_or(QString()),
+                 QString("Cmd+W"));
+
+        PluginRegistry registry(EPlatform::Mac);
+        QVERIFY(registry.Add(*manifest));
+        QCOMPARE(registry.KeyOwner("Cmd+N")->Id, QString("one"));
+        QCOMPARE(registry.KeyOwner("J", "sessions.list")->Id, QString("one"));
+        QCOMPARE(registry.KeyOwner("Cmd+W")->Id, QString("one"));
+        QCOMPARE(registry.Problems().size(), 1);
+        QVERIFY(registry.Problems().front().startsWith(
+            "keybinding 2 of plugin one is ignored:"));
     }
 
     void KeyOfALostCommandIsIgnored() {
         PluginRegistry registry;
         QVERIFY(registry.Add(Plugin("one", {"shared.run"})));
         PluginManifest two = Plugin("two", {"shared.run"});
-        two.Keybindings.append({.Command = "shared.run", .Key = "Ctrl+Q"});
+        two.Keybindings.append(
+            {.Command = "shared.run", .Key = "Ctrl+Q", .Mac = {}, .When = {}});
         QVERIFY(registry.Add(two));
         // Ctrl+Q would run plugin one's command.
         QVERIFY(!registry.KeyOwner("Ctrl+Q"));
