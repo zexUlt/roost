@@ -52,6 +52,16 @@ Dialog {
         id: bugReport
     }
 
+    // A Label that can be selected and copied: no frame, the font and the
+    // color of a Label.
+    component SelectableText: TextEdit {
+        readOnly: true
+        selectByMouse: true
+        selectByKeyboard: true
+        color: root.palette.windowText
+        font: root.font
+    }
+
     contentItem: ColumnLayout {
         spacing: 8
 
@@ -81,7 +91,7 @@ Dialog {
 
         Repeater {
             model: root.fileList
-            delegate: Label {
+            delegate: SelectableText {
                 required property var modelData
 
                 objectName: "fileEntry"
@@ -105,26 +115,26 @@ Dialog {
             onToggled: root.refresh()
         }
 
-        Label {
+        SelectableText {
             objectName: "errorText"
             Layout.fillWidth: true
-            wrapMode: Text.Wrap
+            wrapMode: TextEdit.Wrap
             color: "#b00020"
             text: bugReport.error
             visible: bugReport.error !== "" && !root.done
         }
 
-        Label {
+        SelectableText {
             objectName: "zipPathText"
             Layout.fillWidth: true
-            wrapMode: Text.WrapAnywhere
+            wrapMode: TextEdit.WrapAnywhere
             text: "Saved: " + bugReport.zipPath
             visible: root.done
         }
 
-        Label {
+        SelectableText {
             Layout.fillWidth: true
-            wrapMode: Text.Wrap
+            wrapMode: TextEdit.Wrap
             text: "Send us the zip: open an issue and attach it."
             visible: root.done
         }

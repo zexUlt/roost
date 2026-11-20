@@ -1,8 +1,8 @@
 // The "Report a Bug…" dialog in the window of the shell (Main.qml), offscreen:
-// the toolbar button and the shortcut open it, it takes a description and
-// writes the zip into a temporary directory. Show and Open are never pressed.
-// The logs and the settings are the ones of temporary directories
-// (ROOST_SOCKET, ROOST_CONFIG); HOME and Downloads are not touched.
+// the toolbar button (the Help menu on macOS) and the shortcut open it, it
+// takes a description and writes the zip into a temporary directory. Show and
+// Open are never pressed. The logs and the settings are the ones of temporary
+// directories (ROOST_SOCKET, ROOST_CONFIG); HOME and Downloads are not touched.
 
 #include <QDir>
 #include <QFile>
@@ -29,6 +29,31 @@ class BugReportDialogTest : public QObject {
     Q_OBJECT
 
 private:
+    // The item is read-only text that selects with the mouse and keyboard,
+    // and selectAll() takes `expected`.
+    static void ExpectSelectable(QQuickItem* item, const QString& expected) {
+        QVERIFY(item->property("readOnly").toBool());
+        QVERIFY(item->property("selectByMouse").toBool());
+        QVERIFY(item->property("selectByKeyboard").toBool());
+        QVERIFY(QMetaObject::invokeMethod(item, "selectAll"));
+        QVERIFY2(item->property("selectedText").toString().contains(expected),
+                 qPrintable(item->property("selectedText").toString()));
+    }
+
+    // The Repeater's delegates are children of the item, not of the QObject
+    // tree findChild() walks.
+    static QQuickItem* VisualChild(QQuickItem* parent, const QString& name) {
+        for (QQuickItem* child : parent->childItems()) {
+            if (child->objectName() == name) {
+                return child;
+            }
+            if (QQuickItem* found = VisualChild(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
     QObject* Dialog() {
         return Window_->findChild<QObject*>("bugReportDialog");
     }
@@ -69,7 +94,20 @@ private slots:
         Socket_.reset();
     }
 
-    void TheToolbarButtonOpensTheDialog() {
+    // Linux: the toolbar button. macOS: no toolbar, the Help menu item.
+    void TheToolbarOrTheHelpMenuOpensTheDialog() {
+#ifdef Q_OS_MACOS
+        auto* toolBar = Window_->findChild<QQuickItem*>("toolBar");
+        QVERIFY(toolBar != nullptr);
+        QVERIFY(!toolBar->isVisible());
+        QObject* item = Engine_->rootObjects().first()->findChild<QObject*>(
+            "reportBugMenuItem");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("text").toString(),
+                 QString::fromUtf8("Report a Bug…"));
+        QVERIFY(QMetaObject::invokeMethod(item, "triggered"));
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+#else
         auto* button = Window_->findChild<QQuickItem*>("reportBugButton");
         QVERIFY(button != nullptr);
         QCOMPARE(button->property("text").toString(),
@@ -80,6 +118,7 @@ private slots:
                 .toPoint();
         QTest::mouseClick(Window_, Qt::LeftButton, Qt::NoModifier, center);
         QTRY_VERIFY(Dialog()->property("visible").toBool());
+#endif
     }
 
     // macOS only (Cmd+Shift+B); elsewhere the key is the terminal program's.
@@ -97,6 +136,33 @@ private slots:
         QTest::qWait(200);
         QVERIFY(!Dialog()->property("visible").toBool());
 #endif
+    }
+
+    // The texts of the dialog can be selected and copied: read-only text
+    // with the mouse selection, not Labels.
+    void TheShownTextsAreSelectable() {
+        QMetaObject::invokeMethod(Window_, "reportBug");
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+
+        QQuickItem* entry = nullptr;
+        QTRY_VERIFY((entry = VisualChild(
+                         Dialog()->property("contentItem").value<QQuickItem*>(),
+                         "fileEntry")));
+        ExpectSelectable(entry, entry->property("text").toString());
+
+        Dialog()->setProperty("outputDirectory", Dir_.filePath("selectable"));
+        QVERIFY(QMetaObject::invokeMethod(
+            Window_->findChild<QObject*>("createButton"), "clicked"));
+        QVERIFY(Dialog()->property("done").toBool());
+        const QString zip = Dialog()
+                                ->property("report")
+                                .value<QObject*>()
+                                ->property("zipPath")
+                                .toString();
+        QVERIFY(!zip.isEmpty());
+        auto* saved = Window_->findChild<QQuickItem*>("zipPathText");
+        QVERIFY(saved != nullptr);
+        ExpectSelectable(saved, zip);
     }
 
     void TheDialogListsTheFilesAndWritesTheZip() {
