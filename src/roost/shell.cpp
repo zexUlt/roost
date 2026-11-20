@@ -348,7 +348,8 @@ void Shell::SetLink(Slot& slot, const PluginLoader::PanelInfo& info) {
 void Shell::OnRefused(const rpc::Error& error) {
     const QJsonObject data = error.Data.toObject();
     QString message = error.Message;
-    if (data.contains("protocol") || data.contains("ghosttyVt")) {
+    if (!data.contains("roostd") &&
+        (data.contains("protocol") || data.contains("ghosttyVt"))) {
         message += QStringLiteral(
                        " (roostd: protocol %1, libghostty-vt %2; this window: "
                        "protocol %3, libghostty-vt %4)")
@@ -361,10 +362,16 @@ void Shell::OnRefused(const rpc::Error& error) {
     }
     Mismatch_ =
         error.Code == static_cast<int>(protocol::EErrorCode::VersionMismatch);
+    // A roostd of this protocol that is not of this build: the client wrote
+    // `roostd` (its version, or null) into the data, and its message already
+    // names both versions and says to restart.
+    const bool otherBuild = Mismatch_ && data.contains("roostd");
     if (Mismatch_ && Launcher_ != nullptr) {
         message += QStringLiteral(
             "\nRestarting closes the warm terminals; Claude sessions keep "
             "running.");
+    } else if (otherBuild) {
+        message += QStringLiteral(". Then press Retry.");
     } else {
         message += QStringLiteral(". Restart roostd, then press Retry.");
     }

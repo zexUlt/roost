@@ -23,6 +23,7 @@
 #include "api/api.hpp"
 #include "api_test_support.hpp"
 #include "core/frame.hpp"
+#include "core/version.hpp"
 
 using namespace roost;
 using namespace roost::api_test;
@@ -109,7 +110,10 @@ private:
         const QString method = request.value("method").toString();
         const QJsonValue id = request.value("id");
         if (method == "hello") {
-            Send({{"jsonrpc", "2.0"}, {"id", id}, {"result", QJsonObject{}}});
+            Send({{"jsonrpc", "2.0"},
+                  {"id", id},
+                  {"result", QJsonObject{{"roostd", QString::fromStdString(
+                                                        VersionString())}}}});
         } else if (method == "bus.subscribe") {
             Send({{"jsonrpc", "2.0"},
                   {"id", id},

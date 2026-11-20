@@ -25,8 +25,9 @@ namespace roost {
 // roostd coming up and "startFailed" (the message is why) after a start that
 // failed, both only while the window is not connected, and "restarting" while
 // the launcher waits for the old roostd of a refusal to go),
-// `connectionMessage`, `restartOffered` (the refusal is VersionMismatch and
-// there is a launcher), `problems` (a list of strings); it gives the signals
+// `connectionMessage`, `restartOffered` (the refusal is VersionMismatch, from
+// roostd or for a roostd of another version than the window's, and there is a
+// launcher), `problems` (a list of strings); it gives the signals
 // `retryRequested()` and `restartRequested()` (the launcher replaces the
 // roostd, nothing else of the window moves). A slot takes `panel`, `error`,
 // `linkInput`, `linkOutput`.
@@ -115,7 +116,8 @@ private:
     QList<Slot> Slots_;
     QString Connection_;
     QString ConnectionMessage_;
-    // The last refusal was a VersionMismatch.
+    // The last refusal was a VersionMismatch (another protocol or library, or
+    // another version of roostd).
     bool Mismatch_ = false;
     bool Filling_ = false;
     bool FillAgain_ = false;

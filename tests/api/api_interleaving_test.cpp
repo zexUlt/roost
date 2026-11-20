@@ -24,6 +24,7 @@
 #include "api_test_support.hpp"
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
+#include "core/version.hpp"
 #include "helpers/roostd_process.hpp"
 
 using namespace roost;
@@ -146,7 +147,7 @@ private:
         const QString method = request.value("method").toString();
         const QJsonValue id = request.value("id");
         if (method == "hello") {
-            Reply(id, {});
+            Reply(id, {{"roostd", QString::fromStdString(VersionString())}});
         } else if (method == "bus.subscribe") {
             ++Subscriptions_;
             if (request.value("params").toObject().value("pattern") ==

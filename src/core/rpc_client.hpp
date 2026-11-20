@@ -37,9 +37,12 @@ public:
 
     // Connects and sends hello with the versions of this build. The future
     // yields hello's result or error: VersionMismatch from a roostd of
-    // another build, ConnectionLost if no roostd listens at the path (then its
-    // `data` is {"noListener": true}, protocol::NO_LISTENER_KEY). A
-    // refused hello drops the connection.
+    // another protocol or library, or one that answers but whose `roostd`
+    // version is not this build's VersionString() (or is missing; then
+    // `data` has `roostd`: the version, or null), ConnectionLost if no roostd
+    // listens at the path (then its `data` is {"noListener": true},
+    // protocol::NO_LISTENER_KEY). A refused hello, of either kind, drops the
+    // connection.
     QFuture<rpc::Result> Connect(const QString& socketPath);
 
     // Requests made while the connection is coming up wait for it; after it

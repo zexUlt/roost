@@ -258,6 +258,40 @@ void RpcClient::Dispatch(const QJsonValue& value) {
         return;
     }
     const QJsonValue result = message.value(QStringLiteral("result"));
+    if (*id == HelloId_) {
+        // The protocol and the library match, but a roostd left running from
+        // before an update is still not the build of this window (its plugin
+        // backends may sit in a deleted bundle): refuse it as roostd refuses
+        // another protocol, so that the window can offer the restart.
+        const QJsonValue theirs =
+            result.toObject().value(QStringLiteral("roostd"));
+        const QString ours = QString::fromStdString(VersionString());
+        if (!theirs.isString() || theirs.toString() != ours) {
+            // Null, not absent, when it is missing: the window tells this
+            // refusal from the one for the protocol by the key.
+            QJsonObject data{
+                {QStringLiteral("roostd"),
+                 theirs.isString() ? theirs : QJsonValue(QJsonValue::Null)}};
+            if (PeerPid_ > 0) {
+                data.insert(QLatin1String(protocol::PEER_PID_KEY), PeerPid_);
+            }
+            const QString text =
+                theirs.isString()
+                    ? QStringLiteral(
+                          "roostd %1 is not the version of this window %2; "
+                          "restart roostd")
+                          .arg(theirs.toString(), ours)
+                    : QStringLiteral(
+                          "roostd did not tell its version, this window is "
+                          "%1; restart roostd")
+                          .arg(ours);
+            Settle(promise,
+                   std::unexpected(protocol::MakeError(
+                       protocol::EErrorCode::VersionMismatch, text, data)));
+            Lose(QStringLiteral("roostd refused hello: %1").arg(text));
+            return;
+        }
+    }
     Settle(promise, result.isUndefined() ? QJsonValue() : result);
 }
 

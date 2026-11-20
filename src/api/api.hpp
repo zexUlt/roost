@@ -95,8 +95,9 @@ signals:
     // failed. Pending calls have failed with ConnectionLost. The attempts that
     // follow are silent until one succeeds.
     void Disconnected(const QString& reason);
-    // roostd answered hello with an error: VersionMismatch, or anything else
-    // but a lost connection. The attempts stop; Disconnected follows if it
+    // roostd answered hello with an error: VersionMismatch (also made by the
+    // client for a roostd of another version, RpcClient::Connect), or anything
+    // else but a lost connection. The attempts stop; Disconnected follows if it
     // has not been said. Connect starts them again.
     void Refused(const roost::rpc::Error& error);
 

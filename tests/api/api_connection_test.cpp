@@ -10,12 +10,16 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <unistd.h>
+
+#include <chrono>
 #include <memory>
 
 #include "api/api.hpp"
 #include "api_test_support.hpp"
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
+#include "core/version.hpp"
 #include "helpers/refusing_server.hpp"
 #include "helpers/roostd_process.hpp"
 
@@ -72,6 +76,67 @@ private slots:
                  static_cast<int>(protocol::EErrorCode::VersionMismatch));
         QCOMPARE(error.Data.toObject().value("ghosttyVt").toString(),
                  QString(roost::testing::RefusingServer::GHOSTTY_VT));
+        QCOMPARE(daemon.Hellos(), 1);
+        QVERIFY(connected.isEmpty());
+        QVERIFY(!api.IsConnected());
+    }
+
+    // The protocol and the library are the same, the build is not: the answer
+    // is a success on the wire, and the window refuses it as a mismatch.
+    void ADaemonOfAnotherVersionIsRefused() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        roost::testing::RefusingServer daemon;
+        daemon.SetAnswerWithVersion("0.0.1 (libghostty-vt 0.0.0)");
+        QVERIFY(daemon.Listen(dir.filePath("old.sock")));
+        api::Api api({.FirstReconnectDelay = std::chrono::milliseconds(20),
+                      .MaxReconnectDelay = std::chrono::milliseconds(40)});
+        QSignalSpy refused(&api, &api::Api::Refused);
+        QSignalSpy connected(&api, &api::Api::Connected);
+        api.Connect(dir.filePath("old.sock"));
+        QVERIFY(!refused.isEmpty() || refused.wait(TIMEOUT_MS));
+        const auto error = qvariant_cast<rpc::Error>(refused.at(0).at(0));
+        QCOMPARE(error.Code,
+                 static_cast<int>(protocol::EErrorCode::VersionMismatch));
+        QVERIFY2(error.Message.contains("0.0.1 (libghostty-vt 0.0.0)"),
+                 qPrintable(error.Message));
+        QVERIFY2(
+            error.Message.contains(QString::fromStdString(VersionString())),
+            qPrintable(error.Message));
+        QCOMPARE(error.Data.toObject().value("roostd").toString(),
+                 QString("0.0.1 (libghostty-vt 0.0.0)"));
+        // The peer is the fake, which is this process.
+        QCOMPARE(error.Data.toObject().value("peerPid").toInteger(),
+                 static_cast<qint64>(::getpid()));
+        QCOMPARE(api.RefusedPeerPid(), static_cast<qint64>(::getpid()));
+        QVERIFY(!api.IsConnected());
+        // No retry of its own.
+        QTest::qWait(300);
+        QCOMPARE(daemon.Hellos(), 1);
+        QCOMPARE(refused.size(), 1);
+        QVERIFY(connected.isEmpty());
+        QVERIFY(!api.IsConnected());
+    }
+
+    void ADaemonThatDoesNotTellItsVersionIsRefused() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        roost::testing::RefusingServer daemon;
+        daemon.SetAnswerWithoutVersion();
+        QVERIFY(daemon.Listen(dir.filePath("old.sock")));
+        api::Api api({.FirstReconnectDelay = std::chrono::milliseconds(20),
+                      .MaxReconnectDelay = std::chrono::milliseconds(40)});
+        QSignalSpy refused(&api, &api::Api::Refused);
+        QSignalSpy connected(&api, &api::Api::Connected);
+        api.Connect(dir.filePath("old.sock"));
+        QVERIFY(!refused.isEmpty() || refused.wait(TIMEOUT_MS));
+        const auto error = qvariant_cast<rpc::Error>(refused.at(0).at(0));
+        QCOMPARE(error.Code,
+                 static_cast<int>(protocol::EErrorCode::VersionMismatch));
+        QVERIFY(error.Data.toObject().contains("roostd"));
+        QVERIFY(error.Data.toObject().value("roostd").isNull());
+        QCOMPARE(api.RefusedPeerPid(), static_cast<qint64>(::getpid()));
+        QTest::qWait(300);
         QCOMPARE(daemon.Hellos(), 1);
         QVERIFY(connected.isEmpty());
         QVERIFY(!api.IsConnected());

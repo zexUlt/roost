@@ -274,6 +274,66 @@ private slots:
         QCOMPARE(Starts_, 1);
     }
 
+    // The old roostd answers hello with success but is of another build (an
+    // update replaced the app under it): the same banner and the same restart
+    // as for a refusal, nothing moves without the click.
+    void ADaemonOfAnotherBuildGetsTheBannerAndTheRestart() {
+        StartOld({"--exit-delay", "300", "--answer-version",
+                  "0.0.1 (libghostty-vt 0.0.0)"});
+        const qint64 oldPid = Old_->processId();
+        Boot();
+        WaitRefused();
+        QVERIFY(Visible("restartButton"));
+        QVERIFY2(BannerText().contains("0.0.1 (libghostty-vt 0.0.0)"),
+                 qPrintable(BannerText()));
+        QVERIFY2(BannerText().contains("warm terminals"),
+                 qPrintable(BannerText()));
+        QCOMPARE(Api_->RefusedPeerPid(), oldPid);
+        QTest::qWait(QUIET_MS);
+        QVERIFY(OldAlive());
+        QVERIFY(!QFile::exists(Marker()));
+        QCOMPARE(Starts_, 0);
+
+        Click("restartButton");
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(Marker()), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Old_->state(), QProcess::NotRunning,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Connection(), QString("connected"),
+                                  TIMEOUT_MS);
+        QVERIFY(!Visible("restartButton"));
+        const qint64 newPid = testing::DetachedDaemons::PidOf(Lock());
+        QVERIFY(newPid > 1);
+        QVERIFY(newPid != oldPid);
+        QCOMPARE(Starts_, 1);
+    }
+
+    // A roostd that does not tell its version counts as another build.
+    void ADaemonWithoutAVersionGetsTheRestartToo() {
+        StartOld({"--answer-no-version"});
+        Boot();
+        WaitRefused();
+        QVERIFY(Visible("restartButton"));
+        QVERIFY2(BannerText().contains("did not tell its version"),
+                 qPrintable(BannerText()));
+        QTest::qWait(QUIET_MS);
+        QVERIFY(OldAlive());
+        QCOMPARE(Starts_, 0);
+    }
+
+    // --no-spawn: the text does not repeat "restart roostd".
+    void ADaemonOfAnotherBuildWithoutALauncherHasNoButton() {
+        StartOld({"--answer-version", "0.0.1 (libghostty-vt 0.0.0)"});
+        Boot(false);
+        WaitRefused();
+        QVERIFY(Visible("retryButton"));
+        QVERIFY(!Visible("restartButton"));
+        QVERIFY2(BannerText().contains("0.0.1 (libghostty-vt 0.0.0)"),
+                 qPrintable(BannerText()));
+        QVERIFY2(!BannerText().contains("Restart roostd"),
+                 qPrintable(BannerText()));
+        QVERIFY(OldAlive());
+    }
+
     // A window from the desktop has not read the login environment when the
     // roostd it meets refuses it: the click reads it, then starts roostd with
     // it.

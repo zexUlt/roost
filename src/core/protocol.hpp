@@ -15,7 +15,8 @@ inline constexpr int VERSION = 1;
 // Errors of roostd and its client, in the range JSON-RPC leaves to servers.
 enum class EErrorCode : int {
     HandshakeRequired = -32000,   // a method other than hello before hello
-    VersionMismatch = -32001,     // hello with another protocol or library
+    VersionMismatch = -32001,     // hello with another protocol or library,
+                                  // or answered by another roostd version
     ConnectionLost = -32002,      // client side: the socket went away
     BackendUnavailable = -32003,  // the plugin's backend is not running
     StoreFailed = -32004,         // reading or writing a plugin's state failed

@@ -31,6 +31,16 @@ public:
     // refusal the window must not offer a restart for.
     void SetCode(protocol::EErrorCode code) { Code_ = code; }
 
+    // Answers hello successfully, as a roostd of this protocol and library
+    // but of another build does: `{protocol, ghosttyVt, roostd}` with the given
+    // `roostd`; the other call answers without one (a v0.1.0-style answer
+    // that lost the field). Neither is a refusal by the server.
+    void SetAnswerWithVersion(const QString& roostd) {
+        Answers_ = EAnswers::WithVersion;
+        RoostdVersion_ = roostd;
+    }
+    void SetAnswerWithoutVersion() { Answers_ = EAnswers::WithoutVersion; }
+
     // The hellos answered so far, over all connections.
     int Hellos() const { return Hellos_; }
 
@@ -39,6 +49,8 @@ public:
     static constexpr const char* GHOSTTY_VT = "0.0.0-refusing";
 
 private:
+    enum class EAnswers { Refuse, WithVersion, WithoutVersion };
+
     void OnConnection();
     void OnReadyRead(QLocalSocket* socket);
 
@@ -47,6 +59,8 @@ private:
     std::map<QLocalSocket*, FrameDecoder> Decoders_;
     int Hellos_ = 0;
     bool OmitData_ = false;
+    EAnswers Answers_ = EAnswers::Refuse;
+    QString RoostdVersion_;
     protocol::EErrorCode Code_ = protocol::EErrorCode::VersionMismatch;
 };
 

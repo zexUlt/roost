@@ -36,6 +36,20 @@ void RefusingServer::OnReadyRead(QLocalSocket* socket) {
         const QJsonObject request =
             QJsonDocument::fromJson(frame->Body).object();
         ++Hellos_;
+        if (Answers_ != EAnswers::Refuse) {
+            QJsonObject result{{"protocol", protocol::VERSION},
+                               {"ghosttyVt", QLatin1String(GHOSTTY_VT)}};
+            if (Answers_ == EAnswers::WithVersion) {
+                result.insert("roostd", RoostdVersion_);
+            }
+            const QJsonObject answer{{"jsonrpc", "2.0"},
+                                     {"id", request.value("id")},
+                                     {"result", result}};
+            socket->write(*EncodeFrame(
+                EFrameKind::Rpc,
+                QJsonDocument(answer).toJson(QJsonDocument::Compact)));
+            continue;
+        }
         const rpc::Error error = protocol::MakeError(
             Code_,
             QStringLiteral("roostd speaks protocol %1 with libghostty-vt %2; "

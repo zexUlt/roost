@@ -24,6 +24,7 @@
 #include "api_test_support.hpp"
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
+#include "core/version.hpp"
 #include "helpers/roostd_process.hpp"
 
 using namespace roost;
@@ -107,7 +108,9 @@ private:
             answer.insert("error", QJsonObject{{"code", error.Code},
                                                {"message", error.Message}});
         } else {
-            answer.insert("result", QJsonObject{});
+            answer.insert("result",
+                          QJsonObject{{"roostd", QString::fromStdString(
+                                                     VersionString())}});
         }
         Socket_->write(
             *EncodeFrame(EFrameKind::Rpc,

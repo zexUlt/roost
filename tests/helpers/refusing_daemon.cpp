@@ -6,13 +6,16 @@
 // otherwise.
 //
 //   refusing_daemon <socket> [--ignore-term] [--exit-delay <ms>]
-//                   [--marker <file>]
+//                   [--marker <file>] [--answer-version <roostd>]
+//                   [--answer-no-version]
 //
 // SIGTERM creates the marker file. Without --ignore-term it then ends as
 // roostd does: the socket closes, then the lock is released. With it SIGTERM
 // changes nothing else, so that the test can tell that the signal came and
 // that the process is still there. --exit-delay keeps the socket and the lock
-// for that long after SIGTERM, as a roostd that is busy stopping does. Prints
+// for that long after SIGTERM, as a roostd that is busy stopping does.
+// --answer-version and --answer-no-version make it answer hello successfully
+// with that `roostd` version, or with none: a roostd of another build. Prints
 // "ready" when it listens.
 
 #include <QCoreApplication>
@@ -27,6 +30,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <optional>
 
 #include "helpers/refusing_server.hpp"
 
@@ -62,6 +66,8 @@ int main(int argc, char* argv[]) {
     }
     QByteArray marker;
     int exitDelayMs = 0;
+    std::optional<QString> answerVersion;
+    bool answerNoVersion = false;
     for (qsizetype i = 2; i < arguments.size(); ++i) {
         if (arguments[i] == QLatin1String("--marker") &&
             i + 1 < arguments.size()) {
@@ -69,6 +75,11 @@ int main(int argc, char* argv[]) {
         } else if (arguments[i] == QLatin1String("--exit-delay") &&
                    i + 1 < arguments.size()) {
             exitDelayMs = arguments[++i].toInt();
+        } else if (arguments[i] == QLatin1String("--answer-version") &&
+                   i + 1 < arguments.size()) {
+            answerVersion = arguments[++i];
+        } else if (arguments[i] == QLatin1String("--answer-no-version")) {
+            answerNoVersion = true;
         } else if (arguments[i] == QLatin1String("--ignore-term")) {
             IGNORE_TERM = true;
         } else {
@@ -105,6 +116,11 @@ int main(int argc, char* argv[]) {
     {
         // Closes the socket before the lock is released.
         roost::testing::RefusingServer server;
+        if (answerVersion) {
+            server.SetAnswerWithVersion(*answerVersion);
+        } else if (answerNoVersion) {
+            server.SetAnswerWithoutVersion();
+        }
         if (!server.Listen(socket)) {
             std::fputs("refusing_daemon: cannot listen\n", stderr);
             code = 5;

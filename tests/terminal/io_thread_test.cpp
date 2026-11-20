@@ -32,6 +32,7 @@
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
 #include "core/rpc_client.hpp"
+#include "core/version.hpp"
 #include "helpers/process_lifeline.hpp"
 #include "terminal/io_thread.hpp"
 
@@ -123,8 +124,9 @@ int AnswersSeen(const OpenedSession& opened) {
     return match.hasMatch() ? match.captured(1).toInt() : 0;
 }
 
-// A stand-in for roostd that answers every request with an empty result,
-// session.open with channel 7, and sends nothing else.
+// A stand-in for roostd that answers every request with a result that has only
+// the version of this build, session.open with channel 7, and sends nothing
+// else.
 class AnswersOnlyServer : public QObject {
 public:
     bool Listen(const QString& path) {
@@ -156,7 +158,8 @@ private:
             const QJsonValue result =
                 method == QStringLiteral("session.open")
                     ? QJsonValue(QJsonObject{{"channel", 7}})
-                    : QJsonValue(QJsonObject{});
+                    : QJsonValue(QJsonObject{
+                          {"roostd", QString::fromStdString(VersionString())}});
             const QJsonObject answer{{"jsonrpc", "2.0"},
                                      {"id", request.value("id")},
                                      {"result", result}};
