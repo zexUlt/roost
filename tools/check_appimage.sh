@@ -186,6 +186,21 @@ else
     fail "objdump is missing: the AVX-512 check cannot run (install binutils)"
 fi
 
+# --- icon ------------------------------------------------------------------
+# linuxdeploy links the hicolor icon nearest to 64 px to the root of the
+# AppDir, and appimagetool links .DirIcon to it from the Icon= of the desktop
+# file: file managers and the AppImage tools show that.
+if [ -s "$appdir/.DirIcon" ] && [ -s "$appdir/roost.png" ] &&
+    [ "$(head -c8 "$appdir/.DirIcon" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]; then
+    ok ".DirIcon is a PNG (roost.png)"
+else
+    fail ".DirIcon is missing, empty or not a PNG (or roost.png is missing)"
+fi
+for size in 16 32 48 64 128 256 512; do
+    [ -s "$appdir/usr/share/icons/hicolor/${size}x${size}/apps/roost.png" ] ||
+        fail "usr/share/icons/hicolor/${size}x${size}/apps/roost.png is missing"
+done
+
 # --- licences --------------------------------------------------------------
 licenses=$appdir/usr/share/licenses/roost
 for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt ICU-LICENSE.txt; do

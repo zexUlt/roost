@@ -21,6 +21,7 @@
 #include "roost/plugin_watcher.hpp"
 #include "roost/shell.hpp"
 #include "roost/single_session.hpp"
+#include "roost/window_icon.hpp"
 #include "roost/window_log.hpp"
 
 namespace {
@@ -156,6 +157,7 @@ int main(int argc, char* argv[]) {
         roost::WindowLogPath(roost::protocol::SocketPath()));
     roost::LogWindowStartup();
     QCoreApplication::setApplicationName(QStringLiteral("roost"));
+    roost::InstallWindowIcon();
     QCoreApplication::setApplicationVersion(
         QString::fromStdString(roost::VersionString()));
 

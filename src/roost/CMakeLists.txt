@@ -17,10 +17,25 @@ add_library(roost_app STATIC
     shell.hpp
     single_session.cpp
     single_session.hpp
+    window_icon.cpp
+    window_icon.hpp
     window_log.cpp
     window_log.hpp
 )
 target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick)
+
+# The icon of the window: the PNGs of the Linux package, so that there is one
+# set of files to replace (tools/make_icons.sh). PNG, not SVG: no image plugin.
+set(_roost_icons ${PROJECT_SOURCE_DIR}/packaging/linux/icons/hicolor)
+set(_roost_icon_files)
+foreach(size 16 32 48 64 128 256 512)
+    set(file ${_roost_icons}/${size}x${size}/apps/roost.png)
+    set_source_files_properties(${file} PROPERTIES QT_RESOURCE_ALIAS ${size}.png)
+    list(APPEND _roost_icon_files ${file})
+endforeach()
+qt_add_resources(roost_app window_icons
+    PREFIX /roost/icons
+    FILES ${_roost_icon_files})
 
 # The QML of the window, as a static library so that the tests can load
 # Main.qml too (an executable cannot be linked). Link roost_shell and
