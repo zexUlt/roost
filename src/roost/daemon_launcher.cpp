@@ -28,10 +28,14 @@ DaemonLauncher::Command DaemonLauncher::DefaultCommand(
                       QCoreApplication::applicationDirPath());
 }
 
+QString DaemonLauncher::LogDirectory(const QString& socketPath) {
+    return QFileInfo(socketPath).absolutePath();
+}
+
 DaemonLauncher::Command DaemonLauncher::CommandFor(
     const QString& socketPath, const QString& appImage, const QString& appDir,
     const QString& executableDir) {
-    const QString dir = QFileInfo(socketPath).absolutePath();
+    const QString dir = LogDirectory(socketPath);
     const QString log = dir + QStringLiteral("/roostd.log");
     const QString startLog = dir + QStringLiteral("/roostd.start.log");
     // An APPIMAGE of another app's environment does not count: this

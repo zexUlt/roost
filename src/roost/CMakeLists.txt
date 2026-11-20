@@ -1,6 +1,8 @@
 # The window's controllers that are not QML types; shared by the executable and
 # the tests.
 add_library(roost_app STATIC
+    bug_report.cpp
+    bug_report.hpp
     daemon_launcher.cpp
     daemon_launcher.hpp
     login_environment.cpp
@@ -27,10 +29,11 @@ qt_add_library(roost_shell STATIC)
 qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
-    QML_FILES Main.qml PanelSlot.qml SessionMain.qml
+    QML_FILES BugReportDialog.qml Main.qml PanelSlot.qml SessionMain.qml
+    SOURCES bug_report_controller.cpp bug_report_controller.hpp
     NO_CACHEGEN
 )
-target_link_libraries(roost_shell PUBLIC Qt6::Quick)
+target_link_libraries(roost_shell PUBLIC roost_app Qt6::Quick)
 
 qt_add_executable(roost
     main.cpp

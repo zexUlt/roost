@@ -172,6 +172,24 @@ stderr at once on a loader problem (for example a missing QML import such as
 no session and changes nothing beyond what the window writes when it shows
 the list.
 
+### Reporting a bug
+
+Click "Report a Bug…" in the toolbar, press `Cmd+Shift+B` (`Ctrl+Shift+B` on
+Linux) or choose Help → "Report a Bug…" (macOS). Describe the problem and press
+Create. roost writes `roost-bug-<YYYYMMDD-HHMMSS>.zip` to your Downloads folder
+(your home directory if there is none) and never overwrites an earlier zip.
+Nothing is sent: "Show in Finder" (Linux: "Show in Folder") reveals the zip, and
+"Open GitHub Issue" opens a new issue in the browser with your text in it, so
+attach the zip there.
+
+The zip holds `about.txt` (versions of roost and Qt, OS, kernel, CPU, graphics
+API, the socket path), `description.txt` and, if they exist, the logs next to the
+socket: `roostd.log`, `roostd.log.1`, `roostd.start.log`, `roost.log`,
+`roost.log.1`. Logs may contain paths and session names: read them before you
+send. The settings (the files of `~/.config/roost` or `$XDG_CONFIG_HOME/roost`
+that roostd's store writes, `*.json`) go in only if you tick "Include settings";
+they are off by default.
+
 ## License
 
 Apache-2.0, see `LICENSE`. Third-party components and their licences are listed

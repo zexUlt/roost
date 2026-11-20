@@ -38,9 +38,34 @@ Window {
     visible: true
     title: "roost"
 
+    // Opens the bug report dialog; the toolbar button, the shortcut and the
+    // menu of macOS call it.
+    function reportBug() {
+        bugReportDialog.open();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        ToolBar {
+            objectName: "toolBar"
+            Layout.fillWidth: true
+
+            RowLayout {
+                anchors.fill: parent
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                ToolButton {
+                    objectName: "reportBugButton"
+                    text: "Report a Bug…"
+                    onClicked: root.reportBug()
+                }
+            }
+        }
 
         Rectangle {
             id: banner
@@ -195,5 +220,36 @@ Window {
         context: Qt.WindowShortcut
         sequence: Qt.platform.os === "osx" ? "Meta+\\" : "Ctrl+\\"
         onActivated: listSlot.forceActiveFocus()
+    }
+
+    BugReportDialog {
+        id: bugReportDialog
+
+        window: root
+    }
+
+    // Cmd+Shift+B on macOS. The terminal does not take it: TerminalItem
+    // leaves ShortcutOverride alone, so the shortcut fires from there too.
+    Shortcut {
+        context: Qt.WindowShortcut
+        sequence: "Ctrl+Shift+B"
+        onActivated: root.reportBug()
+    }
+
+    // The menu bar only where Qt Quick Controls makes it native (macOS):
+    // elsewhere MenuBar would draw a bar inside the window.
+    Loader {
+        active: Qt.platform.os === "osx"
+        sourceComponent: MenuBar {
+            Menu {
+                title: "Help"
+
+                MenuItem {
+                    objectName: "reportBugMenuItem"
+                    text: "Report a Bug…"
+                    onTriggered: root.reportBug()
+                }
+            }
+        }
     }
 }

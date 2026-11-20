@@ -574,3 +574,10 @@ target_compile_definitions(daemon_restart_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     REFUSING_DAEMON_PATH="$<TARGET_FILE:refusing_daemon>")
 add_dependencies(daemon_restart_test roostd refusing_daemon)
+
+# The bug report: the zip writer with the system's unzip, then the dialog of the
+# window (toolbar button, shortcut, Create) in Main.qml, offscreen; no roostd.
+roost_add_qt_test(bug_report_test roost/bug_report_test.cpp roost_app)
+roost_add_qt_test(bug_report_dialog_test roost/bug_report_dialog_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
