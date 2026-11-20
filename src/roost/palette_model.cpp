@@ -10,7 +10,6 @@
 
 #include "api/keymap_service.hpp"
 #include "qml_api/roost_singleton.hpp"
-#include "roost/shell.hpp"
 
 namespace roost {
 
@@ -47,13 +46,15 @@ bool IsLetter(const QString& key) {
     return key.size() == 1 && key.front().isLetter();
 }
 
+// The panel type of the built-in terminal, as `when` names it.
+constexpr QLatin1StringView TERMINAL_PANEL{"terminal.view"};
+
 // Whether the key is one that the terminal needs (design.md §16, "Ввод
 // текста"): Ctrl with a letter is a control character for the program, and
 // Alt with a letter types a character on macOS. Only a key that is active in
 // the terminal can take it from there.
 bool CapturesInput(const TableKey& key, EPlatform platform) {
-    if (!key.When.isEmpty() &&
-        key.When != QString::fromLatin1(Shell::TERMINAL_PANEL)) {
+    if (!key.When.isEmpty() && key.When != TERMINAL_PANEL) {
         return false;
     }
     if (!IsLetter(key.Chord.Key)) {
