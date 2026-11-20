@@ -266,6 +266,13 @@ bool TerminalItem::ensurePane() {
     pane->SetVisible(isVisible());
     connect(this, &TerminalItem::input, pane, &SessionPane::SendInput);
     connect(this, &TerminalItem::gridSizeChanged, pane, [this, pane] {
+        // A layout that is being rearranged gives the item no size for a
+        // moment: the grid is 1x1 then, and the PTY keeps its size rather
+        // than go 1x1 and back, which the program sees and the terminals
+        // reflow their text through.
+        if (width() <= 0 || height() <= 0) {
+            return;
+        }
         pane->SetGrid(static_cast<quint16>(Columns_),
                       static_cast<quint16>(Rows_));
     });

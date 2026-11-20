@@ -407,6 +407,28 @@ private slots:
             Screen(SessionOf()).contains(SizeLine(100, 30)), TIMEOUT_MS);
     }
 
+    // A layout that is being rearranged gives the item no size for a moment;
+    // the PTY must not be sized 1x1 for it: the program redraws for that, and
+    // the terminals reflow their text through it and back.
+    void AnItemWithoutASizeLeavesThePtyAlone() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML));
+        Page_->setProperty("ref", Ref("fast-agent", "s1"));
+        SettleOpen();
+        Item_->forceActiveFocus();
+        QVERIFY(QTest::qWaitFor([&] { return Item_->hasActiveFocus(); }));
+
+        Page_->setSize(QSizeF(0, 0));
+        QCOMPARE(Item_->columns(), 1);
+        // Behind the resize on the connection, so that when fake_tui has
+        // answered it again, it has drawn its size for any resize before.
+        QTest::keyClick(Window_.get(), 'q');
+
+        QTRY_VERIFY_WITH_TIMEOUT(Screen(SessionOf()).contains(ANSWERED_TWICE),
+                                 TIMEOUT_MS);
+        QVERIFY(Screen(SessionOf()).contains(SizeLine(COLUMNS, ROWS)));
+    }
+
     void ATuiThatExitsEndsTheStatusAndEnterReopensWithReopen() {
         QVERIFY(Prepare());
         QVERIFY(ShowPage(QML));
