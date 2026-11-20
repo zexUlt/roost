@@ -9,7 +9,10 @@
 
 #include <expected>
 #include <optional>
+#include <utility>
 #include <vector>
+
+#include "core/key_chord.hpp"
 
 namespace roost {
 
@@ -22,9 +25,17 @@ struct PluginCommand {
     QString Title;
 };
 
+// As declared: the registry parses the chords (design.md §16), so a broken one
+// costs this keybinding and not the manifest. At least one of Key and Mac is
+// set.
 struct PluginKeybinding {
     QString Command;
-    QString Key;
+    // Applies on every platform, and on macOS unless Mac is set.
+    std::optional<QString> Key;
+    // Replaces Key on macOS.
+    std::optional<QString> Mac;
+    // The panel type that must have focus; empty for any panel.
+    QString When;
 };
 
 // An agent the plugin's backend serves (design.md §7).
@@ -99,12 +110,19 @@ QStringList FindPluginDirectories(const QStringList& searchPath);
 // earlier plugin wins a conflict: a second plugin with a taken id is not
 // loaded, and a command id, an agent id or a key that is taken stays with its
 // first owner, and so do the keys bound to it. Every refusal is kept as a
-// problem for the user to see. Keys are compared ignoring case; their full
-// normal form comes with the keymap (M6).
+// problem for the user to see. A key is the pair (parsed chord, `when`): the
+// same chord in two panels is two keys, and Shift+Ctrl+N is Ctrl+Shift+N. A
+// keybinding whose chord does not parse is a problem and does not act; the
+// plugin and its other keybindings load.
 //
 // The pointers and the reference it hands out are good until the next Add.
 class PluginRegistry {
 public:
+    // `platform` is the one whose chords count: a keybinding with only `mac`
+    // does not act on Linux.
+    explicit PluginRegistry(EPlatform platform = HostPlatform())
+        : Platform_(platform) {}
+
     // False if the plugin is refused for its id.
     bool Add(PluginManifest manifest);
 
@@ -120,8 +138,13 @@ public:
     // The plugin that serves this agent, or null.
     const PluginManifest* AgentOwner(const QString& agentId) const;
 
-    // The plugin whose binding of this key counts, or null.
-    const PluginManifest* KeyOwner(const QString& key) const;
+    // The plugin whose binding of this chord, in the panel type `when` (empty
+    // for any panel), counts, or null. A `key` that does not parse has no
+    // owner.
+    const PluginManifest* KeyOwner(const QString& key,
+                                   const QString& when = {}) const;
+    const PluginManifest* KeyOwner(const KeyChord& chord,
+                                   const QString& when = {}) const;
 
     // In load order.
     const std::vector<PluginManifest>& Plugins() const { return Plugins_; }
@@ -132,9 +155,11 @@ private:
     std::vector<PluginManifest> Plugins_;
     QHash<QString, std::size_t> ById_;
     QHash<QString, std::size_t> Commands_;
+    // By KeyOf(chord, when).
     QHash<QString, std::size_t> Keys_;
     QHash<QString, std::size_t> Agents_;
     QStringList Problems_;
+    EPlatform Platform_;
 };
 
 }  // namespace roost

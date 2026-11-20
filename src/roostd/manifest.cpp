@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "core/bus.hpp"
+#include "core/key_chord.hpp"
 #include "core/store.hpp"
 
 namespace roost {
@@ -184,22 +185,42 @@ Checked ParseKeybindings(const QJsonValue& value, PluginManifest& manifest) {
         const QJsonObject binding = entry.toObject();
         const QJsonValue command = binding.value("command");
         const QJsonValue key = binding.value("key");
-        if (!IsValidCommandId(command) || !key.isString() ||
-            key.toString().trimmed().isEmpty()) {
-            return Fail(
-                QStringLiteral("a keybinding needs a command id and a key"));
+        const QJsonValue mac = binding.value("mac");
+        const QJsonValue when = binding.value("when");
+        // What the chords say is the registry's to judge; here only that
+        // there is something to judge.
+        if (!IsValidCommandId(command) ||
+            (!key.isString() && !mac.isString()) ||
+            (!key.isUndefined() && !key.isString()) ||
+            (!mac.isUndefined() && !mac.isString()) ||
+            (!when.isUndefined() && !when.isString())) {
+            return Fail(QStringLiteral(
+                "a keybinding needs a command id, and a \"key\" or a "
+                "\"mac\" that is a string, and a \"when\" that is a string "
+                "if present"));
         }
         const bool declared = std::ranges::any_of(
             manifest.Commands, [&](const PluginCommand& own) {
                 return own.Id == command.toString();
             });
         if (!declared) {
-            return Fail(QStringLiteral("key %1 is bound to %2, a command the "
-                                       "plugin does not declare")
-                            .arg(key.toString(), command.toString()));
+            return Fail(
+                QStringLiteral("key %1 is bound to %2, a command the "
+                               "plugin does not declare")
+                    .arg(key.isString() ? key.toString() : mac.toString(),
+                         command.toString()));
         }
-        manifest.Keybindings.append(
-            {.Command = command.toString(), .Key = key.toString()});
+        PluginKeybinding parsed{.Command = command.toString(),
+                                .Key = std::nullopt,
+                                .Mac = std::nullopt,
+                                .When = when.toString()};
+        if (key.isString()) {
+            parsed.Key = key.toString();
+        }
+        if (mac.isString()) {
+            parsed.Mac = mac.toString();
+        }
+        manifest.Keybindings.append(std::move(parsed));
     }
     return {};
 }
@@ -260,6 +281,17 @@ Checked CheckWindowParts(const QJsonObject& contributes,
                            "inside the plugin directory"));
     }
     return {};
+}
+
+// The key of a binding in the table: the chord in its normal text and the
+// panel type, which cannot hold a NUL.
+QString KeyOf(const KeyChord& chord, const QString& when) {
+    return WriteKeyChord(chord) + QChar(u'\0') + when;
+}
+
+// The chord as the user wrote it, for a message.
+QString Written(const PluginKeybinding& binding) {
+    return binding.Key ? *binding.Key : binding.Mac.value_or(QString());
 }
 
 }  // namespace
@@ -440,7 +472,10 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         }
         Commands_.insert(command.Id, index);
     }
-    for (const PluginKeybinding& binding : manifest.Keybindings) {
+    for (qsizetype position = 0; position < manifest.Keybindings.size();
+         ++position) {
+        const PluginKeybinding& binding = manifest.Keybindings[position];
+        const QString written = Written(binding);
         // A key runs the command of whoever owns it, so a plugin binds only
         // the commands it kept.
         if (const auto command = Commands_.constFind(binding.Command);
@@ -449,19 +484,35 @@ bool PluginRegistry::Add(PluginManifest manifest) {
                 command == Commands_.cend()
                     ? QStringLiteral("key %1 of plugin %2 is ignored: the "
                                      "plugin has no command %3")
-                          .arg(binding.Key, manifest.Id, binding.Command)
+                          .arg(written, manifest.Id, binding.Command)
                     : QStringLiteral("key %1 of plugin %2 is ignored: its "
                                      "command %3 belongs to plugin %4")
-                          .arg(binding.Key, manifest.Id, binding.Command,
+                          .arg(written, manifest.Id, binding.Command,
                                ownerOf(*command)));
             continue;
         }
-        const QString key = binding.Key.toLower();
+        const auto chord = ChooseKeyChord(binding.Key, binding.Mac, Platform_);
+        if (!chord) {
+            Problems_.append(
+                QStringLiteral("keybinding %1 of plugin %2 is ignored: %3")
+                    .arg(position)
+                    .arg(manifest.Id, chord.error()));
+            continue;
+        }
+        if (!*chord) {
+            // Only a `mac` on Linux: it is for the other platform.
+            continue;
+        }
+        const QString key = KeyOf(**chord, binding.When);
         if (const auto taken = Keys_.constFind(key); taken != Keys_.cend()) {
             Problems_.append(
-                QStringLiteral("key %1 of plugin %2 is ignored: plugin %3 "
+                QStringLiteral("key %1%2 of plugin %3 is ignored: plugin %4 "
                                "binds it")
-                    .arg(binding.Key, manifest.Id, ownerOf(*taken)));
+                    .arg(WriteKeyChord(**chord),
+                         binding.When.isEmpty()
+                             ? QString()
+                             : QStringLiteral(" (when %1)").arg(binding.When),
+                         manifest.Id, ownerOf(*taken)));
             continue;
         }
         Keys_.insert(key, index);
@@ -502,8 +553,15 @@ const PluginManifest* PluginRegistry::AgentOwner(const QString& agentId) const {
     return it == Agents_.cend() ? nullptr : &Plugins_[*it];
 }
 
-const PluginManifest* PluginRegistry::KeyOwner(const QString& key) const {
-    const auto it = Keys_.constFind(key.toLower());
+const PluginManifest* PluginRegistry::KeyOwner(const QString& key,
+                                               const QString& when) const {
+    const auto chord = ParseKeyChord(key, Platform_);
+    return chord ? KeyOwner(*chord, when) : nullptr;
+}
+
+const PluginManifest* PluginRegistry::KeyOwner(const KeyChord& chord,
+                                               const QString& when) const {
+    const auto it = Keys_.constFind(KeyOf(chord, when));
     return it == Keys_.cend() ? nullptr : &Plugins_[*it];
 }
 
