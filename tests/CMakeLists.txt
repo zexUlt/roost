@@ -1,9 +1,4 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
-# QuickPrivate: only terminal_paint_node_test, to read the scene graph. A
-# private module ties the build to one Qt version; CI pins it.
-set(QT_NO_PRIVATE_MODULE_WARNING ON)
-find_package(Qt6 REQUIRED COMPONENTS QuickPrivate)
-unset(QT_NO_PRIVATE_MODULE_WARNING)
 
 # Tests never touch the real ~/.config/roost or another program's config, and
 # leave no QML disk cache behind in the user's cache directory.
@@ -98,7 +93,7 @@ roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_paint_node_test qml_api/terminal_paint_node_test.cpp
-    roost_qml_api Qt6::Quick Qt6::QuickPrivate)
+    roost_qml_api Qt6::Quick)
 set_tests_properties(terminal_paint_node_test PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic")
 add_test(NAME terminal_paint_node_test_threaded COMMAND terminal_paint_node_test)

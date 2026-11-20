@@ -6,7 +6,6 @@
 #include "qml_api/terminal_item.hpp"
 #include "terminal/terminal_session.hpp"
 
-#include <private/qquickitem_p.h>
 #include <QQuickWindow>
 #include <QSGNode>
 #include <QSignalSpy>
@@ -37,6 +36,29 @@ void Write(TerminalSession& session, QByteArrayView bytes) {
     session.Write(lock, bytes);
 }
 
+// A TerminalItem that learns its child container node: the parent of the paint
+// node it was given back. The container lives as long as the item, and public
+// QSGNode API is enough to count what is under it.
+class ProbedTerminalItem : public TerminalItem {
+public:
+    using TerminalItem::TerminalItem;
+
+    // Null until the item has been given its own paint node back once.
+    QSGNode* Container() const { return Container_.load(); }
+
+protected:
+    QSGNode* updatePaintNode(QSGNode* oldNode,
+                             UpdatePaintNodeData* data) override {
+        if (oldNode != nullptr && oldNode->parent() != nullptr) {
+            Container_ = oldNode->parent();
+        }
+        return TerminalItem::updatePaintNode(oldNode, data);
+    }
+
+private:
+    std::atomic<QSGNode*> Container_ = nullptr;
+};
+
 }  // namespace
 
 class TerminalPaintNodeTest : public QObject {
@@ -52,20 +74,19 @@ private:
     }
 
     // The nodes the item has put in the scene graph: its paint node, and
-    // whatever an earlier one left behind.
+    // whatever an earlier one left behind. -1: the container is not known yet.
     int NodesOfItem() const { return Nodes_.load(); }
 
 private slots:
     void init() {
-        Item_ = new TerminalItem(Window_.contentItem());
+        Item_ = new ProbedTerminalItem(Window_.contentItem());
         Item_->setSize(QSizeF(COLUMNS * 20, ROWS * 40));
         Window_.resize(COLUMNS * 20, ROWS * 40);
         connect(
             &Window_, &QQuickWindow::afterSynchronizing, this,
             [this] {
-                auto* container =
-                    QQuickItemPrivate::get(Item_)->childContainerNode();
-                Nodes_ = container != nullptr ? container->childCount() : 0;
+                const QSGNode* container = Item_->Container();
+                Nodes_ = container != nullptr ? container->childCount() : -1;
             },
             Qt::DirectConnection);
         Item_->setSession(NewSession());
@@ -110,7 +131,7 @@ private slots:
 
 private:
     QQuickWindow Window_;
-    TerminalItem* Item_ = nullptr;
+    ProbedTerminalItem* Item_ = nullptr;
     std::atomic<int> Nodes_ = 0;
 };
 
