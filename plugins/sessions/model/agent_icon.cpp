@@ -28,8 +28,11 @@ QString UserAgentIconsDirectory() {
     } else if (QDir::isAbsolutePath(xdg)) {
         config = QDir::cleanPath(xdg + QStringLiteral("/roost"));
     } else {
-        config = QDir::cleanPath(qEnvironmentVariable("HOME") +
-                                 QStringLiteral("/.config/roost"));
+        const QString home = qEnvironmentVariable("HOME");
+        if (!QDir::isAbsolutePath(home) || QDir::cleanPath(home) == u'/') {
+            return {};
+        }
+        config = QDir::cleanPath(home + QStringLiteral("/.config/roost"));
     }
     return config + QStringLiteral("/agent-icons");
 }
@@ -41,20 +44,47 @@ bool IsAgentIconName(const QString& agent) {
            agent != QStringLiteral("..");
 }
 
-QUrl ResolveAgentIcon(const QString& agent) {
-    if (!IsAgentIconName(agent)) {
-        return Bundled(QStringLiteral("default"));
+namespace {
+
+// The user's `<name>.svg`, then `.png`; empty when there is none.
+QUrl UserIcon(const QString& directory, const QString& name) {
+    if (directory.isEmpty()) {
+        return {};
     }
-    const QString directory = UserAgentIconsDirectory();
     for (const QString& extension :
          {QStringLiteral(".svg"), QStringLiteral(".png")}) {
-        const QFileInfo file(directory + '/' + agent + extension);
+        const QFileInfo file(directory + '/' + name + extension);
         if (file.isFile()) {
             return QUrl::fromLocalFile(file.absoluteFilePath());
         }
     }
-    if (QFile::exists(BUNDLED_DIRECTORY + agent + ".svg")) {
+    return {};
+}
+
+}  // namespace
+
+QUrl ResolveBundledAgentIcon(const QString& agent) {
+    if (IsAgentIconName(agent) &&
+        QFile::exists(BUNDLED_DIRECTORY + agent + ".svg")) {
         return Bundled(agent);
+    }
+    return Bundled(QStringLiteral("default"));
+}
+
+QUrl ResolveAgentIcon(const QString& agent) {
+    const QString directory = UserAgentIconsDirectory();
+    const bool plain = IsAgentIconName(agent);
+    if (plain) {
+        if (const QUrl own = UserIcon(directory, agent); !own.isEmpty()) {
+            return own;
+        }
+        if (QFile::exists(BUNDLED_DIRECTORY + agent + ".svg")) {
+            return Bundled(agent);
+        }
+    }
+    if (const QUrl fallback = UserIcon(directory, QStringLiteral("default"));
+        !fallback.isEmpty()) {
+        return fallback;
     }
     return Bundled(QStringLiteral("default"));
 }

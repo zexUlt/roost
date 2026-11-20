@@ -151,6 +151,10 @@ public:
     // is created, not when a file appears.
     Q_INVOKABLE QUrl agentIcon(const QString& agent);
 
+    // The bundled icon of an agent (or the bundled default): what the row
+    // shows when the file of the user fails to load.
+    Q_INVOKABLE QUrl bundledAgentIcon(const QString& agent) const;
+
 signals:
     void sourceChanged();
     void sourceLoadedChanged();

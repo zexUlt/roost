@@ -251,6 +251,10 @@ QUrl SessionsList::agentIcon(const QString& agent) {
     return *found;
 }
 
+QUrl SessionsList::bundledAgentIcon(const QString& agent) const {
+    return ResolveBundledAgentIcon(agent);
+}
+
 QString SessionsList::query() const { return State_.View().Query; }
 
 void SessionsList::setQuery(const QString& query) {

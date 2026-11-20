@@ -104,6 +104,45 @@ private slots:
             QTRY_COMPARE(icon->property("status").toInt(), 1);
             QCOMPARE(icon->width(), 16.0);
             QCOMPARE(icon->height(), 16.0);
+            // The icon does not overlap the title: its right edge, in the
+            // coordinates of the row, is not right of the left edge of the
+            // text of the title.
+            QQuickItem* title = item->findChild<QQuickItem*>("sessionTitle");
+            QVERIFY(title != nullptr);
+            const qreal iconRight =
+                item->mapFromItem(icon, QPointF(icon->width(), 0)).x();
+            const qreal titleLeft = item->mapFromItem(title, QPointF(0, 0)).x();
+            QVERIFY2(iconRight <= titleLeft,
+                     qPrintable(QStringLiteral("%1 > %2").arg(iconRight).arg(
+                         titleLeft)));
+        }
+    }
+
+    // A file of the user that exists but does not load leaves no gap: the row
+    // falls back to the bundled icon of its agent.
+    void ABrokenUserIconFallsBackToTheBundledOne() {
+        const ScopedEnv config("ROOST_CONFIG",
+                               Dir_->filePath("config").toUtf8());
+        QVERIFY(QDir().mkpath(Dir_->filePath("config/agent-icons")));
+        QFile broken(Dir_->filePath("config/agent-icons/claude.svg"));
+        QVERIFY(broken.open(QIODevice::WriteOnly));
+        QVERIFY(broken.write("this is not an svg") > 0);
+        broken.close();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        for (int row = 0; row < ORDER.size(); ++row) {
+            QQuickItem* item = RowItem(row);
+            QVERIFY(item != nullptr);
+            QQuickItem* icon = item->findChild<QQuickItem*>("agentIcon");
+            QVERIFY(icon != nullptr);
+            // Image.Ready, from the bundled source.
+            QTRY_COMPARE(icon->property("status").toInt(), 1);
+            QVERIFY2(icon->property("source").toString().startsWith(
+                         "qrc:/qt/qml/RoostSessions/agent-icons/claude.svg"),
+                     qPrintable(icon->property("source").toString()));
         }
     }
 

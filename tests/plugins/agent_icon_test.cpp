@@ -51,6 +51,14 @@ private:
         return called ? url : QUrl("not-called");
     }
 
+    static QUrl Bundled(QObject* list, const QString& agent) {
+        QUrl url;
+        const bool called = QMetaObject::invokeMethod(list, "bundledAgentIcon",
+                                                      Q_RETURN_ARG(QUrl, url),
+                                                      Q_ARG(QString, agent));
+        return called ? url : QUrl("not-called");
+    }
+
     bool Touch(const QString& name) const {
         QDir().mkpath(Config_->filePath("agent-icons"));
         QFile file(Config_->filePath("agent-icons/" + name));
@@ -106,6 +114,51 @@ private slots:
         QCOMPARE(
             Icon(list.get(), "codex"),
             QUrl::fromLocalFile(Config_->filePath("agent-icons/codex.png")));
+    }
+
+    void AUserDefaultReplacesTheBundledDefaultNotTheBundledIcons() {
+        QVERIFY(Touch("default.png"));
+        const auto png = NewList();
+        const QUrl userPng =
+            QUrl::fromLocalFile(Config_->filePath("agent-icons/default.png"));
+        QCOMPARE(Icon(png.get(), "aider"), userPng);
+        QCOMPARE(Icon(png.get(), "a b"), userPng);
+        QCOMPARE(Icon(png.get(), "claude"), QUrl(BUNDLED + "claude.svg"));
+
+        QVERIFY(Touch("default.svg"));
+        QVERIFY(Touch("aider.svg"));
+        const auto svg = NewList();
+        QCOMPARE(Icon(svg.get(), "codex"), QUrl(BUNDLED + "codex.svg"));
+        QCOMPARE(
+            Icon(svg.get(), "aider"),
+            QUrl::fromLocalFile(Config_->filePath("agent-icons/aider.svg")));
+        QCOMPARE(
+            Icon(svg.get(), "other"),
+            QUrl::fromLocalFile(Config_->filePath("agent-icons/default.svg")));
+        // The bundled icon is the one to fall back to, whatever the user has.
+        QCOMPARE(Bundled(svg.get(), "other"), QUrl(BUNDLED + "default.svg"));
+        QCOMPARE(Bundled(svg.get(), "claude"), QUrl(BUNDLED + "claude.svg"));
+        QCOMPARE(Bundled(svg.get(), "../x"), QUrl(BUNDLED + "default.svg"));
+    }
+
+    void WithoutAHomeDirectoryOnlyTheBundledIconsAreUsed() {
+        ScopedEnv roost("ROOST_CONFIG", std::nullopt);
+        ScopedEnv xdg("XDG_CONFIG_HOME", std::nullopt);
+        for (const char* home : {"", "relative/home", "/"}) {
+            ScopedEnv env("HOME", QByteArray(home));
+            const auto list = NewList();
+            QCOMPARE(Icon(list.get(), "claude"), QUrl(BUNDLED + "claude.svg"));
+            QCOMPARE(Icon(list.get(), "aider"), QUrl(BUNDLED + "default.svg"));
+        }
+        // A good HOME gives ~/.config/roost/agent-icons.
+        ScopedEnv home("HOME", Config_->path().toUtf8());
+        QVERIFY(QDir().mkpath(Config_->filePath(".config/roost/agent-icons")));
+        QFile file(Config_->filePath(".config/roost/agent-icons/claude.svg"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const auto list = NewList();
+        QCOMPARE(Icon(list.get(), "claude"),
+                 QUrl::fromLocalFile(Config_->filePath(
+                     ".config/roost/agent-icons/claude.svg")));
     }
 
     void ADirectoryOfTheNameIsNotAnIcon() {
