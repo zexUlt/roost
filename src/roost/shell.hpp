@@ -28,8 +28,10 @@ namespace roost {
 // the connection is up and the plugins are listed, and shows the default
 // layout until then (its slots wait with a placeholder; no panel is created
 // before the layout is known). It writes by patch: when the user finishes
-// resizing a split (`splitResized`) and in SetLayout. A change of the document
-// by another writer is not followed while the window runs.
+// resizing a split (`splitResized`), after each edit of the layout
+// (`layoutEdit`: split, tabs, close, links; src/roost/layout_commands.hpp),
+// and in SetLayout. A failed write is a problem of the window. A change of the
+// document by another writer is not followed while the window runs.
 //
 // A root that has no `layoutTree` (a window of a test with its own slots) is
 // served the old way: the slots found at the start, the panel types as the
@@ -77,7 +79,7 @@ public:
     // of the leaves that go are given back to the loader, new leaves get
     // panels. Nothing is saved while the stored layout is not read, if it was
     // not readable or if it is of a version this roost does not know. For the
-    // layout editor (M6) and the tests; no UI calls it yet.
+    // tests; the edits of the user go through `layoutEdit`.
     void SetLayout(const Layout& layout);
 
     // Whether the window shows what `roost --smoke-sessions` checks. `Ready`:
@@ -111,6 +113,10 @@ private slots:
     void OnSlotCreated(const QVariant& slot);
     // The root's splitResized(path, sizes).
     void OnSplitResized(const QVariant& path, const QVariant& sizes);
+    // The root's layoutEdit(action, args): an edit of the layout from a
+    // command or the panel menu (layout_commands.hpp), or the request to show
+    // the link editor.
+    void OnLayoutEdit(const QString& action, const QVariant& args);
 
 private:
     struct Slot {
@@ -140,6 +146,13 @@ private:
     void ApplyLayout(Layout layout);
     void PublishLayout();
     void SaveLayout();
+    // The panel types that can be created, with their ports.
+    LayoutKnownPanels KnownPanels() const;
+    // Writes the root's `panelTypes`.
+    void PublishPanelTypes();
+    // Gives the root the inputs of the leaf with what each can be fed from
+    // (`openLinkEditor`).
+    void OpenLinkEditor(const QString& instance);
     // Works out the links of the leaves from the panels there are now.
     void UpdateLinks();
     // Whether the connection is being waited for (the banner may say that
@@ -181,6 +194,11 @@ private:
     bool LayoutWritable_ = true;
     QJsonValue LayoutDocument_;
     QStringList LayoutProblems_;
+    // The last edit that was refused (the reason), and the last write of the
+    // layout that failed; the strip shows them until the next edit that works
+    // or the next write that does.
+    QString EditProblem_;
+    QString WriteProblem_;
 };
 
 }  // namespace roost

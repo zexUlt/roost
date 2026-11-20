@@ -9,6 +9,8 @@ add_library(roost_app STATIC
     daemon_launcher.hpp
     key_matcher.cpp
     key_matcher.hpp
+    layout_commands.cpp
+    layout_commands.hpp
     layout_model.cpp
     layout_model.hpp
     login_environment.cpp
@@ -52,8 +54,8 @@ qt_add_library(roost_shell STATIC)
 qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
-    QML_FILES BugReportDialog.qml LayoutNode.qml LayoutView.qml Main.qml
-        PanelSlot.qml SessionMain.qml SplitNode.qml TabNode.qml
+    QML_FILES BugReportDialog.qml LayoutNode.qml LayoutView.qml LinkEditor.qml
+        Main.qml PanelMenu.qml PanelSlot.qml SessionMain.qml SplitNode.qml TabNode.qml
     SOURCES bug_report_controller.cpp bug_report_controller.hpp
     NO_CACHEGEN
 )
