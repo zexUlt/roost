@@ -10,6 +10,7 @@
 #include "api/bus_service.hpp"
 #include "api/command_service.hpp"
 #include "api/dispatcher.hpp"
+#include "api/keymap_service.hpp"
 #include "api/plugin_service.hpp"
 #include "api/session_service.hpp"
 #include "api/store_service.hpp"
@@ -81,6 +82,7 @@ public:
     WarmTerminals& Terminals() { return Terminals_; }
     BusService& Bus() { return Bus_; }
     CommandService& Commands() { return Commands_; }
+    KeymapService& Keymap() { return Keymap_; }
     PluginService& Plugins() { return Plugins_; }
     SessionService& Sessions() { return Sessions_; }
     StoreService& Store() { return Store_; }
@@ -119,6 +121,7 @@ private:
     WarmTerminals Terminals_;
     BusService Bus_;
     CommandService Commands_;
+    KeymapService Keymap_;
     PluginService Plugins_;
     SessionService Sessions_;
     StoreService Store_;

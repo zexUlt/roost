@@ -284,7 +284,7 @@ add_dependencies(single_session_test roostd roost fake_tui claude-adapter)
 # fixture: the services and the dispatcher, the thread check.
 foreach(_api_test api_dispatcher_test api_bus_test api_connection_test
         api_sessions_test api_store_test api_reconnect_test
-        api_interleaving_test api_unavailable_test)
+        api_interleaving_test api_unavailable_test api_keymap_test)
     roost_add_qt_test(${_api_test} api/${_api_test}.cpp roost_api roost_test_helpers)
     target_compile_definitions(${_api_test} PRIVATE
         ROOSTD_PATH="$<TARGET_FILE:roostd>"
@@ -474,6 +474,7 @@ set_tests_properties(
     api_reconnect_test
     api_sessions_test
     api_store_test
+    api_keymap_test
     api_thread_check_test
     api_unavailable_test
     roost_calls_test
@@ -634,6 +635,16 @@ roost_add_qt_test(bug_report_test roost/bug_report_test.cpp roost_app)
 roost_add_qt_test(bug_report_dialog_test roost/bug_report_dialog_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
     roost_test_helpers Qt6::Qml Qt6::Quick)
+
+# The keymap table against key presses in a real window: the matcher, with the
+# real roostd and the fixture backend behind the commands.
+roost_add_qt_test(keymap_match_test roost/keymap_match_test.cpp roost_app
+    roost_qml_api roost_qml_apiplugin roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(keymap_match_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(keymap_match_test roostd fixture_backend)
+set_tests_properties(keymap_match_test PROPERTIES LABELS "threads")
 
 # The layout model: the default tree, round trip, repair of broken documents;
 # pure data, no plugins or window.

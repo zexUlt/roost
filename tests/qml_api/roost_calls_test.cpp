@@ -574,6 +574,7 @@ private slots:
             {"bus.publish", {{"name", "x.y"}, {"payload", 1}}},
             {"commands.run",
              {{"command", "fixture.echo"}, {"args", QJsonArray{1, "two"}}}},
+            {"keymap.get", {}},
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},

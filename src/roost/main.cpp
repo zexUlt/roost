@@ -17,6 +17,7 @@
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
 #include "roost/daemon_launcher.hpp"
+#include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
 #include "roost/shell.hpp"
@@ -235,6 +236,9 @@ int main(int argc, char* argv[]) {
     std::optional<roost::PluginLoader> loader;
     std::optional<roost::Shell> shell;
     std::optional<roost::PluginWatcher> watcher;
+    // The key presses of the window against the keymap table (design.md §16);
+    // it uses the services of `api`, which outlives it.
+    std::optional<roost::KeyMatcher> keyMatcher;
     roost::RoostSingleton* roostSingleton = nullptr;
     if (!sessionMode) {
         // Created here, before any QML: the singleton installs the key filter
@@ -247,6 +251,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         roostSingleton->setApi(*api);
+        keyMatcher.emplace(api->Keymap(), api->Commands());
         api->Connect(roost::protocol::SocketPath());
     }
     engine.loadFromModule("Roost.Shell", sessionMode ? "SessionMain" : "Main");

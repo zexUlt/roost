@@ -361,7 +361,8 @@ private slots:
         QCOMPARE(daemon.Count("hello"), 2);
         QCOMPARE(connected.size(), 1);
         QVERIFY(Api_->IsConnected());
-        QCOMPARE(daemon.Count("bus.subscribe"), 1);
+        // The sessions' pattern and the keymap's, one each.
+        QCOMPARE(daemon.Count("bus.subscribe"), 2);
     }
 
     void ASecondConnectWhileTryingIsStillAWarning() {
@@ -436,8 +437,8 @@ private slots:
         QVERIFY(Publish("t.gone", 1));
         QTest::qWait(50);
         QCOMPARE(heard, 0);
-        // Only the sessions cache is subscribed.
-        QCOMPARE(SubscriptionsAtRoostd(), 1);
+        // Only the sessions cache and the keymap are subscribed.
+        QCOMPARE(SubscriptionsAtRoostd(), 2);
     }
 
     void ADocumentChangedWhileTheDaemonWasDownIsReadAnew() {
@@ -498,8 +499,9 @@ private slots:
         QCOMPARE(rows.size(), 1);
         QCOMPARE(changed.size(), 1);
 
-        // At roostd: the sessions' pattern and the store's, one each.
-        QCOMPARE(SubscriptionsAtRoostd(), 2);
+        // At roostd: the patterns of the sessions, the keymap and the store,
+        // one each.
+        QCOMPARE(SubscriptionsAtRoostd(), 3);
     }
 };
 

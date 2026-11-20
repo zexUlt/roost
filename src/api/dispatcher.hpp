@@ -15,6 +15,7 @@
 namespace roost::api {
 
 class CommandService;
+class KeymapService;
 class PluginService;
 class SessionService;
 class StoreService;
@@ -25,7 +26,7 @@ class StoreService;
 // params, a future of rpc::Result.
 //
 // Exposed: sessions.list, plugins.list, store.get, store.set, store.patch,
-// commands.run, bus.publish. Not exposed: hello and session.open,
+// commands.run, keymap.get, bus.publish. Not exposed: hello and session.open,
 // session.resize and session.close, which belong to the window itself.
 // Subscribing takes a callback, so it is a pair of methods here and not a
 // by-name call.
@@ -33,14 +34,16 @@ class StoreService;
 // The methods that have a cache go through its service: sessions.list always
 // asks roostd and refreshes the rows, store.get answers from the documents
 // that are warm, store.set and store.patch leave the cache to the event that
-// follows them.
+// follows them, and keymap.get answers from the table of the window's own
+// platform once it is loaded (it takes no params; a `platform` of another
+// platform is InvalidParams).
 //
 // Use it from the GUI thread.
 class Dispatcher : public QObject {
     Q_OBJECT
 
 public:
-    Dispatcher(BusService& bus, CommandService& commands,
+    Dispatcher(BusService& bus, CommandService& commands, KeymapService& keymap,
                PluginService& plugins, SessionService& sessions,
                StoreService& store, QObject* parent = nullptr);
 
@@ -65,8 +68,9 @@ public:
     void Unsubscribe(BusService::LocalId id);
 
 private:
-    void RegisterBuiltins(CommandService& commands, PluginService& plugins,
-                          SessionService& sessions, StoreService& store);
+    void RegisterBuiltins(CommandService& commands, KeymapService& keymap,
+                          PluginService& plugins, SessionService& sessions,
+                          StoreService& store);
 
     BusService& Bus_;
     std::map<QString, rpc::Handler> Handlers_;

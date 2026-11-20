@@ -44,6 +44,14 @@ struct KeyChord {
 std::expected<KeyChord, QString> ParseKeyChord(const QString& text,
                                                EPlatform platform);
 
+// Whether a key is F1 to F24 in the normal form of KeyChord::Key.
+bool IsFunctionKey(const QString& key);
+
+// A key that the terminal or a field of text needs (design.md §16): no Cmd,
+// Ctrl or Alt, and not F1 to F24. Shift alone does not count: Shift+J types a
+// letter.
+bool IsBareKey(const KeyChord& chord);
+
 // The normal text: modifiers in the order Cmd, Ctrl, Alt, Shift, then the
 // key. ParseKeyChord(WriteKeyChord(chord)) is `chord`.
 QString WriteKeyChord(const KeyChord& chord);
