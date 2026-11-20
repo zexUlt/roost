@@ -31,6 +31,13 @@ public:
     // `context` is null.
     QObject* add(QQmlContext* context);
 
+    // Tells that `owner` serves the panel `panel` (the item made in the
+    // context of `owner`). Weak: the panel may go first.
+    void bindPanel(const QObject* owner, QObject* panel);
+
+    // The panel that `owner` serves, or nullptr.
+    QObject* panelOf(const QObject* owner) const;
+
     // The object to use as the `context` of a call made by the JS code that is
     // calling now: the owner of the nearest registered context, `fallback` when
     // no registered context is on the chain, nullptr when the call must be
@@ -45,6 +52,7 @@ public:
 
 private:
     QHash<QQmlContext*, QPointer<QObject>> Owners_;
+    QHash<const QObject*, QPointer<QObject>> Panels_;
 };
 
 }  // namespace roost

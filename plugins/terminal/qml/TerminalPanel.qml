@@ -36,7 +36,8 @@ FocusScope {
     // `shell`, which gives it Cmd+C and Ctrl+Shift+C in this panel) copies the
     // selection. It goes when the panel does. The item still copies on the same
     // keys by itself (IsCopyShortcut) whenever the table does not take the
-    // key. With two terminal panels the later registration runs.
+    // key. With two terminal panels the one that has the focus runs, else the
+    // later registration.
     // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
         if (Roost.commands !== null) {
@@ -54,9 +55,19 @@ FocusScope {
         // The family and size of settings.terminalFont, in every window.
         font: Roost.theme.terminalFont
 
+        // Another panel that shows the same session took it over: this one
+        // takes it back when it gets the focus or Enter.
+        onActiveFocusChanged: {
+            if (activeFocus && superseded) {
+                takeBack();
+            }
+        }
+
         // Enter, on the main keys and on the keypad.
         function handleEnter(event) {
-            if (status === "ended" || status === "failed") {
+            if (superseded) {
+                takeBack();
+            } else if (status === "ended" || status === "failed") {
                 reopen();
             } else {
                 event.accepted = false;
@@ -91,6 +102,9 @@ FocusScope {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: {
+            if (terminal.superseded) {
+                return "Shown in another panel.";
+            }
             switch (terminal.status) {
             case "none":
                 // A session is chosen but the item has no size yet, so it has

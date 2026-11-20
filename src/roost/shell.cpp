@@ -3,8 +3,12 @@
 #include <QJSValue>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QMetaObject>
+#include <QSet>
 #include <QVariant>
+#include <QVariantList>
+#include <QVariantMap>
 #include <QtLogging>
 
 #include <algorithm>
@@ -16,6 +20,13 @@
 namespace roost {
 
 namespace {
+
+constexpr const char* LIST_PANEL = "sessions.list";
+constexpr const char* TERMINAL_PANEL = "terminal.view";
+// The ids of the two panels of the window of a root without a layout view.
+constexpr const char* LIST_INSTANCE = "list";
+constexpr const char* TERMINAL_INSTANCE = "terminal";
+constexpr const char* SESSION_REF = "SessionRef";
 
 // The name of the one entry of `declared` that has the type, or empty with the
 // reason in `problem` if there is none or several.
@@ -86,6 +97,110 @@ TerminalOpening OpeningOf(const QQuickItem* panel) {
     return opening;
 }
 
+// The leaves of the tree, by instance id, in document order.
+void CollectLeaves(const LayoutNode& node,
+                   QList<std::pair<QString, QString>>& leaves) {
+    if (node.Kind == ELayoutNodeKind::Leaf) {
+        leaves.append({node.Instance, node.Panel});
+        return;
+    }
+    for (const LayoutNode& child : node.Children) {
+        CollectLeaves(child, leaves);
+    }
+}
+
+const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance) {
+    if (node.Kind == ELayoutNodeKind::Leaf) {
+        return node.Instance == instance ? &node : nullptr;
+    }
+    for (const LayoutNode& child : node.Children) {
+        if (const LayoutNode* found = FindLeaf(child, instance)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+// The tree as the layout view takes it (LayoutView.qml): a size is a number of
+// pixels, 0 for the rest.
+QVariant NodeToVariant(const LayoutNode& node) {
+    QVariantMap map;
+    QVariantList children;
+    for (const LayoutNode& child : node.Children) {
+        children.append(NodeToVariant(child));
+    }
+    switch (node.Kind) {
+        case ELayoutNodeKind::Split: {
+            QVariantList sizes;
+            for (const LayoutSize& size : node.Sizes) {
+                sizes.append(size.Fill ? 0 : size.Pixels);
+            }
+            map = {{"kind", "split"},
+                   {"horizontal", node.Horizontal},
+                   {"children", children},
+                   {"sizes", sizes}};
+            break;
+        }
+        case ELayoutNodeKind::Tabs:
+            map = {{"kind", "tabs"},
+                   {"active", node.Active},
+                   {"children", children}};
+            break;
+        case ELayoutNodeKind::Leaf:
+            map = {{"kind", "leaf"},
+                   {"instance", node.Instance},
+                   {"panel", node.Panel}};
+            break;
+    }
+    return map;
+}
+
+// A list that QML gave as a `var`, whichever way it arrives.
+QVariantList AsList(const QVariant& value) {
+    if (value.metaType() == QMetaType::fromType<QJSValue>()) {
+        return value.value<QJSValue>().toVariant().toList();
+    }
+    return value.toList();
+}
+
+QQuickItem* AsItem(const QVariant& value) {
+    if (value.metaType() == QMetaType::fromType<QJSValue>()) {
+        return qobject_cast<QQuickItem*>(value.value<QJSValue>().toQObject());
+    }
+    return qobject_cast<QQuickItem*>(value.value<QObject*>());
+}
+
+// The patch that makes the stored document the tree: the document itself, and
+// null for the keys of another kind of root that may still be stored (arrays
+// are replaced by a merge patch, so nothing below the root can be left over).
+QJsonObject LayoutPatch(const Layout& layout) {
+    QJsonObject patch = LayoutToJson(layout);
+    QJsonObject root = patch.value("root").toObject();
+    for (const char* key : {"split", "children", "sizes", "tabs", "active",
+                            "instance", "panel", "links"}) {
+        if (!root.contains(QLatin1String(key))) {
+            root.insert(QLatin1String(key), QJsonValue::Null);
+        }
+    }
+    patch.insert("root", root);
+    return patch;
+}
+
+// The lines of a parse that the shell shows: the structure of the document.
+// Unknown panel types and links are the shell's own (the slot's placeholder
+// and the link problems), worked out from the panels there are.
+QStringList StructureProblems(const QStringList& lines) {
+    QStringList kept;
+    for (const QString& line : lines) {
+        if (line.contains(QLatin1String(".links.")) ||
+            line.contains(QLatin1String(": no panel "))) {
+            continue;
+        }
+        kept.append(line);
+    }
+    return kept;
+}
+
 }  // namespace
 
 Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
@@ -95,11 +210,26 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
       Api_(api),
       SocketPath_(std::move(socketPath)),
       Launcher_(launcher) {
-    for (auto* item : root.findChildren<QQuickItem*>("panelSlot")) {
-        Slots_.append({item, item->property("panelType").toString(), {}, {}});
-    }
-    if (Slots_.isEmpty()) {
-        qWarning("roost: the window has no panel slot");
+    LayoutMode_ = root.metaObject()->indexOfProperty("layoutTree") >= 0;
+    if (LayoutMode_) {
+        connect(&Root_, SIGNAL(slotCreated(QVariant)), this,
+                SLOT(OnSlotCreated(QVariant)));
+        connect(&Root_, SIGNAL(splitResized(QVariant, QVariant)), this,
+                SLOT(OnSplitResized(QVariant, QVariant)));
+    } else {
+        for (auto* item : root.findChildren<QQuickItem*>("panelSlot")) {
+            Slots_.append({.Item = item,
+                           .Type = item->property("panelType").toString(),
+                           .Instance = {},
+                           .Panel = {},
+                           .LinkProblems = {},
+                           .Links = {},
+                           .LinkInput = {},
+                           .LinkOutput = {}});
+        }
+        if (Slots_.isEmpty()) {
+            qWarning("roost: the window has no panel slot");
+        }
     }
 
     connect(&Loader_, &PluginLoader::PanelTypesChanged, this,
@@ -111,8 +241,10 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
             &Shell::OnPanelAboutToBeDestroyed, Qt::DirectConnection);
     connect(&Api_.Plugins(), &api::PluginService::Changed, this,
             &Shell::OnPanelTypesChanged);
-    connect(&Api_, &api::Api::Connected, this,
-            [this] { SetConnection(QStringLiteral("connected"), {}); });
+    connect(&Api_, &api::Api::Connected, this, [this] {
+        SetConnection(QStringLiteral("connected"), {});
+        ReadLayout();
+    });
     connect(&Api_, &api::Api::Disconnected, this, [this](const QString& why) {
         // A refusal is followed by a Disconnected; the refusal is what the
         // window shows until Retry or a connection.
@@ -139,6 +271,11 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
     SetConnection(Api_.IsConnected() ? QStringLiteral("connected")
                                      : QStringLiteral("connecting"),
                   {});
+    if (LayoutMode_) {
+        // The default layout until the stored one is known: the slots wait.
+        ApplyLayout(DefaultLayout());
+        ReadLayout();
+    }
     Refill();
     UpdateProblems();
 }
@@ -167,9 +304,7 @@ Shell::Readiness Shell::CheckReadiness() const {
                       .arg(problem.Plugin, problem.Panel, problem.Message));
     }
     for (const Slot& slot : Slots_) {
-        if (!slot.LinkProblem.isEmpty()) {
-            failures.append(slot.LinkProblem);
-        }
+        failures.append(slot.LinkProblems);
     }
     if (Connection_ == QLatin1String("refused")) {
         failures.append(QStringLiteral("roostd refused the connection"));
@@ -179,23 +314,33 @@ Shell::Readiness Shell::CheckReadiness() const {
     for (const auto& problem : listed) {
         failures.append(QStringLiteral("roostd: %1").arg(problem.toString()));
     }
-    // A missing slot cannot appear by waiting.
-    for (const char* type : {LIST_PANEL, TERMINAL_PANEL}) {
-        const bool present =
-            std::ranges::any_of(Slots_, [type](const Slot& slot) {
-                return slot.Type == QLatin1String(type);
-            });
-        if (!present) {
-            failures.append(
-                QStringLiteral("the window has no panel %1").arg(type));
+    // A missing slot cannot appear by waiting. A layout shows what it has: it
+    // may have no terminal.
+    if (!LayoutMode_) {
+        for (const char* type : {LIST_PANEL, TERMINAL_PANEL}) {
+            const bool present =
+                std::ranges::any_of(Slots_, [type](const Slot& slot) {
+                    return slot.Type == QLatin1String(type);
+                });
+            if (!present) {
+                failures.append(
+                    QStringLiteral("the window has no panel %1").arg(type));
+            }
         }
     }
-    const TerminalOpening opening = OpeningOf(PanelOf(TERMINAL_PANEL));
     // roostd refused the open: the attach will not start by waiting.
-    if (opening.Wanted && opening.Status == QLatin1String("failed")) {
-        failures.append(QStringLiteral("panel %1 could not open %2: %3")
-                            .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
-                                 opening.Message));
+    QList<std::pair<const Slot*, TerminalOpening>> openings;
+    for (const Slot& slot : Slots_) {
+        if (slot.Type != QLatin1String(TERMINAL_PANEL)) {
+            continue;
+        }
+        const TerminalOpening opening = OpeningOf(slot.Panel.data());
+        openings.append({&slot, opening});
+        if (opening.Wanted && opening.Status == QLatin1String("failed")) {
+            failures.append(QStringLiteral("panel %1 could not open %2: %3")
+                                .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
+                                     opening.Message));
+        }
     }
     if (!failures.isEmpty()) {
         return {false, true, failures.join(QStringLiteral("; "))};
@@ -205,6 +350,9 @@ Shell::Readiness Shell::CheckReadiness() const {
     if (!Api_.IsConnected()) {
         waiting.append(
             QStringLiteral("not connected to roostd at %1").arg(SocketPath_));
+    }
+    if (LayoutMode_ && !LayoutSettled_) {
+        waiting.append(QStringLiteral("the layout is not loaded"));
     }
     for (const Slot& slot : Slots_) {
         if (slot.Panel.isNull()) {
@@ -223,15 +371,23 @@ Shell::Readiness Shell::CheckReadiness() const {
     // then the terminal has to be open (roostd answered session.open, so the
     // attach process is started, or was already for a warm session) or, if
     // the program already left, ended.
-    if (ListIsRestoring(PanelOf(LIST_PANEL))) {
+    const bool restoring = std::ranges::any_of(Slots_, [](const Slot& slot) {
+        return slot.Type == QLatin1String(LIST_PANEL) &&
+               ListIsRestoring(slot.Panel.data());
+    });
+    if (restoring) {
         waiting.append(
             QStringLiteral("panel %1 has not restored the opened session")
                 .arg(LIST_PANEL));
-    } else if (opening.Wanted && opening.Status != QLatin1String("open") &&
-               opening.Status != QLatin1String("ended")) {
-        waiting.append(QStringLiteral("panel %1 is opening %2 (%3)")
-                           .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
-                                opening.Status));
+    } else {
+        for (const auto& [slot, opening] : openings) {
+            if (opening.Wanted && opening.Status != QLatin1String("open") &&
+                opening.Status != QLatin1String("ended")) {
+                waiting.append(QStringLiteral("panel %1 is opening %2 (%3)")
+                                   .arg(QLatin1String(TERMINAL_PANEL),
+                                        opening.Key, opening.Status));
+            }
+        }
     }
     if (!waiting.isEmpty()) {
         return {false, false, waiting.join(QStringLiteral("; "))};
@@ -239,17 +395,19 @@ Shell::Readiness Shell::CheckReadiness() const {
     return {true, false, {}};
 }
 
-const QQuickItem* Shell::PanelOf(const char* type) const {
-    for (const Slot& slot : Slots_) {
-        if (slot.Type == QLatin1String(type)) {
-            return slot.Panel.data();
+Shell::Slot* Shell::SlotOf(const QString& instance) {
+    for (Slot& slot : Slots_) {
+        if (slot.Instance == instance) {
+            return &slot;
         }
     }
     return nullptr;
 }
 
 void Shell::OnPanelTypesChanged() {
+    TrySettle();
     Refill();
+    UpdateLinks();
     UpdateProblems();
 }
 
@@ -266,11 +424,16 @@ void Shell::OnPanelAboutToBeDestroyed(QQuickItem* panel) {
         // panel.
         Write(slot, "panel", QVariant::fromValue<QQuickItem*>(nullptr));
         slot.Panel.clear();
-        slot.LinkProblem.clear();
+        slot.LinkProblems.clear();
+        slot.Links.clear();
+        slot.LinkInput.clear();
+        slot.LinkOutput.clear();
+        Write(slot, "links", QVariantList());
         Write(slot, "linkInput", QString());
         Write(slot, "linkOutput", QString());
         Write(slot, "error", ErrorFor(slot.Type));
     }
+    UpdateLinks();
     UpdateProblems();
 }
 
@@ -290,22 +453,30 @@ void Shell::Refill() {
         }
     } while (FillAgain_);
     Filling_ = false;
+    UpdateLinks();
 }
 
 void Shell::Fill(Slot& slot) {
     const auto info = Loader_.Info(slot.Type);
-    const bool isList = slot.Type == QLatin1String(LIST_PANEL);
+    // No panel before the layout is known: a leaf of the stored layout may not
+    // be one of the default.
+    const bool known = !LayoutMode_ || LayoutSettled_;
+    QString instance = slot.Instance;
+    if (instance.isEmpty()) {
+        instance = QLatin1String(slot.Type == QLatin1String(LIST_PANEL)
+                                     ? LIST_INSTANCE
+                                     : TERMINAL_INSTANCE);
+    }
     QQuickItem* panel =
-        info ? Loader_.CreatePanel(
-                   slot.Type,
-                   QLatin1String(isList ? LIST_INSTANCE : TERMINAL_INSTANCE))
-             : nullptr;
+        info && known ? Loader_.CreatePanel(slot.Type, instance) : nullptr;
     if (panel == nullptr) {
         Write(slot, "error", ErrorFor(slot.Type));
         return;
     }
     slot.Panel = panel;
-    SetLink(slot, *info);
+    if (slot.Instance.isEmpty()) {
+        SetLegacyLink(slot, *info);
+    }
     Write(slot, "error", QString());
     // Last: the slot reparents the panel, and its link becomes active.
     Write(slot, "panel", QVariant::fromValue<QQuickItem*>(panel));
@@ -326,17 +497,21 @@ QString Shell::ErrorFor(const QString& type) const {
     return QStringLiteral("no panel %1").arg(type);
 }
 
-void Shell::SetLink(Slot& slot, const PluginLoader::PanelInfo& info) {
-    slot.LinkProblem.clear();
+void Shell::SetLegacyLink(Slot& slot, const PluginLoader::PanelInfo& info) {
+    slot.LinkProblems.clear();
+    QString problem;
     QString input;
     QString output;
     const bool isList = slot.Type == QLatin1String(LIST_PANEL);
     if (isList) {
         output = SingleOfType(info.Outputs, QLatin1String(SESSION_REF),
-                              slot.Type, "output", slot.LinkProblem);
+                              slot.Type, "output", problem);
     } else if (slot.Type == QLatin1String(TERMINAL_PANEL)) {
         input = SingleOfType(info.Inputs, QLatin1String(SESSION_REF), slot.Type,
-                             "input", slot.LinkProblem);
+                             "input", problem);
+    }
+    if (!problem.isEmpty()) {
+        slot.LinkProblems.append(problem);
     }
     // A declared name without a property is the loader's problem; the link
     // would only write to nothing.
@@ -348,6 +523,255 @@ void Shell::SetLink(Slot& slot, const PluginLoader::PanelInfo& info) {
     }
     Write(slot, "linkInput", input);
     Write(slot, "linkOutput", output);
+}
+
+void Shell::UpdateLinks() {
+    if (!LayoutMode_) {
+        return;
+    }
+    QMap<QString, QString> outputs;
+    for (Slot& dest : Slots_) {
+        const LayoutNode* leaf = FindLeaf(Layout_.Root, dest.Instance);
+        const auto info = Loader_.Info(dest.Type);
+        QStringList problems;
+        QVariantList links;
+        QString linkInput;
+        if (leaf != nullptr && info && dest.Panel) {
+            for (auto it = leaf->Links.cbegin(); it != leaf->Links.cend();
+                 ++it) {
+                const QString& input = it.key();
+                const Slot* source = SlotOf(it->From);
+                if (source == nullptr || source->Panel.isNull()) {
+                    continue;
+                }
+                const auto sourceInfo = Loader_.Info(source->Type);
+                if (!sourceInfo) {
+                    continue;
+                }
+                if (!info->Inputs.contains(input)) {
+                    problems.append(
+                        QStringLiteral("panel %1 declares no input %2; the "
+                                       "link is off")
+                            .arg(dest.Type, input));
+                    continue;
+                }
+                const QString type = info->Inputs.value(input).toString();
+                QString output = it->Output;
+                if (sourceInfo->Outputs.value(output).toString() != type) {
+                    QString problem;
+                    output = SingleOfType(sourceInfo->Outputs, type,
+                                          source->Type, "output", problem);
+                    if (output.isEmpty()) {
+                        problems.append(problem);
+                        continue;
+                    }
+                }
+                // A declared name without a property is the loader's problem;
+                // the link would only write to nothing.
+                if (dest.Panel->metaObject()->indexOfProperty(
+                        qPrintable(input)) < 0 ||
+                    source->Panel->metaObject()->indexOfProperty(
+                        qPrintable(output)) < 0) {
+                    continue;
+                }
+                links.append(QVariantMap{
+                    {"input", input}, {"from", it->From}, {"output", output}});
+                if (linkInput.isEmpty()) {
+                    linkInput = input;
+                }
+                if (!outputs.contains(it->From)) {
+                    outputs.insert(it->From, output);
+                }
+            }
+        }
+        dest.LinkProblems = problems;
+        if (dest.Links != links) {
+            dest.Links = links;
+            Write(dest, "links", links);
+        }
+        if (dest.LinkInput != linkInput) {
+            dest.LinkInput = linkInput;
+            Write(dest, "linkInput", linkInput);
+        }
+    }
+    for (Slot& source : Slots_) {
+        const QString output = outputs.value(source.Instance);
+        if (source.LinkOutput != output) {
+            source.LinkOutput = output;
+            Write(source, "linkOutput", output);
+        }
+    }
+}
+
+void Shell::OnSlotCreated(const QVariant& value) {
+    QQuickItem* item = AsItem(value);
+    if (item == nullptr) {
+        return;
+    }
+    Slot* slot = SlotOf(item->property("instanceId").toString());
+    if (slot == nullptr) {
+        return;
+    }
+    // A slot of an earlier tree is left as it is: it is deleted, and writing
+    // to it would let go of the links of the panel that moves to the new one.
+    slot->Item = item;
+    slot->Links.clear();
+    slot->LinkInput.clear();
+    slot->LinkOutput.clear();
+    if (slot->Panel) {
+        Write(*slot, "error", QString());
+        Write(*slot, "panel", QVariant::fromValue<QQuickItem*>(slot->Panel));
+    } else {
+        Write(*slot, "error", ErrorFor(slot->Type));
+        // The panel is made outside the creation of the layout view's items.
+        QMetaObject::invokeMethod(this, &Shell::Refill, Qt::QueuedConnection);
+    }
+    UpdateLinks();
+}
+
+void Shell::OnSplitResized(const QVariant& path, const QVariant& sizes) {
+    LayoutNode* node = &Layout_.Root;
+    for (const QVariant& index : AsList(path)) {
+        const int at = index.toInt();
+        if (node->Kind == ELayoutNodeKind::Leaf || at < 0 ||
+            static_cast<size_t>(at) >= node->Children.size()) {
+            return;
+        }
+        node = &node->Children[static_cast<size_t>(at)];
+    }
+    const QVariantList list = AsList(sizes);
+    if (node->Kind != ELayoutNodeKind::Split ||
+        static_cast<size_t>(list.size()) != node->Children.size()) {
+        return;
+    }
+    std::vector<LayoutSize> changed;
+    for (const QVariant& size : list) {
+        changed.push_back(size.toInt() > 0 ? LayoutSize::Px(size.toInt())
+                                           : LayoutSize::Rest());
+    }
+    if (changed == node->Sizes) {
+        return;
+    }
+    node->Sizes = std::move(changed);
+    SaveLayout();
+}
+
+void Shell::ReadLayout() {
+    if (!LayoutMode_ || LayoutRequested_ || !Api_.IsConnected()) {
+        return;
+    }
+    LayoutRequested_ = true;
+    Api_.Store()
+        .Get(QStringLiteral("layout"))
+        .then(this, [this](rpc::Result answer) {
+            LayoutAnswered_ = true;
+            if (answer) {
+                LayoutDocument_ =
+                    answer->toObject().value(QStringLiteral("document"));
+            } else {
+                // Not overwritten: what is stored may be fine.
+                LayoutWritable_ = false;
+                LayoutProblems_.append(
+                    QStringLiteral("the layout could not be read (%1); the "
+                                   "default layout is used")
+                        .arg(answer.error().Message));
+            }
+            TrySettle();
+            Refill();
+            UpdateProblems();
+        });
+}
+
+void Shell::TrySettle() {
+    if (!LayoutMode_ || LayoutSettled_ || !LayoutAnswered_ ||
+        !Api_.Plugins().IsLoaded()) {
+        return;
+    }
+    LayoutKnownPanels known;
+    for (const QString& type : Loader_.PanelTypes()) {
+        if (const auto info = Loader_.Info(type)) {
+            known.insert(type,
+                         {.Inputs = info->Inputs, .Outputs = info->Outputs});
+        }
+    }
+    // No document is the default layout, and says nothing.
+    LayoutParseResult parsed{
+        .Tree = DefaultLayout(), .Problems = {}, .Writable = true};
+    if (LayoutDocument_.isObject() && !LayoutDocument_.toObject().isEmpty()) {
+        parsed = ParseLayout(LayoutDocument_, known);
+    }
+    LayoutSettled_ = true;
+    LayoutWritable_ = LayoutWritable_ && parsed.Writable;
+    LayoutProblems_.append(StructureProblems(parsed.Problems));
+    ApplyLayout(std::move(parsed.Tree));
+}
+
+void Shell::SetLayout(const Layout& layout) {
+    if (!LayoutMode_) {
+        return;
+    }
+    ApplyLayout(layout);
+    SaveLayout();
+}
+
+void Shell::ApplyLayout(Layout layout) {
+    QList<std::pair<QString, QString>> leaves;
+    CollectLeaves(layout.Root, leaves);
+    QMap<QString, QString> wanted;
+    for (const auto& [instance, type] : leaves) {
+        wanted.insert(instance, type);
+    }
+    // The panels of the leaves that go, or whose type changed, are given back
+    // first.
+    for (qsizetype i = Slots_.size() - 1; i >= 0; --i) {
+        const Slot& slot = Slots_[i];
+        const auto found = wanted.constFind(slot.Instance);
+        if (found != wanted.cend() && found.value() == slot.Type) {
+            continue;
+        }
+        if (QQuickItem* panel = slot.Panel.data()) {
+            Loader_.DestroyPanel(panel);
+        }
+        Slots_.removeAt(i);
+    }
+    const bool changed = !LayoutPublished_ || Layout_ != layout;
+    Layout_ = std::move(layout);
+    for (const auto& [instance, type] : leaves) {
+        if (SlotOf(instance) == nullptr) {
+            Slots_.append({.Item = {},
+                           .Type = type,
+                           .Instance = instance,
+                           .Panel = {},
+                           .LinkProblems = {},
+                           .Links = {},
+                           .LinkInput = {},
+                           .LinkOutput = {}});
+        }
+    }
+    if (changed) {
+        PublishLayout();
+    }
+    Refill();
+    UpdateProblems();
+}
+
+void Shell::PublishLayout() {
+    LayoutPublished_ = true;
+    Root_.setProperty("layoutTree", NodeToVariant(Layout_.Root));
+}
+
+void Shell::SaveLayout() {
+    if (!LayoutSettled_ || !LayoutWritable_) {
+        return;
+    }
+    Api_.Store()
+        .Patch(QStringLiteral("layout"), LayoutPatch(Layout_))
+        .then(this, [](rpc::Result answer) {
+            if (!answer) {
+                qWarning("roost: the layout was not saved: %s",
+                         qPrintable(answer.error().Message));
+            }
+        });
 }
 
 void Shell::OnRefused(const rpc::Error& error) {
@@ -452,10 +876,9 @@ void Shell::UpdateProblems() {
                       .arg(problem.Plugin, problem.Panel, problem.Message));
     }
     for (const Slot& slot : Slots_) {
-        if (!slot.LinkProblem.isEmpty()) {
-            problems.append(slot.LinkProblem);
-        }
+        problems.append(slot.LinkProblems);
     }
+    problems.append(LayoutProblems_);
     if (Root_.property("problems").toStringList() != problems) {
         Root_.setProperty("problems", problems);
     }

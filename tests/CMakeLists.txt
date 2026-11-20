@@ -455,6 +455,42 @@ target_compile_definitions(sessions_prompt_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(sessions_prompt_test roostd fake_tui claude-adapter sessions_qml)
 
+# The layout view of the window with two pairs of a list and a terminal: each
+# list drives its own terminal, a pair leaves the other connected, a terminal
+# that lost its session says so.
+roost_add_qt_test(layout_view_test roost/layout_view_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_view_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_view_test roostd fake_tui claude-adapter sessions_qml)
+
+# The layout is kept and comes back over a restart of roostd and the window:
+# tree, sizes, links and the session of each list.
+roost_add_qt_test(layout_restore_test roost/layout_restore_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_restore_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_restore_test roostd fake_tui claude-adapter sessions_qml)
+
+# terminal.copy with two terminal panels runs in the one that has the focus.
+roost_add_qt_test(terminal_copy_focus_test roost/terminal_copy_focus_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(terminal_copy_focus_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(terminal_copy_focus_test roostd fake_tui claude-adapter sessions_qml)
+
 # Warm terminals in the window: a switch to a warm session is one frame, and a
 # window that restarts finds its session warm in roostd. Same setup as
 # terminal_panel_test, with a proxy that counts the opens.
