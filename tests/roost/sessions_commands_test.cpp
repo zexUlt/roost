@@ -672,6 +672,53 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
     }
 
+    void CommandKeysUseTheCommandsEachAgentOffers() {
+        FailOnWarnings();
+        const QString id = "codex_fixture";
+        const QString cwd = Dir_->filePath("home");
+        const ScopedEnv executable("ROOST_CODEX_EXECUTABLE", FAKE_CODEX_PATH);
+        const ScopedEnv scenario("ROOST_TEST_SCENARIO", "mixed-panel");
+        const ScopedEnv project("ROOST_TEST_PROJECT", cwd.toUtf8());
+        Start({}, 5);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        MoveTo(id);
+
+        Press(Qt::Key_D);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Notice(), QString("Delete unavailable for codex"), TIMEOUT_MS);
+        QVERIFY(Confirm().isEmpty());
+        Press(Qt::Key_R);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Notice(), QString("Respawn unavailable for codex"), TIMEOUT_MS);
+        QVERIFY(Confirm().isEmpty());
+        QVERIFY(Commands().isEmpty());
+
+        AskAndConfirm(Qt::Key_R, Qt::ShiftModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"respawn --all"},
+                                  TIMEOUT_MS);
+
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        // These keystrokes go straight to the task input. The command
+        // lookup has to wait for submit, so d and x cannot act on the list.
+        Press(Qt::Key_N);
+        QVERIFY(Prompting());
+        QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
+        Type("dx do it");
+        QCOMPARE(PromptText(), QString("dx do it"));
+        QVERIFY(Confirm().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(cwd));
+        QCOMPARE(BgRan().value(1), QString("[--bg][--][dx do it]"));
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+    }
+
     void NStartsASessionInTheCursorsDirectory() {
         FailOnWarnings();
         Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});

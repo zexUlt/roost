@@ -13,6 +13,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +28,7 @@
 
 #include <unistd.h>
 
+#include <array>
 #include <optional>
 
 #include "core/rpc_client.hpp"
@@ -37,6 +39,9 @@ using roost::testing::ProcessLifeline;
 using roost::testing::RelayStandardError;
 
 namespace {
+
+// The sizes of the hicolor theme of the Linux package.
+constexpr std::array<int, 7> ICON_SIZES{16, 32, 48, 64, 128, 256, 512};
 
 constexpr int TIMEOUT_MS = 10000;
 constexpr int INSTALL_TIMEOUT_MS = 120000;
@@ -212,6 +217,8 @@ private:
         QSet<QString> files{
             plugins + "/claude/plugin.json",
             plugins + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
+            plugins + "/codex/plugin.json",
+            plugins + "/codex/backend/" + CODEX_ADAPTER_FILE,
             plugins + "/sessions/plugin.json",
             plugins + "/sessions/qml/SessionsPanel.qml",
             plugins + "/sessions/qml/RoostSessions/qmldir",
@@ -228,9 +235,11 @@ private:
         if (IS_MACOS) {
             files.unite({
                 "roost.app/Contents/Info.plist",
+                "roost.app/Contents/Resources/roost.icns",
                 "roost.app/Contents/MacOS/roost",
                 "roost.app/Contents/MacOS/roostd",
                 QString("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE,
+                QString("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE,
                 QString("roost.app/Contents/PlugIns/roost/") +
                     SESSIONS_MODULE_FILE,
             });
@@ -239,8 +248,11 @@ private:
                 "bin/roost",
                 "bin/roostd",
                 "share/applications/roost.desktop",
-                "share/icons/hicolor/256x256/apps/roost.png",
             });
+            for (const int size : ICON_SIZES) {
+                files.insert(QString("share/icons/hicolor/%1x%1/apps/roost.png")
+                                 .arg(size));
+            }
         }
         return files;
     }
@@ -331,7 +343,8 @@ private slots:
     void ProgramsAreExecutable() {
         QStringList programs{
             BinDir() + "/roost", BinDir() + "/roostd",
-            PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE};
+            PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
+            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE};
         for (const QString& program : programs) {
             QVERIFY2(QFileInfo(program).isExecutable(), qPrintable(program));
         }
@@ -342,9 +355,12 @@ private slots:
     void PluginBinariesAreWhereTheManifestsExpectThem() {
         const QString adapter =
             PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE;
+        const QString codex =
+            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE;
         const QString module = SessionsModuleDir() + "/" + SESSIONS_MODULE_FILE;
         if (!IS_MACOS) {
             QVERIFY(!QFileInfo(adapter).isSymLink());
+            QVERIFY(!QFileInfo(codex).isSymLink());
             QVERIFY(!QFileInfo(module).isSymLink());
             return;
         }
@@ -354,6 +370,7 @@ private slots:
         };
         const QList<Link> links{
             {adapter, Path("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE},
+            {codex, Path("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE},
             {module,
              Path("roost.app/Contents/PlugIns/roost/") + SESSIONS_MODULE_FILE},
         };
@@ -404,6 +421,11 @@ private slots:
                  QStringLiteral("io.github.zexult.roost"));
         QCOMPARE(plist.value("CFBundleExecutable").toString(),
                  QStringLiteral("roost"));
+        QCOMPARE(plist.value("CFBundleIconFile").toString(),
+                 QStringLiteral("roost"));
+        // The file the key names, in Resources, is an icns.
+        QVERIFY(ReadAll(Path("roost.app/Contents/Resources/roost.icns"))
+                    .startsWith("icns"));
         QCOMPARE(plist.value("CFBundlePackageType").toString(),
                  QStringLiteral("APPL"));
         QCOMPARE(plist.value("CFBundleShortVersionString").toString(),
@@ -430,9 +452,15 @@ private slots:
         QVERIFY(lines.contains("Type=Application"));
         QVERIFY(lines.contains("Exec=roost"));
         QVERIFY(lines.contains("Icon=roost"));
-        // The icon the file names, by the icon theme rules, is a PNG.
-        QVERIFY(ReadAll(Path("share/icons/hicolor/256x256/apps/roost.png"))
-                    .startsWith("\x89PNG\r\n\x1a\n"));
+        // The icon the file names, by the icon theme rules, is a PNG of every
+        // size of the theme, each of its own size.
+        for (const int size : ICON_SIZES) {
+            const QByteArray png = ReadAll(Path(
+                QString("share/icons/hicolor/%1x%1/apps/roost.png").arg(size)));
+            QVERIFY2(png.startsWith("\x89PNG\r\n\x1a\n"),
+                     qPrintable(QString::number(size)));
+            QCOMPARE(QImage::fromData(png).size(), QSize(size, size));
+        }
     }
 
     // The installed binaries do not lean on the build tree.
@@ -447,6 +475,11 @@ private slots:
             tool,
             IS_MACOS ? BinDir() + "/" + CLAUDE_ADAPTER_FILE
                      : PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
+            ADAPTER_RUN_PATH);
+        CheckRunPath(
+            tool,
+            IS_MACOS ? BinDir() + "/" + CODEX_ADAPTER_FILE
+                     : PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE,
             ADAPTER_RUN_PATH);
         CheckRunPath(tool,
                      IS_MACOS
@@ -530,7 +563,7 @@ private slots:
                      qPrintable(directory));
         }
         ids.sort();
-        QCOMPARE(ids, (QStringList{"claude", "sessions", "terminal"}));
+        QCOMPARE(ids, (QStringList{"claude", "codex", "sessions", "terminal"}));
 
         // The adapter is started from its place in the plugin directory (on
         // macOS a symlink to the one in Contents/MacOS), runs the fake claude.

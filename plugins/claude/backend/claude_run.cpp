@@ -3,9 +3,9 @@
 #include <QRegularExpression>
 #include <QString>
 
-#include <signal.h>
-
 #include <utility>
+
+#include "common/backend_process.hpp"
 
 namespace roost::claude {
 
@@ -34,26 +34,6 @@ QString FirstReason(const QByteArray& text) {
 
 }  // namespace
 
-void StopRun(QProcess& process) {
-    if (process.state() == QProcess::NotRunning) {
-        return;
-    }
-    // A run that failed to start (chdir failed, say) reports it while the
-    // state is still Starting, with no process: the pid is 0, and killpg(0)
-    // is the group of the adapter itself. There is nothing to signal or to
-    // wait for, and waitForFinished would block for its whole timeout.
-    const auto group = static_cast<pid_t>(process.processId());
-    if (group <= 0) {
-        return;
-    }
-    ::killpg(group, SIGKILL);
-    process.kill();
-    process.waitForFinished();
-    // A fork that raced with the first signal may have joined the group
-    // after it was delivered; the group lives on while it has a member.
-    ::killpg(group, SIGKILL);
-}
-
 QString FailureReason(const RunOutput& output, const QString& verb) {
     QString reason = FirstReason(output.StandardError);
     if (reason.isEmpty()) {
@@ -75,7 +55,7 @@ ClaudeRun::ClaudeRun(RunRequest request, QObject* parent)
 ClaudeRun::~ClaudeRun() {
     if (Started_ && !Finished_) {
         Process_.disconnect(this);
-        StopRun(Process_);
+        plugin::StopRun(Process_);
         Finished_ = true;
         Promise_.addResult(std::unexpected(
             QStringLiteral("the adapter stopped before claude %1 finished")
@@ -140,7 +120,7 @@ void ClaudeRun::Finish(RunResult result) {
     Finished_ = true;
     TimeoutTimer_.stop();
     Process_.disconnect(this);
-    StopRun(Process_);
+    plugin::StopRun(Process_);
     Promise_.addResult(std::move(result));
     Promise_.finish();
     deleteLater();

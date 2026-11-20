@@ -1,4 +1,4 @@
-#include "claude/backend/json_rpc.hpp"
+#include "common/json_rpc.hpp"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -9,7 +9,7 @@
 #include <optional>
 #include <utility>
 
-namespace roost::claude::jsonrpc {
+namespace roost::plugin::jsonrpc {
 
 namespace {
 
@@ -247,4 +247,4 @@ QFuture<QJsonValue> Dispatcher::HandleOne(const QJsonValue& message) const {
         });
 }
 
-}  // namespace roost::claude::jsonrpc
+}  // namespace roost::plugin::jsonrpc

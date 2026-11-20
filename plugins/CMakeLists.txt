@@ -2,7 +2,9 @@
 # as roostd finds it: next to bin/, so ROOST_PLUGINS_PATH is not needed.
 set(ROOST_PLUGINS_OUTPUT_DIR ${PROJECT_BINARY_DIR}/roost-plugins)
 
+add_subdirectory(common)
 add_subdirectory(claude)
+add_subdirectory(codex)
 add_subdirectory(sessions)
 add_subdirectory(terminal)
 

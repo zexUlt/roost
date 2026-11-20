@@ -15,6 +15,9 @@ struct TestEnvironment {
         if (!qEnvironmentVariableIsSet("QML_DISABLE_DISK_CACHE")) {
             qputenv("QML_DISABLE_DISK_CACHE", "1");
         }
+        if (!qEnvironmentVariableIsSet("ROOST_CODEX_EXECUTABLE")) {
+            qputenv("ROOST_CODEX_EXECUTABLE", "roost-no-codex-in-tests");
+        }
     }
 };
 

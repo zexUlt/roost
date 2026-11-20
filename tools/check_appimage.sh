@@ -186,6 +186,21 @@ else
     fail "objdump is missing: the AVX-512 check cannot run (install binutils)"
 fi
 
+# --- icon ------------------------------------------------------------------
+# linuxdeploy links the hicolor icon nearest to 64 px to the root of the
+# AppDir, and appimagetool links .DirIcon to it from the Icon= of the desktop
+# file: file managers and the AppImage tools show that.
+if [ -s "$appdir/.DirIcon" ] && [ -s "$appdir/roost.png" ] &&
+    [ "$(head -c8 "$appdir/.DirIcon" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]; then
+    ok ".DirIcon is a PNG (roost.png)"
+else
+    fail ".DirIcon is missing, empty or not a PNG (or roost.png is missing)"
+fi
+for size in 16 32 48 64 128 256 512; do
+    [ -s "$appdir/usr/share/icons/hicolor/${size}x${size}/apps/roost.png" ] ||
+        fail "usr/share/icons/hicolor/${size}x${size}/apps/roost.png is missing"
+done
+
 # --- licences --------------------------------------------------------------
 licenses=$appdir/usr/share/licenses/roost
 for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt ICU-LICENSE.txt; do
@@ -231,7 +246,8 @@ for module in QtCore QtQuick/Controls QtQuick/Controls/Fusion QtQuick/Controls/F
     [ -f "$appdir/usr/qml/$module/qmldir" ] ||
         fail "usr/qml/$module/qmldir is missing"
 done
-for file in plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \
+for file in plugins/codex/plugin.json plugins/codex/backend/codex-adapter \
+    plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \
     plugins/sessions/qml/RoostSessions/libsessions_qml.so plugins/claude/plugin.json; do
     [ -e "$appdir/usr/lib/roost/$file" ] || fail "usr/lib/roost/$file is missing"
 done

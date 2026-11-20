@@ -13,4 +13,14 @@ Window {
     Text {
         text: "Redwood, whitespace and #hashtags are not colours"
     }
+
+    Text {
+        text: "Orange"
+        objectName: "Red"
+    }
+
+    Text {
+        text: "#123"
+        property var label: "Tan"
+    }
 }

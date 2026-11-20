@@ -3,21 +3,29 @@
 # the plugins takes its colours from Roost.theme, so no colour is written in it.
 #
 # The rule. In every .qml file of
-#   src/roost/*.qml                 (not below)
-#   plugins/*/qml/**/*.qml
+#   src/roost/**/*.qml              (recursive)
+#   plugins/<id>/**/*.qml           (the whole plugin, not only qml/)
 #   templates/plugin-qml/**/*.qml
 # a line is a violation if it has
-#   1. a string that is a colour in hex: "#rgb", "#rrggbb", "#aarrggbb", up to
-#      "#rrrrggggbbbb" (3 to 12 hex digits), in double or single quotes;
-#   2. a string that is exactly a colour name of Qt (the SVG names,
-#      case-insensitive), whatever property it is for; "transparent" is
-#      excepted: it is no hue and the theme has no role for it;
-#   3. a call that makes a colour: Qt.rgba, Qt.rgb, Qt.hsla, Qt.hsl, Qt.hsva,
-#      Qt.hsv, Qt.color.
-# Comments are scanned too: a quoted colour in a comment is a violation, so the
-# comment says what colour it means without quoting it. The theme is JSON
-# (src/qml_api/themes/default.json) and is not in the scanned set. Agent icons
-# are SVG and PNG files, not QML: out of scope.
+#   1. a colour in hex ("#rgb", "#rrggbb", "#aarrggbb", up to "#rrrrggggbbbb":
+#      3 to 12 hex digits, in double or single quotes) or a string that is
+#      exactly a colour name of Qt (the SVG names, case-insensitive) given as
+#      the value of a colour property: a property whose last name segment
+#      contains "color" (color, border.color, fillColor, textColor,
+#      GradientStop.color), a palette.<role> property, or a
+#      "property color <name>" declaration. Both a QML binding (name: value)
+#      and a JS assignment (x.color = value) count; the value may be an
+#      expression (a ternary) up to the next ";", "{" or "}" of the line. Any
+#      other property may hold such a string: text: "Orange", objectName:
+#      "Red", text: "#123" are not colours. "transparent" is excepted: it is
+#      no hue and the theme has no role for it;
+#   2. a call that makes a colour, in any place: Qt.rgba, Qt.rgb, Qt.hsla,
+#      Qt.hsl, Qt.hsva, Qt.hsv, Qt.color.
+# Comments are scanned too: a colour property written in a comment with a
+# quoted colour is a violation, so the comment says what colour it means
+# without quoting it. The theme is JSON (src/qml_api/themes/default.json) and
+# is not in the scanned set. Agent icons are SVG and PNG files, not QML: out of
+# scope.
 #
 # tests/gates/qml_colors/ holds one tree per case, laid out like the repository.
 # "clean" must pass, and every other case breaks the rule one way and must fail
@@ -34,19 +42,22 @@ names='aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blancheda
 quote="[\"']"
 hex="${quote}#[0-9A-Fa-f]{3,12}${quote}"
 named="${quote}(${names})${quote}"
+# The name of a colour property, then ":" or "=" (not "=="), then the value.
+prop='[A-Za-z0-9_]*color[A-Za-z0-9_]*'
+palette='palette\.[A-Za-z0-9_]+'
+decl='property[[:space:]]+color[[:space:]]+[A-Za-z0-9_]+'
+key="(^|[^A-Za-z0-9_.])(([A-Za-z_][A-Za-z0-9_]*\.)*(${prop}|${palette})|${decl})[[:space:]]*(:|=[^=])[^;{}]*"
 call='Qt\.(rgba|rgb|hsla|hsl|hsva|hsv|color)[[:space:]]*\('
 
 # The files of the rule under $1, one per line.
 scanned() {
-    local base=$1
-    [ -d "$base/src/roost" ] &&
-        find "$base/src/roost" -maxdepth 1 -name '*.qml'
-    local dir
-    for dir in "$base"/plugins/*/qml; do
+    local base=$1 dir
+    for dir in "$base/src/roost" "$base/templates/plugin-qml"; do
         [ -d "$dir" ] && find "$dir" -name '*.qml'
     done
-    [ -d "$base/templates/plugin-qml" ] &&
-        find "$base/templates/plugin-qml" -name '*.qml'
+    for dir in "$base"/plugins/*; do
+        [ -d "$dir" ] && find "$dir" -name '*.qml'
+    done
     return 0
 }
 
@@ -55,8 +66,7 @@ violations() {
     local base=$1 file
     while IFS= read -r file; do
         {
-            grep -nE "$hex" "$file"
-            grep -niE "$named" "$file"
+            grep -niE "${key}(${hex}|${named})" "$file"
             grep -nE "$call" "$file"
         } 2>/dev/null | sort -t: -k1,1n -u | sed "s|^|${file#"$base"/}:|"
     done < <(scanned "$base" | sort)
@@ -115,5 +125,10 @@ check hex3_single_quotes fail src/roost/Short.qml
 check name_template fail templates/plugin-qml/qml/Hello.qml
 check name_case fail src/roost/Upper.qml
 check call_rgba fail plugins/demo/qml/Call.qml
+check deep_src fail src/roost/sub/Deep.qml
+check plugin_outside_qml fail plugins/demo/Outer.qml
+check js_assignment fail src/roost/Assign.qml
+check border_name fail src/roost/Border.qml
+check property_decl fail src/roost/Decl.qml
 
 exit "$failed"
