@@ -211,8 +211,9 @@ private:
     // Plugins first (Daemon_->AddQmlPlugin), then this.
     // The loader is made after the list of plugins is loaded (its constructor
     // reads it) or, with `listLoaded` false, before the connection is even
-    // asked for, and Boot returns without running the event loop after that:
-    // the list has not arrived and cannot arrive before the test looks.
+    // asked for. The list may then arrive before Boot returns (inside Connect,
+    // if roostd answers first); LoaderTypes_ sees every change of the loader's
+    // types from the start.
     bool Boot(bool listLoaded = true) {
         // Names the step that failed and what the Api saw until then, so that
         // a failure in CI says whether a start failed or a wait ran out, and
@@ -277,10 +278,12 @@ private:
         if (!listLoaded) {
             Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
                                                      *Singleton_);
-            Api_->Connect(Daemon_->SocketPath());
-            if (Api_->Plugins().IsLoaded()) {
-                return fail("the check that the list has not arrived yet");
+            if (!Loader_->PanelTypes().isEmpty()) {
+                return fail("the check that the loader starts without types");
             }
+            LoaderTypes_ = std::make_unique<QSignalSpy>(
+                Loader_.get(), &PluginLoader::PanelTypesChanged);
+            Api_->Connect(Daemon_->SocketPath());
             return true;
         }
         Api_->Connect(Daemon_->SocketPath());
@@ -374,6 +377,8 @@ private:
     RoostSingleton* Singleton_ = nullptr;
     QPointer<QObject> Shell_;
     std::unique_ptr<PluginLoader> Loader_;
+    // Set by Boot(false): the changes of Loader_'s types since before Connect.
+    std::unique_ptr<QSignalSpy> LoaderTypes_;
 
 private slots:
     void init() {
@@ -384,6 +389,7 @@ private slots:
 
     void cleanup() {
         // Before the engine, as documented; the Api outlives the engine.
+        LoaderTypes_.reset();
         Loader_.reset();
         delete Shell_.data();
         Engine_.reset();
@@ -442,9 +448,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
                           {{"p.qml", ItemPanel("p")}}));
         QVERIFY(Boot(false));
-        QVERIFY(Loader_->PanelTypes().isEmpty());
-        QSignalSpy types(Loader_.get(), &PluginLoader::PanelTypesChanged);
-        QTRY_COMPARE_WITH_TIMEOUT(types.count(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(LoaderTypes_->count(), 1, TIMEOUT_MS);
         QCOMPARE(Loader_->PanelTypes(), (QStringList{"a-one.p"}));
     }
 
@@ -691,7 +695,8 @@ private slots:
         if (how == "fetch") {
             QSignalSpy changed(&Api_->Plugins(), &api::PluginService::Changed);
             Api_->Plugins().Fetch();
-            QVERIFY(changed.wait(TIMEOUT_MS));
+            // The answer may be there before Fetch returns: look first.
+            QVERIFY(!changed.isEmpty() || changed.wait(TIMEOUT_MS));
         } else {
             if (how == "restart-file-edited") {
                 QVERIFY(

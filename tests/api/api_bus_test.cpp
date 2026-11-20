@@ -114,7 +114,9 @@ private slots:
         Api_ = std::make_unique<api::Api>();
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(Daemon_->SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
     }
 
     void cleanup() {
@@ -416,7 +418,7 @@ private slots:
         QCOMPARE(SUBSCRIBE_WARNINGS.load(), 0);
 
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         Publish("x.a", 1);
         Publish("x.b", 2);
         Flush();

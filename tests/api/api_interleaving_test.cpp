@@ -355,7 +355,9 @@ private slots:
         api::Api api;
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(Roostd_->SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         // The store's directory is made by the first write.
         const QFuture<rpc::Result> saved = api.Store().Set("fixture", Doc(0));
         QVERIFY(WaitFor(saved));

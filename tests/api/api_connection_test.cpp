@@ -34,7 +34,9 @@ private slots:
         QSignalSpy connected(&api, &api::Api::Connected);
         QSignalSpy refused(&api, &api::Api::Refused);
         api.Connect(daemon.SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QVERIFY(api.IsConnected());
         QVERIFY(refused.isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(api.Plugins().IsLoaded(), TIMEOUT_MS);
@@ -64,7 +66,7 @@ private slots:
         QSignalSpy disconnected(&api, &api::Api::Disconnected);
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(dir.filePath("old.sock"));
-        QVERIFY(refused.wait(TIMEOUT_MS));
+        QVERIFY(!refused.isEmpty() || refused.wait(TIMEOUT_MS));
         const auto error = qvariant_cast<rpc::Error>(refused.at(0).at(0));
         QCOMPARE(error.Code,
                  static_cast<int>(protocol::EErrorCode::VersionMismatch));
@@ -91,7 +93,7 @@ private slots:
         api::Api api;
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(daemon.SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QSignalSpy notified(&api.Io(), &IoThread::Notified);
 
         // Any method of the protocol, and its error as it came.

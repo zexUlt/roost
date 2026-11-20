@@ -149,7 +149,9 @@ private:
         Api_ = std::make_unique<api::Api>();
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(Daemon_->SocketPath());
-        if (!connected.wait(TIMEOUT_MS)) {
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        if (connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
             return false;
         }
         Engine_ = std::make_unique<QQmlEngine>();

@@ -111,7 +111,6 @@ private:
             Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
         QVERIFY(Singleton_ != nullptr);
         Singleton_->setApi(*Api_);
-        Api_->Connect(Socket());
         Engine_->loadFromModule("Roost.Shell", "Main");
         QVERIFY(!Engine_->rootObjects().isEmpty());
         Loader_ = std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(),
@@ -119,6 +118,9 @@ private:
         Shell_ =
             std::make_unique<Shell>(*Engine_->rootObjects().first(), *Loader_,
                                     *Api_, Socket(), Launcher_.get());
+        // After the shell listens: Connect may say Refused or Connected
+        // inside the call, and a shell made later would not see it.
+        Api_->Connect(Socket());
     }
 
     QObject* Root() { return Engine_->rootObjects().first(); }

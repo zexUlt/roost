@@ -179,7 +179,9 @@ private slots:
         QSignalSpy connected(&api, &api::Api::Connected);
         QSignalSpy noListener(&api, &api::Api::NoListener);
         api.Connect(daemon.SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QTest::qWait(300);
         QCOMPARE(Starts_.load(), 0);
         QVERIFY(noListener.isEmpty());
@@ -194,7 +196,7 @@ private slots:
         QSignalSpy refused(&api, &api::Api::Refused);
         QSignalSpy noListener(&api, &api::Api::NoListener);
         api.Connect(Socket());
-        QVERIFY(refused.wait(TIMEOUT_MS));
+        QVERIFY(!refused.isEmpty() || refused.wait(TIMEOUT_MS));
         QTest::qWait(300);
         QCOMPARE(Starts_.load(), 0);
         QVERIFY(noListener.isEmpty());

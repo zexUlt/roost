@@ -334,7 +334,9 @@ private:
         Api_ = std::make_unique<api::Api>();
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(SocketPath());
-        return connected.wait(TIMEOUT_MS) &&
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        return (!connected.isEmpty() || connected.wait(TIMEOUT_MS)) &&
                QTest::qWaitFor([&] { return Api_->Sessions().IsLoaded(); },
                                TIMEOUT_MS);
     }
@@ -521,7 +523,7 @@ private slots:
         Api_ = std::make_unique<api::Api>();
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(SocketPath());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QTRY_VERIFY_WITH_TIMEOUT(Api_->Sessions().IsLoaded(), TIMEOUT_MS);
         QCOMPARE(Api_->Sessions().Rows().size(), 4);
         const qint64 adapter = AdapterPid();

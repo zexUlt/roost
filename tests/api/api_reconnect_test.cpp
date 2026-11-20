@@ -271,7 +271,9 @@ private slots:
         Api_ = std::make_unique<api::Api>(Quick());
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(dir.filePath("fake.sock"));
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
 
         const QFuture<rpc::Result> run =
             Api_->Commands().Run("fixture.pid", QJsonArray{});
@@ -321,7 +323,7 @@ private slots:
         QSignalSpy refused(Api_.get(), &api::Api::Refused);
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(dir.filePath("fake.sock"));
-        QVERIFY(refused.wait(TIMEOUT_MS));
+        QVERIFY(!refused.isEmpty() || refused.wait(TIMEOUT_MS));
         QCOMPARE(qvariant_cast<rpc::Error>(refused.at(0).at(0)).Code,
                  static_cast<int>(protocol::EErrorCode::VersionMismatch));
         QTest::qWait(SEVERAL_ATTEMPTS_MS);
@@ -331,7 +333,7 @@ private slots:
         // A daemon of the right build: a new Connect tries again.
         daemon.Refuse = false;
         Api_->Connect(dir.filePath("fake.sock"));
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QCOMPARE(daemon.Count("hello"), 2);
         QVERIFY(Api_->IsConnected());
     }
@@ -351,7 +353,7 @@ private slots:
             Api_->Connect(dir.filePath("fake.sock"));
         });
         Api_->Connect(dir.filePath("fake.sock"));
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QTest::qWait(SEVERAL_ATTEMPTS_MS);
         QCOMPARE(daemon.Count("hello"), 2);
         QCOMPARE(connected.size(), 1);

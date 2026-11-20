@@ -193,7 +193,11 @@ private:
         auto api = std::make_unique<api::Api>();
         QSignalSpy connected(api.get(), &api::Api::Connected);
         api->Connect(Daemon_->SocketPath());
-        return connected.wait(TIMEOUT_MS) ? std::move(api) : nullptr;
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        return (!connected.isEmpty() || connected.wait(TIMEOUT_MS))
+                   ? std::move(api)
+                   : nullptr;
     }
 
     // The daemon, the Api, the engine and the QML object, ready to call.

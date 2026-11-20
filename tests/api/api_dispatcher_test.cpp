@@ -48,7 +48,9 @@ private:
         Api_ = std::make_unique<api::Api>();
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(Daemon_->SocketPath());
-        return connected.wait(TIMEOUT_MS);
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        return !connected.isEmpty() || connected.wait(TIMEOUT_MS);
     }
 
     // The thread in which the future finished is recorded by a continuation
