@@ -1,6 +1,7 @@
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
 
@@ -298,6 +299,11 @@ int main(int argc, char* argv[]) {
             qCritical("roost --smoke: the root object is not a window");
             return 1;
         }
+        if (!roost::ControlsStyleIsSelected()) {
+            qCritical("roost --smoke: the Controls style is %s, not Fusion",
+                      qPrintable(QQuickStyle::name()));
+            return 1;
+        }
         ExitAfterFirstFrame(window, session.get());
     }
 
@@ -307,6 +313,12 @@ int main(int argc, char* argv[]) {
         if (window == nullptr) {
             qCritical(
                 "roost --smoke-sessions: the root object is not a window");
+            return 1;
+        }
+        if (!roost::ControlsStyleIsSelected()) {
+            qCritical(
+                "roost --smoke-sessions: the Controls style is %s, not Fusion",
+                qPrintable(QQuickStyle::name()));
             return 1;
         }
         ExitWhenSessionsShown(window, &*shell);

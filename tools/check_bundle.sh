@@ -193,6 +193,8 @@ for path in Contents/Resources/qml/QtCore/qmldir \
     Contents/Resources/qml/QtQuick/Controls \
     Contents/Resources/qml/QtQuick/Controls/Fusion/qmldir \
     Contents/Resources/qml/QtQuick/Controls/Fusion/impl/qmldir \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/libqtquickcontrols2fusionstyleplugin.dylib \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/impl/libqtquickcontrols2fusionstyleimplplugin.dylib \
     Contents/Resources/qml/QtQuick/Controls/Basic/qmldir \
     Contents/Resources/qml/QtQuick/Layouts \
     Contents/PlugIns/imageformats/libqsvg.dylib; do
