@@ -52,8 +52,10 @@ private slots:
         QTest::newRow("a digit") << "Cmd+1" << MAC << "Cmd+1";
         QTest::newRow("plus is a key") << "Ctrl++" << LINUX << "Ctrl++";
         QTest::newRow("bare plus") << "+" << LINUX << "+";
-        QTest::newRow("a letter of another script")
-            << "Ctrl+ж" << LINUX << "Ctrl+Ж";
+        QTest::newRow("latin letter with a diacritic")
+            << "Ctrl+é" << LINUX << "Ctrl+É";
+        QTest::newRow("upper latin letter with a diacritic")
+            << "Ctrl+É" << LINUX << "Ctrl+É";
     }
 
     void ParsesToTheNormalForm() {
@@ -68,6 +70,9 @@ private slots:
         QVERIFY(again);
         QCOMPARE(*again, *chord);
         QCOMPARE(WriteKeyChord(*again), normal);
+        // Write(Parse(Write(Parse(x)))) == Write(Parse(x)).
+        QCOMPARE(WriteKeyChord(*ParseKeyChord(WriteKeyChord(*chord), platform)),
+                 WriteKeyChord(*chord));
     }
 
     // Cmd is the Command key and Ctrl the Control key, apart from each other.
@@ -108,6 +113,16 @@ private slots:
             << "Super+N" << LINUX << "unknown modifier \"Super\"";
         QTest::newRow("unknown key name")
             << "Ctrl+Foo" << LINUX << "unknown key name \"Foo\"";
+        QTest::newRow("cyrillic letter")
+            << "Ctrl+ж" << LINUX << "is not a Latin letter";
+        QTest::newRow("greek letter")
+            << "λ" << LINUX << "is not a Latin letter";
+        QTest::newRow("micro sign turns Greek in upper case")
+            << "µ" << LINUX << "is not a Latin letter";
+        QTest::newRow("sharp s is SS in upper case")
+            << "Ctrl+ß" << LINUX << "no one-character upper case";
+        QTest::newRow("ligature fi is FI in upper case")
+            << "ﬁ" << LINUX << "no one-character upper case";
         QTest::newRow("F0") << "F0" << LINUX << "unknown key name";
         QTest::newRow("F25") << "F25" << LINUX << "unknown key name";
         QTest::newRow("F05") << "F05" << LINUX << "unknown key name";

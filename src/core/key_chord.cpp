@@ -68,7 +68,34 @@ std::expected<QString, QString> NormalizeKey(const QString& part,
                                "character; write a name such as Space")
                     .arg(text));
         }
-        return part.toUpper();
+        const QString upper = part.toUpper();
+        // "ß" is "SS" in upper case: the normal form would not parse back.
+        if (upper.size() != part.size()) {
+            return std::unexpected(
+                QStringLiteral("\"%1\" in \"%2\" has no one-character upper "
+                               "case; write the letter of the US key")
+                    .arg(part, text));
+        }
+        // A letter of another script never fires: the binding matches the US
+        // key of a non-Latin layout. The upper case is checked, as "µ" turns
+        // into the Greek "Μ".
+        const char32_t code = upper.toUcs4().front();
+        if (QChar::isLetter(code)) {
+            switch (QChar::script(code)) {
+                case QChar::Script_Latin:
+                case QChar::Script_Common:
+                case QChar::Script_Inherited:
+                case QChar::Script_Unknown:
+                    break;
+                default:
+                    return std::unexpected(
+                        QStringLiteral("\"%1\" in \"%2\" is not a Latin "
+                                       "letter: write the letter of the US "
+                                       "key")
+                            .arg(part, text));
+            }
+        }
+        return upper;
     }
     const QString lower = part.toLower();
     for (const KeyName& name : KEY_NAMES) {
