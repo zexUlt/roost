@@ -61,4 +61,19 @@ ResolvedTheme ResolveTheme(const QJsonObject& settings) {
     return resolved;
 }
 
+ResolvedTerminalColors ResolveTerminalColors(const QJsonObject& tokens) {
+    auto colors = ParseTerminalColors(tokens);
+    if (colors) {
+        return {.Colors = *colors, .Problem = {}, .Fallback = false};
+    }
+    const QString problem = colors.error();
+    auto fallback = ParseTerminalColors(ResolveTheme({}).Tokens);
+    if (!fallback) {
+        return {.Colors = std::nullopt,
+                .Problem = fallback.error(),
+                .Fallback = false};
+    }
+    return {.Colors = *fallback, .Problem = problem, .Fallback = true};
+}
+
 }  // namespace roost

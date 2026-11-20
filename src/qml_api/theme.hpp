@@ -77,9 +77,10 @@ public:
     // does not know, and a value that is not a colour, are ignored with a
     // warning (`categories` takes an array of exactly eight colours). `changed`
     // follows if any token took a new value. The terminal tokens are checked
-    // together, as ParseTerminalColors reads them: a bad one leaves all the
-    // terminal tokens of the call out; terminalColorsChanged follows if the
-    // terminal colours changed. Returns whether every key was taken.
+    // together, as ParseTerminalColors reads them: a bad one gives all the
+    // terminal colours the default theme's (as roostd does);
+    // terminalColorsChanged follows if the terminal colours changed. Returns
+    // whether every key was taken.
     bool load(const QJsonObject& tokens);
 
     // The theme that the settings document names (settings.theme), all of its

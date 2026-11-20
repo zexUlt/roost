@@ -127,15 +127,22 @@ bool Theme::load(const QJsonObject& tokens) {
     }
     bool terminalDiffers = false;
     if (terminalGiven) {
-        const auto colors = ParseTerminalColors(terminalTokens);
-        if (!colors) {
-            qWarning("roost: theme: %s; the terminal tokens are ignored",
-                     qUtf8Printable(colors.error()));
+        const ResolvedTerminalColors resolved =
+            ResolveTerminalColors(terminalTokens);
+        if (resolved.Fallback) {
+            qWarning("roost: theme: %s; the default terminal colours are used",
+                     qUtf8Printable(resolved.Problem));
+            taken = false;
+            terminalTokens = ResolveTheme({}).Tokens;
+        }
+        if (!resolved.Colors) {
+            qWarning("roost: theme: the default has no terminal colours: %s",
+                     qUtf8Printable(resolved.Problem));
             taken = false;
         } else {
             TerminalTokens_ = terminalTokens;
-            terminalDiffers = !(*colors == TerminalColors_);
-            TerminalColors_ = *colors;
+            terminalDiffers = !(*resolved.Colors == TerminalColors_);
+            TerminalColors_ = *resolved.Colors;
         }
     }
     if (differs || terminalDiffers) {

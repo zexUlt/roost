@@ -41,6 +41,8 @@ Q_IMPORT_QML_PLUGIN(Roost_ApiPlugin)
 namespace {
 
 constexpr int TIMEOUT_MS = 10000;
+// How long one asking waits for its reply before asking again.
+constexpr int ASK_RETRY_MS = 300;
 const QString SESSION = "bg-1b2c3d4e";
 // Each query answered once; a digit after the 1 would be more than once.
 const QRegularExpression ANSWERED_ONCE(
@@ -76,13 +78,20 @@ bool Greets(const QString& socketPath) {
 }
 
 // The test theme: its background and nothing else; the rest is the default's.
-bool WriteThemeFile(const QString& path) {
+bool WriteThemeFile(const QString& path, bool broken = false) {
+    QJsonObject tokens{{"terminalBackground", TEST_BACKGROUND},
+                       {"terminalForeground", "#c0d0e0"}};
+    if (broken) {
+        // Fifteen colours instead of sixteen: the terminal tokens do not parse.
+        QJsonArray ansi;
+        for (int i = 0; i < 15; ++i) {
+            ansi.append("#000000");
+        }
+        tokens.insert("terminalAnsi", ansi);
+    }
     QFile file(path);
-    return file.open(QIODevice::WriteOnly) &&
-           file.write(QJsonDocument(
-                          QJsonObject{{"terminalBackground", TEST_BACKGROUND},
-                                      {"terminalForeground", "#c0d0e0"}})
-                          .toJson()) > 0;
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+           file.write(QJsonDocument(tokens).toJson()) > 0;
 }
 
 // Written to disk before it is run: an open file that is exec'd is not a
@@ -148,6 +157,7 @@ private:
         if (singleton == nullptr) {
             return false;
         }
+        Roost_ = singleton;
         singleton->setApi(*Api_);
         Api_->Connect(SocketPath());
         return QTest::qWaitFor([&] { return Api_->IsConnected(); }, TIMEOUT_MS);
@@ -171,6 +181,21 @@ private:
     // The TUI asks the terminal; the answer is on its line 7.
     void Ask(const QByteArray& query) {
         Api_->Io().SendInput(Opened_.Channel, "Q" + query);
+    }
+
+    // Asks again until the screen shows the reply: roostd takes a changed
+    // document in its own time, and a query asked before that is answered
+    // with the old colours.
+    bool AskUntilAnswered(const QByteArray& query, const QString& reply) {
+        const QDeadlineTimer deadline(TIMEOUT_MS);
+        while (!deadline.hasExpired()) {
+            Ask(query);
+            if (QTest::qWaitFor([&] { return Screen(Opened_).contains(reply); },
+                                ASK_RETRY_MS)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Writes the document `settings` of the daemon, as the window does.
@@ -204,6 +229,7 @@ private:
     std::unique_ptr<api::Api> Api_;
     std::unique_ptr<QQmlEngine> Engine_;
     OpenedSession Opened_;
+    RoostSingleton* Roost_ = nullptr;
 
 private slots:
     void init() {
@@ -220,6 +246,7 @@ private slots:
 
     void cleanup() {
         Opened_ = {};
+        Roost_ = nullptr;
         Api_.reset();
         Engine_.reset();
         if (Daemon_ && Daemon_->state() != QProcess::NotRunning) {
@@ -254,23 +281,15 @@ private slots:
                                   TIMEOUT_MS);
         // roostd takes the document in its own time: ask until it answers
         // with the new colour.
-        QTRY_VERIFY_WITH_TIMEOUT(
-            [&] {
-                Ask("\x1b]11;?\x07");
-                return QTest::qWaitFor(
-                    [&] { return Screen(Opened_).contains(ASKED_TEST); }, 300);
-            }(),
-            TIMEOUT_MS);
+        AskUntilAnswered("\x1b]11;?\x07", ASKED_TEST);
 
         // The foreground, the cursor and a palette entry of the same theme:
         // the test theme has a foreground of its own, and the default
         // cursor and palette.
-        QTest::qWait(200);
         Ask("\x1b]10;?\x07");
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(Opened_).contains(R"(reply \x1b]10;rgb:c0c0/d0d0/e0e0\x07)"),
             TIMEOUT_MS);
-        QTest::qWait(200);
         Ask("\x1b]4;1;?\x07");
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(Opened_).contains(
@@ -281,13 +300,12 @@ private slots:
     // A terminal opened after the change has the colours from the start.
     void ANewTerminalHasTheThemeAtOnce() {
         QVERIFY(WriteSettings({{"theme", "test"}}));
-        QTest::qWait(300);
+        // The window's Theme has the settings before the terminal opens.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Roost_->theme()->terminalColors().Background.R == 0x10, TIMEOUT_MS);
         QVERIFY(OpenAndSettle());
-        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), TEST_BACKGROUND,
-                                  TIMEOUT_MS);
-        Ask("\x1b]11;?\x07");
-        QTRY_VERIFY_WITH_TIMEOUT(Screen(Opened_).contains(ASKED_TEST),
-                                 TIMEOUT_MS);
+        QCOMPARE(WindowBackground(), TEST_BACKGROUND);
+        AskUntilAnswered("\x1b]11;?\x07", ASKED_TEST);
     }
 
     // An id that no theme has is the default theme, and the daemon stays up.
@@ -299,15 +317,27 @@ private slots:
         QVERIFY(WriteSettings({{"theme", "nonesuch"}}));
         QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#000000"),
                                   TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(
-            [&] {
-                Ask("\x1b]11;?\x07");
-                return QTest::qWaitFor(
-                    [&] { return Screen(Opened_).contains(ASKED_DEFAULT); },
-                    300);
-            }(),
-            TIMEOUT_MS);
+        AskUntilAnswered("\x1b]11;?\x07", ASKED_DEFAULT);
         QCOMPARE(Daemon_->state(), QProcess::Running);
+    }
+
+    // A theme whose terminal tokens do not parse is the default for both
+    // processes, not the previous theme for the window and the default for
+    // roostd.
+    void BrokenTerminalTokensAreTheDefaultInBothProcesses() {
+        QVERIFY(WriteSettings({{"theme", "test"}}));
+        QVERIFY(OpenAndSettle());
+        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), TEST_BACKGROUND,
+                                  TIMEOUT_MS);
+        QVERIFY(AskUntilAnswered("\x1b]11;?\x07", ASKED_TEST));
+
+        // The same id, the file now broken; the document changes so that
+        // both processes read it again.
+        QVERIFY(WriteThemeFile(Dir_->filePath("theme.json"), true));
+        QVERIFY(WriteSettings({{"theme", "test"}, {"again", 1}}));
+        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#000000"),
+                                  TIMEOUT_MS);
+        QVERIFY(AskUntilAnswered("\x1b]11;?\x07", ASKED_DEFAULT));
     }
 };
 

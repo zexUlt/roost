@@ -3,6 +3,10 @@
 #include <QJsonObject>
 #include <QString>
 
+#include <optional>
+
+#include "core/terminal_theme.hpp"
+
 namespace roost {
 
 // The theme the settings select (design.md §5): the id in `settings.theme`
@@ -31,5 +35,18 @@ inline const QString DEFAULT_THEME_ID = QStringLiteral("default");
 // the window to another theme without a second built-in one. Nothing sets it
 // outside tests.
 ResolvedTheme ResolveTheme(const QJsonObject& settings);
+
+// The terminal colours of a theme's tokens, and the rule for a theme whose
+// terminal tokens do not parse that the window and roostd share: the colours
+// of the default theme (Fallback), Problem being what is wrong with the given
+// tokens. Colors is empty only when the default theme itself does not parse
+// (Problem says why); the caller keeps what it has.
+struct ResolvedTerminalColors {
+    std::optional<TerminalColors> Colors;
+    QString Problem;
+    bool Fallback = false;
+};
+
+ResolvedTerminalColors ResolveTerminalColors(const QJsonObject& tokens);
 
 }  // namespace roost

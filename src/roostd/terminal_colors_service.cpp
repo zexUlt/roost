@@ -46,11 +46,10 @@ TerminalColorsService::~TerminalColorsService() {
 
 void TerminalColorsService::Apply(const QJsonObject& settings) {
     ResolvedTheme theme = ResolveTheme(settings);
-    auto colors = ParseTerminalColors(theme.Tokens);
-    if (!colors) {
+    const ResolvedTerminalColors resolved = ResolveTerminalColors(theme.Tokens);
+    if (resolved.Fallback) {
         theme.Problem = QStringLiteral("theme \"%1\": %2; the default is used")
-                            .arg(theme.Id, colors.error());
-        colors = ParseTerminalColors(ResolveTheme({}).Tokens);
+                            .arg(theme.Id, resolved.Problem);
     }
     if (theme.Problem != Logged_) {
         Logged_ = theme.Problem;
@@ -58,18 +57,18 @@ void TerminalColorsService::Apply(const QJsonObject& settings) {
             qWarning("roostd: %s", qUtf8Printable(Logged_));
         }
     }
-    if (!colors) {
+    if (!resolved.Colors) {
         // Not even the default theme: the terminals keep what they have.
         qWarning("roostd: the default theme has no terminal colors: %s",
-                 qUtf8Printable(colors.error()));
+                 qUtf8Printable(resolved.Problem));
         return;
     }
-    if (Applied_ == *colors) {
+    if (Applied_ == *resolved.Colors) {
         return;
     }
     qInfo("roostd: terminal theme \"%s\"", qUtf8Printable(theme.Id));
-    Applied_ = *colors;
-    Pool_.SetColors(*colors);
+    Applied_ = *resolved.Colors;
+    Pool_.SetColors(*resolved.Colors);
 }
 
 }  // namespace roost

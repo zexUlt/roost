@@ -295,6 +295,14 @@ private slots:
             << "terminalForeground";
         QTest::newRow("alpha")
             << "terminalCursor" << QJsonValue("#ffffff80") << "terminalCursor";
+        QTest::newRow("plus sign")
+            << "terminalForeground" << QJsonValue("#+12345")
+            << "terminalForeground";
+        QTest::newRow("space") << "terminalForeground" << QJsonValue("# 12345")
+                               << "terminalForeground";
+        QTest::newRow("not hex")
+            << "terminalForeground" << QJsonValue("#12345g")
+            << "terminalForeground";
         QTest::newRow("not a string")
             << "terminalSelection" << QJsonValue(7) << "terminalSelection";
         QTest::newRow("short ansi")

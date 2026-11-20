@@ -4,6 +4,7 @@
 #include <QJsonValue>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <optional>
 
@@ -28,11 +29,14 @@ std::optional<Rgb> ParseColor(const QJsonValue& value) {
     if (text.size() != 7 || text[0] != u'#') {
         return std::nullopt;
     }
-    bool ok = false;
-    const uint number = QStringView(text).mid(1).toUInt(&ok, 16);
-    if (!ok) {
+    const QStringView digits = QStringView(text).mid(1);
+    // toUInt would take a sign or a space; only hex digits are a colour.
+    if (!std::ranges::all_of(digits, [](QChar c) {
+            return c.unicode() < 128 && std::isxdigit(c.unicode()) != 0;
+        })) {
         return std::nullopt;
     }
+    const uint number = digits.toUInt(nullptr, 16);
     return Rgb{.R = static_cast<quint8>(number >> 16),
                .G = static_cast<quint8>(number >> 8),
                .B = static_cast<quint8>(number)};
