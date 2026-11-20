@@ -16,6 +16,7 @@
 #include "core/version.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/controls_style.hpp"
 #include "roost/daemon_launcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
@@ -155,6 +156,7 @@ int main(int argc, char* argv[]) {
     roost::InstallWindowLog(
         roost::WindowLogPath(roost::protocol::SocketPath()));
     roost::LogWindowStartup();
+    roost::SelectControlsStyle();
     QCoreApplication::setApplicationName(QStringLiteral("roost"));
     QCoreApplication::setApplicationVersion(
         QString::fromStdString(roost::VersionString()));

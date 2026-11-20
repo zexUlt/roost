@@ -619,6 +619,12 @@ roost_add_qt_test(bug_report_dialog_test roost/bug_report_dialog_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
     roost_test_helpers Qt6::Qml Qt6::Quick)
 
+# The Controls style of the window is Fusion and the palette of the window is
+# the theme's: a Button of the banner and the bug report dialog, painted.
+roost_add_qt_test(controls_style_test roost/controls_style_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+
 # The layout model: the default tree, round trip, repair of broken documents;
 # pure data, no plugins or window.
 roost_add_qt_test(layout_model_test roost/layout_model_test.cpp roost_app)

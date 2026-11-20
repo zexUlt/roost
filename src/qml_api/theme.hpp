@@ -24,6 +24,12 @@ class Theme : public QObject {
 
     // The window behind the panels.
     Q_PROPERTY(QColor windowBackground READ windowBackground NOTIFY changed)
+    // What Qt Quick Controls draw on the window: the text (also of buttons and
+    // fields), the background of a button, the background of a text field.
+    // They become the `palette` of the window (Main.qml).
+    Q_PROPERTY(QColor windowText READ windowText NOTIFY changed)
+    Q_PROPERTY(QColor controlBackground READ controlBackground NOTIFY changed)
+    Q_PROPERTY(QColor inputBackground READ inputBackground NOTIFY changed)
     // The background of a panel, and of what lies over one.
     Q_PROPERTY(QColor panelBackground READ panelBackground NOTIFY changed)
     Q_PROPERTY(QColor overlayBackground READ overlayBackground NOTIFY changed)
@@ -71,6 +77,9 @@ public:
     bool load(const QJsonObject& tokens);
 
     QColor windowBackground() const { return WindowBackground_; }
+    QColor windowText() const { return WindowText_; }
+    QColor controlBackground() const { return ControlBackground_; }
+    QColor inputBackground() const { return InputBackground_; }
     QColor panelBackground() const { return PanelBackground_; }
     QColor overlayBackground() const { return OverlayBackground_; }
     QColor text() const { return Text_; }
@@ -100,6 +109,9 @@ signals:
 
 private:
     QColor WindowBackground_;
+    QColor WindowText_;
+    QColor ControlBackground_;
+    QColor InputBackground_;
     QColor PanelBackground_;
     QColor OverlayBackground_;
     QColor Text_;

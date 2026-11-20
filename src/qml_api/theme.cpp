@@ -37,6 +37,9 @@ Theme::Theme(QObject* parent) : QObject(parent) {
 bool Theme::load(const QJsonObject& tokens) {
     static const std::array TOKENS = {
         Token{"windowBackground", &Theme::WindowBackground_},
+        Token{"windowText", &Theme::WindowText_},
+        Token{"controlBackground", &Theme::ControlBackground_},
+        Token{"inputBackground", &Theme::InputBackground_},
         Token{"panelBackground", &Theme::PanelBackground_},
         Token{"overlayBackground", &Theme::OverlayBackground_},
         Token{"text", &Theme::Text_},

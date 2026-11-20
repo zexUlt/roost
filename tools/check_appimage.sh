@@ -226,7 +226,8 @@ else
 fi
 
 # --- QML -------------------------------------------------------------------
-for module in QtCore QtQuick/Controls QtQuick/Controls/Basic QtQuick/Layouts; do
+# Fusion is the style of the window (roost::SelectControlsStyle), Basic its base.
+for module in QtCore QtQuick/Controls QtQuick/Controls/Fusion QtQuick/Controls/Fusion/impl QtQuick/Controls/Basic QtQuick/Layouts; do
     [ -f "$appdir/usr/qml/$module/qmldir" ] ||
         fail "usr/qml/$module/qmldir is missing"
 done

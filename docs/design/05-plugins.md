@@ -141,6 +141,9 @@ QML-модуль плагина, без библиотеки на C ABI:
   | токен | роль | значение по умолчанию |
   |---|---|---|
   | `windowBackground` | окно за панелями | `#ffffff` |
+  | `windowText` | текст Controls на окне, в том числе на кнопках и в полях | `#000000` |
+  | `controlBackground` | фон кнопки Controls | `#efefef` |
+  | `inputBackground` | фон поля ввода Controls | `#ffffff` |
   | `panelBackground` | фон панели | `#1e1e1e` |
   | `overlayBackground` | то, что лежит над панелью (справка) | `#f01e1e1e` |
   | `text` | основной текст на панели | `#e0e0e0` |
@@ -165,7 +168,7 @@ QML-модуль плагина, без библиотеки на C ABI:
   | `error` | ошибка на панели | `#e06060` |
   | `windowError` | ошибка на фоне окна | `#b00020` |
 
-  Не покрыто темой: `palette` элементов Qt Quick Controls (стиль по-прежнему родной на macOS) и цвета терминала в рендерере (оба — позже в M6).
+  `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: на фоне окна (белом) они читаются, на тёмном фоне панели (`panelBackground`) плагин задаёт свой `palette` из токенов, иначе текст Controls будет чёрным на тёмном. Диалог берёт палитру окна, пока открыт. Не покрыто темой: цвета терминала в рендерере (позже в M6).
 
 Роли `Roost.sessions` — поля строки `sessions.list`, фиксированный список `api::SessionService::FIELDS`: `agent`, `id`, `title`, `cwd`, `state`, `startedAt`. Поле, которого в строке нет (`startedAt` бывает не у всех), читается как `undefined`. Новое поле строки `sessions.list` добавляют в `FIELDS`, иначе QML его не увидит. В делегате роль читают как `model.<имя>`. Для двух ролей это обязательно: `required property string id` не допускается, `id` в QML зарезервировано; голое `state` в делегате — свойство `Item.state`, а не роль, и даёт пустую строку. Строку по ключу `(agent, id)` плагин находит перебором: `Roost.sessions.data(Roost.sessions.index(i, 0), Qt.UserRole + n)`, где `n` — позиция поля в `FIELDS` (`agent` — 0, `id` — 1); поиска по ключу у модели нет.
 

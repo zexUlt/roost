@@ -71,6 +71,12 @@ constexpr OldColor OLD_COLORS[] = {
     {"error", "#e06060"},
     // BugReportDialog.qml: the error on the window.
     {"windowError", "#b00020"},
+    // Main.qml: the palette of the window for Qt Quick Controls. No literal
+    // had them; they are what the Fusion style paints by default (black text,
+    // grey button, white field).
+    {"windowText", "#000000"},
+    {"controlBackground", "#efefef"},
+    {"inputBackground", "#ffffff"},
 };
 
 // SessionsPanel.qml: categoryColors.
