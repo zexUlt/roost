@@ -29,6 +29,7 @@ namespace roost {
 // Not matched at all:
 //   - while an input method composes (a QInputMethodEvent with a preedit
 //     string was the last one seen, no one with an empty string since);
+//   - while the focus is in a Popup or a Dialog (the keys are the dialog's);
 //   - before the table is loaded;
 //   - a key without Cmd, Ctrl or Alt other than F1 to F24 while the focus is
 //     in the terminal or in an item that takes text (it has the flag
@@ -63,6 +64,10 @@ public:
     // PanelSlot above `focus`; empty with no slot above it or no focus.
     static QString PanelTypeOf(const QQuickItem* focus);
 
+    // Whether `focus` is inside the window's overlay: in a Popup or a Dialog,
+    // whose items live there.
+    static bool InOverlay(const QQuickItem* focus);
+
     // Whether the focus takes text: the terminal, or an item that has an
     // input method (a TextInput, a TextEdit).
     static bool TakesText(const QQuickItem* focus);
@@ -75,9 +80,12 @@ private:
 
     api::KeymapService& Keymap_;
     api::CommandService& Commands_;
-    // An input method has a preedit string on now.
+    // An input method has a preedit string on now; reset when the focus object
+    // changes.
     bool Composing_ = false;
-    // The Qt keys of the caught presses that have not been released yet.
+    // The Qt keys of the caught presses that have not been released yet, in
+    // the focus span of the window that caught them: cleared when the focus
+    // window changes.
     QSet<int> Held_;
 };
 

@@ -1,6 +1,7 @@
 #include "roost/key_matcher.hpp"
 
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QQuickWindow>
 #include <QtLogging>
@@ -16,6 +17,9 @@ namespace roost {
 namespace {
 
 const QString PANEL_SLOT = QStringLiteral("panelSlot");
+// The class of the item that Popup and Dialog live in (Qt Quick Templates);
+// the class is private, so it is found by name.
+const char* const OVERLAY_CLASS = "QQuickOverlay";
 
 struct NamedKey {
     int Qt;
@@ -80,6 +84,14 @@ KeyMatcher::KeyMatcher(api::KeymapService& keymap,
     if (QCoreApplication* const app = QCoreApplication::instance()) {
         app->installEventFilter(this);
     }
+    if (QGuiApplication* const gui = qGuiApp) {
+        // A key pressed in one focus span is not released in the next, and an
+        // input method that is cancelled by moving the focus says nothing.
+        connect(gui, &QGuiApplication::focusWindowChanged, this,
+                [this] { Held_.clear(); });
+        connect(gui, &QGuiApplication::focusObjectChanged, this,
+                [this] { Composing_ = false; });
+    }
 }
 
 KeyMatcher::~KeyMatcher() {
@@ -126,6 +138,16 @@ QString KeyMatcher::PanelTypeOf(const QQuickItem* focus) {
     return {};
 }
 
+bool KeyMatcher::InOverlay(const QQuickItem* focus) {
+    for (const QQuickItem* item = focus; item != nullptr;
+         item = item->parentItem()) {
+        if (item->inherits(OVERLAY_CLASS)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool KeyMatcher::TakesText(const QQuickItem* focus) {
     return focus != nullptr &&
            (qobject_cast<const TerminalItem*>(focus) != nullptr ||
@@ -162,6 +184,9 @@ bool KeyMatcher::OnPress(QObject* watched, const QKeyEvent& event) {
         return false;
     }
     const QQuickItem* const focus = window->activeFocusItem();
+    if (InOverlay(focus)) {
+        return false;
+    }
     if (IsBareKey(*chord) && TakesText(focus)) {
         return false;
     }

@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -110,10 +111,25 @@ protected:
     }
 };
 
+// Counts the key releases that reach an item.
+class ReleaseCounter : public QObject {
+public:
+    int* Count = nullptr;
+
+protected:
+    bool eventFilter(QObject* /*watched*/, QEvent* event) override {
+        if (event->type() == QEvent::KeyRelease) {
+            ++*Count;
+        }
+        return false;
+    }
+};
+
 // Three panels, as the shell has them: a slot is a FocusScope with the
 // objectName "panelSlot" and a panelType.
 const char* const QML = R"(
 import QtQuick
+import QtQuick.Controls
 import Roost.Api
 
 Item {
@@ -136,6 +152,17 @@ Item {
         Item { objectName: "otherItem" }
     }
     Item { objectName: "outsideItem" }
+    Popup {
+        objectName: "popup"
+        parent: Overlay.overlay
+        modal: true
+        width: 100
+        height: 100
+        contentItem: Item {
+            objectName: "popupItem"
+            focus: true
+        }
+    }
 }
 )";
 
@@ -435,22 +462,89 @@ private slots:
         QCOMPARE(Counter_.Presses, 0);
         // The release of a key that was not caught is not eaten.
         int releases = 0;
-        class ReleaseCounter : public QObject {
-        public:
-            int* Count = nullptr;
-
-        protected:
-            bool eventFilter(QObject*, QEvent* event) override {
-                if (event->type() == QEvent::KeyRelease) {
-                    ++*Count;
-                }
-                return false;
-            }
-        } probe;
+        ReleaseCounter probe;
         probe.Count = &releases;
         Window_.activeFocusItem()->installEventFilter(&probe);
         Release(Qt::Key_K, CONTROL_KEY, XKB_K, MAC_K, QString(QChar(0x0B)));
         QCOMPARE(releases, 1);
+    }
+
+    // The keys of a Popup or a Dialog are its own: an entry without `when`
+    // does not fire under it, and fires again when it is closed.
+    void NothingIsMatchedWhileTheFocusIsInAPopup() {
+        QVERIFY(Boot({Entry("Ctrl+J", "k1")}));
+        auto* popup = Root_->findChild<QObject*>("popup");
+        QVERIFY(popup != nullptr);
+        QVERIFY(QMetaObject::invokeMethod(popup, "open"));
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QQuickItem* inside = Root_->findChild<QQuickItem*>("popupItem");
+        QVERIFY(inside != nullptr);
+        inside->forceActiveFocus();
+        QTRY_COMPARE(Window_.activeFocusItem(), inside);
+        Counter_.Presses = 0;
+        inside->installEventFilter(&Counter_);
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QCOMPARE(Counter_.Presses, 1);
+        QVERIFY(Flush());
+        QVERIFY(!Ran("k1"));
+        QVERIFY(QMetaObject::invokeMethod(popup, "close"));
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QVERIFY(Focus("otherItem"));
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("k1"), TIMEOUT_MS);
+    }
+
+    // A key caught in one focus span is not held in the next: when the window
+    // loses the focus between the press and the release, the release of the
+    // same key in the terminal reaches the terminal.
+    void AReleaseAfterTheFocusWindowChangedIsNotEaten() {
+        QVERIFY(Boot({Entry("Ctrl+J", "k1")}));
+        QVERIFY(Focus("terminal"));
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("k1"), TIMEOUT_MS);
+        QQuickWindow other;
+        other.resize(50, 50);
+        other.show();
+        QVERIFY(QTest::qWaitForWindowActive(&other));
+        QTRY_VERIFY(QGuiApplication::focusWindow() != &Window_);
+        Window_.requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(&Window_));
+        QVERIFY(Focus("terminal"));
+        int releases = 0;
+        ReleaseCounter probe;
+        probe.Count = &releases;
+        Window_.activeFocusItem()->installEventFilter(&probe);
+        Release(Qt::Key_J, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("j"));
+        QCOMPARE(releases, 1);
+    }
+
+    // The release of a key caught in the same focus span is still eaten after
+    // the focus moves to another item of the window (a command that moves it).
+    void AReleaseAfterTheFocusItemChangedIsEaten() {
+        QVERIFY(Boot({Entry("Ctrl+J", "k1")}));
+        QVERIFY(Focus("otherItem"));
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("k1"), TIMEOUT_MS);
+        QVERIFY(Focus("terminal"));
+        int releases = 0;
+        ReleaseCounter probe;
+        probe.Count = &releases;
+        Window_.activeFocusItem()->installEventFilter(&probe);
+        Release(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QCOMPARE(releases, 0);
+    }
+
+    // An input method cancelled by a move of the focus says nothing more: the
+    // table is looked at again.
+    void ACompositionEndedByAFocusChangeDoesNotSwitchTheTableOff() {
+        QVERIFY(Boot({Entry("Ctrl+J", "k1")}));
+        QVERIFY(Focus("otherItem"));
+        QInputMethodEvent composing(QStringLiteral("に"), {});
+        QCoreApplication::sendEvent(Window_.activeFocusItem(), &composing);
+        QVERIFY(Focus("listItem"));
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QString(QChar(0x0A)));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("k1"), TIMEOUT_MS);
+        QCOMPARE(Counter_.Presses, 0);
     }
 
     void NothingIsMatchedBeforeTheTableIsLoaded() {
