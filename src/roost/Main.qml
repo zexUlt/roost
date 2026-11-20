@@ -72,6 +72,13 @@ ApplicationWindow {
         bugReportDialog.open();
     }
 
+    // Opens the command palette; macOS calls it from the View menu, other
+    // platforms from the toolbar button, and both from the command
+    // shell.palette.
+    function openPalette() {
+        commandPalette.open();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -87,6 +94,12 @@ ApplicationWindow {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                ToolButton {
+                    objectName: "paletteButton"
+                    text: "Command Palette…"
+                    onClicked: root.openPalette()
                 }
 
                 ToolButton {
@@ -254,11 +267,13 @@ ApplicationWindow {
     // keyboard to the list from anywhere, the terminal included. Not a toggle:
     // in the list it does nothing. shell.reportBug, Cmd+Shift+B on macOS only:
     // on Linux Ctrl+Shift+B must reach the program in the terminal.
+    // shell.palette, Ctrl+Shift+P (Cmd+Shift+P on macOS): the command palette.
     // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
         if (Roost.commands !== null) {
             Roost.commands.registerCommand("shell.focusList", () => listSlot.forceActiveFocus());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
+            Roost.commands.registerCommand("shell.palette", () => root.openPalette());
         }
     }
 
@@ -290,12 +305,26 @@ ApplicationWindow {
         window: root
     }
 
+    CommandPalette {
+        id: commandPalette
+    }
+
     // The menu bar only where Qt Quick Controls makes it native (macOS):
     // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
     // Bug…" is there instead of the toolbar button.
     Loader {
         active: Qt.platform.os === "osx"
         sourceComponent: MenuBar {
+            Menu {
+                title: "View"
+
+                MenuItem {
+                    objectName: "paletteMenuItem"
+                    text: "Command Palette…"
+                    onTriggered: root.openPalette()
+                }
+            }
+
             Menu {
                 title: "Help"
 
