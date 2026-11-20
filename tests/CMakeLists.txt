@@ -520,7 +520,7 @@ if(ROOST_INSTALL_RPATH_TO_QT)
     endif()
 endif()
 roost_add_qt_test(install_layout_test install/install_layout_test.cpp
-    roost_test_lifeline)
+    roost_test_lifeline Qt6::Gui)
 target_compile_definitions(install_layout_test PRIVATE
     CMAKE_COMMAND="${CMAKE_COMMAND}"
     BUILD_DIR="${PROJECT_BINARY_DIR}"
@@ -551,6 +551,10 @@ roost_add_qt_test(window_log_test roost/window_log_test.cpp
     roost_app roost_qml_api roost_terminal)
 # Two writer threads, std only.
 set_tests_properties(window_log_test PROPERTIES LABELS "threads;threads_std")
+
+# The icon of the window: the compiled-in PNGs, 16 to 512 pixels, and that
+# InstallWindowIcon sets them on the application.
+roost_add_qt_test(window_icon_test roost/window_icon_test.cpp roost_app)
 
 # The window starts roostd when nobody listens on the socket: the launcher with
 # a real Api and the real roostd (detached; the test stops it by its lock).

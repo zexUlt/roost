@@ -13,6 +13,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +28,7 @@
 
 #include <unistd.h>
 
+#include <array>
 #include <optional>
 
 #include "core/rpc_client.hpp"
@@ -37,6 +39,9 @@ using roost::testing::ProcessLifeline;
 using roost::testing::RelayStandardError;
 
 namespace {
+
+// The sizes of the hicolor theme of the Linux package.
+constexpr std::array<int, 7> ICON_SIZES{16, 32, 48, 64, 128, 256, 512};
 
 constexpr int TIMEOUT_MS = 10000;
 constexpr int INSTALL_TIMEOUT_MS = 120000;
@@ -228,6 +233,7 @@ private:
         if (IS_MACOS) {
             files.unite({
                 "roost.app/Contents/Info.plist",
+                "roost.app/Contents/Resources/roost.icns",
                 "roost.app/Contents/MacOS/roost",
                 "roost.app/Contents/MacOS/roostd",
                 QString("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE,
@@ -239,8 +245,11 @@ private:
                 "bin/roost",
                 "bin/roostd",
                 "share/applications/roost.desktop",
-                "share/icons/hicolor/256x256/apps/roost.png",
             });
+            for (const int size : ICON_SIZES) {
+                files.insert(QString("share/icons/hicolor/%1x%1/apps/roost.png")
+                                 .arg(size));
+            }
         }
         return files;
     }
@@ -404,6 +413,11 @@ private slots:
                  QStringLiteral("io.github.zexult.roost"));
         QCOMPARE(plist.value("CFBundleExecutable").toString(),
                  QStringLiteral("roost"));
+        QCOMPARE(plist.value("CFBundleIconFile").toString(),
+                 QStringLiteral("roost"));
+        // The file the key names, in Resources, is an icns.
+        QVERIFY(ReadAll(Path("roost.app/Contents/Resources/roost.icns"))
+                    .startsWith("icns"));
         QCOMPARE(plist.value("CFBundlePackageType").toString(),
                  QStringLiteral("APPL"));
         QCOMPARE(plist.value("CFBundleShortVersionString").toString(),
@@ -430,9 +444,15 @@ private slots:
         QVERIFY(lines.contains("Type=Application"));
         QVERIFY(lines.contains("Exec=roost"));
         QVERIFY(lines.contains("Icon=roost"));
-        // The icon the file names, by the icon theme rules, is a PNG.
-        QVERIFY(ReadAll(Path("share/icons/hicolor/256x256/apps/roost.png"))
-                    .startsWith("\x89PNG\r\n\x1a\n"));
+        // The icon the file names, by the icon theme rules, is a PNG of every
+        // size of the theme, each of its own size.
+        for (const int size : ICON_SIZES) {
+            const QByteArray png = ReadAll(Path(
+                QString("share/icons/hicolor/%1x%1/apps/roost.png").arg(size)));
+            QVERIFY2(png.startsWith("\x89PNG\r\n\x1a\n"),
+                     qPrintable(QString::number(size)));
+            QCOMPARE(QImage::fromData(png).size(), QSize(size, size));
+        }
     }
 
     // The installed binaries do not lean on the build tree.

@@ -6,6 +6,8 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>roost</string>
+    <key>CFBundleIconFile</key>
+    <string>roost</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.zexult.roost</string>
     <key>CFBundleInfoDictionaryVersion</key>

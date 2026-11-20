@@ -76,12 +76,15 @@ if(APPLE)
         ${PROJECT_BINARY_DIR}/packaging/Info.plist @ONLY)
     install(FILES ${PROJECT_BINARY_DIR}/packaging/Info.plist
         DESTINATION ${_roost_app} COMPONENT roost)
+    # CFBundleIconFile of Info.plist.in names it. Made by tools/make_icons.sh.
+    install(FILES packaging/macos/roost.icns
+        DESTINATION ${_roost_app}/Resources COMPONENT roost)
 else()
     install(FILES packaging/linux/roost.desktop
         DESTINATION share/applications COMPONENT roost)
-    # A placeholder until there is an icon.
-    install(FILES packaging/linux/roost.png
-        DESTINATION share/icons/hicolor/256x256/apps COMPONENT roost)
+    # Every size of the hicolor theme, made by tools/make_icons.sh.
+    install(DIRECTORY packaging/linux/icons/hicolor
+        DESTINATION share/icons COMPONENT roost)
 endif()
 
 install(FILES

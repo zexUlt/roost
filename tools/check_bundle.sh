@@ -206,6 +206,26 @@ for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt; do
 done
 
 # ---------------------------------------------------------------------------
+# The icon: the file Info.plist names is in Resources, and iconutil takes it
+# apart into an iconset that has the largest picture (512x512@2x).
+
+icon_name=$(plutil -extract CFBundleIconFile raw -o - "$app/Contents/Info.plist" 2>/dev/null)
+if [ -z "$icon_name" ]; then
+    fail "Info.plist has no CFBundleIconFile"
+elif [ ! -s "$app/Contents/Resources/$icon_name.icns" ]; then
+    fail "Contents/Resources/$icon_name.icns (CFBundleIconFile) is missing or empty"
+else
+    iconset_parent=$(mktemp -d "${TMPDIR:-/tmp}/roost-icon.XXXXXX") || exit 1
+    if iconutil -c iconset -o "$iconset_parent/roost.iconset" "$app/Contents/Resources/$icon_name.icns" >/dev/null 2>&1 &&
+        [ -s "$iconset_parent/roost.iconset/icon_512x512@2x.png" ]; then
+        echo "ok:   $icon_name.icns parses and has 512x512@2x"
+    else
+        fail "$icon_name.icns does not parse with iconutil or has no icon_512x512@2x"
+    fi
+    rm -rf "$iconset_parent"
+fi
+
+# ---------------------------------------------------------------------------
 # The signature.
 
 if verify=$(codesign --verify --deep --strict --verbose=2 "$app" 2>&1); then
