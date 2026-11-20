@@ -31,11 +31,24 @@ SessionPane::SessionPane(WarmTerminals& terminals, QObject* parent)
                     SyncStatus();
                 }
             });
+    connect(&Terminals_, &WarmTerminals::Released, this,
+            [this](const SessionKey& key) {
+                // Nobody shows the session now: a pane that is shown and
+                // wants it does, so that its text goes and the screen comes
+                // back.
+                if (key == Key_ && !GivingUp_ && Visible_ && !Owns()) {
+                    TakeBack();
+                }
+            });
 }
 
-SessionPane::~SessionPane() {
-    if (Key_) {
+SessionPane::~SessionPane() { GiveUp(); }
+
+void SessionPane::GiveUp() {
+    if (Key_ && Owns()) {
+        GivingUp_ = true;
         Terminals_.Release(*Key_, this);
+        GivingUp_ = false;
     }
 }
 
@@ -44,11 +57,9 @@ void SessionPane::Show(const std::optional<SessionKey>& key) {
         Reopen();
         return;
     }
-    if (Key_) {
-        Terminals_.Release(*Key_, this);
-    }
+    GiveUp();
     Key_ = key;
-    if (Key_) {
+    if (Key_ && Visible_) {
         Terminals_.Acquire(*Key_, this, Grid_.first, Grid_.second);
     }
     // The old screen goes at once, and a warm session's comes in the same
@@ -61,6 +72,30 @@ void SessionPane::Reopen() {
     if (Owns()) {
         Terminals_.Reopen(*Key_);
     }
+}
+
+void SessionPane::SetVisible(bool visible) {
+    if (visible == Visible_) {
+        return;
+    }
+    Visible_ = visible;
+    if (!Visible_) {
+        // Others that want the session may take it now.
+        GiveUp();
+    } else if (Key_) {
+        Terminals_.Acquire(*Key_, this, Grid_.first, Grid_.second);
+    }
+    SyncSession();
+    SyncStatus();
+}
+
+void SessionPane::TakeBack() {
+    if (!Superseded()) {
+        return;
+    }
+    Terminals_.Acquire(*Key_, this, Grid_.first, Grid_.second);
+    SyncSession();
+    SyncStatus();
 }
 
 void SessionPane::SetGrid(quint16 columns, quint16 rows) {

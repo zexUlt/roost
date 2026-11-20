@@ -80,7 +80,9 @@ enum class EPaneStatus {
 // At most one owner shows a key (a session has one render state): the entry
 // records who Acquired it. A second Acquire of a shown key from another owner
 // takes the show over and says Superseded, so that the old owner stops
-// showing it; the old owner's Release then changes nothing.
+// showing it; the old owner's Release then changes nothing. When the owner
+// does Release it, nobody shows the key, and the pool says Released, so that a
+// panel that still wants the session can Acquire it again.
 //
 // Uses an IoThread and lives in the thread of it (the GUI thread). The
 // IoThread must outlive the pool. The destructor closes every channel.
@@ -105,7 +107,7 @@ public:
                  quint16 rows);
     // The panel no longer shows the session. A live or opening one stays
     // warm; any other is dropped. Does nothing unless the owner is the one
-    // that shows it.
+    // that shows it, otherwise says Released after it is done.
     void Release(const SessionKey& key, const QObject* owner);
 
     // The grid wanted for the session. Only the latest size is sent, once the
@@ -155,6 +157,9 @@ signals:
     void StatusChanged(const roost::SessionKey& key);
     // Another owner has Acquired the shown session; Owner(key) is it.
     void Superseded(const roost::SessionKey& key);
+    // The owner of the key has Released it: no panel shows it now. The entry
+    // is warm, or dropped, as Release left it; a slot may Acquire it.
+    void Released(const roost::SessionKey& key);
 
 private:
     struct Entry {

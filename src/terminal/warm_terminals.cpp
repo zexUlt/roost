@@ -86,6 +86,8 @@ void WarmTerminals::Release(const SessionKey& key, const QObject* owner) {
         entry->Status != EPaneStatus::Opening) {
         Erase(entry);
     }
+    // After the entry is as it stays: a slot may Acquire the key at once.
+    emit Released(SessionKey(key));
 }
 
 void WarmTerminals::SetGrid(const SessionKey& key, quint16 columns,
