@@ -17,7 +17,8 @@ namespace roost::claude {
 struct RunRequest {
     QString Program;
     QStringList Args;
-    // Empty: the working directory of the adapter.
+    // Empty: the home directory, or the working directory of the adapter if
+    // the home is not a directory.
     QString WorkingDirectory;
     // A run that takes longer is killed and counts as failed.
     std::chrono::milliseconds Timeout{60'000};

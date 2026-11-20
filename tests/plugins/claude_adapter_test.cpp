@@ -444,6 +444,29 @@ private slots:
         }
     }
 
+    // A HOME that is no directory leaves the directory as it was before: the
+    // run starts anyway.
+    void ClaudeAgentsRunsWhenTheHomeIsNotADirectory_data() {
+        QTest::addColumn<bool>("isFile");
+        QTest::newRow("missing") << false;
+        QTest::newRow("file") << true;
+    }
+
+    void ClaudeAgentsRunsWhenTheHomeIsNotADirectory() {
+        QFETCH(bool, isFile);
+        QVERIFY(QDir(Dir_->filePath("home")).removeRecursively());
+        if (isFile) {
+            QFile file(Dir_->filePath("home"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        Put("agents.json", Agents({Entry("s1", "working")}));
+        StartAdapter();
+        const QJsonValue sessions = ListSessions();
+        QVERIFY2(sessions.isArray(),
+                 QJsonDocument(sessions.toObject()).toJson().constData());
+        QCOMPARE(sessions.toArray().size(), 1);
+    }
+
     void ARequestWaitsForTheFirstRun() {
         Put("agents.json", Agents({Entry("s1", "idle")}));
         Put("sleep", "0.5");

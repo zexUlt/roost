@@ -260,6 +260,8 @@ private slots:
     void init() {
         QVERIFY(Project_.isValid());
         QVERIFY(QDir(Project_.path()).mkpath("project with spaces"));
+        // A test may leave a file in its place.
+        QFile::remove(Project_.filePath("home"));
         QVERIFY(QDir(Project_.path()).mkpath("home"));
         Events_.clear();
     }
@@ -400,6 +402,26 @@ private slots:
 
     void AppServerRunsInTheHomeDirectory() {
         QVERIFY(Launch("home", QCoreApplication::applicationFilePath()));
+        QCOMPARE(Call("agent.listSessions").value("result").toArray().size(),
+                 2);
+    }
+
+    // A HOME that is no directory leaves the directory as it was before: the
+    // app server starts anyway.
+    void AppServerStartsWhenTheHomeIsNotADirectory_data() {
+        QTest::addColumn<bool>("isFile");
+        QTest::newRow("missing") << false;
+        QTest::newRow("file") << true;
+    }
+
+    void AppServerStartsWhenTheHomeIsNotADirectory() {
+        QFETCH(bool, isFile);
+        QVERIFY(QDir(Project_.filePath("home")).removeRecursively());
+        if (isFile) {
+            QFile file(Project_.filePath("home"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        QVERIFY(Launch("plain", QCoreApplication::applicationFilePath()));
         QCOMPARE(Call("agent.listSessions").value("result").toArray().size(),
                  2);
     }

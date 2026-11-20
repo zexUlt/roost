@@ -73,8 +73,13 @@ QFuture<RunResult> ClaudeRun::Start() {
 
     Process_.setProgram(Request_.Program);
     Process_.setArguments(Request_.Args);
-    if (!Request_.WorkingDirectory.isEmpty()) {
-        Process_.setWorkingDirectory(Request_.WorkingDirectory);
+    // Without a directory of its own, from the home directory, not the plugin
+    // directory the backend starts in: claude takes it for a project.
+    const QString directory = Request_.WorkingDirectory.isEmpty()
+                                  ? plugin::HomeDirectory()
+                                  : Request_.WorkingDirectory;
+    if (!directory.isEmpty()) {
+        Process_.setWorkingDirectory(directory);
     }
     Process_.setStandardInputFile(QProcess::nullDevice());
     // A group of its own to kill on a timeout, and default signal handlers.
