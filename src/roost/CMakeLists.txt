@@ -6,6 +6,9 @@ add_library(roost_app STATIC
     daemon_launcher.cpp
     daemon_launcher.hpp
     login_environment.cpp
+    layout_model.cpp
+    layout_model.hpp
+    login_environment.cpp
     login_environment.hpp
     plugin_loader.cpp
     plugin_loader.hpp
