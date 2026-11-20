@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -48,5 +49,26 @@ struct ResolvedTerminalColors {
 };
 
 ResolvedTerminalColors ResolveTerminalColors(const QJsonObject& tokens);
+
+// The fonts the settings ask for (design.md §5): `settings.terminalFont`
+// {family, size} and `settings.uiFontSize`. The same reader for every window;
+// whether a family exists and is monospace is for the GUI to say (Theme), this
+// only checks what the document says. A key that is absent is not a problem
+// and stays empty (Family) or 0 (a size): the system monospace font, the size
+// of today, the default UI font. A size is in points, from MIN_FONT_SIZE to
+// MAX_FONT_SIZE; a size that is not a number or is outside them is 0 (the
+// default) and a problem.
+struct FontSettings {
+    QString TerminalFamily;
+    double TerminalSize = 0;
+    double UiSize = 0;
+    // One line for each key that could not be used, to show to the user.
+    QStringList Problems;
+};
+
+inline constexpr double MIN_FONT_SIZE = 6;
+inline constexpr double MAX_FONT_SIZE = 72;
+
+FontSettings ResolveFontSettings(const QJsonObject& settings);
 
 }  // namespace roost

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Roost.Api
 
 // The panel terminal.view: the session chosen in the list, shown in a
@@ -50,6 +51,8 @@ FocusScope {
         anchors.fill: parent
         focus: true
         session: root.session
+        // The family and size of settings.terminalFont, in every window.
+        font: Roost.theme.terminalFont
 
         // Enter, on the main keys and on the keypad.
         function handleEnter(event) {
@@ -78,7 +81,7 @@ FocusScope {
         onTriggered: root.reopenWanted = false
     }
 
-    Text {
+    Label {
         objectName: "terminalStatus"
         anchors.fill: parent
         anchors.margins: 12

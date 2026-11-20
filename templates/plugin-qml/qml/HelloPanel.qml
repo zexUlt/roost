@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Roost.Api
 
 // The panel of the template: shows the id of its plugin and whether the window
@@ -14,7 +15,7 @@ Item {
         anchors.centerIn: parent
         spacing: 8
 
-        Text {
+        Label {
             objectName: "pluginIdText"
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Plugin " + root.pluginId
@@ -22,7 +23,7 @@ Item {
             color: Roost.theme.text
         }
 
-        Text {
+        Label {
             objectName: "connectionText"
             anchors.horizontalCenter: parent.horizontalCenter
             text: Roost.connected ? "connected to roostd" : "not connected"

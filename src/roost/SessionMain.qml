@@ -12,6 +12,7 @@ Window {
         objectName: "terminal"
         anchors.fill: parent
         focus: true
+        font: Roost.theme.terminalFont
         Component.onCompleted: forceActiveFocus()
     }
 }
