@@ -45,6 +45,8 @@ class SessionsList : public QAbstractListModel {
     Q_PROPERTY(QVariant opened READ opened WRITE setOpened NOTIFY openedChanged)
     // The document was read, or the read failed.
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
+    // A write is in flight or waits to be sent, or a sync that may ask for one.
+    Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
     // Nothing is written: the read failed or the document is of a newer
     // version. `problem` says why, or that a write failed.
     Q_PROPERTY(bool readOnly READ readOnly NOTIFY readOnlyChanged)
@@ -85,6 +87,7 @@ public:
     QVariant opened() const;
     void setOpened(const QVariant& ref);
     bool ready() const;
+    bool saving() const;
     bool readOnly() const;
     QString problem() const;
     QString query() const;
@@ -131,16 +134,21 @@ public:
     // store (empty if there is none); the echo of our own write is ignored,
     // any other document replaces the state. readFailed: the read failed, the
     // list works and is read-only. saveFinished: the write that saveRequested
-    // asked for ended, with an error text or an empty one.
+    // asked for ended, with an error text or an empty one. storeLost: the
+    // connection to the store went; nothing is written until restore or
+    // readFailed, so that a write of the state kept from before does not
+    // overtake the read of the document at the next connection.
     Q_INVOKABLE void restore(const QVariantMap& document);
     Q_INVOKABLE void readFailed(const QString& error);
     Q_INVOKABLE void saveFinished(const QString& error);
+    Q_INVOKABLE void storeLost();
 
 signals:
     void sourceChanged();
     void sourceLoadedChanged();
     void openedChanged();
     void readyChanged();
+    void savingChanged();
     void readOnlyChanged();
     void problemChanged();
     void queryChanged();
@@ -204,6 +212,9 @@ private:
 
     bool InFlight_ = false;
     bool Dirty_ = false;
+    // The store was lost and the document is not read again yet: the state
+    // may be older than the store's, so it is not written.
+    bool Reading_ = false;
     // The document in flight, until its change event comes back or the answer
     // does: roostd announces every successful write, equal or not, and does
     // so before it answers, so no echo outlives its write.

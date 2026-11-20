@@ -778,9 +778,20 @@ FocusScope {
 
     // The stored document: read on creation if connected and at every
     // connection (the window forgets its copy when the connection goes),
-    // written as the model asks.
+    // written as the model asks. When the connection goes the list stops
+    // writing (storeLost) until the read at the next one: what it holds may
+    // be older than the store's document.
+    // The answer of a read sent before the connection went comes after it
+    // (answers are delivered later, the loss at once): it is of the old
+    // connection, and is dropped, or it would end the wait for the new read.
+    property int storeGeneration: 0
+
     function readStore() {
+        const generation = storeGeneration;
         Roost.store.get("sessions", (error, result) => {
+            if (generation !== storeGeneration) {
+                return;
+            }
             if (error) {
                 sessionsList.readFailed(error.message ? error.message : "the store read failed");
             } else {
@@ -831,6 +842,9 @@ FocusScope {
         function onConnectedChanged() {
             if (Roost.connected) {
                 root.readStore();
+            } else {
+                root.storeGeneration++;
+                sessionsList.storeLost();
             }
         }
     }

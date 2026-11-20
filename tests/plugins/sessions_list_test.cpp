@@ -319,7 +319,11 @@ private slots:
     void RowsInAnEmptyListPutTheCursorOnTheFirst();
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
+    void AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead();
+    void AWriteInFlightAtTheStoreLossEndsWithoutAnotherWrite();
     void OneWriteInFlightAndTheLastEditWins();
+    void SavingCoversAQueuedSyncAndAnnouncesItsEnd();
+    void NothingIsWrittenAfterTheStoreIsLostUntilItIsReadAgain();
     void TheEchoOfOurWriteChangesNothing();
     void AWriteFromAnotherWindowIsTakenIn();
     void ChangesAreMovesInsertsAndRemovesNotResets();
@@ -670,6 +674,77 @@ void SessionsListTest::AFailedReadLeavesTheListReadOnly() {
     Settle();
     QVERIFY(!env.List.readOnly());
     QVERIFY(env.List.problem().isEmpty());
+}
+
+void SessionsListTest::SavingCoversAQueuedSyncAndAnnouncesItsEnd() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    QVERIFY(!env.List.saving());
+    QSignalSpy changed(&env.List, &SessionsList::savingChanged);
+
+    // A change of the source queues a sync, which may ask for a write.
+    env.Source.SetState(0, "done");
+    QVERIFY(env.List.saving());
+    QCOMPARE(changed.count(), 1);
+    Settle();
+    QVERIFY(!env.List.saving());
+    QCOMPARE(changed.count(), 2);
+}
+
+void SessionsListTest::NothingIsWrittenAfterTheStoreIsLostUntilItIsReadAgain() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.List.storeLost();
+    env.List.togglePin("work");
+    Settle();
+    QVERIFY(env.Saved.isEmpty());
+    QVERIFY(env.List.saving());
+
+    env.List.restore({});
+    Settle();
+    QVERIFY(!env.List.saving());
+}
+
+void SessionsListTest::AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    QCOMPARE(env.Saved.size(), 1);
+    // The write failed, the state stays unsaved; then the connection is lost.
+    env.List.saveFinished("disk full");
+    env.List.storeLost();
+
+    // The first sync at the new connection comes before the document is read:
+    // it must not send the old state over the new document.
+    env.Source.SetState(0, "done");
+    Settle();
+    QCOMPARE(env.Saved.size(), 1);
+
+    env.AutoAck = true;
+    env.List.restore({});
+    Settle();
+    QVERIFY(!env.List.saving());
+}
+
+void SessionsListTest::AWriteInFlightAtTheStoreLossEndsWithoutAnotherWrite() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");
+    env.List.setQuery("z");  // an edit while the write is in flight
+    QCOMPARE(env.Saved.size(), 1);
+    env.List.storeLost();
+
+    // The write ends before the document is read again.
+    env.List.saveFinished({});
+    Settle();
+    QCOMPARE(env.Saved.size(), 1);
+
+    env.AutoAck = true;
+    env.List.restore({});
+    Settle();
+    QVERIFY(!env.List.saving());
 }
 
 void SessionsListTest::OneWriteInFlightAndTheLastEditWins() {

@@ -512,24 +512,18 @@ bool SessionsWindow::PressAccepted(Qt::Key key,
 // list is in), one write at a time, the next one sent when the answer to
 // the last comes. A write of a plugin made before that is stored between
 // the panel's own, and the stale one that follows it comes back as a
-// foreign change that replaces what the plugin wrote. `restored` is the
-// last event that makes the panel write, so at most one write is in flight
-// and one follows it. The answer to a request comes after those of the
-// requests sent before it, on the one connection and in one order of
-// delivery: so after the first round trip the follow-up is sent, and after
-// the second its answer is in too.
+// foreign change that replaces what the plugin wrote. The panel says when
+// none is in flight or waiting (`saving`); the answer of a write comes
+// after its change event, so nothing of it is still on its way. The
+// round trips of the requests of the test are not a measure of that: the
+// panel's follow-up is sent several event loop turns after the answer
+// that ends the last write.
 void SessionsWindow::WaitForThePanelToStopWriting() {
     QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->property("restored").toBool(),
                              TIMEOUT_MS);
-    for (int round = 0; round < 2; ++round) {
-        auto answered = std::make_shared<bool>(false);
-        Api_->Io()
-            .Request(QStringLiteral("store.get"),
-                     QJsonObject{{QStringLiteral("plugin"),
-                                  QStringLiteral("sessions")}})
-            .then(this, [answered](rpc::Result) { *answered = true; });
-        QTRY_VERIFY_WITH_TIMEOUT(*answered, TIMEOUT_MS);
-    }
+    QObject* model = PanelOf(LIST)->findChild<QObject*>("sessionsModel");
+    QVERIFY2(model != nullptr, "the list panel has no sessionsModel");
+    QTRY_VERIFY_WITH_TIMEOUT(!model->property("saving").toBool(), TIMEOUT_MS);
 }
 
 }  // namespace roost::testing

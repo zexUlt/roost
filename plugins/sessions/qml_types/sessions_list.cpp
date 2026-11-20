@@ -63,6 +63,7 @@ bool isStopRow(const Row& row) {
 
 struct SessionsList::Exposed {
     bool Ready = false;
+    bool Saving = false;
     bool ReadOnly = false;
     QString Problem;
     QString Opened;
@@ -229,6 +230,8 @@ void SessionsList::setOpened(const QVariant& ref) {
 }
 
 bool SessionsList::ready() const { return Ready_; }
+
+bool SessionsList::saving() const { return InFlight_ || Dirty_ || SyncQueued_; }
 
 bool SessionsList::readOnly() const { return ReadFailed_ || State_.ReadOnly(); }
 
@@ -415,6 +418,7 @@ void SessionsList::restore(const QVariantMap& document) {
     const QJsonObject doc = QJsonObject::fromVariantMap(document);
     if (Ready_ && !ReadFailed_ && Echo_ && *Echo_ == doc) {
         Echo_.reset();
+        Reading_ = false;
         return;
     }
     changing([&] {
@@ -423,6 +427,7 @@ void SessionsList::restore(const QVariantMap& document) {
         // document, so its echo is a foreign one too and is taken in.
         Echo_.reset();
         Dirty_ = false;
+        Reading_ = false;
         bool save = State_.Restore(doc);
         ReadFailed_ = false;
         ReadProblem_.clear();
@@ -441,6 +446,7 @@ void SessionsList::restore(const QVariantMap& document) {
 void SessionsList::readFailed(const QString& error) {
     changing([&] {
         ReadFailed_ = true;
+        Reading_ = false;
         ReadProblem_ =
             error.isEmpty() ? QStringLiteral("the store read failed") : error;
         Ready_ = true;
@@ -467,10 +473,15 @@ void SessionsList::saveFinished(const QString& error) {
             return;
         }
         SaveProblem_.clear();
-        if (Dirty_) {
+        if (Dirty_ && !Reading_) {
             sendSave();
         }
     });
+}
+
+void SessionsList::storeLost() {
+    // The write in flight ends with its own answer, an error.
+    Reading_ = true;
 }
 
 void SessionsList::requestSave() {
@@ -478,13 +489,13 @@ void SessionsList::requestSave() {
         return;
     }
     Dirty_ = true;
-    if (!InFlight_) {
+    if (!InFlight_ && !Reading_) {
         sendSave();
     }
 }
 
 void SessionsList::retrySave() {
-    if (Dirty_ && !InFlight_ && Ready_ && !readOnly()) {
+    if (Dirty_ && !InFlight_ && !Reading_ && Ready_ && !readOnly()) {
         sendSave();
     }
 }
@@ -507,18 +518,18 @@ void SessionsList::scheduleSync() {
     if (SyncQueued_) {
         return;
     }
-    SyncQueued_ = true;
+    changing([this] { SyncQueued_ = true; });
     QMetaObject::invokeMethod(this, [this] { sync(); }, Qt::QueuedConnection);
 }
 
 void SessionsList::sync() {
-    SyncQueued_ = false;
-    if (Ready_) {
-        changing([this] {
+    changing([this] {
+        SyncQueued_ = false;
+        if (Ready_) {
             syncBody();
             retrySave();
-        });
-    }
+        }
+    });
 }
 
 bool SessionsList::holding() const { return ResetPending_ && !SourceLoaded_; }
@@ -766,6 +777,7 @@ std::vector<SessionEntry> SessionsList::readSource() const {
 SessionsList::Exposed SessionsList::snapshot() const {
     Exposed out;
     out.Ready = Ready_;
+    out.Saving = saving();
     out.ReadOnly = readOnly();
     out.Problem = problem();
     out.Opened = State_.View().Opened;
@@ -791,6 +803,9 @@ void SessionsList::announce(const Exposed& before) {
     const Exposed now = snapshot();
     if (now.Ready != before.Ready) {
         emit readyChanged();
+    }
+    if (now.Saving != before.Saving) {
+        emit savingChanged();
     }
     if (now.ReadOnly != before.ReadOnly) {
         emit readOnlyChanged();
