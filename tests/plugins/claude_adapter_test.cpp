@@ -52,10 +52,12 @@ QJsonObject Request(qint64 id, const QString& method,
 //   exit         its exit code
 //   sleep        seconds to take
 //   hang         if present, writes its pid to pid and sleeps for good
+// Each run adds its working directory to cwd.
 // Each run adds "start <args>" and "end" lines to calls.
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 echo "start $*" >> "$dir/calls"
+pwd -P >> "$dir/cwd"
 if [ -f "$dir/sigpipe" ]; then ( yes 2>/dev/null; echo $? > "$dir/yes" ) | true; fi
 if [ -f "$dir/hang" ]; then
   sleep 600 & echo $! >> "$dir/pids"; echo $$ >> "$dir/pids"; exec sleep 600
@@ -100,6 +102,7 @@ private:
                       EClaude claude = EClaude::Fake) {
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
+        environment.insert("HOME", Dir_->filePath("home"));
         if (claude == EClaude::Fake) {
             environment.insert("PATH", Dir_->filePath("bin") + u':' +
                                            environment.value("PATH"));
@@ -208,6 +211,7 @@ private slots:
         QVERIFY(Dir_->isValid());
         QVERIFY(QDir(Dir_->path()).mkpath("bin"));
         QVERIFY(QDir(Dir_->path()).mkpath("empty"));
+        QVERIFY(QDir(Dir_->path()).mkpath("home"));
         Put("claude", FAKE_CLAUDE);
         QVERIFY(QFile::setPermissions(
             FakePath("claude"),
@@ -420,6 +424,24 @@ private slots:
         }
         QCOMPARE(listed, QJsonValue(expected));
         QCOMPARE(Calls().value(0), QString("start agents --json --all"));
+    }
+
+    // Not the plugin directory the backend starts in, where claude would take
+    // the installed package for a project.
+    void ClaudeAgentsRunsInTheHomeDirectory() {
+        Put("agents.json", Agents({Entry("s1", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QVERIFY(WaitForRuns(2));
+        QFile file(FakePath("cwd"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QStringList runs =
+            QString::fromUtf8(file.readAll()).split(u'\n', Qt::SkipEmptyParts);
+        QVERIFY(runs.size() >= 2);
+        const QString home = QDir(Dir_->filePath("home")).canonicalPath();
+        for (const QString& cwd : runs) {
+            QCOMPARE(cwd, home);
+        }
     }
 
     void ARequestWaitsForTheFirstRun() {

@@ -169,6 +169,9 @@ void Adapter::Poll() {
         return;
     }
     StartReplyTimer();
+    // The backend starts in the plugin directory, inside the installed
+    // package, and codex treats its working directory as a project.
+    Process_.setWorkingDirectory(QDir::homePath());
     Process_.start(Executable_, {"app-server"});
 }
 

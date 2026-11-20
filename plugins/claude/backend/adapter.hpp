@@ -47,7 +47,8 @@ struct AdapterOptions {
 };
 
 // The Claude adapter (design.md §7): lists Claude Code's background sessions
-// by running `<Program> agents --json --all`, one run at a time, and answers
+// by running `<Program> agents --json --all` from the home directory, one run
+// at a time, and answers
 // roostd from the last run:
 //
 //   agent.listSessions {agent: "claude"} -> [{id, state, title, cwd,
