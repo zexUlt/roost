@@ -42,6 +42,7 @@
 #include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/controls_style.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
 #include "terminal/io_thread.hpp"
@@ -490,6 +491,9 @@ private:
     std::unique_ptr<IoThread> Direct_;
 
 private slots:
+    // The style of the window, as main() selects it, before the first engine.
+    void initTestCase() { roost::SelectControlsStyle(); }
+
     void init() {
         Dir_ = std::make_unique<QTemporaryDir>();
         QVERIFY(Dir_->isValid());

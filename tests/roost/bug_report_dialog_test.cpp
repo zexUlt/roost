@@ -19,6 +19,7 @@
 
 #include "helpers/scoped_env.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/controls_style.hpp"
 
 using namespace roost;
 
@@ -65,6 +66,9 @@ private:
     QQuickWindow* Window_ = nullptr;
 
 private slots:
+    // The style of the window, as main() selects it, before the first engine.
+    void initTestCase() { roost::SelectControlsStyle(); }
+
     void init() {
         QVERIFY(Dir_.isValid());
         QVERIFY(QDir().mkpath(Dir_.filePath("run")));

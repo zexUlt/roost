@@ -1,6 +1,7 @@
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
 
@@ -16,6 +17,7 @@
 #include "core/version.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/controls_style.hpp"
 #include "roost/daemon_launcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
@@ -156,6 +158,7 @@ int main(int argc, char* argv[]) {
     roost::InstallWindowLog(
         roost::WindowLogPath(roost::protocol::SocketPath()));
     roost::LogWindowStartup();
+    roost::SelectControlsStyle();
     QCoreApplication::setApplicationName(QStringLiteral("roost"));
     roost::InstallWindowIcon();
     QCoreApplication::setApplicationVersion(
@@ -296,6 +299,11 @@ int main(int argc, char* argv[]) {
             qCritical("roost --smoke: the root object is not a window");
             return 1;
         }
+        if (!roost::ControlsStyleIsSelected()) {
+            qCritical("roost --smoke: the Controls style is %s, not Fusion",
+                      qPrintable(QQuickStyle::name()));
+            return 1;
+        }
         ExitAfterFirstFrame(window, session.get());
     }
 
@@ -305,6 +313,12 @@ int main(int argc, char* argv[]) {
         if (window == nullptr) {
             qCritical(
                 "roost --smoke-sessions: the root object is not a window");
+            return 1;
+        }
+        if (!roost::ControlsStyleIsSelected()) {
+            qCritical(
+                "roost --smoke-sessions: the Controls style is %s, not Fusion",
+                qPrintable(QQuickStyle::name()));
             return 1;
         }
         ExitWhenSessionsShown(window, &*shell);

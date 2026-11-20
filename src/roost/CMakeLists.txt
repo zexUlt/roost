@@ -3,6 +3,8 @@
 add_library(roost_app STATIC
     bug_report.cpp
     bug_report.hpp
+    controls_style.cpp
+    controls_style.hpp
     daemon_launcher.cpp
     daemon_launcher.hpp
     layout_model.cpp
@@ -22,7 +24,7 @@ add_library(roost_app STATIC
     window_log.cpp
     window_log.hpp
 )
-target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick)
+target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick Qt6::QuickControls2)
 
 # The icon of the window: the PNGs of the Linux package, so that there is one
 # set of files to replace (tools/make_icons.sh). PNG, not SVG: no image plugin.

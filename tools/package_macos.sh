@@ -61,7 +61,9 @@ while IFS= read -r -d '' file; do
     fi
 done < <(find "$contents/MacOS" "$contents/PlugIns" -type f -print0)
 
-# QML scanned for imports: the window's and each plugin's. RoostSessions,
+# QML scanned for imports: the window's and each plugin's. The window imports
+# QtQuick.Controls, and macdeployqt copies the whole module with its styles:
+# Fusion, the style of the window, is among them (tools/check_bundle.sh). RoostSessions,
 # which a plugin carries itself, is found through the plugin's own directory,
 # so it is not passed as -qmlimport (that would copy it a second time into
 # Resources/qml).

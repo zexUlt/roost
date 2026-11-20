@@ -241,9 +241,16 @@ else
 fi
 
 # --- QML -------------------------------------------------------------------
-for module in QtCore QtQuick/Controls QtQuick/Controls/Basic QtQuick/Layouts; do
+# Fusion is the style of the window (roost::SelectControlsStyle), Basic its base.
+for module in QtCore QtQuick/Controls QtQuick/Controls/Fusion QtQuick/Controls/Fusion/impl QtQuick/Controls/Basic QtQuick/Layouts; do
     [ -f "$appdir/usr/qml/$module/qmldir" ] ||
         fail "usr/qml/$module/qmldir is missing"
+done
+# The plugin libraries of the Fusion style, which its qmldir files name.
+for library in QtQuick/Controls/Fusion/libqtquickcontrols2fusionstyleplugin.so \
+    QtQuick/Controls/Fusion/impl/libqtquickcontrols2fusionstyleimplplugin.so; do
+    [ -f "$appdir/usr/qml/$library" ] ||
+        fail "usr/qml/$library is missing"
 done
 for file in plugins/codex/plugin.json plugins/codex/backend/codex-adapter \
     plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \

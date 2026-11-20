@@ -1,5 +1,8 @@
 {
     "windowBackground": "#ffffff",
+    "windowText": "#000000",
+    "controlBackground": "#efefef",
+    "inputBackground": "#ffffff",
     "panelBackground": "#1e1e1e",
     "overlayBackground": "#f01e1e1e",
     "text": "#e0e0e0",

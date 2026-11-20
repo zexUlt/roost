@@ -28,6 +28,7 @@
 #include "helpers/refusing_server.hpp"
 #include "helpers/scoped_env.hpp"
 #include "qml_api/roost_singleton.hpp"
+#include "roost/controls_style.hpp"
 #include "roost/daemon_launcher.hpp"
 #include "roost/login_environment.hpp"
 #include "roost/plugin_loader.hpp"
@@ -155,6 +156,9 @@ private:
     std::optional<QProcessEnvironment> Started_;
 
 private slots:
+    // The style of the window, as main() selects it, before the first engine.
+    void initTestCase() { roost::SelectControlsStyle(); }
+
     void init() {
         Owned_ = std::make_unique<QTemporaryDir>();
         Dir_ = Owned_.get();
