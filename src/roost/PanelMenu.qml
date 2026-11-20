@@ -18,7 +18,8 @@ Menu {
     property var info: ({
             inTabs: false,
             canIntoTabs: false,
-            canClose: false
+            canClose: false,
+            hasInputs: false
         })
 
     // Opens the menu on the panel of `slot` at the point (x, y) of the slot.
@@ -92,6 +93,7 @@ Menu {
     MenuItem {
         objectName: "menuEditLinks"
         text: "Edit links…"
+        enabled: root.info.hasInputs
         onTriggered: root.run("editLinks", {})
     }
 

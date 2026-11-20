@@ -42,6 +42,8 @@ ApplicationWindow {
     signal layoutEdit(string action, var args)
     // The panel types the layout can be split with; written by C++.
     property var panelTypes: []
+    // Those of them that have inputs, so links to edit; written by C++.
+    property var panelsWithInputs: []
 
     // C++ calls these: the keyboard to a panel after an edit, and the link
     // editor with the state of a panel.
@@ -200,6 +202,7 @@ ApplicationWindow {
             onSlotCreated: slot => root.slotCreated(slot)
             onSplitResized: (path, sizes) => root.splitResized(path, sizes)
             panelTypes: root.panelTypes
+            panelsWithInputs: root.panelsWithInputs
             onLayoutEdit: (action, args) => root.layoutEdit(action, args)
         }
 

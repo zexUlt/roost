@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQmlExtensionPlugin>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -18,6 +19,7 @@
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
 #include "roost/layout_commands.hpp"
+#include "terminal/session_pane.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -158,6 +160,13 @@ private:
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
     }
 
+    // Runs the command with the keyboard in `instance`, and waits for nothing.
+    void RunLocal(const QString& instance, const QString& command) {
+        Focus(instance);
+        QVERIFY(Api_->Commands().HasLocal(command));
+        Api_->Commands().Run(command);
+    }
+
     bool HasProblem(const QString& part) {
         for (const QString& problem : Problems()) {
             if (problem.contains(part)) {
@@ -262,7 +271,7 @@ private slots:
 
     // ---- the pure edits ---------------------------------------------------
 
-    void SplitMakesANewInstanceOfTheTypeWithTheLinksOfTheSource() {
+    void SplitMakesANewInstanceOfTheTypeWithNoLinks() {
         const LayoutEdit edit =
             SplitPanel(ListAndTerminal(), "terminal", true, {}, Known());
         QVERIFY2(edit.Refused.isEmpty(), qPrintable(edit.Refused));
@@ -276,8 +285,9 @@ private slots:
                               LayoutSize::Rest()}));
         const LayoutNode& added = Leaf(edit.Tree, "terminal-2");
         QCOMPARE(added.Panel, QString("terminal.view"));
-        QCOMPARE(added.Links, Leaf(edit.Tree, "terminal").Links);
-        QCOMPARE(added.Links.value("session").From, QString("list"));
+        // The new half is not fed: a copy of the links of the source would
+        // take its session. The source keeps its links.
+        QVERIFY(added.Links.isEmpty());
         // The source is what it was, and the focus stays on it.
         QCOMPARE(Leaf(edit.Tree, "terminal"),
                  Leaf(ListAndTerminal(), "terminal"));
@@ -320,32 +330,43 @@ private slots:
                  (QStringList{"gauge", "gauge-2"}));
     }
 
-    void SplitWithAnotherTypeKeepsOnlyTheLinksTheTypeCanTake() {
+    void SplitWithAnotherTypeHasNoLinksEither() {
         const Layout before = Tree(Split(
             true,
             {Leaf("list", "sessions.list"), Leaf("gauge", "probe.gauge"),
              Leaf("terminal", "terminal.view",
                   {{"session", From("list", "selected")}})},
             {LayoutSize::Rest(), LayoutSize::Rest(), LayoutSize::Rest()}));
-        // A mixer takes `session` as the terminal does: the link comes along.
+        // A mixer takes `session` as the terminal does, and still gets no link.
         const LayoutEdit mixer =
             SplitPanel(before, "terminal", true, "probe.mixer", Known());
         QVERIFY2(mixer.Refused.isEmpty(), qPrintable(mixer.Refused));
-        const LayoutNode& mix = Leaf(mixer.Tree, "probe.mixer-2");
-        QCOMPARE(mix.Panel, QString("probe.mixer"));
-        QCOMPARE(mix.Links.value("session").From, QString("list"));
-        // A meter has no `session`: the link stays behind.
-        const LayoutEdit meter =
-            SplitPanel(before, "terminal", false, "probe.meter", Known());
-        QVERIFY(meter.Refused.isEmpty());
-        QVERIFY(Leaf(meter.Tree, "probe.meter-2").Links.isEmpty());
-        QCOMPARE(Leaf(meter.Tree, "terminal").Links.size(), 1);
+        QCOMPARE(Leaf(mixer.Tree, "probe.mixer-2").Panel,
+                 QString("probe.mixer"));
+        QVERIFY(Leaf(mixer.Tree, "probe.mixer-2").Links.isEmpty());
+        QCOMPARE(Leaf(mixer.Tree, "terminal"), Leaf(before, "terminal"));
         // An unknown type is refused and the tree is as it was.
         const LayoutEdit unknown =
             SplitPanel(before, "terminal", true, "no.such", Known());
         QVERIFY(!unknown.Refused.isEmpty());
         QVERIFY(!unknown.Changed);
         QCOMPARE(unknown.Tree, before);
+    }
+
+    void SplitOfAPlaceholderLeafDoesNothingWithoutAType() {
+        const Layout before = Tree(Split(
+            true, {Leaf("list", "sessions.list"), Leaf("stub", QString())},
+            {LayoutSize::Rest(), LayoutSize::Rest()}));
+        const LayoutEdit edit = SplitPanel(before, "stub", true, {}, Known());
+        QVERIFY(edit.Refused.contains("no panel type"));
+        QVERIFY(!edit.Changed);
+        QCOMPARE(edit.Tree, before);
+        // The type the user chose is the one to split with.
+        const LayoutEdit chosen =
+            SplitPanel(before, "stub", true, "sessions.list", Known());
+        QVERIFY2(chosen.Refused.isEmpty(), qPrintable(chosen.Refused));
+        QCOMPARE(Leaf(chosen.Tree, "sessions.list-2").Panel,
+                 QString("sessions.list"));
     }
 
     void SplitGivesAnIdNoLeafHas() {
@@ -562,6 +583,78 @@ private slots:
                  QString("c"));
     }
 
+    void CloseGivesTheKeyboardToTheNeighbourBeforeIt() {
+        const Layout layout = Tree(Split(
+            true,
+            {Leaf("a", "sessions.list"), Leaf("b", "terminal.view"),
+             Leaf("c", "terminal.view")},
+            {LayoutSize::Px(200), LayoutSize::Px(200), LayoutSize::Rest()}));
+        QCOMPARE(ClosePanel(layout, "b").Focus, QString("a"));
+        QCOMPARE(ClosePanel(layout, "c").Focus, QString("b"));
+        // The first has none before it: the one after it.
+        QCOMPARE(ClosePanel(layout, "a").Focus, QString("b"));
+    }
+
+    void CloseOfATabThatIsNotShownGivesTheKeyboardToTheShownOne() {
+        const auto stack = [](int active) {
+            return Tree(Split(
+                true,
+                {Leaf("list", "sessions.list"),
+                 Tabs({Leaf("a", "terminal.view"), Leaf("b", "terminal.view"),
+                       Leaf("c", "terminal.view")},
+                      active)},
+                {LayoutSize::Px(320), LayoutSize::Rest()}));
+        };
+        // `a` is shown; `c`, the last, goes: the neighbour by index is `b`,
+        // which is a hidden page.
+        const LayoutEdit last = ClosePanel(stack(0), "c");
+        QCOMPARE(last.Focus, QString("a"));
+        QCOMPARE(last.Tree.Root.Children[1].Active, 0);
+        // `c` is shown and `a` goes: `c` stays the shown one.
+        const LayoutEdit first = ClosePanel(stack(2), "a");
+        QCOMPARE(first.Focus, QString("c"));
+        // `b` is shown and `a` goes.
+        QCOMPARE(ClosePanel(stack(1), "a").Focus, QString("b"));
+        // A stack that has one tab left is that tab.
+        const LayoutEdit pair = ClosePanel(
+            Tree(Split(
+                true,
+                {Leaf("list", "sessions.list"),
+                 Tabs({Leaf("a", "terminal.view"), Leaf("b", "terminal.view")},
+                      0)},
+                {LayoutSize::Px(320), LayoutSize::Rest()})),
+            "b");
+        QCOMPARE(pair.Focus, QString("a"));
+    }
+
+    void TheShownTabStaysShownWhenAnotherTabLeavesTheStack() {
+        // Four tabs, `c` shown: the index of `c` drops by one with `a` gone,
+        // and a clamp to the last tab would not save it.
+        const auto stack = [] {
+            return Tree(Split(
+                true,
+                {Leaf("list", "sessions.list"),
+                 Tabs({Leaf("a", "terminal.view"), Leaf("b", "terminal.view"),
+                       Leaf("c", "terminal.view"), Leaf("d", "terminal.view")},
+                      2)},
+                {LayoutSize::Px(320), LayoutSize::Rest()}));
+        };
+        const LayoutEdit out = MoveOutOfTabs(stack(), "a");
+        QVERIFY2(out.Refused.isEmpty(), qPrintable(out.Refused));
+        const LayoutNode& left = out.Tree.Root.Children[1];
+        QCOMPARE(Instances(left), (QStringList{"b", "c", "d"}));
+        QCOMPARE(left.Active, 1);
+        QCOMPARE(left.Children[static_cast<size_t>(left.Active)].Instance,
+                 QString("c"));
+
+        const LayoutEdit closed = ClosePanel(stack(), "a");
+        const LayoutNode& rest = closed.Tree.Root.Children[1];
+        QCOMPARE(Instances(rest), (QStringList{"b", "c", "d"}));
+        QCOMPARE(rest.Active, 1);
+        QCOMPARE(rest.Children[static_cast<size_t>(rest.Active)].Instance,
+                 QString("c"));
+    }
+
     void TheLastPanelCannotBeClosed() {
         const Layout alone = Tree(Leaf("list", "sessions.list"));
         const LayoutEdit edit = ClosePanel(alone, "list");
@@ -677,23 +770,20 @@ private slots:
         Layout now = Shell_->CurrentLayout();
         QCOMPARE(Instances(now.Root),
                  (QStringList{"list", "terminal", "terminal-2"}));
-        // The new terminal is a panel of the window, fed by the same list.
+        // The new terminal is a panel of the window, fed by nothing: it
+        // does not take the session from the source.
         QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("terminal-2") != nullptr,
                                  TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(PanelByInstance("terminal-2")
-                                      ->property("session")
-                                      .toMap()
-                                      .value("id"),
-                                  QVariant(id), TIMEOUT_MS);
-        // The source keeps its session and its panel.
-        // Two terminals on one session: the new one has it, the source keeps
-        // its link and says it is shown elsewhere (the rule of the view).
-        QTRY_VERIFY_WITH_TIMEOUT(TerminalOf("terminal")->superseded(),
-                                 TIMEOUT_MS);
+        QVERIFY(PanelByInstance("terminal-2")
+                    ->property("session")
+                    .toMap()
+                    .isEmpty());
+        // The source keeps its session and shows it.
+        QVERIFY(!TerminalOf("terminal")->superseded());
+        QCOMPARE(TerminalOf("terminal")->status(), QString("open"));
         QCOMPARE(
             TerminalOf("terminal")->property("session").toMap().value("id"),
             QVariant(id));
-        QCOMPARE(TerminalOf("terminal-2")->status(), QString("open"));
         QCOMPARE(SlotCount(), 3);
 
         RunWritesOnce("terminal-2", "layout.splitDown");
@@ -899,6 +989,144 @@ private slots:
             PanelByInstance("terminal")->property("session").toMap().isEmpty(),
             TIMEOUT_MS);
         QVERIFY(Problems().isEmpty());
+    }
+
+    void EditsOfAnUnwritableLayoutAreAppliedAndSaidNotToBeSaved() {
+        FailOnWarnings();
+        // A document of a version this roost does not know is not overwritten.
+        QJsonObject newer = LayoutToJson(ListAndTerminal());
+        newer.insert("version", 99);
+        QVERIFY(QDir().mkpath(Dir_->filePath("config")));
+        const QString path = Dir_->filePath("config/layout.json");
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write(QJsonDocument(newer).toJson()) > 0);
+        }
+        const QByteArray stored = ReadFile(path);
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        RunLocal("terminal", "layout.splitRight");
+        // The edit is in the window, and the strip says it is not kept.
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Instances(Shell_->CurrentLayout().Root),
+            (QStringList{"list", "terminal", "terminal-2"}), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("not writable"), TIMEOUT_MS);
+        QTest::qWait(300);
+        QCOMPARE(ReadFile(path), stored);
+    }
+
+    void AFailedWriteIsInTheStripUntilTheNextWriteThatWorks() {
+        // No FailOnWarnings: the shell warns of the write that failed.
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        RunWritesOnce("terminal", "layout.splitRight");
+        QVERIFY(Problems().isEmpty());
+
+        // roostd cannot write into its config directory.
+        const QString config = Dir_->filePath("config");
+        const auto open = QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                          QFileDevice::ExeOwner;
+        const auto closed = QFileDevice::ReadOwner | QFileDevice::ExeOwner;
+        QVERIFY(QFile::setPermissions(config, closed));
+        const auto restore = qScopeGuard(
+            [&config, open] { QFile::setPermissions(config, open); });
+        {
+            QFile probe(config + "/probe");
+            if (probe.open(QIODevice::WriteOnly)) {
+                QSKIP("the directory is writable whatever its mode here");
+            }
+        }
+        Focus("terminal-2");
+        Api_->Commands().Run("layout.splitDown");
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("not saved"), TIMEOUT_MS);
+        // The window has the edit.
+        QCOMPARE(Instances(Shell_->CurrentLayout().Root),
+                 (QStringList{"list", "terminal", "terminal-2", "terminal-3"}));
+
+        // The next write that works clears it.
+        QVERIFY(QFile::setPermissions(config, open));
+        Focus("terminal-3");
+        QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
+        Api_->Commands().Run("layout.splitRight");
+        QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!HasProblem("not saved"), TIMEOUT_MS);
+        QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
+    }
+
+    void ThereAreNoLinksToEditOnAPanelWithoutInputs() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        // The command does nothing: no dialog, no problem, no write.
+        Focus("list");
+        QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
+        Api_->Commands().Run("layout.editLinks");
+        QTest::qWait(300);
+        QObject* editor = Popup("linkEditor");
+        QVERIFY(editor == nullptr || !editor->property("visible").toBool());
+        QVERIFY(Problems().isEmpty());
+        QCOMPARE(Writes(spy), 0);
+
+        // The menu item is off for the list and on for the terminal.
+        const auto menuOn = [this](const QString& instance) {
+            QQuickItem* slot = SlotByInstance(instance);
+            QTest::mouseClick(
+                Window(), Qt::RightButton, Qt::NoModifier,
+                slot->mapToScene(QPointF(slot->width() / 2, 40)).toPoint());
+            QObject* popup = Root()->findChild<QObject*>("panelMenu");
+            QTRY_VERIFY_WITH_TIMEOUT(
+                popup != nullptr && popup->property("visible").toBool() &&
+                    popup->property("instance") == instance,
+                TIMEOUT_MS);
+        };
+        menuOn("list");
+        QVERIFY(Root()->findChild<QQuickItem*>("menuSplitRight")->isEnabled());
+        QVERIFY(!Root()->findChild<QQuickItem*>("menuEditLinks")->isEnabled());
+    }
+
+    void TheRightButtonBelongsToATerminalThatTracksTheMouse() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        OpenIdIn("list", "terminal", IdIn("list", 1));
+        // The program in the terminal turns on mouse tracking (1000h).
+        const auto* pane = TerminalOf("terminal")->findChild<SessionPane*>();
+        QVERIFY(pane != nullptr);
+        {
+            const auto session = pane->Session();
+            const auto lock = session->Lock();
+            session->Write(lock, "\x1b[?1000h");
+        }
+        QQuickItem* slot = SlotByInstance("terminal");
+        const QPoint at =
+            slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
+                .toPoint();
+        QObject* popup = Root()->findChild<QObject*>("panelMenu");
+        QVERIFY(popup != nullptr);
+
+        // The program owns the button: no menu.
+        QTest::mouseClick(Window(), Qt::RightButton, Qt::NoModifier, at);
+        QTest::qWait(400);
+        QVERIFY(!popup->property("visible").toBool());
+
+        // Shift takes it back for roost.
+        QTest::mouseClick(Window(), Qt::RightButton, Qt::ShiftModifier, at);
+        QTRY_VERIFY_WITH_TIMEOUT(popup->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        QCOMPARE(popup->property("instance").toString(), QString("terminal"));
     }
 
     void TheLastPanelStaysAndTheStripSaysWhy() {

@@ -754,7 +754,14 @@ void Shell::PublishLayout() {
 }
 
 void Shell::SaveLayout() {
-    if (!LayoutSettled_ || !LayoutWritable_) {
+    if (!LayoutSettled_) {
+        return;
+    }
+    if (!LayoutWritable_) {
+        // The edit stays in the window; the user is told it will not last.
+        WriteProblem_ = QStringLiteral(
+            "the stored layout is not writable: edits are not saved");
+        UpdateProblems();
         return;
     }
     Api_.Store()
@@ -794,6 +801,16 @@ void Shell::PublishPanelTypes() {
     if (Root_.property("panelTypes").toStringList() != types) {
         Root_.setProperty("panelTypes", types);
     }
+    QStringList withInputs;
+    for (const QString& type : types) {
+        if (const auto info = Loader_.Info(type);
+            info && !info->Inputs.isEmpty()) {
+            withInputs.append(type);
+        }
+    }
+    if (Root_.property("panelsWithInputs").toStringList() != withInputs) {
+        Root_.setProperty("panelsWithInputs", withInputs);
+    }
 }
 
 void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
@@ -818,6 +835,10 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
         if (FindLeaf(Layout_.Root, instance) == nullptr) {
             EditProblem_ = QStringLiteral("there is no panel %1").arg(instance);
             UpdateProblems();
+            return;
+        }
+        // A panel with no inputs has no links to edit: nothing to open.
+        if (LinkChoices(Layout_, instance, known).empty()) {
             return;
         }
         EditProblem_.clear();

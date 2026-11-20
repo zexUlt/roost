@@ -41,9 +41,11 @@ int CountLeaves(const LayoutNode& node);
 QString NewInstanceId(const Layout& layout, const QString& base);
 
 // Splits the leaf: the new half, after the source, is a new instance of
-// `panel` (the type of the source if empty) with the links of the source that
-// the new type can take. `horizontal`: side by side, else one under the other.
-// The source panel keeps its instance id, so its state.
+// `panel` (the type of the source if empty) with no links: a new panel that
+// took the links of the source would take the session from it. `horizontal`:
+// side by side, else one under the other. The source panel keeps its instance
+// id, so its state and links. Refused for a leaf with no panel type and no
+// `panel` to take.
 LayoutEdit SplitPanel(const Layout& layout, const QString& instance,
                       bool horizontal, const QString& panel,
                       const LayoutKnownPanels& known);

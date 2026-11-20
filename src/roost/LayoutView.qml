@@ -29,6 +29,8 @@ Item {
 
     // The panel types that "Split with…" offers; written by the shell.
     property var panelTypes: []
+    // The panel types that have inputs: only they have links to edit.
+    property var panelsWithInputs: []
     // The instance id of the panel that had the keyboard last, "" if none.
     property string lastFocused: ""
     // The panel that takes the keyboard when its slot is there, "" if none.
@@ -77,15 +79,19 @@ Item {
         const info = {
             inTabs: false,
             canIntoTabs: false,
-            canClose: false
+            canClose: false,
+            hasInputs: false
         };
         let leaves = 0;
         const walk = (node, parent) => {
             if (node.kind === "leaf") {
                 leaves += 1;
-                if (node.instance === instance && parent !== null) {
-                    info.inTabs = parent.kind === "tabs";
-                    info.canIntoTabs = parent.kind === "split" && parent.children.length > 1;
+                if (node.instance === instance) {
+                    info.hasInputs = view.panelsWithInputs.includes(node.panel);
+                    if (parent !== null) {
+                        info.inTabs = parent.kind === "tabs";
+                        info.canIntoTabs = parent.kind === "split" && parent.children.length > 1;
+                    }
                 }
                 return;
             }

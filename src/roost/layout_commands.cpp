@@ -197,6 +197,12 @@ LayoutEdit SplitPanel(const Layout& layout, const QString& instance,
     Layout tree = layout;
     LayoutNode& source = At(tree.Root, path, path.size());
     const QString type = panel.isEmpty() ? source.Panel : panel;
+    if (type.isEmpty()) {
+        // A placeholder leaf has no type to make another one of.
+        return Refuse(
+            layout,
+            QStringLiteral("%1 has no panel type to split with").arg(instance));
+    }
     if (!panel.isEmpty() && panel != source.Panel && !known.contains(panel)) {
         return Refuse(layout,
                       QStringLiteral("there is no panel type %1").arg(panel));
@@ -210,23 +216,6 @@ LayoutEdit SplitPanel(const Layout& layout, const QString& instance,
     QString base = type == source.Panel ? source.Instance : type;
     base.remove(COUNTER_SUFFIX);
     added.Instance = NewInstanceId(layout, base);
-    for (auto it = source.Links.constBegin(); it != source.Links.constEnd();
-         ++it) {
-        const bool same = type == source.Panel;
-        if (same) {
-            added.Links.insert(it.key(), it.value());
-            continue;
-        }
-        const LayoutNode* origin = FindLeaf(layout.Root, it->From);
-        const QString in = InputType(known, type, it.key());
-        if (origin != nullptr && !in.isEmpty() &&
-            in == OutputType(known, origin->Panel, it->Output)) {
-            added.Links.insert(
-                it.key(),
-                {.From = it->From, .Output = it->Output, .Problem = {}});
-        }
-    }
-
     if (!path.empty()) {
         LayoutNode& parent = At(tree.Root, path, path.size() - 1);
         if (parent.Kind == ELayoutNodeKind::Split &&
@@ -374,18 +363,13 @@ LayoutEdit ClosePanel(const Layout& layout, const QString& instance) {
     const Path parentPath(path.begin(), path.end() - 1);
     LayoutNode& parent = At(tree.Root, path, path.size() - 1);
     const size_t index = path.back();
-    // The keyboard goes to the neighbour: before the closed panel in a split,
-    // after it in a stack (the tab that is shown next).
+    // The keyboard goes to the neighbour before the closed panel in a split
+    // (the one after it for the first), and in a stack to the tab that is
+    // shown once the panel is gone.
     const bool stack = parent.Kind == ELayoutNodeKind::Tabs;
     QString focus;
-    if (parent.Children.size() > 1) {
-        size_t neighbour = 0;
-        if (stack) {
-            neighbour =
-                index + 1 < parent.Children.size() ? index + 1 : index - 1;
-        } else {
-            neighbour = index > 0 ? index - 1 : index + 1;
-        }
+    if (!stack && parent.Children.size() > 1) {
+        const size_t neighbour = index > 0 ? index - 1 : index + 1;
         focus = ShownLeaf(parent.Children[neighbour]).Instance;
     }
 
@@ -399,6 +383,11 @@ LayoutEdit ClosePanel(const Layout& layout, const QString& instance) {
     }
     EraseLinksFrom(tree.Root, instance);
     Tidy(tree.Root, parentPath);
+    const LayoutNode& left = At(tree.Root, parentPath, parentPath.size());
+    if (stack &&
+        (left.Kind == ELayoutNodeKind::Leaf || !left.Children.empty())) {
+        focus = ShownLeaf(left).Instance;
+    }
     return Done(std::move(tree), layout, focus);
 }
 
