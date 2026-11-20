@@ -262,6 +262,8 @@ public:
 protected:
     QStringList Changes_;
     bool WithoutTerminal_ = false;
+    // The type of the list panel OpenWindow waits for.
+    QString ListType_ = LIST;
     bool SpySelected_ = false;
     std::unique_ptr<QSignalSpy> SelectedSpy_;
     std::unique_ptr<QTemporaryDir> Dir_;

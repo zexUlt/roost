@@ -417,6 +417,90 @@ private slots:
         QVERIFY(AnyProblemHas(result, "not an object"));
         QVERIFY(result.Writable);
     }
+
+    void DefaultForThePanelsThereAreIsTheDefaultTree() {
+        const DefaultLayoutResult result = DefaultLayoutFor(
+            {"counter.view", "sessions.list", "terminal.view"}, Known());
+        QCOMPARE(result.Tree, DefaultLayout());
+        QVERIFY(result.Problems.isEmpty());
+    }
+
+    void DefaultTakesTheListAndTheTerminalByTheirPorts() {
+        LayoutKnownPanels known = Known();
+        known.remove("sessions.list");
+        known.remove("terminal.view");
+        known.insert("alt.list", {.Inputs = {{"filter", "String"}},
+                                  .Outputs = {{"selected", "SessionRef"}}});
+        known.insert("alt.screen",
+                     {.Inputs = {{"open", "SessionRef"}}, .Outputs = {}});
+        const DefaultLayoutResult result =
+            DefaultLayoutFor({"counter.view", "alt.list", "alt.screen"}, known);
+        QVERIFY(result.Problems.isEmpty());
+        const LayoutNode& root = result.Tree.Root;
+        QCOMPARE(root.Children[0].Instance, QString("list"));
+        QCOMPARE(root.Children[0].Panel, QString("alt.list"));
+        QCOMPARE(root.Children[1].Instance, QString("terminal"));
+        QCOMPARE(root.Children[1].Panel, QString("alt.screen"));
+        QCOMPARE(root.Children[1].Links.keys(), QStringList{"open"});
+        QCOMPARE(root.Children[1].Links["open"].From, QString("list"));
+        QCOMPARE(root.Children[1].Links["open"].Output, QString("selected"));
+        QCOMPARE(root.Sizes, (std::vector<LayoutSize>{LayoutSize::Px(320),
+                                                      LayoutSize::Rest()}));
+        // The tree is a good one for these panels.
+        const LayoutParseResult parsed =
+            ParseLayout(LayoutToJson(result.Tree), known);
+        QVERIFY2(parsed.Problems.isEmpty(),
+                 qPrintable(parsed.Problems.join('\n')));
+    }
+
+    void DefaultWithoutAListOrATerminalKeepsTheBuiltInTypes() {
+        const DefaultLayoutResult result =
+            DefaultLayoutFor({"counter.view"}, {{"counter.view", {}}});
+        QCOMPARE(result.Tree, DefaultLayout());
+        QVERIFY(result.Problems.isEmpty());
+    }
+
+    void DefaultWithSeveralListsTakesTheFirstInLoadOrderAndNamesTheOthers() {
+        LayoutKnownPanels known = Known();
+        known.insert("a.list",
+                     {.Inputs = {}, .Outputs = {{"selected", "SessionRef"}}});
+        known.insert("z.list",
+                     {.Inputs = {}, .Outputs = {{"selected", "SessionRef"}}});
+        // Load order, not the order of the table.
+        const DefaultLayoutResult result = DefaultLayoutFor(
+            {"z.list", "sessions.list", "a.list", "terminal.view"}, known);
+        QCOMPARE(result.Tree.Root.Children[0].Panel, QString("z.list"));
+        QCOMPARE(result.Problems.size(), 1);
+        QVERIFY(result.Problems.first().contains("z.list is used"));
+        QVERIFY(result.Problems.first().contains("sessions.list, a.list"));
+    }
+
+    void DefaultListNeedsTheOutputSelectedOfTypeSessionRef() {
+        LayoutKnownPanels known = Known();
+        known.remove("sessions.list");
+        known.insert("a.list",
+                     {.Inputs = {}, .Outputs = {{"picked", "SessionRef"}}});
+        known.insert("b.list",
+                     {.Inputs = {}, .Outputs = {{"selected", "String"}}});
+        const DefaultLayoutResult result =
+            DefaultLayoutFor({"a.list", "b.list", "terminal.view"}, known);
+        QCOMPARE(result.Tree, DefaultLayout());
+        QVERIFY(result.Problems.isEmpty());
+    }
+
+    void UnusableDocumentGivesTheFallbackTree() {
+        LayoutKnownPanels known = Known();
+        known.insert("alt.list",
+                     {.Inputs = {}, .Outputs = {{"selected", "SessionRef"}}});
+        known.remove("sessions.list");
+        const Layout other =
+            DefaultLayoutFor({"alt.list", "terminal.view"}, known).Tree;
+        QCOMPARE(other.Root.Children[0].Panel, QString("alt.list"));
+        QCOMPARE(ParseLayout(Json("[1]"), known, other).Tree, other);
+        QCOMPARE(ParseLayout(Json(R"({"version": 2})"), known, other).Tree,
+                 other);
+        QCOMPARE(ParseLayout(Json(R"({"root": 5})"), known, other).Tree, other);
+    }
 };
 
 QTEST_GUILESS_MAIN(LayoutModelTest)

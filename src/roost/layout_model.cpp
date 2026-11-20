@@ -33,18 +33,20 @@ bool IsWholeNumber(const QJsonValue& value) {
     return std::floor(number) == number && std::abs(number) < 1e9;
 }
 
-LayoutNode DefaultRoot() {
+// The window of before M6 between two panel types: `input` of the terminal
+// takes the `selected` of the list.
+LayoutNode DefaultRoot(const QString& listPanel, const QString& terminalPanel,
+                       const QString& terminalInput) {
     LayoutNode list;
     list.Instance = QStringLiteral("list");
-    list.Panel = QStringLiteral("sessions.list");
+    list.Panel = listPanel;
 
     LayoutNode terminal;
     terminal.Instance = QStringLiteral("terminal");
-    terminal.Panel = QStringLiteral("terminal.view");
-    terminal.Links.insert(QStringLiteral("session"),
-                          {.From = QStringLiteral("list"),
-                           .Output = QStringLiteral("selected"),
-                           .Problem = {}});
+    terminal.Panel = terminalPanel;
+    terminal.Links.insert(terminalInput, {.From = QStringLiteral("list"),
+                                          .Output = QStringLiteral("selected"),
+                                          .Problem = {}});
 
     LayoutNode root;
     root.Kind = ELayoutNodeKind::Split;
@@ -52,6 +54,17 @@ LayoutNode DefaultRoot() {
     root.Children = {std::move(list), std::move(terminal)};
     root.Sizes = {LayoutSize::Px(320), LayoutSize::Rest()};
     return root;
+}
+
+// The names of the entries of `declared` of the type.
+QStringList NamesOfType(const QVariantMap& declared, const QString& type) {
+    QStringList names;
+    for (auto it = declared.begin(); it != declared.end(); ++it) {
+        if (it.value().toString() == type) {
+            names.append(it.key());
+        }
+    }
+    return names;
 }
 
 // Parsing: the structure only. Instances, panels and links are checked after
@@ -428,12 +441,76 @@ QJsonObject NodeToJson(const LayoutNode& node) {
 
 }  // namespace
 
-Layout DefaultLayout() { return {.Root = DefaultRoot()}; }
+Layout DefaultLayout() {
+    return {.Root = DefaultRoot(QStringLiteral("sessions.list"),
+                                QStringLiteral("terminal.view"),
+                                QStringLiteral("session"))};
+}
+
+DefaultLayoutResult DefaultLayoutFor(const QStringList& order,
+                                     const LayoutKnownPanels& known) {
+    const QString sessionRef = QStringLiteral("SessionRef");
+    const QString selected = QStringLiteral("selected");
+    QStringList lists;
+    for (const QString& type : order) {
+        const auto found = known.constFind(type);
+        if (found != known.cend() &&
+            found->Outputs.value(selected).toString() == sessionRef) {
+            lists.append(type);
+        }
+    }
+    DefaultLayoutResult result{.Tree = DefaultLayout(), .Problems = {}};
+    QString listPanel = QStringLiteral("sessions.list");
+    if (!lists.isEmpty()) {
+        listPanel = lists.first();
+        if (lists.size() > 1) {
+            result.Problems.append(
+                QStringLiteral(
+                    "default layout: several panels declare the output "
+                    "selected of type SessionRef; %1 is used, %2 not placed")
+                    .arg(listPanel, lists.mid(1).join(QLatin1String(", "))));
+        }
+    }
+    // A terminal takes the session in its one input of that type; a panel
+    // with several is not told from the others by its type, and the list is
+    // not its own terminal.
+    QStringList terminals;
+    QString terminalInput = QStringLiteral("session");
+    QMap<QString, QString> inputOf;
+    for (const QString& type : order) {
+        const auto found = known.constFind(type);
+        if (found == known.cend() || type == listPanel) {
+            continue;
+        }
+        const QStringList inputs = NamesOfType(found->Inputs, sessionRef);
+        if (inputs.size() == 1) {
+            terminals.append(type);
+            inputOf.insert(type, inputs.first());
+        }
+    }
+    QString terminalPanel = QStringLiteral("terminal.view");
+    if (!terminals.isEmpty()) {
+        terminalPanel = terminals.first();
+        terminalInput = inputOf.value(terminalPanel);
+        if (terminals.size() > 1) {
+            result.Problems.append(
+                QStringLiteral(
+                    "default layout: several panels take a SessionRef input; "
+                    "%1 is used, %2 not placed")
+                    .arg(terminalPanel,
+                         terminals.mid(1).join(QLatin1String(", "))));
+        }
+    }
+    result.Tree = {.Root =
+                       DefaultRoot(listPanel, terminalPanel, terminalInput)};
+    return result;
+}
 
 LayoutParseResult ParseLayout(const QJsonValue& document,
-                              const LayoutKnownPanels& known) {
+                              const LayoutKnownPanels& known,
+                              const Layout& fallback) {
     if (!document.isObject()) {
-        return Resolved(DefaultLayout(),
+        return Resolved(fallback,
                         {QStringLiteral("the layout is not an object; the "
                                         "default layout is used")},
                         true, known);
@@ -444,7 +521,7 @@ LayoutParseResult ParseLayout(const QJsonValue& document,
     const QJsonValue version = object.value("version");
     if (!version.isUndefined() &&
         !(IsWholeNumber(version) && version.toInt() == LAYOUT_VERSION)) {
-        return Resolved(DefaultLayout(),
+        return Resolved(fallback,
                         {QStringLiteral("the layout has a version this roost "
                                         "does not know; the default layout is "
                                         "used and the stored one is kept")},
@@ -458,7 +535,7 @@ LayoutParseResult ParseLayout(const QJsonValue& document,
         lines.append(
             QStringLiteral("root: no usable root; the default layout "
                            "is used"));
-        return Resolved(DefaultLayout(), std::move(lines), true, known);
+        return Resolved(fallback, std::move(lines), true, known);
     }
     return Resolved({.Root = std::move(*root)}, std::move(lines), true, known);
 }

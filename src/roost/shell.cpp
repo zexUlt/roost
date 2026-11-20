@@ -694,11 +694,14 @@ void Shell::TrySettle() {
                          {.Inputs = info->Inputs, .Outputs = info->Outputs});
         }
     }
-    // No document is the default layout, and says nothing.
+    // The default layout is made of the panels there are, by their ports.
+    DefaultLayoutResult standard =
+        DefaultLayoutFor(Loader_.PanelTypes(), known);
+    // No document is the default layout, and says nothing about itself.
     LayoutParseResult parsed{
-        .Tree = DefaultLayout(), .Problems = {}, .Writable = true};
+        .Tree = standard.Tree, .Problems = standard.Problems, .Writable = true};
     if (LayoutDocument_.isObject() && !LayoutDocument_.toObject().isEmpty()) {
-        parsed = ParseLayout(LayoutDocument_, known);
+        parsed = ParseLayout(LayoutDocument_, known, standard.Tree);
     }
     LayoutSettled_ = true;
     LayoutWritable_ = LayoutWritable_ && parsed.Writable;

@@ -73,6 +73,7 @@ void SessionsWindow::Teardown() {
     StopDaemon();
     WithoutTerminal_ = false;
     SpySelected_ = false;
+    ListType_ = LIST;
 }
 
 bool SessionsWindow::WriteFakeClaude(const char* script) const {
@@ -256,7 +257,7 @@ void SessionsWindow::OpenWindow() {
         QCoreApplication::processEvents(QEventLoop::AllEvents);
     }
     QTRY_VERIFY_WITH_TIMEOUT(
-        PanelOf(LIST) != nullptr &&
+        PanelOf(ListType_) != nullptr &&
             (WithoutTerminal_ || PanelOf(TERMINAL) != nullptr),
         TIMEOUT_MS);
     QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
@@ -272,7 +273,7 @@ void SessionsWindow::OpenWindow() {
 // Whether the list panel is loaded; with SpySelected_, the first time it
 // is, every change of its `selected` is recorded, before any list is in.
 bool SessionsWindow::WatchSelectedOnLoad() {
-    QQuickItem* panel = PanelOf(LIST);
+    QQuickItem* panel = PanelOf(ListType_);
     if (panel != nullptr && SpySelected_ && !SelectedSpy_) {
         SelectedSpy_ =
             std::make_unique<QSignalSpy>(panel, SIGNAL(selectedChanged()));

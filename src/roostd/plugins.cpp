@@ -176,15 +176,59 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
 
 PluginHost::~PluginHost() = default;
 
-void PluginHost::Load(const QStringList& searchPath) {
+DisabledPlugins ReadDisabledPlugins(const Store& store) {
+    const auto settings = store.Load(QStringLiteral("settings"));
+    if (!settings) {
+        return {.Ids = {},
+                .Problem = QStringLiteral("settings: %1; no plugin is disabled")
+                               .arg(settings.error())};
+    }
+    const QJsonValue plugins = settings->value(QStringLiteral("plugins"));
+    if (plugins.isUndefined() || plugins.isNull()) {
+        return {};
+    }
+    const QString malformed = QStringLiteral(
+        "settings: plugins.disabled is not an array of plugin ids; no plugin "
+        "is disabled");
+    if (!plugins.isObject()) {
+        return {.Ids = {}, .Problem = malformed};
+    }
+    const QJsonValue disabled =
+        plugins.toObject().value(QStringLiteral("disabled"));
+    if (disabled.isUndefined() || disabled.isNull()) {
+        return {};
+    }
+    if (!disabled.isArray()) {
+        return {.Ids = {}, .Problem = malformed};
+    }
+    QStringList ids;
+    for (const QJsonValue& id : disabled.toArray()) {
+        if (!id.isString()) {
+            return {.Ids = {}, .Problem = malformed};
+        }
+        ids.append(id.toString());
+    }
+    return {.Ids = ids, .Problem = {}};
+}
+
+void PluginHost::Load(const QStringList& searchPath,
+                      const DisabledPlugins& disabled) {
     if (Loaded_) {
         return;
     }
     Loaded_ = true;
+    if (!disabled.Problem.isEmpty()) {
+        Registry_.AddProblem(disabled.Problem);
+    }
     for (const QString& directory : FindPluginDirectories(searchPath)) {
         auto manifest = LoadManifest(directory);
         if (!manifest) {
             Registry_.AddProblem(manifest.error());
+            continue;
+        }
+        if (disabled.Ids.contains(manifest->Id)) {
+            qInfo("roostd: plugin %s is disabled by the settings",
+                  qUtf8Printable(manifest->Id));
             continue;
         }
         Registry_.Add(*std::move(manifest));
