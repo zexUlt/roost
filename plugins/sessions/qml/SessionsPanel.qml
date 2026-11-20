@@ -72,10 +72,10 @@ FocusScope {
     // take the session that is still listed for a new one.
     property var forgetPending: []
 
-    // The colours of the categories, by the `colorIndex` of the model, and of
-    // the states, hard-coded until the palette of the layout (M6).
-    readonly property var categoryColors: ["#0087d7", "#d70000", "#008700", "#d75f00", "#8700d7", "#008787", "#d700af", "#875f00"]
-    readonly property string textColor: "#e0e0e0"
+    // The colours come from Roost.theme: the categories by the `colorIndex`
+    // of the model, and the states.
+    readonly property var categoryColors: Roost.theme.categories
+    readonly property color textColor: Roost.theme.text
     readonly property var tabs: [
         {
             "name": "all",
@@ -94,12 +94,12 @@ FocusScope {
     function stateColor(state) {
         switch (state) {
         case "working":
-            return "#d78700";
+            return Roost.theme.stateWorking;
         case "blocked":
         case "needs_input":
-            return "#005fd7";
+            return Roost.theme.stateBlocked;
         case "failed":
-            return "#d70000";
+            return Roost.theme.stateFailed;
         default:
             return textColor;
         }
@@ -861,7 +861,7 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: "#1e1e1e"
+        color: Roost.theme.panelBackground
     }
 
     Connections {
@@ -921,7 +921,7 @@ FocusScope {
                 // The query takes what the title leaves.
                 width: Math.max(0, parent.width - x)
                 elide: Text.ElideRight
-                color: "#a0a0a0"
+                color: Roost.theme.textSecondary
                 text: "/ " + sessionsList.query
             }
         }
@@ -941,7 +941,7 @@ FocusScope {
                     readonly property bool current: sessionsList.tab === modelData.name
 
                     objectName: "sessionsTab"
-                    color: current ? "#ffffff" : "#808080"
+                    color: current ? Roost.theme.textStrong : Roost.theme.textMuted
                     font.bold: current
                     font.underline: current
                     text: modelData.label + " " + (sessionsList.counts[modelData.name] ?? 0)
@@ -973,7 +973,7 @@ FocusScope {
         model: sessionsList
         highlightMoveDuration: 0
         highlight: Rectangle {
-            color: list.activeFocus ? "#3d5a80" : "#3a3a3a"
+            color: list.activeFocus ? Roost.theme.cursorFocused : Roost.theme.cursorUnfocused
         }
 
         // The model owns the cursor: whatever the view does to its index
@@ -1049,14 +1049,14 @@ FocusScope {
             Rectangle {
                 visible: row.isOpen
                 anchors.fill: parent
-                color: "#225aa0ff"
+                color: Roost.theme.accentTint
             }
 
             Rectangle {
                 visible: row.isOpen
                 width: 3
                 height: parent.height
-                color: "#5aa0ff"
+                color: Roost.theme.accent
             }
 
             // A header: the category ("Uncategorized" for none) in its colour,
@@ -1074,7 +1074,7 @@ FocusScope {
                 anchors.leftMargin: 10
                 anchors.rightMargin: 8
                 elide: Text.ElideRight
-                color: row.isHeader && row.model.colorIndex >= 0 ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : "#a0a0a0"
+                color: row.isHeader && row.model.colorIndex >= 0 ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : Roost.theme.textSecondary
                 font.bold: true
                 text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : row.model.category) + " · " + row.model.count : ""
             }
@@ -1091,14 +1091,14 @@ FocusScope {
                 Text {
                     objectName: "pinMark"
                     visible: row.isHeader && row.model.pinned
-                    color: "#a0a0a0"
+                    color: Roost.theme.textSecondary
                     text: "▲"
                 }
 
                 Text {
                     objectName: "headerUnread"
                     visible: row.isHeader && row.model.folded && row.model.unreadCount > 0
-                    color: "#5aa0ff"
+                    color: Roost.theme.accent
                     text: row.isHeader ? "● " + row.model.unreadCount : ""
                 }
             }
@@ -1108,7 +1108,7 @@ FocusScope {
                 visible: !row.isHeader && row.model.unread
                 x: 10
                 y: 6
-                color: "#5aa0ff"
+                color: Roost.theme.accent
                 text: "●"
             }
 
@@ -1164,7 +1164,7 @@ FocusScope {
                     width: parent.width
                     visible: row.showsDetail
                     elide: Text.ElideMiddle
-                    color: "#808080"
+                    color: Roost.theme.textMuted
                     font.pixelSize: titleText.font.pixelSize * 0.85
                     text: row.isHeader ? "" : root.stateWord(row.model.state) + " · " + row.model.cwd
                 }
@@ -1190,7 +1190,7 @@ FocusScope {
         anchors.fill: list
         anchors.margins: 12
         visible: text !== ""
-        color: "#808080"
+        color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
@@ -1217,7 +1217,7 @@ FocusScope {
         anchors.bottom: footer.top
         anchors.margins: 8
         visible: text !== ""
-        color: "#e0a060"
+        color: Roost.theme.warning
         wrapMode: Text.Wrap
         text: Roost.sessions.unavailable.map(entry => entry.agent + ": " + entry.reason).join("\n")
     }
@@ -1243,7 +1243,7 @@ FocusScope {
             rightPadding: 8
             bottomPadding: 4
             visible: text !== ""
-            color: sessionsList.readOnly ? "#e06060" : "#e0a060"
+            color: sessionsList.readOnly ? Roost.theme.error : Roost.theme.warning
             wrapMode: Text.Wrap
             text: sessionsList.problem
         }
@@ -1256,7 +1256,7 @@ FocusScope {
             rightPadding: 8
             bottomPadding: 4
             visible: root.confirm !== null
-            color: "#ffffff"
+            color: Roost.theme.textStrong
             wrapMode: Text.Wrap
             text: root.confirm === null ? "" : root.confirm.text
         }
@@ -1282,7 +1282,7 @@ FocusScope {
                     anchors.left: parent.left
                     anchors.leftMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
-                    color: "#a0a0a0"
+                    color: Roost.theme.textSecondary
                     text: root.promptLabels[root.promptKind] ?? ""
                 }
 
@@ -1297,7 +1297,7 @@ FocusScope {
                     anchors.verticalCenter: parent.verticalCenter
                     clip: true
                     color: root.textColor
-                    selectionColor: "#3d5a80"
+                    selectionColor: Roost.theme.selection
                     selectByMouse: true
 
                     // The search is live: the list follows every edit.
@@ -1346,7 +1346,7 @@ FocusScope {
                 leftPadding: 8
                 rightPadding: 8
                 visible: root.promptPicksCategory && promptInput.text === "" && sessionsList.knownCategories.length > 0
-                color: "#808080"
+                color: Roost.theme.textMuted
                 elide: Text.ElideRight
                 text: sessionsList.knownCategories.slice(0, 9).map((name, i) => (i + 1) + " " + name).join("   ")
             }
@@ -1360,7 +1360,7 @@ FocusScope {
             rightPadding: 8
             bottomPadding: 4
             visible: root.notice !== ""
-            color: "#a0a0a0"
+            color: Roost.theme.textSecondary
             wrapMode: Text.Wrap
             text: root.notice
         }
@@ -1371,7 +1371,7 @@ FocusScope {
         objectName: "sessionsHelp"
         anchors.fill: parent
         visible: root.helpOpen
-        color: "#f01e1e1e"
+        color: Roost.theme.overlayBackground
 
         TapHandler {
             onTapped: root.helpOpen = false

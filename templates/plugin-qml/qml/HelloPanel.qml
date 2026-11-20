@@ -19,14 +19,14 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Plugin " + root.pluginId
             font.pixelSize: 20
-            color: "#e0e0e0"
+            color: Roost.theme.text
         }
 
         Text {
             objectName: "connectionText"
             anchors.horizontalCenter: parent.horizontalCenter
             text: Roost.connected ? "connected to roostd" : "not connected"
-            color: "#a0a0a0"
+            color: Roost.theme.textSecondary
         }
     }
 }

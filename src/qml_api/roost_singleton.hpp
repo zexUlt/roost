@@ -15,6 +15,7 @@
 #include "qml_api/commands_adapter.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "qml_api/store_adapter.hpp"
+#include "qml_api/theme.hpp"
 
 namespace roost {
 
@@ -33,6 +34,9 @@ class RoostSingleton : public QObject {
     Q_PROPERTY(roost::SessionsModel* sessions READ sessions CONSTANT)
     Q_PROPERTY(roost::StoreAdapter* store READ store CONSTANT)
     Q_PROPERTY(roost::BusAdapter* bus READ bus CONSTANT)
+    // The colours of the window by role (ADR 009: the built-in plugins read
+    // them here too). Present before setApi.
+    Q_PROPERTY(roost::Theme* theme READ theme CONSTANT)
     // Whether the window is connected to roostd now.
     Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
 
@@ -47,6 +51,7 @@ public:
     SessionsModel* sessions() const { return Sessions_; }
     StoreAdapter* store() const { return Store_; }
     BusAdapter* bus() const { return Bus_; }
+    Theme* theme() const { return Theme_; }
     bool connected() const { return Connected_; }
 
     // From C++ only. The window's API, or null until setApi (and in a window
@@ -110,6 +115,7 @@ private:
     SessionsModel* Sessions_ = nullptr;
     StoreAdapter* Store_ = nullptr;
     BusAdapter* Bus_ = nullptr;
+    Theme* Theme_ = nullptr;
     bool Connected_ = false;
 };
 

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Roost.Api
 
 // "Report a Bug…": the user describes the problem, roost writes a zip with
 // the logs and the description. Nothing leaves the machine: Show and Open
@@ -119,7 +120,7 @@ Dialog {
             objectName: "errorText"
             Layout.fillWidth: true
             wrapMode: TextEdit.Wrap
-            color: "#b00020"
+            color: Roost.theme.windowError
             text: bugReport.error
             visible: bugReport.error !== "" && !root.done
         }

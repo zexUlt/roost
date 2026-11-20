@@ -71,7 +71,7 @@ FocusScope {
         anchors.fill: parent
         anchors.margins: 12
         visible: text !== ""
-        color: "#808080"
+        color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

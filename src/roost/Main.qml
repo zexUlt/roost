@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Roost.Api
 
 // The window of the shell (design.md §6): the fixed layout "list | terminal".
 // roost::Shell fills the slots and writes the properties below; the one link
@@ -37,6 +38,7 @@ Window {
     height: 600
     visible: true
     title: "roost"
+    color: Roost.theme.windowBackground
 
     // Opens the bug report dialog; macOS calls it from the Help menu and
     // Cmd+Shift+B, other platforms from the toolbar button.
@@ -76,7 +78,7 @@ Window {
             Layout.fillWidth: true
             visible: root.connection !== "connected"
             implicitHeight: bannerRow.implicitHeight + 16
-            color: root.connection === "refused" ? "#5c1f1f" : "#4a4a2a"
+            color: root.connection === "refused" ? Roost.theme.bannerRefusedBackground : Roost.theme.bannerBackground
 
             RowLayout {
                 id: bannerRow
@@ -89,7 +91,7 @@ Window {
                     objectName: "connectionText"
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    color: "white"
+                    color: Roost.theme.bannerText
                     text: {
                         switch (root.connection) {
                         case "connecting":
@@ -153,7 +155,7 @@ Window {
             Layout.fillWidth: true
             visible: root.problems.length > 0
             implicitHeight: Math.min(problemsList.contentHeight, 96) + 8
-            color: "#3a2a1a"
+            color: Roost.theme.problemsBackground
 
             ListView {
                 id: problemsList
@@ -167,7 +169,7 @@ Window {
 
                     width: ListView.view.width
                     text: modelData
-                    color: "#ffd9a0"
+                    color: Roost.theme.problemsText
                     elide: Text.ElideRight
                 }
             }

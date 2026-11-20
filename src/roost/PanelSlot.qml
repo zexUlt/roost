@@ -1,4 +1,5 @@
 import QtQuick
+import Roost.Api
 
 // A place of the window's layout that shows one panel of a plugin. The shell
 // (roost::Shell) writes `panel`, `error`, `linkInput` and `linkOutput`; this
@@ -34,7 +35,7 @@ FocusScope {
         anchors.margins: 12
         visible: root.panel === null
         text: root.error !== "" ? root.error : root.panelType
-        color: "#808080"
+        color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
