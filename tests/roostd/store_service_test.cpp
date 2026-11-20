@@ -314,12 +314,12 @@ private slots:
         QVERIFY(Start());
         const auto second = Connect();
         QVERIFY(second);
-        constexpr int KEYS = 20;
+        constexpr int keys = 20;
         // Both requests of each pair are on the wire before either is
         // answered, so the daemon takes them one after the other, each on the
         // document the earlier one left.
         QList<QFuture<rpc::Result>> pending;
-        for (int i = 0; i < KEYS; ++i) {
+        for (int i = 0; i < keys; ++i) {
             pending.append(Client_->Request(
                 "store.patch",
                 QJsonObject{
@@ -336,7 +336,7 @@ private slots:
             QVERIFY2(future.result(), qPrintable(MessageOf(future.result())));
         }
         QJsonObject expected;
-        for (int i = 0; i < KEYS; ++i) {
+        for (int i = 0; i < keys; ++i) {
             expected.insert(QString("first%1").arg(i), i);
             expected.insert(QString("second%1").arg(i), i);
         }
