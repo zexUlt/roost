@@ -31,6 +31,8 @@ ApplicationWindow {
     property var keymap: []
     // The last failed write; empty when none.
     property string error
+    // Why the document or the table could not be read; empty when they were.
+    property string readError
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
     readonly property string platformName: Qt.platform.os === "osx" ? "mac" : "linux"
@@ -62,18 +64,39 @@ ApplicationWindow {
         }
         Roost.store.patch("settings", patch, err => {
             error = err ? err.message : "";
+            if (err) {
+                // The write did not happen: the fields show what is stored.
+                showDocument(true);
+            }
         });
     }
 
-    function applyDocument(document) {
-        settingsDocument = document;
-        // What the user is typing in is not replaced.
+    // Writes one key of the terminal font. The last key of it that goes takes
+    // the object with it: a merge patch would leave `{}`.
+    function patchTerminalFont(key, value) {
+        const font = terminalFont;
+        const others = (typeof font === "object" && !Array.isArray(font)) ? Object.keys(font).filter(k => k !== key) : [];
+        patchSettings({
+            "terminalFont": (value === null && others.length === 0) ? null : {
+                [key]: value
+            }
+        });
+    }
+
+    // The fields show the document. What the user is typing in is not
+    // replaced, unless `force`.
+    function showDocument(force) {
         for (const field of [terminalFamilyField, terminalSizeField, uiSizeField]) {
-            if (!field.activeFocus) {
+            if (force || !field.activeFocus) {
                 field.text = field.shown();
             }
         }
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
+    }
+
+    function applyDocument(document) {
+        settingsDocument = document;
+        showDocument(false);
     }
 
     function applyKeymap(bindings) {
@@ -116,32 +139,69 @@ ApplicationWindow {
 
     // The first show loads the document and the table: a window that is
     // never opened asks the daemon for nothing (a refused connection is
-    // retried by a request).
-    property bool loaded: false
+    // retried by a request). A read that fails shows why and is made again
+    // at the next connection, which also brings what changed while there was
+    // none.
+    property bool shownOnce: false
+    // A read sent before the connection went is of the old one.
+    property int readGeneration: 0
 
-    onVisibleChanged: {
-        if (!visible || loaded) {
+    function read() {
+        const generation = ++readGeneration;
+        if (!Roost.connected) {
+            readError = "Not connected to roostd; the settings are read when it is.";
             return;
         }
-        loaded = true;
+        readError = "";
+        const failed = err => {
+            readError = "Could not read the settings: " + (err.message ?? err);
+        };
         if (Roost.store !== null) {
             Roost.store.get("settings", (err, result) => {
-                if (!err) {
+                if (generation !== readGeneration) {
+                    return;
+                }
+                if (err) {
+                    failed(err);
+                } else {
                     applyDocument(result.document);
                 }
             });
         }
+        Roost.call("keymap.get", undefined, (err, result) => {
+            if (generation !== readGeneration) {
+                return;
+            }
+            if (err) {
+                failed(err);
+            } else {
+                applyKeymap(result.bindings);
+            }
+        });
+    }
+
+    onVisibleChanged: {
+        if (!visible || shownOnce) {
+            return;
+        }
+        shownOnce = true;
         if (Roost.bus !== null) {
             Roost.bus.subscribe("keymap.changed", root, (name, payload) => {
                 if (payload.platform === platformName) {
                     applyKeymap(payload.bindings);
                 }
             });
-            Roost.call("keymap.get", undefined, (err, result) => {
-                if (!err) {
-                    applyKeymap(result.bindings);
-                }
-            });
+        }
+        read();
+    }
+
+    Connections {
+        target: Roost
+
+        function onConnectedChanged() {
+            if (root.shownOnce) {
+                root.read();
+            }
         }
     }
 
@@ -217,11 +277,7 @@ ApplicationWindow {
                     onEditingFinished: {
                         const family = text.trim() === "" ? null : text.trim();
                         if ((family ?? "") !== shown()) {
-                            root.patchSettings({
-                                "terminalFont": {
-                                    "family": family
-                                }
-                            });
+                            root.patchTerminalFont("family", family);
                         }
                     }
                 }
@@ -245,11 +301,7 @@ ApplicationWindow {
                         if (size === undefined) {
                             text = shown();
                         } else if (String(size ?? "") !== shown()) {
-                            root.patchSettings({
-                                "terminalFont": {
-                                    "size": size
-                                }
-                            });
+                            root.patchTerminalFont("size", size);
                         }
                     }
                 }
@@ -293,10 +345,10 @@ ApplicationWindow {
             Label {
                 objectName: "settingsError"
                 Layout.fillWidth: true
-                visible: root.error !== ""
+                visible: text !== ""
                 wrapMode: Text.Wrap
                 color: Roost.theme.error
-                text: root.error
+                text: [root.readError, root.error].filter(s => s !== "").join("\n")
             }
 
             Repeater {

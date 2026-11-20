@@ -4,6 +4,7 @@
 #include <QVariant>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QWindow>
 
 #include <algorithm>
 
@@ -23,6 +24,19 @@ SettingsPages::SettingsPages(QObject& window, PluginLoader& loader)
     // Direct: after the signal the item is gone.
     connect(&Loader_, &PluginLoader::PanelAboutToBeDestroyed, this,
             &SettingsPages::OnPanelAboutToBeDestroyed, Qt::DirectConnection);
+    // A page runs code of its plugin when it is made: not before the window
+    // is shown for the first time.
+    if (auto* qwindow = qobject_cast<QWindow*>(&Window_)) {
+        Shown_ = qwindow->isVisible();
+        connect(qwindow, &QWindow::visibleChanged, this, [this](bool visible) {
+            if (visible && !Shown_) {
+                Shown_ = true;
+                Refresh();
+            }
+        });
+    } else {
+        Shown_ = true;
+    }
     Refresh();
 }
 
@@ -45,6 +59,9 @@ QStringList SettingsPages::PluginIds() const {
 }
 
 void SettingsPages::Refresh() {
+    if (!Shown_) {
+        return;
+    }
     if (Refreshing_) {
         // CreateSettingsPage disabled a page and emitted the signal; the
         // outer loop goes again.

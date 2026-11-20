@@ -70,6 +70,9 @@ Item {
 }
 )";
 
+// A page that compiles but is no Item.
+const QByteArray NOT_AN_ITEM_PAGE = "import QtQml\nQtObject {}\n";
+
 // A page that does not compile.
 const QByteArray BROKEN_PAGE = "import QtQuick\nItem { nonsense }\n";
 
@@ -187,8 +190,11 @@ class SettingsWindowTest : public QObject {
     Q_OBJECT
 
 private:
-    // A window against the running roostd; null if it could not be made.
-    std::unique_ptr<SettingsWindow> OpenWindow() {
+    // A window against roostd; null if it could not be made. `open`: shown at
+    // once. `wait`: made when the connection and the plugins are there; with
+    // roostd down it is not waited for.
+    std::unique_ptr<SettingsWindow> OpenWindow(bool open = true,
+                                               bool wait = true) {
         auto window = std::make_unique<SettingsWindow>();
         QSignalSpy connected(window->Api.get(), &api::Api::Connected);
         window->Singleton = window->Engine->singletonInstance<RoostSingleton*>(
@@ -198,10 +204,11 @@ private:
         }
         window->Singleton->setApi(*window->Api);
         window->Api->Connect(Daemon_->SocketPath());
-        if (connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
+        if (wait && connected.isEmpty() && !connected.wait(TIMEOUT_MS)) {
             return nullptr;
         }
-        if (!QTest::qWaitFor([&] { return window->Api->Plugins().IsLoaded(); },
+        if (wait &&
+            !QTest::qWaitFor([&] { return window->Api->Plugins().IsLoaded(); },
                              TIMEOUT_MS)) {
             return nullptr;
         }
@@ -218,7 +225,9 @@ private:
         window->Object->setProperty("opensFiles", false);
         window->Pages =
             std::make_unique<SettingsPages>(*window->Object, *window->Loader);
-        QMetaObject::invokeMethod(window->Object.get(), "open");
+        if (open) {
+            QMetaObject::invokeMethod(window->Object.get(), "open");
+        }
         return window;
     }
 
@@ -321,6 +330,63 @@ private slots:
         QCOMPARE(problems.size(), 1);
         QCOMPARE(problems.first().Plugin, QStringLiteral("broken"));
         QCOMPARE(problems.first().Panel, QStringLiteral("(settings)"));
+    }
+
+    // The root of a page is no Item: CreateSettingsPage fails and disables the
+    // page. That is one problem, no section, and no endless refresh: the
+    // signal of the loader is counted, and the pages are cut off from it when
+    // it comes too often, so that a loop is a failure and not a hang.
+    void APageThatIsNoItemIsOneProblemAndNoLoop() {
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin(*Daemon_, "noitem", "qml/Settings.qml",
+                          {{"qml/Settings.qml", NOT_AN_ITEM_PAGE}}));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow(false);
+        QVERIFY(window);
+        int changes = 0;
+        connect(window->Loader.get(), &PluginLoader::SettingsPagesChanged, this,
+                [&] {
+                    if (++changes == 20) {
+                        disconnect(window->Loader.get(),
+                                   &PluginLoader::SettingsPagesChanged,
+                                   window->Pages.get(), nullptr);
+                    }
+                });
+        QVERIFY(QMetaObject::invokeMethod(window->Object.get(), "open"));
+        QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
+        QVERIFY2(changes < 20, "the pages are refreshed again and again");
+        QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
+        auto problems = window->Loader->Problems();
+        QCOMPARE(problems.size(), 1);
+        QCOMPARE(problems.first().Plugin, QStringLiteral("noitem"));
+        QCOMPARE(problems.first().Panel, QStringLiteral("(settings)"));
+
+        // Loaded again, the page fails again: still one problem, no section.
+        changes = 0;
+        window->Loader->Reload("noitem");
+        QVERIFY2(changes < 20, "the pages are refreshed again and again");
+        problems = window->Loader->Problems();
+        QCOMPARE(problems.size(), 1);
+        QCOMPARE(problems.first().Plugin, QStringLiteral("noitem"));
+        QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
+        QCOMPARE(window->FindAll("pluginSettings").size(), 1);
+    }
+
+    // A page runs the code of its plugin when it is made, so no page is made
+    // before the window is shown, also not when a plugin is loaded again.
+    void NoPageIsMadeBeforeTheWindowIsShown() {
+        auto window = OpenWindow(false);
+        QVERIFY(window);
+        QVERIFY(!window->Window()->isVisible());
+        QCOMPARE(window->Pages->PluginIds(), QStringList());
+        QVERIFY(window->Find("fixtureField") == nullptr);
+        window->Loader->Reload(FIXTURE);
+        QCOMPARE(window->Pages->PluginIds(), QStringList());
+        QVERIFY(window->Find("fixtureField") == nullptr);
+
+        QVERIFY(QMetaObject::invokeMethod(window->Object.get(), "open"));
+        QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
+        QTRY_VERIFY(window->Find("fixtureField") != nullptr);
     }
 
     // An edit of the page is in the document of the plugin under `settings`,
@@ -430,6 +496,67 @@ private slots:
         QTRY_VERIFY(!Document("settings").contains("uiFontSize"));
         QCOMPARE(Document("settings").value("terminalFont").toObject(),
                  (QJsonObject{{"size", 15}}));
+    }
+
+    // The last key of the terminal font that goes takes the object with it.
+    void TheLastKeyOfTheTerminalFontTakesTheObjectWithIt() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QVERIFY(window->Edit("terminalSizeField", "15"));
+        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QTRY_COMPARE(Document("settings").value("terminalFont").toObject(),
+                     (QJsonObject{{"family", "Courier"}, {"size", 15}}));
+        QTRY_COMPARE(window->Document().value("terminalFont").toObject().size(),
+                     2);
+        QVERIFY(window->Edit("terminalSizeField", ""));
+        QTRY_COMPARE(Document("settings").value("terminalFont").toObject(),
+                     (QJsonObject{{"family", "Courier"}}));
+        QTRY_COMPARE(window->Document().value("terminalFont").toObject().size(),
+                     1);
+        QVERIFY(window->Edit("terminalFamilyField", ""));
+        QTRY_VERIFY(!Document("settings").contains("terminalFont"));
+    }
+
+    // A write that fails leaves no wrong value in the field, and the reason
+    // stays on the screen.
+    void AFailedWriteReturnsTheFieldAndShowsTheError() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QTRY_COMPARE(window->Document().value("uiFontSize"), QJsonValue(14));
+        QVERIFY(Daemon_->Stop());
+        QTRY_VERIFY(!window->Singleton->connected());
+
+        QVERIFY(window->Edit("uiSizeField", "20"));
+        QTRY_COMPARE(window->Find("uiSizeField")->property("text"),
+                     QVariant("14"));
+        QTRY_VERIFY(!window->Object->property("error").toString().isEmpty());
+        QQuickItem* label = window->Find("settingsError");
+        QVERIFY(label != nullptr);
+        QVERIFY(label->isVisible());
+        QVERIFY(label->property("text").toString().contains(
+            window->Object->property("error").toString()));
+    }
+
+    // Opened while roostd is down: the window says why it is empty, and shows
+    // the stored values when it is up and connected.
+    void AWindowOpenedBeforeRoostdIsUpReadsWhenItConnects() {
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(
+            WriteFile(Daemon_->ConfigPath() + "/settings.json",
+                      R"({"uiFontSize": 14, "terminalFont": {"size": 15}})"));
+        auto window = OpenWindow(true, false);
+        QVERIFY(window);
+        QTRY_VERIFY(window->Find("settingsError")->isVisible());
+        QCOMPARE(window->Find("uiSizeField")->property("text"), QVariant(""));
+
+        QVERIFY(StartDaemon());
+        QTRY_COMPARE(window->Find("uiSizeField")->property("text"),
+                     QVariant("14"));
+        QCOMPARE(window->Find("terminalSizeField")->property("text"),
+                 QVariant("15"));
+        QTRY_VERIFY(!window->Find("settingsError")->isVisible());
+        QTRY_COMPARE(window->FindAll("keymapRow").size(), 2);
     }
 
     // Text that is no number is no edit: the field goes back to the value.

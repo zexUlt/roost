@@ -19,8 +19,9 @@ namespace roost {
 // {pluginId, page} in load order, `page` being the live item (the window shows
 // it, the loader owns it); and `keymapFile`, the path of the user's
 // keymap.json, which the window offers to open and never writes. The pages
-// are made when the list of plugins is known and stay while their plugin is
-// loaded; a plugin that is loaded again gets a new page.
+// are made when the window is shown for the first time (a page runs code of
+// its plugin, so a window that is never opened makes none) and stay while
+// their plugin is loaded; a plugin that is loaded again gets a new page.
 //
 // It must be destroyed before the loader and the engine: its destructor
 // gives the pages back to the loader.
@@ -48,6 +49,7 @@ private:
     QObject& Window_;
     PluginLoader& Loader_;
     QList<Page> Pages_;
+    bool Shown_ = false;
     bool Refreshing_ = false;
     bool RefreshAgain_ = false;
 };
