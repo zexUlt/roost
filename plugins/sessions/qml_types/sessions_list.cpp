@@ -460,9 +460,23 @@ void SessionsList::restore(const QVariantMap& document) {
             if (const std::optional<QJsonObject> ours = currentDocument()) {
                 for (const KeyPath& path : PatchPaths(DiffOf(Stored_, *ours))) {
                     // Whoever wrote the document says what version it is.
-                    if (path != KeyPath{QStringLiteral("version")}) {
-                        SetAt(merged, path, ValueAt(*ours, path));
+                    if (path == KeyPath{QStringLiteral("version")}) {
+                        continue;
                     }
+                    // A leaf of the view of an instance that the document
+                    // lacks: the whole view is ours, as the instance shows it,
+                    // else a lone leaf would pass for the view of the instance
+                    // and hide the shared one it was seeded from.
+                    const KeyPath own{QStringLiteral("view"),
+                                      State_.Instance()};
+                    if (!State_.Instance().isEmpty() &&
+                        path.size() > own.size() &&
+                        path.first(own.size()) == own &&
+                        !ValueAt(merged, own).isObject()) {
+                        SetAt(merged, own, ValueAt(*ours, own));
+                        continue;
+                    }
+                    SetAt(merged, path, ValueAt(*ours, path));
                 }
             }
         }

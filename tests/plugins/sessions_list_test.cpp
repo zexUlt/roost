@@ -399,6 +399,7 @@ private slots:
     void TwoInstancesKeepTheirOwnOpened();
     void AnOldSharedViewSeedsANewInstance();
     void AnInstanceWithItsOwnViewIgnoresTheSharedOne();
+    void ALeafOfAnInstanceViewTheDocumentLacksBringsTheWholeView();
     void AFailedWriteIsWrittenAgainWithTheNextChangeOfTheSource();
     void AFailedWriteLeavesNoEchoBehind();
     void ADestroyedSourceEmptiesTheListAndUnloadsIt();
@@ -1334,6 +1335,33 @@ void SessionsListTest::AnInstanceWithItsOwnViewIgnoresTheSharedOne() {
     QCOMPARE(env.List.opened().toMap(), Ref("a"));
     // Its own view says nothing of the tab: the default, not the shared one.
     QCOMPARE(env.List.tab(), QString("all"));
+}
+
+// An older roost writes the document whole, without `view.<id>`: our unsent
+// leaf must not leave a view of one key that hides the seed.
+void SessionsListTest::
+    ALeafOfAnInstanceViewTheDocumentLacksBringsTheWholeView() {
+    Env env;
+    env.List.setInstanceId("right");
+    QVariantMap old = Doc({{"a", "work"}, {"z", "alpha"}});
+    old["view"] =
+        QVariantMap{{"query", "q"}, {"tab", "active"}, {"compact", true}};
+    env.Open({{"a"}, {"z"}}, old);
+    env.List.storeLost();
+    env.List.setOpened(Ref("a"));
+    Settle();
+
+    QVariantMap foreign = old;
+    env.Store = QJsonObject::fromVariantMap(foreign);
+    env.List.restore(foreign);
+    Settle();
+    QCOMPARE(env.List.opened().toMap(), Ref("a"));
+    QCOMPARE(env.List.query(), QString("q"));
+    QCOMPARE(env.List.tab(), QString("active"));
+    QVERIFY(env.List.compact());
+    const QJsonObject own = ViewOfInstance(env.Store, "right");
+    QCOMPARE(own.value("opened").toString(), Key("a"));
+    QCOMPARE(own.value("tab").toString(), QString("active"));
 }
 
 void SessionsListTest::
