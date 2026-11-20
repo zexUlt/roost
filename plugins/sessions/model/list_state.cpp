@@ -117,6 +117,14 @@ ETab TabOf(const QString& name) {
     return ETab::All;
 }
 
+// The view of the instance: its own member of `view` if the document has one,
+// else the shared `view` as an older roost wrote it.
+QJsonObject ViewOf(const QJsonObject& document, const QString& instance) {
+    const QJsonObject view = document.value(VIEW_KEY).toObject();
+    const QJsonValue own = view.value(instance);
+    return !instance.isEmpty() && own.isObject() ? own.toObject() : view;
+}
+
 template <typename TValue>
 bool Assign(TValue& target, const TValue& value) {
     if (target == value) {
@@ -173,7 +181,7 @@ bool ListState::Restore(const QJsonObject& document) {
     View_.Pinned = DedupedKeepLast(ReadStrings(document.value(PINNED_KEY)));
     const QStringList folded = ReadStrings(document.value(FOLDED_KEY));
     View_.Folded = QSet<QString>(folded.begin(), folded.end());
-    const QJsonObject view = document.value(VIEW_KEY).toObject();
+    const QJsonObject view = ViewOf(document, Instance_);
     View_.Query = view.value(QUERY_KEY).toString();
     View_.Tab = TabOf(view.value(TAB_KEY).toString());
     View_.ViewArchive = view.value(ARCHIVE_KEY).toBool(false);
@@ -208,15 +216,17 @@ bool ListState::Restore(const QJsonObject& document) {
     if (!Listed_.empty()) {
         Reconcile(shownBefore);
     }
-    const std::optional<QJsonObject> now = BuildDocument();
+    const std::optional<QJsonObject> now = BuildDocument(document);
     return now.has_value() && *now != document;
 }
 
-std::optional<QJsonObject> ListState::ToDocument() const {
-    return BuildDocument();
+std::optional<QJsonObject> ListState::ToDocument(
+    const QJsonObject& base) const {
+    return BuildDocument(base);
 }
 
-std::optional<QJsonObject> ListState::BuildDocument() const {
+std::optional<QJsonObject> ListState::BuildDocument(
+    const QJsonObject& base) const {
     if (ReadOnly()) {
         return std::nullopt;
     }
@@ -224,14 +234,24 @@ std::optional<QJsonObject> ListState::BuildDocument() const {
     for (auto it = Colors_.begin(); it != Colors_.end(); ++it) {
         colors.insert(it.key(), it.value());
     }
-    QJsonObject view;
-    view.insert(QUERY_KEY, View_.Query);
-    view.insert(TAB_KEY, TabName(View_.Tab));
-    view.insert(ARCHIVE_KEY, View_.ViewArchive);
-    view.insert(COMPACT_KEY, Compact_);
-    view.insert(OPENED_KEY, View_.Opened);
+    QJsonObject own;
+    own.insert(QUERY_KEY, View_.Query);
+    own.insert(TAB_KEY, TabName(View_.Tab));
+    own.insert(ARCHIVE_KEY, View_.ViewArchive);
+    own.insert(COMPACT_KEY, Compact_);
+    own.insert(OPENED_KEY, View_.Opened);
+    // The shared view keeps the views of the other instances next to its own
+    // keys; the view of an instance is one member of it.
+    QJsonObject view = base.value(VIEW_KEY).toObject();
+    if (Instance_.isEmpty()) {
+        for (auto it = own.begin(); it != own.end(); ++it) {
+            view.insert(it.key(), it.value());
+        }
+    } else {
+        view.insert(Instance_, own);
+    }
 
-    QJsonObject document;
+    QJsonObject document = base;
     document.insert(VERSION_KEY, DOCUMENT_VERSION);
     document.insert(CATEGORIES_KEY, WriteStrings(Categories_));
     document.insert(NAMES_KEY, WriteStrings(Names_));

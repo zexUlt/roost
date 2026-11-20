@@ -106,12 +106,15 @@ public:
     // type until its plugin is loaded again. The panel gets its own
     // QQmlContext, registered as the owner of its one-shot calls; if the root
     // has a property `pluginId` (also a `required` one), it is set to the id
-    // of the plugin before Component.onCompleted. A plugin that is being
+    // of the plugin before Component.onCompleted, and a property `instanceId`
+    // to `instanceId`, the id of the panel in the window's layout, the same
+    // way. A plugin that is being
     // unloaded gives nothing: a slot of PanelAboutToBeDestroyed gets nullptr.
     // Each declared input and output must be a property of the root; a missing
     // one is a problem (the same one is not recorded twice), and the panel is
     // still created.
-    QQuickItem* CreatePanel(const QString& panelId);
+    QQuickItem* CreatePanel(const QString& panelId,
+                            const QString& instanceId = QString());
 
     // Tears the instance down: PanelAboutToBeDestroyed (the item is alive, a
     // slot drops it and its bindings), then the owner of its calls, the item,

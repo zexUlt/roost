@@ -512,6 +512,11 @@ roost_add_qt_test(sessions_rows_test plugins/sessions_rows_test.cpp sessions_lis
 # names, unread.
 roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_list_lib)
 
+# The plugin's copy of the store's merge patch (it does not link roost core)
+# against the store's own.
+roost_add_qt_test(sessions_merge_patch_test plugins/sessions_merge_patch_test.cpp
+    sessions_list_lib)
+
 # SessionsList, the QML-facing model of the sessions list, over a fake source,
 # and the module RoostSessions loaded from the plugin directory as the window
 # does.

@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "sessions/model/list_state.hpp"
+#include "sessions/model/merge_patch.hpp"
 #include "sessions/model/session_rows.hpp"
 
 namespace roost::sessions {
@@ -43,6 +45,12 @@ class SessionsList : public QAbstractListModel {
     // source are taken only when it is.
     Q_PROPERTY(bool sourceLoaded READ sourceLoaded WRITE setSourceLoaded NOTIFY
                    sourceLoadedChanged)
+    // The id of the panel in the window's layout: the view (query, tab,
+    // archive, compact, opened) lives in the document under it, so that two
+    // lists keep their own. Set before the document is read; a later change is
+    // ignored. Empty: the view is the one the document shares (`view`).
+    Q_PROPERTY(QString instanceId READ instanceId WRITE setInstanceId NOTIFY
+                   instanceIdChanged)
     // The open session, {agent, id} or null: never unread, kept by the tabs.
     Q_PROPERTY(QVariant opened READ opened WRITE setOpened NOTIFY openedChanged)
     // The document was read, or the read failed.
@@ -82,6 +90,8 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    QString instanceId() const;
+    void setInstanceId(const QString& instanceId);
     QAbstractItemModel* source() const;
     void setSource(QAbstractItemModel* source);
     bool sourceLoaded() const;
@@ -134,9 +144,12 @@ public:
 
     // The store. restore: the document, from a read or from a change of the
     // store (empty if there is none); the echo of our own write is ignored,
-    // any other document replaces the state. readFailed: the read failed, the
-    // list works and is read-only. saveFinished: the write that saveRequested
-    // asked for ended, with an error text or an empty one. storeLost: the
+    // any other document is taken in, except the keys of ours that the store
+    // has not got yet: those stay as they are and go out in the next write.
+    // The write is a merge patch (saveRequested), so it touches only those
+    // keys. readFailed: the read failed, the list works and is read-only.
+    // saveFinished: the write that saveRequested asked for ended, with an
+    // error text or an empty one. storeLost: the
     // connection to the store went; nothing is written until restore or
     // readFailed, so that a write of the state kept from before does not
     // overtake the read of the document at the next connection.
@@ -156,6 +169,7 @@ public:
     Q_INVOKABLE QUrl bundledAgentIcon(const QString& agent) const;
 
 signals:
+    void instanceIdChanged();
     void sourceChanged();
     void sourceLoadedChanged();
     void openedChanged();
@@ -170,8 +184,9 @@ signals:
     void countsChanged();
     void knownCategoriesChanged();
     void cursorChanged();
-    // The document to write; one in flight, the next after saveFinished.
-    void saveRequested(const QVariantMap& document);
+    // The merge patch (RFC 7386) that takes the last document of the store to
+    // ours; one in flight, the next after saveFinished.
+    void saveRequested(const QVariantMap& patch);
 
 private:
     struct Exposed;
@@ -189,6 +204,10 @@ private:
     void requestSave();
     void retrySave();
     void sendSave();
+    // Our document: the last one of the store with our state written over it.
+    std::optional<QJsonObject> currentDocument() const;
+    // Dirty_ from the difference of currentDocument() and the last document.
+    void refreshDirty();
     std::vector<SessionEntry> readSource() const;
     // The category of a listed session, nullopt if it is not listed.
     std::optional<QString> listedCategory(const QString& key) const;
@@ -224,13 +243,19 @@ private:
     QString CursorKey_;
 
     bool InFlight_ = false;
-    bool Dirty_ = false;
+    // The key paths where our document differs from the last one of the store:
+    // edits not written, and those of the write in flight until it is in.
+    QSet<KeyPath> Dirty_;
+    // The last document of the store we know of, from a read, a change or our
+    // own write. What the patches are made against.
+    QJsonObject Stored_;
     // The store was lost and the document is not read again yet: the state
     // may be older than the store's, so it is not written.
     bool Reading_ = false;
-    // The document in flight, until its change event comes back or the answer
-    // does: roostd announces every successful write, equal or not, and does
-    // so before it answers, so no echo outlives its write.
+    // The document the store has after the write in flight, until its change
+    // event comes back or the answer does: roostd announces every successful
+    // write, equal or not, and does so before it answers, so no echo outlives
+    // its write. Gone when a document of another writer came in between.
     std::optional<QJsonObject> Echo_;
 };
 

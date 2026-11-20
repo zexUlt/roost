@@ -25,6 +25,7 @@
 #include "api/session_service.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/sessions_model.hpp"
+#include "sessions/model/merge_patch.hpp"
 #include "sessions/model/row_diff.hpp"
 #include "sessions/qml_types/sessions_list.hpp"
 
@@ -187,20 +188,28 @@ QVariantMap Doc(const QMap<QString, QString>& categories,
         .toVariantMap();
 }
 
-// A list over a source, with a tester, the documents it asked to write and an
-// acknowledgement of each of them unless told otherwise.
+// A list over a source, with a tester, a store that takes its patches, the
+// patches it asked to write and the document the store has after each of them,
+// and an acknowledgement of each write unless told otherwise.
 struct Env {
     FakeSource Source;
     SessionsList List;
     QAbstractItemModelTester Tester{
         &List, QAbstractItemModelTester::FailureReportingMode::QtTest};
+    // The store: what Open read, and the patches applied to it.
+    QJsonObject Store;
+    QList<QVariantMap> Patches;
+    // The document of the store after each write.
     QList<QVariantMap> Saved;
     bool AutoAck = true;
 
     Env() {
         QObject::connect(&List, &SessionsList::saveRequested, &List,
-                         [this](const QVariantMap& document) {
-                             Saved.append(document);
+                         [this](const QVariantMap& patch) {
+                             Patches.append(patch);
+                             ApplyPatch(Store,
+                                        QJsonObject::fromVariantMap(patch));
+                             Saved.append(Store.toVariantMap());
                              if (AutoAck) {
                                  QMetaObject::invokeMethod(
                                      &List, [this] { List.saveFinished({}); },
@@ -214,9 +223,11 @@ struct Env {
         Source.ResetTo(std::move(items));
         List.setSource(&Source);
         List.setSourceLoaded(true);
+        Store = QJsonObject::fromVariantMap(document);
         List.restore(document);
         Settle();
         Saved.clear();
+        Patches.clear();
     }
 
     void Reset(std::vector<Item> items, bool loaded) {
@@ -229,6 +240,57 @@ struct Env {
         QVERIFY(List.setCursorRow(static_cast<int>(Rows(List).indexOf(key))));
     }
 };
+
+// Two lists of one window over one store: a write of one is announced to both,
+// then acknowledged.
+struct Pair {
+    FakeSource Source;
+    SessionsList Left;
+    SessionsList Right;
+    QJsonObject Store;
+
+    Pair() {
+        Left.setInstanceId("left");
+        Right.setInstanceId("right");
+        for (SessionsList* list : {&Left, &Right}) {
+            QObject::connect(
+                list, &SessionsList::saveRequested, list,
+                [this, list](const QVariantMap& patch) {
+                    ApplyPatch(Store, QJsonObject::fromVariantMap(patch));
+                    QMetaObject::invokeMethod(
+                        list,
+                        [this, list] {
+                            const QVariantMap document = Store.toVariantMap();
+                            Left.restore(document);
+                            Right.restore(document);
+                            list->saveFinished({});
+                        },
+                        Qt::QueuedConnection);
+                });
+        }
+    }
+
+    void Open(std::vector<Item> items) {
+        Source.ResetTo(std::move(items));
+        for (SessionsList* list : {&Left, &Right}) {
+            list->setSource(&Source);
+            list->setSourceLoaded(true);
+            list->restore(Store.toVariantMap());
+        }
+        SettleAll();
+    }
+
+    // Until every write, announcement and acknowledgement is through.
+    static void SettleAll() {
+        for (int i = 0; i < 6; ++i) {
+            Settle();
+        }
+    }
+};
+
+QJsonObject ViewOfInstance(const QJsonObject& store, const QString& instance) {
+    return store.value("view").toObject().value(instance).toObject();
+}
 
 // The model as a view that applies only the signals sees it.
 struct Mirror {
@@ -331,8 +393,12 @@ private slots:
     void TheModuleLoadsFromThePluginDirectory();
     void RevealClearsTheQueryUnfoldsAndPutsTheCursorOnTheSession();
     void NoEchoOutlivesItsWrite();
-    void AForeignDocumentInTheMiddleOfOurWriteEndsOnTheLastWriter();
-    void AForeignDocumentTakesTheViewAndTheOpenedSessionAlong();
+    void AForeignDocumentInTheMiddleOfOurWriteKeepsOurKeys();
+    void AForeignDocumentKeepsUnsentEdits();
+    void AForeignDocumentUpdatesKeysWeDidNotTouch();
+    void TwoInstancesKeepTheirOwnOpened();
+    void AnOldSharedViewSeedsANewInstance();
+    void AnInstanceWithItsOwnViewIgnoresTheSharedOne();
     void AFailedWriteIsWrittenAgainWithTheNextChangeOfTheSource();
     void AFailedWriteLeavesNoEchoBehind();
     void ADestroyedSourceEmptiesTheListAndUnloadsIt();
@@ -822,6 +888,7 @@ void SessionsListTest::AWriteFromAnotherWindowIsTakenIn() {
     QVariantMap other =
         Doc({{"a", "work"}, {"z", "alpha"}}, {}, {"work", "alpha"});
     other["view"] = QVariantMap{{"query", "alpha"}, {"tab", "all"}};
+    env.Store = QJsonObject::fromVariantMap(other);
     env.List.restore(other);
     Settle();
     QCOMPARE(Rows(env.List), (QStringList{"header:alpha", Key("z")}));
@@ -1061,11 +1128,10 @@ void SessionsListTest::NoEchoOutlivesItsWrite() {
              (QStringList{"header:work", Key("a"), "header:alpha", Key("z")}));
 }
 
-// restore(foreign), restore(echo of ours), saveFinished: roostd saw the
-// foreign write first and ours after it, so the store ends on ours and so does
-// the list; nothing is written back.
-void SessionsListTest::
-    AForeignDocumentInTheMiddleOfOurWriteEndsOnTheLastWriter() {
+// restore(foreign), restore(echo of ours), saveFinished: the foreign document
+// is taken in except the key we wrote, which stays ours whichever of the two
+// writes the store saw first; nothing is written back.
+void SessionsListTest::AForeignDocumentInTheMiddleOfOurWriteKeepsOurKeys() {
     Env env;
     env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
     env.AutoAck = false;
@@ -1073,42 +1139,201 @@ void SessionsListTest::
     const QVariantMap ours = env.Saved.last();
     QCOMPARE(Rows(env.List).first(), QString("header:work"));
 
-    env.List.restore(Doc({{"a", "work"}, {"z", "alpha"}}, {}, {"alpha"}));
-    QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
+    // The store saw the foreign write first: its pins are not ours to take, the
+    // echo of our write (not the document we expected) leaves them as they
+    // were.
+    QVariantMap foreign = ours;
+    foreign["pinned"] = QStringList{"alpha"};
+    env.List.restore(foreign);
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
     env.List.restore(ours);
     QCOMPARE(Rows(env.List).first(), QString("header:work"));
     env.List.saveFinished({});
     Settle();
     QCOMPARE(Rows(env.List).first(), QString("header:work"));
     QCOMPARE(env.Saved.size(), 1);
+
+    // The store saw ours first: the foreign write after it is the last one and
+    // is taken in whole, nothing of ours is unsent any more.
+    env.List.restore(foreign);
+    QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
+    Settle();
+    QCOMPARE(env.Saved.size(), 1);
 }
 
-// 06-panels.md, [APPROVAL 3]: query, tab, archive, compact and opened are in
-// the shared document; the last whole-document writer wins, the view's state
-// with it (two list panels are M6).
-void SessionsListTest::AForeignDocumentTakesTheViewAndTheOpenedSessionAlong() {
+// What we have not written is ours: a document of the store that comes first
+// takes what we did not touch and nothing of what we did.
+void SessionsListTest::AForeignDocumentKeepsUnsentEdits() {
     Env env;
     env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
-    env.List.setOpened(Ref("a"));
+    // The store is gone: the edits wait.
+    env.List.storeLost();
+    env.List.setQuery("a");
+    env.List.togglePin("work");
     Settle();
-    QSignalSpy openedChanged(&env.List, &SessionsList::openedChanged);
-    QSignalSpy tabChanged(&env.List, &SessionsList::tabChanged);
-    QSignalSpy compactChanged(&env.List, &SessionsList::compactChanged);
+    QVERIFY(env.Saved.isEmpty());
 
-    QVariantMap other = Doc({{"a", "work"}, {"z", "alpha"}});
-    other["view"] = QVariantMap{{"query", ""},
-                                {"tab", "active"},
-                                {"compact", true},
-                                {"opened", Key("z")}};
+    QVariantMap other =
+        Doc({{"a", "work"}, {"z", "alpha"}}, {"alpha"}, {"alpha"});
+    other["view"] = QVariantMap{{"query", "z"}, {"compact", true}};
+    env.Store = QJsonObject::fromVariantMap(other);
     env.List.restore(other);
     Settle();
+    // Ours: the query and the pins. Theirs: the compact view.
+    QCOMPARE(env.List.query(), QString("a"));
+    // Theirs also: the fold of alpha, which hides its session.
+    QCOMPARE(Rows(env.List),
+             (QStringList{"header:work", Key("a"), "header:alpha"}));
+    QVERIFY(env.List.compact());
+
+    // One write, of our keys alone.
+    QCOMPARE(env.Patches.size(), 1);
+    const QJsonObject patch = QJsonObject::fromVariantMap(env.Patches[0]);
+    QCOMPARE(patch.value("pinned").toArray(), Strings({"work"}));
+    QCOMPARE(patch.value("view").toObject().value("query").toString(),
+             QString("a"));
+    QVERIFY(!patch.contains("folded"));
+    QVERIFY(!patch.contains("categories"));
+    QVERIFY(!patch.value("view").toObject().contains("compact"));
+    // And the store ends with both.
+    QCOMPARE(env.Store.value("folded").toArray(), Strings({"alpha"}));
+    QCOMPARE(env.Store.value("pinned").toArray(), Strings({"work"}));
+    QVERIFY(env.Store.value("view").toObject().value("compact").toBool());
+    QCOMPARE(env.Store.value("view").toObject().value("query").toString(),
+             QString("a"));
+    QVERIFY(!env.List.saving());
+}
+
+void SessionsListTest::AForeignDocumentUpdatesKeysWeDidNotTouch() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.AutoAck = false;
+    env.List.togglePin("work");  // in flight
+    QCOMPARE(env.Saved.size(), 1);
+    QSignalSpy compactChanged(&env.List, &SessionsList::compactChanged);
+
+    // Another writer renames a session, pins a category and goes compact.
+    QJsonObject other = env.Store;
+    other["names"] = QJsonObject{{Key("z"), "Zed"}};
+    other["pinned"] = Strings({"alpha"});
+    QJsonObject view = other["view"].toObject();
+    view["compact"] = true;
+    other["view"] = view;
+    env.List.restore(other.toVariantMap());
+    Settle();
+    QCOMPARE(Role(env.List, env.List.rowOf(Ref("z")), "title").toString(),
+             QString("Zed"));
+    QVERIFY(Role(env.List, env.List.rowOf(Ref("a")), "key").isValid());
+    QVERIFY(env.List.compact());
+    QCOMPARE(compactChanged.size(), 1);
+    // Not the pins: our write is in flight and later in the store.
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+
+    // The echo of our write, on top of theirs, and its answer: no write more.
+    QJsonObject echo = other;
+    ApplyPatch(echo, QJsonObject::fromVariantMap(env.Patches[0]));
+    env.List.restore(echo.toVariantMap());
+    env.List.saveFinished({});
+    Settle();
+    QCOMPARE(env.Saved.size(), 1);
+    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+    QCOMPARE(Role(env.List, env.List.rowOf(Ref("z")), "title").toString(),
+             QString("Zed"));
+    QVERIFY(!env.List.saving());
+}
+
+// 08-state.md: the view of a panel is `view.<instanceId>`, so that two lists
+// of one window do not share the open session.
+void SessionsListTest::TwoInstancesKeepTheirOwnOpened() {
+    Pair pair;
+    pair.Open({{"a"}, {"z"}});
+
+    pair.Left.setOpened(Ref("a"));
+    Pair::SettleAll();
+    pair.Right.setOpened(Ref("z"));
+    Pair::SettleAll();
+    QCOMPARE(pair.Left.opened().toMap(), Ref("a"));
+    QCOMPARE(pair.Right.opened().toMap(), Ref("z"));
+    QCOMPARE(ViewOfInstance(pair.Store, "left").value("opened").toString(),
+             Key("a"));
+    QCOMPARE(ViewOfInstance(pair.Store, "right").value("opened").toString(),
+             Key("z"));
+
+    // Both choose at once, before either write is announced.
+    pair.Left.setOpened(Ref("z"));
+    pair.Right.setOpened(Ref("a"));
+    Pair::SettleAll();
+    QCOMPARE(pair.Left.opened().toMap(), Ref("z"));
+    QCOMPARE(pair.Right.opened().toMap(), Ref("a"));
+    QCOMPARE(ViewOfInstance(pair.Store, "left").value("opened").toString(),
+             Key("z"));
+    QCOMPARE(ViewOfInstance(pair.Store, "right").value("opened").toString(),
+             Key("a"));
+
+    // Their other view settings are theirs too.
+    pair.Left.setQuery("z");
+    Pair::SettleAll();
+    QCOMPARE(pair.Left.query(), QString("z"));
+    QCOMPARE(pair.Right.query(), QString());
+
+    // A list made later over the store reads its own.
+    SessionsList again;
+    again.setInstanceId("left");
+    again.restore(pair.Store.toVariantMap());
+    QCOMPARE(again.opened().toMap(), Ref("z"));
+    QCOMPARE(again.query(), QString("z"));
+}
+
+// A document of an older roost has one shared `view`: an instance without a
+// key of its own starts from it, and the shared keys stay.
+void SessionsListTest::AnOldSharedViewSeedsANewInstance() {
+    Env env;
+    env.List.setInstanceId("right");
+    QVariantMap old = Doc({{"a", "work"}, {"z", "alpha"}});
+    old["view"] = QVariantMap{{"query", ""},
+                              {"tab", "active"},
+                              {"compact", true},
+                              {"opened", Key("z")}};
+    env.Open({{"a"}, {"z"}}, old);
     QCOMPARE(env.List.opened().toMap(), Ref("z"));
     QCOMPARE(env.List.tab(), QString("active"));
     QVERIFY(env.List.compact());
-    QCOMPARE(openedChanged.size(), 1);
-    QCOMPARE(tabChanged.size(), 1);
-    QCOMPARE(compactChanged.size(), 1);
-    QVERIFY(Role(env.List, env.List.rowOf(Ref("z")), "isOpen").toBool());
+
+    // The seed is written under the instance; the shared keys are not touched.
+    QCOMPARE(ViewOfInstance(env.Store, "right").value("opened").toString(),
+             Key("z"));
+    QCOMPARE(env.Store.value("view").toObject().value("opened").toString(),
+             Key("z"));
+    env.List.setOpened(Ref("a"));
+    Settle();
+    QCOMPARE(ViewOfInstance(env.Store, "right").value("opened").toString(),
+             Key("a"));
+    const QJsonObject shared = env.Store.value("view").toObject();
+    QCOMPARE(shared.value("opened").toString(), Key("z"));
+    QCOMPARE(shared.value("tab").toString(), QString("active"));
+    QVERIFY(shared.value("compact").toBool());
+
+    // Another new instance starts from the same shared view, not from ours.
+    SessionsList second;
+    second.setInstanceId("left");
+    second.restore(env.Store.toVariantMap());
+    QCOMPARE(second.opened().toMap(), Ref("z"));
+    QCOMPARE(second.tab(), QString("active"));
+}
+
+void SessionsListTest::AnInstanceWithItsOwnViewIgnoresTheSharedOne() {
+    Env env;
+    env.List.setInstanceId("left");
+    QVariantMap document = Doc({{"a", "work"}, {"z", "alpha"}});
+    document["view"] = QVariantMap{
+        {"query", "old"},
+        {"opened", Key("z")},
+        {"left", QVariantMap{{"query", "mine"}, {"opened", Key("a")}}}};
+    env.Open({{"a"}, {"z"}}, document);
+    QCOMPARE(env.List.query(), QString("mine"));
+    QCOMPARE(env.List.opened().toMap(), Ref("a"));
+    // Its own view says nothing of the tab: the default, not the shared one.
+    QCOMPARE(env.List.tab(), QString("all"));
 }
 
 void SessionsListTest::
@@ -1160,10 +1385,18 @@ void SessionsListTest::AFailedWriteLeavesNoEchoBehind() {
     QCOMPARE(env.List.query(), QString("z"));
 
     // Another window writes what we failed to: nothing of ours came back from
-    // it, so it is a write of its own and is taken in.
+    // it, so it is a write of its own and is taken in. What of ours it does
+    // not have, the query, stays, and goes out: that it is written proves the
+    // document was not taken for the echo of the write that failed.
+    env.Store = QJsonObject::fromVariantMap(failed);
     env.List.restore(failed);
-    QCOMPARE(env.List.query(), QString());
-    QCOMPARE(Rows(env.List).first(), QString("header:work"));
+    QCOMPARE(env.List.query(), QString("z"));
+    QCOMPARE(Rows(env.List), (QStringList{"header:alpha", Key("z")}));
+    QCOMPARE(env.Saved.size(), 2);
+    QCOMPARE(env.Store.value("pinned").toArray(), Strings({"work"}));
+    const QJsonObject patch = QJsonObject::fromVariantMap(env.Patches.last());
+    QCOMPARE(patch.keys(), QStringList{"view"});
+    QCOMPARE(patch.value("view").toObject().keys(), QStringList{"query"});
 }
 
 void SessionsListTest::ADestroyedSourceEmptiesTheListAndUnloadsIt() {

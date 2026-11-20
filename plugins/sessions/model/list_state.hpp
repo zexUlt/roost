@@ -24,6 +24,15 @@ inline constexpr int DOCUMENT_VERSION = 1;
 
 class ListState {
 public:
+    // The instance of the panel the view belongs to: the view lives in the
+    // document at `view.<instance>`. A document without that key gives the
+    // instance the shared `view` of an older roost (query, tab, archive,
+    // compact, opened), read as its starting value and never written again.
+    // Empty: the view is the shared `view` itself. Set before the first
+    // Restore.
+    void SetInstance(const QString& instance) { Instance_ = instance; }
+    const QString& Instance() const { return Instance_; }
+
     // Replaces everything with the document. A missing or unreadable section
     // is empty, a malformed entry is dropped alone, a repeated pin keeps its
     // last position. A `version` that is missing is 1; an integer 1 is read
@@ -33,16 +42,19 @@ public:
     // `states` object of nothing but malformed entries) is a first run: the
     // next Update seeds the states and marks nothing unread.
     //
-    // The view (opened, query, tab, archive, compact, pins, folds) is always
-    // the document's: a store change overwrites what the window shows. The
+    // The state is always the document's; the caller that has edits of its own
+    // not yet written puts them into the document first (SessionsList). The
     // ranking is kept, renewed only by the rule of Update.
     //
     // Returns whether the state, reconciled with the listed sessions, differs
     // from the given document, so the caller should save it. Always false
     // when read-only.
     bool Restore(const QJsonObject& document);
-    // The document to save; nullopt when read-only.
-    std::optional<QJsonObject> ToDocument() const;
+    // The document as it is now: `base`, the last document of the store, with
+    // every section of this state written over it, so that what the state does
+    // not know (the views of other instances, keys of other writers) stays.
+    // Nullopt when read-only.
+    std::optional<QJsonObject> ToDocument(const QJsonObject& base = {}) const;
 
     bool ReadOnly() const { return !Problem_.isEmpty(); }
     // Why the state is read-only; empty otherwise.
@@ -91,7 +103,7 @@ public:
 private:
     bool IsShownUnread(const QString& key, const QString& state) const;
     QSet<QString> ShownUnread() const;
-    std::optional<QJsonObject> BuildDocument() const;
+    std::optional<QJsonObject> BuildDocument(const QJsonObject& base) const;
     bool Saved(bool changed) const { return changed && !ReadOnly(); }
     bool Reconcile(const QSet<QString>& shownBefore);
     void RenewRanking(const QSet<QString>& shownBefore);
@@ -109,6 +121,7 @@ private:
     ViewState View_;
     bool Compact_ = false;
     bool Seeded_ = false;
+    QString Instance_;
     QString Problem_;
     std::vector<SessionEntry> Listed_;
 };

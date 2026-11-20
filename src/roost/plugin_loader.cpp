@@ -339,7 +339,8 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
     plugin.Panels.push_back(std::move(type));
 }
 
-QQuickItem* PluginLoader::CreatePanel(const QString& panelId) {
+QQuickItem* PluginLoader::CreatePanel(const QString& panelId,
+                                      const QString& instanceId) {
     for (const auto& plugin : Loaded_) {
         if (plugin->Unloading) {
             continue;
@@ -368,10 +369,16 @@ QQuickItem* PluginLoader::CreatePanel(const QString& panelId) {
                                 : message);
             }
             QJSEngine::setObjectOwnership(object, QJSEngine::CppOwnership);
+            // Initial properties, so that `required` is satisfied.
+            QVariantMap initial;
             if (object->metaObject()->indexOfProperty("pluginId") >= 0) {
-                // An initial property, so that `required` is satisfied.
-                type.Component->setInitialProperties(
-                    object, {{QStringLiteral("pluginId"), plugin->Id}});
+                initial.insert(QStringLiteral("pluginId"), plugin->Id);
+            }
+            if (object->metaObject()->indexOfProperty("instanceId") >= 0) {
+                initial.insert(QStringLiteral("instanceId"), instanceId);
+            }
+            if (!initial.isEmpty()) {
+                type.Component->setInitialProperties(object, initial);
             }
             type.Component->completeCreate();
             auto* item = qobject_cast<QQuickItem*>(object);

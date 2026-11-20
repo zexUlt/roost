@@ -102,7 +102,11 @@ private:
     bool HelpOpen() { return PanelOf(LIST)->property("helpOpen").toBool(); }
 
     QJsonObject StoredView() {
-        return StoredDocument().value("view").toObject();
+        return StoredDocument()
+            .value("view")
+            .toObject()
+            .value("list")
+            .toObject();
     }
 
     int ListWidth() { return static_cast<int>(Slot(LIST)->width()); }

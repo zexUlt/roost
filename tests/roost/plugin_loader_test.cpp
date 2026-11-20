@@ -117,6 +117,16 @@ Item {
 }
 )";
 
+// A panel with a required instanceId, which it reports on completion.
+const QByteArray INSTANCE_PANEL = R"(
+import QtQuick
+Item {
+    required property string instanceId
+    property string pluginId
+    Component.onCompleted: roostProbe.Hit("completed:instance", instanceId)
+}
+)";
+
 // A panel that writes to the store of its plugin while it is destroyed: the
 // call is the panel's own, so it must be dropped if the owner of the calls is
 // deleted before the item.
@@ -987,6 +997,24 @@ private slots:
         QVERIFY2(item != nullptr, "the required pluginId was not satisfied");
         QCOMPARE(item->property("pluginId").toString(), QString("a-one"));
         QCOMPARE(Probe_.Last.value("completed:required"), QString("a-one"));
+        QVERIFY(Loader_->Problems().isEmpty());
+    }
+
+    // The id of the panel in the layout reaches the panel the way pluginId
+    // does, before Component.onCompleted, also as a required property.
+    void APanelGetsItsInstanceIdBeforeItIsCompleted() {
+        QVERIFY(AddPlugin("a-one", {Panel("p", "p.qml")},
+                          {{"p.qml", INSTANCE_PANEL}}));
+        QVERIFY(Boot());
+        QQuickItem* item = Loader_->CreatePanel("a-one.p", "list");
+        QVERIFY2(item != nullptr, "the required instanceId was not satisfied");
+        QCOMPARE(item->property("instanceId").toString(), QString("list"));
+        QCOMPARE(item->property("pluginId").toString(), QString("a-one"));
+        QCOMPARE(Probe_.Last.value("completed:instance"), QString("list"));
+        QQuickItem* other = Loader_->CreatePanel("a-one.p", "second");
+        QVERIFY(other != nullptr);
+        QCOMPARE(other->property("instanceId").toString(), QString("second"));
+        QCOMPARE(item->property("instanceId").toString(), QString("list"));
         QVERIFY(Loader_->Problems().isEmpty());
     }
 

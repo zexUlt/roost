@@ -24,6 +24,12 @@ FocusScope {
     // A SessionRef, {agent, id}, or null; the output of the panel.
     property var selected: null
 
+    // The id of this panel in the layout of the window, set by the window
+    // before Component.onCompleted: the view of the list (query, tab, archive,
+    // compact, the open session) is kept in the document `sessions` under it,
+    // so that two lists in a window keep their own.
+    property string instanceId: ""
+
     // Enter or a tap opened or targeted a row, the open one included: the shell
     // may move the keyboard to the terminal. Not emitted when Enter does
     // nothing.
@@ -803,9 +809,11 @@ FocusScope {
 
     // The stored document: read on creation if connected and at every
     // connection (the window forgets its copy when the connection goes),
-    // written as the model asks. When the connection goes the list stops
-    // writing (storeLost) until the read at the next one: what it holds may
-    // be older than the store's document.
+    // written as the model asks, by a merge patch of what it changed (the
+    // document is shared with other lists and writers). When the connection
+    // goes the list stops writing (storeLost) until the read at the next one:
+    // what it holds may be older than the store's document; its edits made
+    // meanwhile are kept over what the read brings.
     // The answer of a read sent before the connection went comes after it
     // (answers are delivered later, the loss at once): it is of the old
     // connection, and is dropped, or it would end the wait for the new read.
@@ -841,11 +849,12 @@ FocusScope {
         id: sessionsList
 
         objectName: "sessionsModel"
+        instanceId: root.instanceId
         source: Roost.sessions
         sourceLoaded: Roost.sessions.loaded
 
-        onSaveRequested: document => {
-            Roost.store.set("sessions", document, error => {
+        onSaveRequested: patch => {
+            Roost.store.patch("sessions", patch, error => {
                 sessionsList.saveFinished(error ? (error.message ? error.message : "the store write failed") : "");
             });
         }
