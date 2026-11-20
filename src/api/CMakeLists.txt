@@ -6,6 +6,7 @@ add_library(roost_api STATIC
     bus_service.cpp
     command_service.cpp
     dispatcher.cpp
+    keymap_service.cpp
     plugin_service.cpp
     session_service.cpp
     store_service.cpp

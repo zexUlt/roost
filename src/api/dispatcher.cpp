@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "api/command_service.hpp"
+#include "api/keymap_service.hpp"
 #include "api/plugin_service.hpp"
 #include "api/session_service.hpp"
 #include "api/store_service.hpp"
@@ -22,14 +23,15 @@ rpc::Result InvalidParams(const QString& message) {
 }  // namespace
 
 Dispatcher::Dispatcher(BusService& bus, CommandService& commands,
-                       PluginService& plugins, SessionService& sessions,
-                       StoreService& store, QObject* parent)
+                       KeymapService& keymap, PluginService& plugins,
+                       SessionService& sessions, StoreService& store,
+                       QObject* parent)
     : QObject(parent), Bus_(bus) {
-    RegisterBuiltins(commands, plugins, sessions, store);
+    RegisterBuiltins(commands, keymap, plugins, sessions, store);
 }
 
 void Dispatcher::RegisterBuiltins(CommandService& commands,
-                                  PluginService& plugins,
+                                  KeymapService& keymap, PluginService& plugins,
                                   SessionService& sessions,
                                   StoreService& store) {
     const bool listingSessions = Register(
@@ -88,6 +90,21 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
             return commands.Run(command.toString(),
                                 params.value(QStringLiteral("args")));
         });
+    const bool keymapGetting = Register(
+        QStringLiteral("keymap.get"), [&keymap](const rpc::Call& call) {
+            // The table is the window's own platform's; the platform is not
+            // a choice here, as it is for roostd.
+            const QJsonValue platform =
+                call.Params.toObject().value(QStringLiteral("platform"));
+            if (!platform.isUndefined() &&
+                platform != KeymapService::PlatformName()) {
+                return rpc::Ready(InvalidParams(
+                    QStringLiteral("keymap.get answers for the platform of "
+                                   "the window, \"%1\"; it takes no params")
+                        .arg(KeymapService::PlatformName())));
+            }
+            return keymap.Get();
+        });
     const bool publishing =
         Register(QStringLiteral("bus.publish"), [this](const rpc::Call& call) {
             const QJsonObject params = call.Params.toObject();
@@ -101,13 +118,14 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
                                 params.value(QStringLiteral("payload")));
         });
     Q_ASSERT(listingSessions && getting && setting && patching && listing &&
-             running && publishing);
+             running && keymapGetting && publishing);
     Q_UNUSED(listingSessions)
     Q_UNUSED(getting)
     Q_UNUSED(setting)
     Q_UNUSED(patching)
     Q_UNUSED(listing)
     Q_UNUSED(running)
+    Q_UNUSED(keymapGetting)
     Q_UNUSED(publishing)
 }
 

@@ -778,14 +778,14 @@ private slots:
                                 .Key = "J",
                                 .Mac = {},
                                 .When = "claude.transcript"});
-        PluginManifest three = Plugin("three", {"three.x"}, {"J"});
+        PluginManifest three = Plugin("three", {"three.x"}, {"Ctrl+J"});
         QVERIFY(registry.Add(one));
         QVERIFY(registry.Add(two));
         QVERIFY(registry.Add(three));
         QCOMPARE(registry.KeyOwner("j", "sessions.list")->Id, QString("one"));
         QCOMPARE(registry.KeyOwner("J", "claude.transcript")->Id,
                  QString("two"));
-        QCOMPARE(registry.KeyOwner("J")->Id, QString("three"));
+        QCOMPARE(registry.KeyOwner("Ctrl+J")->Id, QString("three"));
         QVERIFY(!registry.KeyOwner("J", "other.panel"));
         QVERIFY(registry.Problems().isEmpty());
     }
@@ -806,6 +806,68 @@ private slots:
         QCOMPARE(registry.Problems(),
                  QStringList{"key J (when sessions.list) of plugin two is "
                              "ignored: plugin one binds it"});
+    }
+
+    // A contribution without Cmd, Ctrl or Alt, other than F1 to F24, and
+    // without `when`, would take the text typed into any panel: a problem, the
+    // contribution does not act, the rest of the manifest loads.
+    void BareKeyWithoutWhenIsAProblem() {
+        PluginRegistry registry(EPlatform::Linux);
+        PluginManifest plugin = Plugin("one", {"one.x"}, {"J", "Shift+K"});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = "Ctrl+M", .Mac = {}, .When = {}});
+        QVERIFY(registry.Add(plugin));
+        QVERIFY(registry.Find("one"));
+        QVERIFY(!registry.KeyOwner("J"));
+        QVERIFY(!registry.KeyOwner("Shift+K"));
+        QCOMPARE(registry.KeyOwner("Ctrl+M")->Id, QString("one"));
+        const char* const reason =
+            "has no Cmd, Ctrl or Alt: without \"when\" it would take the text "
+            "typed into any panel";
+        QCOMPARE(registry.Problems(),
+                 (QStringList{
+                     QStringLiteral("keybinding 0 of plugin one is ignored: J "
+                                    "%1")
+                         .arg(reason),
+                     QStringLiteral("keybinding 1 of plugin one is ignored: "
+                                    "Shift+K %1")
+                         .arg(reason)}));
+        // The problem is also one of the keys.
+        QCOMPARE(registry.KeyProblems(), registry.Problems());
+    }
+
+    void BareKeyIsFineWithAWhenOrAsAFunctionKey() {
+        PluginRegistry registry(EPlatform::Linux);
+        PluginManifest plugin =
+            Plugin("one", {"one.x"}, {"F5", "f24", "Alt+J"});
+        plugin.Keybindings.append({.Command = "one.x",
+                                   .Key = "J",
+                                   .Mac = {},
+                                   .When = "sessions.list"});
+        // F25 is not a function key: it does not even parse.
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = "F25", .Mac = {}, .When = {}});
+        QVERIFY(registry.Add(plugin));
+        QVERIFY(registry.KeyOwner("F5"));
+        QVERIFY(registry.KeyOwner("F24"));
+        QVERIFY(registry.KeyOwner("Alt+J"));
+        QVERIFY(registry.KeyOwner("J", "sessions.list"));
+        QCOMPARE(registry.Problems().size(), 1);
+        QVERIFY2(registry.Problems()[0].contains("unknown key name \"F25\""),
+                 qPrintable(registry.Problems()[0]));
+    }
+
+    void BareMacKeyIsAProblemOnMacOnly() {
+        PluginManifest plugin = Plugin("one", {"one.x"});
+        plugin.Keybindings.append(
+            {.Command = "one.x", .Key = std::nullopt, .Mac = "J", .When = {}});
+        PluginRegistry mac(EPlatform::Mac);
+        QVERIFY(mac.Add(plugin));
+        QCOMPARE(mac.Problems().size(), 1);
+        // For the other platform, so no concern of this one.
+        PluginRegistry linux(EPlatform::Linux);
+        QVERIFY(linux.Add(plugin));
+        QVERIFY(linux.Problems().isEmpty());
     }
 
     void MacReplacesKeyOnMacOnly() {

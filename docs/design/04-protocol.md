@@ -34,7 +34,7 @@
 | `store.get` | `{plugin}` | `{document}`: документ плагина в хранилище (§8), `{}`, если его ещё нет |
 | `store.set` | `{plugin, document}` | `null`: документ заменяется целиком |
 | `store.patch` | `{plugin, patch}` | `null`: `patch` вливается в текущий документ по RFC 7386 (`null` удаляет ключ, объект сливается, остальное, массивы тоже, заменяет) |
-| `keymap.get` | `{platform}` | `{bindings, problems}`: итоговая таблица клавиш для платформы окна (`mac` или `linux`, иначе `InvalidParams`) и проблемы файла и вкладов (§16). `bindings` — `{key, command, args?, when?, source}`, `problems` — строки. Таблица больше кадра — `InternalError` |
+| `keymap.get` | `{platform}` | `{bindings, problems}`: итоговая таблица клавиш для платформы окна (`mac` или `linux`, иначе `InvalidParams`) и проблемы файла и вкладов (§16). `bindings` — `{key, command, args?, when?, source}`, `problems` — строки. Таблица больше кадра — `InternalError`. Из окна (`Roost.call`) метод без `params` отдаёт таблицу платформы окна; `params` с другой платформой — `InvalidParams` |
 
 События шины приходят уведомлениями `bus.event {subscription, name, payload}`. Подписки соединения снимаются вместе с ним, а снять чужую подписку нельзя. Событие, которое не поместится в кадр, `bus.publish` отвергает с `InvalidParams`, а не теряет у подписчиков.
 

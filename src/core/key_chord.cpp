@@ -182,6 +182,15 @@ std::expected<KeyChord, QString> ParseKeyChord(const QString& text,
     return chord;
 }
 
+bool IsFunctionKey(const QString& key) {
+    // The same rule as the parser: F1 to F24 written plainly.
+    return !key.isEmpty() && FunctionKey(key.toLower()) == key;
+}
+
+bool IsBareKey(const KeyChord& chord) {
+    return !chord.Cmd && !chord.Ctrl && !chord.Alt && !IsFunctionKey(chord.Key);
+}
+
 QString WriteKeyChord(const KeyChord& chord) {
     QString text;
     if (chord.Cmd) {

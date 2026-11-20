@@ -3,7 +3,10 @@
 // thread; what is not exposed is MethodNotFound; the errors of roostd pass
 // unchanged.
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
 #include <QTest>
@@ -88,9 +91,9 @@ private slots:
     void MethodsAreTheExposedOnes() {
         Api_ = std::make_unique<api::Api>();
         QCOMPARE(Api_->Dispatch().Methods(),
-                 (QStringList{"bus.publish", "commands.run", "plugins.list",
-                              "sessions.list", "store.get", "store.patch",
-                              "store.set"}));
+                 (QStringList{"bus.publish", "commands.run", "keymap.get",
+                              "plugins.list", "sessions.list", "store.get",
+                              "store.patch", "store.set"}));
     }
 
     void EveryMethodRoundTripsInTheGuiThread() {
@@ -103,6 +106,7 @@ private slots:
             {"bus.publish", {{"name", "x.y"}, {"payload", 1}}},
             {"commands.run",
              {{"command", "fixture.echo"}, {"args", QJsonArray{1, "two"}}}},
+            {"keymap.get", {}},
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},
@@ -139,14 +143,63 @@ private slots:
         QVERIFY(ConnectApi());
         for (const char* method :
              {"hello", "session.open", "session.resize", "session.close",
-              "keymap.get", "bus.subscribe", "bus.unsubscribe", "nothing",
-              "rpc.anything", ""}) {
+              "bus.subscribe", "bus.unsubscribe", "nothing", "rpc.anything",
+              ""}) {
             QThread* finishedIn = nullptr;
             const rpc::Result answer = Call(method, QJsonObject{}, &finishedIn);
             QVERIFY2(!answer, method);
             QCOMPARE(answer.error().Code, METHOD_NOT_FOUND);
             QVERIFY2(answer.error().Message.contains(method), method);
         }
+    }
+
+    // The window's table, for its own platform, as roostd put it together: the
+    // key of the file over the plugin's, in the form of the platform.
+    void KeymapGetAnswersTheTableOfTheWindowsPlatform() {
+        QVERIFY(Daemon_->IsValid());
+        QVERIFY(QDir().mkpath(Daemon_->ConfigPath()));
+        QFile file(Daemon_->ConfigPath() + "/keymap.json");
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QJsonArray entries{
+            QJsonObject{{"key", "Ctrl+Shift+Y"},
+                        {"mac", "Cmd+Shift+Y"},
+                        {"command", "fixture.echo"},
+                        {"args", QJsonArray{1, "two"}}},
+            QJsonObject{{"key", "Ctrl+Nope"}, {"command", "fixture.echo"}},
+        };
+        QVERIFY(file.write(QJsonDocument(entries).toJson()) > 0);
+        file.close();
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        const QString chord =
+            HostPlatform() == EPlatform::Mac ? "Cmd+Shift+Y" : "Ctrl+Shift+Y";
+        // From the cache once loaded, and asked of roostd before.
+        for (const char* what : {"loaded", "cached"}) {
+            if (QString(what) == "loaded") {
+                QVERIFY(QTest::qWaitFor(
+                    [&] { return Api_->Keymap().IsLoaded(); }, TIMEOUT_MS));
+            }
+            const rpc::Result answer = Call("keymap.get", QJsonObject{});
+            QVERIFY2(answer, qPrintable(Why(answer)));
+            const QJsonObject table = answer->toObject();
+            QCOMPARE(table.value("bindings").toArray(),
+                     (QJsonArray{QJsonObject{{"key", chord},
+                                             {"command", "fixture.echo"},
+                                             {"args", QJsonArray{1, "two"}},
+                                             {"source", "user"}}}));
+            QCOMPARE(table.value("problems").toArray().size(), 1);
+            QVERIFY(table.value("problems")[0].toString().contains(
+                "keymap.json entry 1 is ignored"));
+        }
+        // The platform of the window is the only one it answers for.
+        const QString other =
+            HostPlatform() == EPlatform::Mac ? "linux" : "mac";
+        const rpc::Result refused =
+            Call("keymap.get", QJsonObject{{"platform", other}});
+        QVERIFY(!refused);
+        QCOMPARE(refused.error().Code, INVALID_PARAMS);
+        const QString own = HostPlatform() == EPlatform::Mac ? "mac" : "linux";
+        QVERIFY(Call("keymap.get", QJsonObject{{"platform", own}}));
     }
 
     void RegisterRefusesTakenAndReservedNames() {

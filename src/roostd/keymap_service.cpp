@@ -50,12 +50,6 @@ QString KeyOf(const KeyChord& chord, const QString& when) {
     return WriteKeyChord(chord) + QChar(u'\0') + when;
 }
 
-bool IsFunctionKey(const QString& key) {
-    bool numbered = false;
-    const int number = key.mid(1).toInt(&numbered);
-    return key.startsWith(u'F') && numbered && number >= 1 && number <= 24;
-}
-
 // One binding of the table.
 struct Binding {
     KeyChord Chord;
@@ -140,9 +134,7 @@ std::expected<std::variant<Entry, OtherPlatform>, QString> ParseEntry(
     entry.Chord = **chord;
     // A key that the terminal or a field of text needs (design.md §16).
     // A removal binds nothing, so it is not held to it.
-    if (entry.Command && !entry.Chord.Cmd && !entry.Chord.Ctrl &&
-        !entry.Chord.Alt && !IsFunctionKey(entry.Chord.Key) &&
-        entry.When.isEmpty()) {
+    if (entry.Command && IsBareKey(entry.Chord) && entry.When.isEmpty()) {
         return std::unexpected(
             QStringLiteral("%1 has no Cmd, Ctrl or Alt: without \"when\" it "
                            "would take the text typed into any panel")

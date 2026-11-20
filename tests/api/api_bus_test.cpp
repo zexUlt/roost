@@ -46,8 +46,9 @@ void CountSubscribeWarnings(QtMsgType type, const QMessageLogContext& context,
     PREVIOUS_HANDLER(type, context, message);
 }
 
-// session.*, subscribed by SessionService after hello.
-constexpr int STANDING_SUBSCRIPTIONS = 1;
+// session.*, subscribed by SessionService after hello, and keymap.changed, by
+// KeymapService.
+constexpr int STANDING_SUBSCRIPTIONS = 2;
 
 }  // namespace
 

@@ -503,6 +503,18 @@ bool PluginRegistry::Add(PluginManifest manifest) {
             // Only a `mac` on Linux: it is for the other platform.
             continue;
         }
+        // A key that the terminal or a field of text needs, bound for any
+        // panel (design.md §16). A contribution has no `command: null`, so
+        // none is exempt.
+        if (IsBareKey(**chord) && binding.When.isEmpty()) {
+            KeyProblem(
+                QStringLiteral("keybinding %1 of plugin %2 is ignored: %3 has "
+                               "no Cmd, Ctrl or Alt: without \"when\" it "
+                               "would take the text typed into any panel")
+                    .arg(position)
+                    .arg(manifest.Id, WriteKeyChord(**chord)));
+            continue;
+        }
         const QString key = KeyOf(**chord, binding.When);
         if (const auto taken = Keys_.constFind(key); taken != Keys_.cend()) {
             KeyProblem(

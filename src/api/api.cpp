@@ -16,10 +16,11 @@ Api::Api(ApiOptions options, QObject* parent)
       Terminals_(Io_),
       Bus_(Io_),
       Commands_(Io_),
+      Keymap_(Io_, Bus_),
       Plugins_(Io_),
       Sessions_(Io_, Bus_, options.FirstRelistDelay, options.MaxRelistDelay),
       Store_(Io_, Bus_),
-      Dispatch_(Bus_, Commands_, Plugins_, Sessions_, Store_),
+      Dispatch_(Bus_, Commands_, Keymap_, Plugins_, Sessions_, Store_),
       Delay_(options.FirstReconnectDelay) {
     RetryTimer_.setSingleShot(true);
     connect(&RetryTimer_, &QTimer::timeout, this, &Api::Attempt);
@@ -88,6 +89,7 @@ void Api::OnHello(const rpc::Result& hello) {
     Plugins_.Fetch();
     Sessions_.Start();
     Store_.Start();
+    Keymap_.Start();
     emit Connected();
 }
 
