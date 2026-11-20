@@ -45,7 +45,7 @@ class SessionsList : public QAbstractListModel {
     Q_PROPERTY(QVariant opened READ opened WRITE setOpened NOTIFY openedChanged)
     // The document was read, or the read failed.
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
-    // A write is in flight or waits to be sent.
+    // A write is in flight or waits to be sent, or a sync that may ask for one.
     Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
     // Nothing is written: the read failed or the document is of a newer
     // version. `problem` says why, or that a write failed.

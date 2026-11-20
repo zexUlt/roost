@@ -231,7 +231,7 @@ void SessionsList::setOpened(const QVariant& ref) {
 
 bool SessionsList::ready() const { return Ready_; }
 
-bool SessionsList::saving() const { return InFlight_ || Dirty_; }
+bool SessionsList::saving() const { return InFlight_ || Dirty_ || SyncQueued_; }
 
 bool SessionsList::readOnly() const { return ReadFailed_ || State_.ReadOnly(); }
 
@@ -518,18 +518,18 @@ void SessionsList::scheduleSync() {
     if (SyncQueued_) {
         return;
     }
-    SyncQueued_ = true;
+    changing([this] { SyncQueued_ = true; });
     QMetaObject::invokeMethod(this, [this] { sync(); }, Qt::QueuedConnection);
 }
 
 void SessionsList::sync() {
-    SyncQueued_ = false;
-    if (Ready_) {
-        changing([this] {
+    changing([this] {
+        SyncQueued_ = false;
+        if (Ready_) {
             syncBody();
             retrySave();
-        });
-    }
+        }
+    });
 }
 
 bool SessionsList::holding() const { return ResetPending_ && !SourceLoaded_; }

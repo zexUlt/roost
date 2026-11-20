@@ -320,6 +320,8 @@ private slots:
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
     void OneWriteInFlightAndTheLastEditWins();
+    void SavingCoversAQueuedSyncAndAnnouncesItsEnd();
+    void NothingIsWrittenAfterTheStoreIsLostUntilItIsReadAgain();
     void TheEchoOfOurWriteChangesNothing();
     void AWriteFromAnotherWindowIsTakenIn();
     void ChangesAreMovesInsertsAndRemovesNotResets();
@@ -670,6 +672,35 @@ void SessionsListTest::AFailedReadLeavesTheListReadOnly() {
     Settle();
     QVERIFY(!env.List.readOnly());
     QVERIFY(env.List.problem().isEmpty());
+}
+
+void SessionsListTest::SavingCoversAQueuedSyncAndAnnouncesItsEnd() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    QVERIFY(!env.List.saving());
+    QSignalSpy changed(&env.List, &SessionsList::savingChanged);
+
+    // A change of the source queues a sync, which may ask for a write.
+    env.Source.SetState(0, "done");
+    QVERIFY(env.List.saving());
+    QCOMPARE(changed.count(), 1);
+    Settle();
+    QVERIFY(!env.List.saving());
+    QCOMPARE(changed.count(), 2);
+}
+
+void SessionsListTest::NothingIsWrittenAfterTheStoreIsLostUntilItIsReadAgain() {
+    Env env;
+    env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));
+    env.List.storeLost();
+    env.List.togglePin("work");
+    Settle();
+    QVERIFY(env.Saved.isEmpty());
+    QVERIFY(env.List.saving());
+
+    env.List.restore({});
+    Settle();
+    QVERIFY(!env.List.saving());
 }
 
 void SessionsListTest::OneWriteInFlightAndTheLastEditWins() {
