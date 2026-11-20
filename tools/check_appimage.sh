@@ -234,6 +234,9 @@ for file in plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSess
     plugins/sessions/qml/RoostSessions/libsessions_qml.so plugins/claude/plugin.json; do
     [ -e "$appdir/usr/lib/roost/$file" ] || fail "usr/lib/roost/$file is missing"
 done
+# The agent icons of the sessions list are SVG.
+[ -f "$appdir/usr/plugins/imageformats/libqsvg.so" ] ||
+    fail "usr/plugins/imageformats/libqsvg.so is missing"
 
 # --- the AppImage itself ---------------------------------------------------
 # The same isolation as tests/roost/window_spawn_test.cpp: nothing of the real

@@ -188,7 +188,8 @@ echo "ok:   $count Mach-O files name only the bundle and the system"
 
 for path in Contents/Resources/qml/QtCore/qmldir \
     Contents/Resources/qml/QtQuick/Controls \
-    Contents/Resources/qml/QtQuick/Layouts; do
+    Contents/Resources/qml/QtQuick/Layouts \
+    Contents/PlugIns/imageformats/libqsvg.dylib; do
     if [ -e "$app/$path" ]; then
         echo "ok:   $path"
     else
