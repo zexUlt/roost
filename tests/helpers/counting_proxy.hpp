@@ -15,8 +15,8 @@
 namespace roost::testing {
 
 // A socket between the IO thread and roostd that passes the bytes through and
-// counts what the client sends: session.open, session.resize and
-// session.view requests and input frames. Runs in the thread that makes it.
+// counts what the client sends: session.open, session.resize, session.view
+// and commands.run requests and input frames. Runs in the thread that makes it.
 class CountingProxy : public QObject {
 public:
     CountingProxy(QString listenPath, QString upstreamPath);
@@ -29,6 +29,7 @@ public:
     int ResizeRequests() const { return ResizeRequests_; }
     int ViewRequests() const { return ViewRequests_; }
     int InputFrames() const { return InputFrames_; }
+    int CommandRequests() const { return CommandRequests_; }
     // Cuts every connection the proxy has now, as a daemon that is gone would
     // while it is in fact still running; later connections work as usual.
     void DropClients();
@@ -70,6 +71,7 @@ private:
     int SizedOpenRequests_ = 0;
     int ResizeRequests_ = 0;
     int ViewRequests_ = 0;
+    int CommandRequests_ = 0;
     int InputFrames_ = 0;
 };
 

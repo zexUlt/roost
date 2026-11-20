@@ -1,8 +1,9 @@
 // The "Report a Bug…" dialog in the window of the shell (Main.qml), offscreen:
-// the toolbar button (the Help menu on macOS) and the shortcut open it, it
-// takes a description and writes the zip into a temporary directory. Show and
-// Open are never pressed. The logs and the settings are the ones of temporary
-// directories (ROOST_SOCKET, ROOST_CONFIG); HOME and Downloads are not touched.
+// the toolbar button (the Help menu on macOS) opens it (Cmd+Shift+B is a key
+// of the table: shell_commands_test), it takes a description and writes the zip
+// into a temporary directory. Show and Open are never pressed. The logs and the
+// settings are the ones of temporary directories (ROOST_SOCKET, ROOST_CONFIG);
+// HOME and Downloads are not touched.
 
 #include <QDir>
 #include <QFile>
@@ -18,7 +19,6 @@
 #include <memory>
 
 #include "helpers/scoped_env.hpp"
-#include "qml_api/terminal_item.hpp"
 #include "roost/controls_style.hpp"
 
 using namespace roost;
@@ -122,23 +122,6 @@ private slots:
                 .toPoint();
         QTest::mouseClick(Window_, Qt::LeftButton, Qt::NoModifier, center);
         QTRY_VERIFY(Dialog()->property("visible").toBool());
-#endif
-    }
-
-    // macOS only (Cmd+Shift+B); elsewhere the key is the terminal program's.
-    // With the keyboard in a terminal: TerminalItem does not take the key.
-    void TheShortcutIsMacOnly() {
-        auto* terminal = new TerminalItem(Window_->contentItem());
-        terminal->setSize(QSizeF(100, 100));
-        terminal->forceActiveFocus();
-        QVERIFY(terminal->hasActiveFocus());
-        QTest::keyClick(Window_, Qt::Key_B,
-                        Qt::ControlModifier | Qt::ShiftModifier);
-#ifdef Q_OS_MACOS
-        QTRY_VERIFY(Dialog()->property("visible").toBool());
-#else
-        QTest::qWait(200);
-        QVERIFY(!Dialog()->property("visible").toBool());
 #endif
     }
 

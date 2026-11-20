@@ -240,6 +240,8 @@ void SessionsWindow::OpenWindow() {
         Engine_->singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
     QVERIFY(Singleton_ != nullptr);
     Singleton_->setApi(*Api_);
+    KeyMatcher_ =
+        std::make_unique<KeyMatcher>(Api_->Keymap(), Api_->Commands());
     Api_->Connect(SocketPath());
     Engine_->loadFromModule("Roost.Shell", "Main");
     QVERIFY(!Engine_->rootObjects().isEmpty());
@@ -264,6 +266,7 @@ void SessionsWindow::OpenWindow() {
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QVERIFY(QTest::qWaitForWindowActive(window));
     QTRY_VERIFY_WITH_TIMEOUT(Singleton_->sessions()->loaded(), TIMEOUT_MS);
+    QTRY_VERIFY_WITH_TIMEOUT(Api_->Keymap().IsLoaded(), TIMEOUT_MS);
 }
 
 // Whether the list panel is loaded; with SpySelected_, the first time it
@@ -282,6 +285,7 @@ bool SessionsWindow::WatchSelectedOnLoad() {
 // session through the API.
 void SessionsWindow::CloseWindow() {
     SelectedSpy_.reset();
+    KeyMatcher_.reset();
     Shell_.reset();
     Loader_.reset();
     // The window stops rendering before it is destroyed.

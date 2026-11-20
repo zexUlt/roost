@@ -144,6 +144,8 @@ void CountingProxy::Count(QByteArray& buffer, Connection& connection) {
                 }
             } else if (body.contains("\"session.view\"")) {
                 ++ViewRequests_;
+            } else if (body.contains("\"commands.run\"")) {
+                ++CommandRequests_;
             }
         }
         buffer.remove(0, frame);

@@ -320,6 +320,17 @@ target_compile_definitions(plugin_loader_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(plugin_loader_test roostd fixture_backend)
 
+# Commands that the window runs itself: a handler of the window comes before
+# roostd, a panel's goes with the panel; a counting proxy sees what reaches
+# roostd.
+roost_add_qt_test(command_local_test roost/command_local_test.cpp
+    roost_app roost_qml_apiplugin roost_test_helpers
+    roost_test_terminal_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(command_local_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
+add_dependencies(command_local_test roostd fixture_backend)
+
 # The window's shell: Main.qml with its slots, the loader and the real roostd,
 # and a refusing server for the version check.
 roost_add_qt_test(shell_test roost/shell_test.cpp
@@ -407,6 +418,18 @@ target_compile_definitions(sessions_commands_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(sessions_commands_test roostd fake_tui claude-adapter codex_adapter_test sessions_qml)
+
+# The commands of the window in its shell: Ctrl+\ and Cmd+Shift+B are entries
+# of the table of the plugin `shell`, and copy is the terminal panel's command.
+roost_add_qt_test(shell_commands_test roost/shell_commands_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(shell_commands_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(shell_commands_test roostd fake_tui claude-adapter sessions_qml)
 
 # The prompt of the sessions panel's footer: search, category and name.
 roost_add_qt_test(sessions_prompt_test roost/sessions_prompt_test.cpp
@@ -498,6 +521,8 @@ set_tests_properties(
     roost_call_owner_test
     plugin_loader_test
     plugin_reload_test
+    command_local_test
+    shell_commands_test
     shell_test
     terminal_panel_test
     terminal_theme_test

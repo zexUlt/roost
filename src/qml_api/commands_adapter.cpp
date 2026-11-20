@@ -1,6 +1,9 @@
 #include "qml_api/commands_adapter.hpp"
 
+#include <QJSValueList>
 #include <QJsonObject>
+#include <QPointer>
+#include <QtLogging>
 
 #include "qml_api/js_callback.hpp"
 
@@ -23,6 +26,49 @@ void CommandsAdapter::run(const QString& command, const QJSValue& args,
     }
     callMethod(Api_, Engine_, context, QStringLiteral("commands.run"), params,
                callback);
+}
+
+bool CommandsAdapter::registerCommand(const QString& command,
+                                      const QJSValue& handler) {
+    if (!handler.isCallable()) {
+        Engine_.throwError(QJSValue::TypeError,
+                           QStringLiteral("Roost.commands.registerCommand: the "
+                                          "handler must be a function"));
+        return false;
+    }
+    QObject* const owner = Owners_.contextFor(
+        Engine_, this, QStringLiteral("commands.registerCommand"));
+    if (owner == nullptr) {
+        return false;
+    }
+    const bool added = Api_.Commands().Register(
+        command, owner,
+        [engine = QPointer<QJSEngine>(&Engine_), handler,
+         command](const QJsonValue& args) -> rpc::Result {
+            if (!engine) {
+                return std::unexpected(rpc::Error::FromCode(
+                    rpc::EErrorCode::InternalError,
+                    QStringLiteral("the engine of the handler of %1 is gone")
+                        .arg(command)));
+            }
+            const QJSValue returned =
+                handler.call({engine->toScriptValue(args)});
+            if (returned.isError()) {
+                return std::unexpected(rpc::Error::FromCode(
+                    rpc::EErrorCode::InternalError,
+                    QStringLiteral("the handler of %1 threw: %2")
+                        .arg(command, returned.toString())));
+            }
+            const QJsonValue value = toJson(*engine, returned);
+            return value.isUndefined() ? QJsonValue(QJsonValue::Null) : value;
+        });
+    if (!added) {
+        qWarning(
+            "roost: the command %s has a handler already (or the id is "
+            "empty): not replaced",
+            qUtf8Printable(command));
+    }
+    return added;
 }
 
 }  // namespace roost

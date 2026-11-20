@@ -11,7 +11,8 @@
 
 namespace roost {
 
-// Roost.commands: commands.run of the dispatcher, and nothing else.
+// Roost.commands: commands.run of the dispatcher, and the handlers of commands
+// that the window runs itself (registerCommand).
 class CommandsAdapter : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -25,6 +26,19 @@ public:
     Q_INVOKABLE void run(const QString& command,
                          const QJSValue& args = QJSValue(),
                          const QJSValue& callback = QJSValue());
+
+    // Gives the command a handler written in QML: `handler(args)` runs in the
+    // window when the command is run (by a key, the palette or `run`), without
+    // a request to roostd; its return value is the answer (undefined is null),
+    // a throw is an error. The handler lives as long as the caller does, as a
+    // call of `run` does (the calling panel's owner, 05-plugins.md): it is
+    // removed when the panel is torn down; in the shell it lives as long as
+    // the window. Returns false, and the handler is not set, if the command
+    // has one already or the caller is being torn down. A handler that is not
+    // a function throws TypeError. The name is not `register`: that is a C++
+    // keyword, and moc names the method as it is written.
+    Q_INVOKABLE bool registerCommand(const QString& command,
+                                     const QJSValue& handler);
 
 private:
     api::Api& Api_;
