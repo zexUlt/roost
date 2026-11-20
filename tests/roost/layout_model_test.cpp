@@ -218,6 +218,25 @@ private slots:
               "links": { "session": { "from": "p", "output": "selected" } } } ] } })json")
             << "instance \"p\" is used twice; this one is \"p-2\"" << 2
             << "link:p-2:ok";
+        QTest::newRow("duplicate keeps an explicit suffixed id")
+            << QByteArray(R"json({ "root": { "split": "h",
+            "sizes": ["fill", "fill", "fill", "fill"], "children": [
+            { "instance": "a", "panel": "sessions.list" },
+            { "instance": "a", "panel": "terminal.view" },
+            { "instance": "a-2", "panel": "sessions.list" },
+            { "instance": "t", "panel": "terminal.view",
+              "links": { "session": { "from": "a-2", "output": "selected" } } } ] } })json")
+            << "instance \"a\" is used twice; this one is \"a-3\"" << 4
+            << "link:t:ok";
+        QTest::newRow("no instance keeps a later explicit id")
+            << QByteArray(R"json({ "root": { "split": "h",
+            "sizes": ["fill", "fill", "fill"], "children": [
+            { "panel": "terminal.view" },
+            { "instance": "terminal.view", "panel": "sessions.list" },
+            { "instance": "t", "panel": "terminal.view",
+              "links": { "session": { "from": "terminal.view", "output": "selected" } } } ] } })json")
+            << "no instance id; \"terminal.view-2\" is used" << 3
+            << "link:t:ok";
         QTest::newRow("no instance")
             << QByteArray(R"json({ "root": {
             "panel": "sessions.list" } })json")

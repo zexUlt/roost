@@ -5,7 +5,6 @@ add_library(roost_app STATIC
     bug_report.hpp
     daemon_launcher.cpp
     daemon_launcher.hpp
-    login_environment.cpp
     layout_model.cpp
     layout_model.hpp
     login_environment.cpp

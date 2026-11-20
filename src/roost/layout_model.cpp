@@ -246,6 +246,20 @@ struct Resolver {
     QMap<QString, QString> Panels;
     QSet<QString> Used;
 
+    // Pass 0: every explicit id is reserved, so a renamed leaf never takes the
+    // id another leaf wrote.
+    void Reserve(const LayoutNode& node) {
+        if (node.Kind == ELayoutNodeKind::Leaf) {
+            if (!node.Instance.isEmpty()) {
+                Used.insert(node.Instance);
+            }
+            return;
+        }
+        for (const LayoutNode& child : node.Children) {
+            Reserve(child);
+        }
+    }
+
     // Pass 1: ids unique and non-empty, in document order.
     void Name(LayoutNode& node, const QString& path) {
         if (node.Kind != ELayoutNodeKind::Leaf) {
@@ -263,8 +277,7 @@ struct Resolver {
             node.Instance.isEmpty()
                 ? (node.Panel.isEmpty() ? QStringLiteral("panel") : node.Panel)
                 : node.Instance;
-        if (!node.Instance.isEmpty() && !Used.contains(wanted)) {
-            Used.insert(wanted);
+        if (!node.Instance.isEmpty() && !Panels.contains(wanted)) {
             Panels.insert(wanted, node.Panel);
             return;
         }
@@ -355,6 +368,7 @@ LayoutParseResult Resolved(Layout tree, QStringList problems, bool writable,
     Problems report;
     Resolver resolver{
         .Known = known, .Report = report, .Panels = {}, .Used = {}};
+    resolver.Reserve(tree.Root);
     resolver.Name(tree.Root, QStringLiteral("root"));
     resolver.Check(tree.Root, QStringLiteral("root"));
     problems.append(report.Take());
