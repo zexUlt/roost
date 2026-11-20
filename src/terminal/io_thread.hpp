@@ -18,6 +18,7 @@
 #include <utility>
 
 #include "core/rpc.hpp"
+#include "core/terminal_theme.hpp"
 #include "terminal/terminal_session.hpp"
 
 namespace roost {
@@ -74,6 +75,12 @@ public:
     // The same without a size: roostd leaves a warm session at the size it
     // has and starts a cold one at its default, so nothing is resized.
     QFuture<OpenResult> Open(const QString& agent, const QString& session);
+
+    // The colours (the theme's terminal tokens) of every terminal of this
+    // thread: those open now get them, with the Updated that redraws them, and
+    // those opened later have them from the start. Until the first call the
+    // terminals keep the library's defaults. Dropped after Stop.
+    void SetColors(const TerminalColors& colors);
 
     // Input for a channel; dropped if the channel is not connected.
     void SendInput(std::uint32_t channel, const QByteArray& bytes);

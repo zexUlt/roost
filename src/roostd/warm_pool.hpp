@@ -8,9 +8,11 @@
 #include <QString>
 
 #include <expected>
+#include <optional>
 #include <vector>
 
 #include "core/pty.hpp"
+#include "core/terminal_theme.hpp"
 #include "core/vt_terminal.hpp"
 
 namespace roost {
@@ -47,6 +49,8 @@ public:
     std::expected<QByteArray, QString> Snapshot() const;
     // Dropped once the session is closed.
     void Write(QByteArrayView bytes);
+    // The default colours of the terminal; see VtTerminal::SetColors.
+    std::expected<void, QString> SetColors(const TerminalColors& colors);
     // The PTY and the terminal both; sizes as for VtTerminal::Create.
     std::expected<void, QString> Resize(PtySize size);
 
@@ -116,6 +120,12 @@ public:
     // reason. Nothing happens if the session is not warm.
     void Evict(const WarmSessionKey& key, const QString& reason);
     qsizetype Count() const { return Sessions_.size(); }
+    // The colours of the terminals of all warm sessions, and of those opened
+    // later: what the programs are told when they ask for them (OSC 10, 11,
+    // 12, 4, CSI ? 996 n). Until the first call a terminal has the library's
+    // defaults, which answer none of those queries. A session that cannot take
+    // them is logged and keeps what it has.
+    void SetColors(const TerminalColors& colors);
     // The keys of the warm sessions, the one viewed most recently first. The
     // order is total: every Touch takes a new tick of the clock.
     std::vector<WarmSessionKey> KeysMostRecentFirst() const;
@@ -127,6 +137,7 @@ private:
     WarmPoolOptions Options_;
     QHash<WarmSessionKey, WarmSession*> Sessions_;
     quint64 Clock_ = 0;
+    std::optional<TerminalColors> Colors_;
 };
 
 }  // namespace roost

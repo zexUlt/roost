@@ -10,10 +10,17 @@
 //   5  input <bytes> total=<n>                 the last input that was not an
 //                                              answer, escaped; bytes of such
 //                                              input so far
+//   7  reply <bytes>                          what came back after the last
+//                                              query that was asked with Q,
+//                                              escaped
 //
 // At start it asks DA1 (CSI c) and CPR (CSI 6 n) once. Keys: q asks both
-// again, x prints "bye" and exits with 0, e exits with 7. With --ignore-hangup
-// it ignores SIGHUP and the end of its input and waits to be killed.
+// again, Q<bytes> sends <bytes> to the terminal as a query of its own (an OSC
+// 11
+// ?, a colour scheme report) and shows everything that is read after it on
+// line 7 (the last 60 characters), x prints "bye" and exits with 0, e exits
+// with 7. With --ignore-hangup it ignores SIGHUP and the end of its input and
+// waits to be killed.
 
 #include <fcntl.h>
 #include <poll.h>
@@ -168,6 +175,8 @@ int main(int argc, char** argv) {
     DrawSize();
     DrawTerminal();
     Answers answers;
+    bool querying = false;
+    std::string reply;
     Line(4, "answers da1=0 cpr=0");
     Ask();
 
@@ -194,6 +203,22 @@ int main(int argc, char** argv) {
             return 0;
         }
         const std::string_view bytes(buffer, static_cast<size_t>(n));
+        if (bytes.size() > 1 && bytes[0] == 'Q') {
+            Put(bytes.substr(1));
+            querying = true;
+            reply.clear();
+            Line(7, "reply ");
+            continue;
+        }
+        if (querying) {
+            reply += bytes;
+            // The end of it: a line that wraps is two rows of the screen.
+            const std::string shown = Escaped(reply);
+            Line(7,
+                 "reply " + (shown.size() > 60 ? shown.substr(shown.size() - 60)
+                                               : shown));
+            continue;
+        }
         if (bytes == "x") {
             Line(6, "bye\r\n");
             return 0;

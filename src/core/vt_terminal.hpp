@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/terminal_theme.hpp"
 #include "core/vt_mouse_encoder.hpp"
 
 #include <QByteArray>
@@ -55,6 +56,14 @@ public:
     ~VtTerminal();
 
     void SetResponseHandler(ResponseHandler handler);
+    // The default colours of the terminal: what the cells that choose none
+    // are drawn in, what the program is told when it asks (OSC 10, 11, 12 for
+    // the foreground, background and cursor; OSC 4 for the palette) and, by
+    // the luminance of the background, what the colour scheme report (CSI ?
+    // 996 n) says. The selection colour is not the terminal's: the renderer
+    // draws with it. May be called again at any time, under whatever
+    // serializes the terminal.
+    std::expected<void, QString> SetColors(const TerminalColors& colors);
     void Write(QByteArrayView bytes);
     // Both sizes must be from 1 to MAX_SIZE, as for Create.
     std::expected<void, QString> Resize(quint16 columns, quint16 rows);

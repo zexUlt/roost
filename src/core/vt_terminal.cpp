@@ -203,9 +203,20 @@ struct VtTerminal::State {
         [&]() noexcept { respond(response); }();
     }
 
+    // The colour scheme report (CSI ? 996 n): the library asks, this answers
+    // from the background that SetColors was given.
+    static bool ColorScheme(GhosttyTerminal /*terminal*/, void* userdata,
+                            GhosttyColorScheme* out) {
+        *out = static_cast<const State*>(userdata)->Dark
+                   ? GHOSTTY_COLOR_SCHEME_DARK
+                   : GHOSTTY_COLOR_SCHEME_LIGHT;
+        return true;
+    }
+
     GhosttyTerminal Terminal;
     GhosttySelectionGesture Gesture = nullptr;
     ResponseHandler Respond;
+    bool Dark = true;
 };
 
 VtTerminal::VtTerminal(std::unique_ptr<State> state)
@@ -295,6 +306,42 @@ void VtTerminal::SetResponseHandler(ResponseHandler handler) {
         ghostty_terminal_set(State_->Terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                              nullptr);
     }
+}
+
+std::expected<void, QString> VtTerminal::SetColors(
+    const TerminalColors& colors) {
+    const auto rgb = [](const TerminalColors::Rgb& color) {
+        return GhosttyColorRgb{.r = color.R, .g = color.G, .b = color.B};
+    };
+    const GhosttyColorRgb foreground = rgb(colors.Foreground);
+    const GhosttyColorRgb background = rgb(colors.Background);
+    const GhosttyColorRgb cursor = rgb(colors.Cursor);
+    GhosttyColorRgb palette[256];
+    for (std::size_t i = 0; i < colors.Palette.size(); ++i) {
+        palette[i] = rgb(colors.Palette[i]);
+    }
+    const struct {
+        GhosttyTerminalOption Option;
+        const void* Value;
+    } options[] = {
+        {GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground},
+        {GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background},
+        {GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor},
+        {GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette},
+    };
+    for (const auto& option : options) {
+        if (const auto result = ghostty_terminal_set(
+                State_->Terminal, option.Option, option.Value);
+            result != GHOSTTY_SUCCESS) {
+            return std::unexpected(Failed("cannot set the colors", result));
+        }
+    }
+    State_->Dark = IsDark(colors.Background);
+    ghostty_terminal_set(State_->Terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
+                         State_.get());
+    ghostty_terminal_set(State_->Terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
+                         reinterpret_cast<const void*>(&State::ColorScheme));
+    return {};
 }
 
 void VtTerminal::Write(QByteArrayView bytes) {

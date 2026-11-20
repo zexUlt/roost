@@ -9,6 +9,7 @@ add_library(roostd_lib STATIC
     server.cpp
     session_channels.cpp
     store_service.cpp
+    terminal_colors_service.cpp
     warm_pool.cpp
 )
 
