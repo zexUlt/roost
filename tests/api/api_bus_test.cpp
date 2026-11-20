@@ -298,32 +298,6 @@ private slots:
         QCOMPARE(SubscriptionsAtRoostd(), 1);
     }
 
-    void AnEventThatOvertakesTheAnswerIsNotLost() {
-        // The subscription ids of roostd count up: learn the next one.
-        const auto probe = Api_->Io().Request(
-            "bus.subscribe", QJsonObject{{"pattern", "probe"}});
-        QVERIFY(WaitFor(probe));
-        QVERIFY(probe.result());
-        const qint64 next =
-            probe.result()->toObject().value("subscription").toInteger() + 1;
-
-        Events heard;
-        QVERIFY(Subscribe("x.a", this, Record(heard)));
-        // Before the event loop runs, so before the answer: the event of the
-        // subscription arrives, and an event of a subscription nobody has.
-        emit Api_->Io().Notified(
-            "bus.event",
-            QJsonObject{
-                {"subscription", next}, {"name", "x.a"}, {"payload", "early"}});
-        emit Api_->Io().Notified("bus.event",
-                                 QJsonObject{{"subscription", next + 100},
-                                             {"name", "x.a"},
-                                             {"payload", "stranger"}});
-        QVERIFY(heard.empty());
-        Flush();
-        QCOMPARE(heard, (Events{{"x.a", "early"}}));
-    }
-
     void ASubscribeFromAnotherThreadIsRefused() {
 #ifdef NDEBUG
         QSKIP("the check is compiled out of release builds");

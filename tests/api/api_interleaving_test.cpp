@@ -6,7 +6,6 @@
 // store, against the real roostd.
 
 #include <QElapsedTimer>
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,7 +24,6 @@
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
 #include "core/version.hpp"
-#include "helpers/roostd_process.hpp"
 
 using namespace roost;
 using namespace roost::api_test;
@@ -82,6 +80,8 @@ public:
             Socket_ = Server_.nextPendingConnection();
             Decoder_ = FrameDecoder();
             Lists_.clear();
+            Gets_.clear();
+            HeldSubscription_ = 0;
             connect(Socket_, &QLocalSocket::readyRead, this, [this] {
                 Decoder_.Feed(Socket_->readAll());
                 while (const auto frame = Decoder_.Next()) {
@@ -118,11 +118,35 @@ public:
 
     // An event of the bus, as the sessions' subscription gets it.
     void Event(const QString& name, const QJsonObject& payload) {
+        EventOn(SessionsSubscription_, name, payload);
+    }
+
+    // An event of the bus, for any subscription number.
+    void EventOn(qint64 subscription, const QString& name,
+                 const QJsonValue& payload) {
         Send({{"jsonrpc", "2.0"},
               {"method", "bus.event"},
-              {"params", QJsonObject{{"subscription", SessionsSubscription_},
+              {"params", QJsonObject{{"subscription", subscription},
                                      {"name", name},
                                      {"payload", payload}}}});
+    }
+
+    // The bus.subscribe of this pattern is not answered until AnswerHeld; its
+    // subscription number is known at once.
+    void Hold(const QString& pattern) { HeldPattern_ = pattern; }
+    bool IsHeld() const { return HeldSubscription_ != 0; }
+    int HeldSubscription() const { return HeldSubscription_; }
+    void AnswerHeld() {
+        Reply(HeldId_, {{"subscription", HeldSubscription_}});
+        HeldSubscription_ = 0;
+    }
+
+    // The store.get requests of the present connection, in the order they
+    // came; AnswerGet answers the index-th with this document.
+    int Gets() const { return static_cast<int>(Gets_.size()); }
+    void AnswerGet(int index, const QJsonObject& document) {
+        Reply(Gets_.at(static_cast<std::size_t>(index)),
+              {{"document", document}});
     }
 
     // When each connection came, and when the last was dropped, in ms since
@@ -150,13 +174,21 @@ private:
             Reply(id, {{"roostd", QString::fromStdString(VersionString())}});
         } else if (method == "bus.subscribe") {
             ++Subscriptions_;
-            if (request.value("params").toObject().value("pattern") ==
-                QJsonValue("session.*")) {
+            const QString pattern =
+                request.value("params").toObject().value("pattern").toString();
+            if (pattern == "session.*") {
                 SessionsSubscription_ = Subscriptions_;
+            }
+            if (!HeldPattern_.isEmpty() && pattern == HeldPattern_) {
+                HeldId_ = id;
+                HeldSubscription_ = Subscriptions_;
+                return;
             }
             Reply(id, {{"subscription", Subscriptions_}});
         } else if (method == "sessions.list") {
             Lists_.push_back(id);
+        } else if (method == "store.get") {
+            Gets_.push_back(id);
         }
     }
 
@@ -167,6 +199,10 @@ private:
     std::vector<qint64> Arrived_;
     qint64 DroppedAt_ = 0;
     std::vector<QJsonValue> Lists_;
+    std::vector<QJsonValue> Gets_;
+    QString HeldPattern_;
+    QJsonValue HeldId_;
+    int HeldSubscription_ = 0;
     int Subscriptions_ = 0;
     int SessionsSubscription_ = 0;
 };
@@ -225,24 +261,8 @@ private:
     std::unique_ptr<api::Api> Api_;
     std::unique_ptr<QSignalSpy> Connected_;
 
-    // The store's side, against the real roostd.
-    bool StartRoostd() {
-        return Roostd_->IsValid() &&
-               Roostd_->AddFixturePlugin("fixture", FIXTURE_BACKEND_PATH) &&
-               Roostd_->Start(ROOSTD_PATH);
-    }
-
-    bool WriteBehindRoostd(const QString& plugin, const QJsonObject& document) {
-        QFile file(Roostd_->ConfigPath() + "/" + plugin + ".json");
-        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-               file.write(QJsonDocument(document).toJson()) > 0;
-    }
-
-    std::unique_ptr<roost::testing::RoostdProcess> Roostd_;
-
 private slots:
     void init() {
-        Roostd_ = std::make_unique<roost::testing::RoostdProcess>();
         Daemon_ = std::make_unique<ScriptedDaemon>();
         Dir_ = std::make_unique<QTemporaryDir>();
     }
@@ -252,7 +272,6 @@ private slots:
         Api_.reset();
         Daemon_.reset();
         Dir_.reset();
-        Roostd_.reset();
     }
 
     // The Refresh is out when the connection goes: it fails as the connection
@@ -350,43 +369,58 @@ private slots:
 
     // Both Gets miss the cache, as neither has answered; each asks roostd, and
     // both get the document. The cache is warm after, and the next Get does
-    // not ask roostd: a document written behind its back is not seen.
+    // not ask roostd. The daemon holds the answers, so that the order does not
+    // depend on how fast the IO thread is.
     void TwoGetsAtOnceGetTheSameDocumentAndWarmTheCache() {
-        QVERIFY(StartRoostd());
-        api::Api api;
-        QSignalSpy connected(&api, &api::Api::Connected);
-        api.Connect(Roostd_->SocketPath());
-        // The signal may be said inside Connect: look at the spy before
-        // waiting.
-        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
-        // The store's directory is made by the first write.
-        const QFuture<rpc::Result> saved = api.Store().Set("fixture", Doc(0));
-        QVERIFY(WaitFor(saved));
-        QVERIFY2(saved.result(), qPrintable(Why(saved.result())));
-        QVERIFY(WriteBehindRoostd("fixture", Doc(1)));
+        QVERIFY(ConnectApi());
+        const QFuture<rpc::Result> first = Api_->Store().Get("fixture");
+        const QFuture<rpc::Result> second = Api_->Store().Get("fixture");
+        QTRY_COMPARE_WITH_TIMEOUT(Daemon_->Gets(), 2, TIMEOUT_MS);
+        QVERIFY(!first.isFinished());
+        QVERIFY(!second.isFinished());
+        QVERIFY(!Api_->Store().IsWarm("fixture"));
 
-        const QFuture<rpc::Result> first = api.Store().Get("fixture");
-        const QFuture<rpc::Result> second = api.Store().Get("fixture");
-        QVERIFY(!api.Store().IsWarm("fixture"));
+        Daemon_->AnswerGet(0, Doc(1));
+        Daemon_->AnswerGet(1, Doc(1));
         QVERIFY(WaitFor(first));
         QVERIFY(WaitFor(second));
         QVERIFY2(first.result(), qPrintable(Why(first.result())));
         QVERIFY2(second.result(), qPrintable(Why(second.result())));
         QCOMPARE(*first.result(), QJsonValue(Wrapped(Doc(1))));
         QCOMPARE(*second.result(), QJsonValue(Wrapped(Doc(1))));
-        QVERIFY(api.Store().IsWarm("fixture"));
+        QVERIFY(Api_->Store().IsWarm("fixture"));
 
-        QVERIFY(WriteBehindRoostd("fixture", Doc(2)));
-        const QFuture<rpc::Result> third = api.Store().Get("fixture");
+        const QFuture<rpc::Result> third = Api_->Store().Get("fixture");
         QVERIFY(WaitFor(third));
         QVERIFY2(third.result(), qPrintable(Why(third.result())));
         QCOMPARE(*third.result(), QJsonValue(Wrapped(Doc(1))));
-        // roostd does hold the newer one.
-        const QFuture<rpc::Result> atRoostd =
-            api.Io().Request("store.get", QJsonObject{{"plugin", "fixture"}});
-        QVERIFY(WaitFor(atRoostd));
-        QVERIFY2(atRoostd.result(), qPrintable(Why(atRoostd.result())));
-        QCOMPARE(*atRoostd.result(), QJsonValue(Wrapped(Doc(2))));
+        QCOMPARE(Daemon_->Gets(), 2);
+    }
+
+    // An event of a subscription arrives before the answer that names it: it
+    // is kept and told when the answer comes. An event of a subscription
+    // nobody has is dropped. The daemon sends the event first and answers
+    // after, so that the order does not depend on how fast the IO thread is.
+    void AnEventThatOvertakesTheAnswerIsNotLost() {
+        QVERIFY(ConnectApi());
+        Daemon_->Hold("x.a");
+        QList<QPair<QString, QJsonValue>> heard;
+        const auto id = Api_->Bus().Subscribe(
+            "x.a", this, [&heard](const QString& name, const QJsonValue& v) {
+                heard.append({name, v});
+            });
+        QVERIFY(id);
+        QTRY_VERIFY_WITH_TIMEOUT(Daemon_->IsHeld(), TIMEOUT_MS);
+        const int subscription = Daemon_->HeldSubscription();
+
+        Daemon_->EventOn(subscription, "x.a", "early");
+        Daemon_->EventOn(subscription + 100, "x.a", "stranger");
+        Daemon_->AnswerHeld();
+        // Frames come in order: "later" is told after the answer is handled.
+        Daemon_->EventOn(subscription, "x.a", "later");
+        QTRY_COMPARE_WITH_TIMEOUT(heard.size(), 2, TIMEOUT_MS);
+        QCOMPARE(heard.at(0).second, QJsonValue("early"));
+        QCOMPARE(heard.at(1).second, QJsonValue("later"));
     }
 
     // Failed attempts grow the wait to its cap. A hello that is answered
