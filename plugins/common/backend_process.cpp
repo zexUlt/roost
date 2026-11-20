@@ -1,6 +1,8 @@
 #include "common/backend_process.hpp"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QProcess>
 #include <QSocketNotifier>
 
@@ -12,6 +14,11 @@
 #include <cstdio>
 
 namespace roost::plugin {
+
+QString HomeDirectory() {
+    const QString home = QDir::homePath();
+    return QFileInfo(home).isDir() ? home : QString();
+}
 
 namespace {
 

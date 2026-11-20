@@ -13,6 +13,12 @@ class QProcess;
 
 namespace roost::plugin {
 
+// The home directory a CLI child runs in, so that the CLI does not take the
+// installed plugin package, where the backend starts, for a project. Empty
+// when the home is not an existing directory: the child then keeps the
+// backend's directory, as it would without this.
+QString HomeDirectory();
+
 // Stops a child started in its own session and the process group it leads.
 void StopRun(QProcess& process);
 

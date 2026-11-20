@@ -158,6 +158,7 @@ private:
             QProcessEnvironment::systemEnvironment();
         environment.insert(
             "PATH", Dir_->filePath("bin") + u':' + environment.value("PATH"));
+        environment.insert("HOME", Dir_->filePath("home"));
         Adapter_ = std::make_unique<QProcess>();
         Adapter_->setProcessEnvironment(environment);
         Adapter_->setProcessChannelMode(QProcess::ForwardedErrorChannel);
@@ -310,6 +311,7 @@ private slots:
         Dir_ = std::make_unique<QTemporaryDir>();
         QVERIFY(Dir_->isValid());
         QVERIFY(QDir(Dir_->path()).mkpath("bin"));
+        QVERIFY(QDir(Dir_->path()).mkpath("home"));
         Put("claude", FAKE_CLAUDE);
         QVERIFY(QFile::setPermissions(
             FakePath("claude"),
@@ -344,6 +346,28 @@ private slots:
                  QJsonDocument(response).toJson().constData());
         QVERIFY(response.value("result").isNull());
         QCOMPARE(CommandCalls(), QStringList{"start stop s1"});
+    }
+
+    // Not the plugin directory the backend starts in, where claude would take
+    // the installed package for a project.
+    void StopRespawnAndRemoveRunInTheHomeDirectory_data() {
+        QTest::addColumn<QString>("command");
+        QTest::addColumn<QString>("verb");
+        QTest::newRow("stop") << "claude.stop" << "stop";
+        QTest::newRow("respawn") << "claude.respawn" << "respawn";
+        QTest::newRow("remove") << "claude.remove" << "rm";
+    }
+
+    void StopRespawnAndRemoveRunInTheHomeDirectory() {
+        QFETCH(QString, command);
+        QFETCH(QString, verb);
+        StartAdapter();
+        QVERIFY(RunCommand(command, QJsonObject{{"session", "s1"}})
+                    .contains("result"));
+        QFile file(FakePath(verb + ".ran"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(file.readAll()).split(u'\n').value(0),
+                 QDir(Dir_->filePath("home")).canonicalPath());
     }
 
     void RemoveRunsOnlyRm() {
