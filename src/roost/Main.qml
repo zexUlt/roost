@@ -40,6 +40,24 @@ Window {
     title: "roost"
     color: Roost.theme.windowBackground
 
+    // The colours of every Qt Quick Controls item below, the dialogs and the
+    // panels' Controls included: they inherit the palette of the window. The
+    // Fusion style (roost::SelectControlsStyle) paints with it; the native
+    // style of macOS would not. A panel with a dark background of its own
+    // sets its own `palette` from the tokens.
+    palette {
+        window: Roost.theme.windowBackground
+        windowText: Roost.theme.windowText
+        base: Roost.theme.inputBackground
+        text: Roost.theme.windowText
+        button: Roost.theme.controlBackground
+        buttonText: Roost.theme.windowText
+        highlight: Roost.theme.selection
+        highlightedText: Roost.theme.textStrong
+        placeholderText: Roost.theme.textMuted
+        accent: Roost.theme.accent
+    }
+
     // Opens the bug report dialog; macOS calls it from the Help menu and
     // Cmd+Shift+B, other platforms from the toolbar button.
     function reportBug() {

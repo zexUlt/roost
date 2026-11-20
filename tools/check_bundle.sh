@@ -184,10 +184,18 @@ done <<<"$macho"
 echo "ok:   $count Mach-O files name only the bundle and the system"
 
 # ---------------------------------------------------------------------------
-# What the window and the plugins import, and the licences.
+# What the window and the plugins import, and the licences. Fusion is the
+# Controls style of the window (roost::SelectControlsStyle) and Basic its base;
+# macdeployqt copies the whole QtQuick/Controls module the QML imports, styles
+# included, and this is where a Qt that stops doing so is caught.
 
 for path in Contents/Resources/qml/QtCore/qmldir \
     Contents/Resources/qml/QtQuick/Controls \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/qmldir \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/impl/qmldir \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/libqtquickcontrols2fusionstyleplugin.dylib \
+    Contents/Resources/qml/QtQuick/Controls/Fusion/impl/libqtquickcontrols2fusionstyleimplplugin.dylib \
+    Contents/Resources/qml/QtQuick/Controls/Basic/qmldir \
     Contents/Resources/qml/QtQuick/Layouts \
     Contents/PlugIns/imageformats/libqsvg.dylib; do
     if [ -e "$app/$path" ]; then

@@ -14,10 +14,12 @@
 #include <signal.h>
 
 #include <algorithm>
+#include <mutex>
 
 #include "core/rpc_client.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/sessions_model.hpp"
+#include "roost/controls_style.hpp"
 #include "terminal/session_pane.hpp"
 
 namespace roost::testing {
@@ -228,6 +230,10 @@ void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
 // loaded; waits until both slots hold theirs and the list has its first
 // sessions.
 void SessionsWindow::OpenWindow() {
+    // The style of the window, as main() selects it, before the first engine
+    // of the process; the style cannot be changed once Controls are loaded.
+    static std::once_flag styleSelected;
+    std::call_once(styleSelected, roost::SelectControlsStyle);
     Api_ = std::make_unique<api::Api>();
     Engine_ = std::make_unique<QQmlApplicationEngine>();
     Singleton_ =

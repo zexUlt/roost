@@ -43,7 +43,7 @@ option(ROOST_WERROR "Treat warnings as errors" ON)
 # private module ties the build to one Qt version; that is accepted there, CI
 # pins the version. The warning is silenced for this call only.
 set(QT_NO_PRIVATE_MODULE_WARNING ON)
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QmlPrivate)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 QmlPrivate)
 unset(QT_NO_PRIVATE_MODULE_WARNING)
 qt_standard_project_setup(REQUIRES 6.8)
 

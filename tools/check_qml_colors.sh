@@ -23,7 +23,7 @@
 #      Qt.hsl, Qt.hsva, Qt.hsv, Qt.color.
 # Comments are scanned too: a colour property written in a comment with a
 # quoted colour is a violation, so the comment says what colour it means
-# without quoting it. The theme is JSON (src/qml_api/themes/default.json) and
+# without quoting it. The theme is JSON (src/core/themes/default.json) and
 # is not in the scanned set. Agent icons are SVG and PNG files, not QML: out of
 # scope.
 #

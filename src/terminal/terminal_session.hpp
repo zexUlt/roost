@@ -95,6 +95,15 @@ public:
                                         quint16 rows);
     // For tests: see VtTerminal::Dump.
     std::expected<QByteArray, QString> Dump(const Locked& lock) const;
+    // The default colours of the terminal and the colour of the selection;
+    // see VtTerminal::SetColors. The frame that follows is drawn in them: the
+    // library marks every row for redrawing, so the caller asks for a frame.
+    std::expected<void, QString> SetColors(const Locked& lock,
+                                           const TerminalColors& colors);
+    // The background of selected text, the last one SetColors was given:
+    // white until then. Readable from any thread.
+    VtRenderState::Rgb SelectionColor() const;
+
     // Copies the terminal's input modes (cursor keys, keypad, Kitty keyboard
     // protocol, ...) into the encoder. The GUI thread does it under a short
     // lock before encoding a key; the encoding itself then needs no lock.
@@ -173,6 +182,8 @@ private:
     VtRenderState RenderState_;
     std::mutex Mutex_;
     std::atomic<bool> SelectionAtLastRender_ = false;
+    // R, G, B of the selection colour, as 0xRRGGBB.
+    std::atomic<quint32> SelectionColor_ = 0xffffff;
 };
 
 }  // namespace roost

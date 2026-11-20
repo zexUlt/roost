@@ -26,9 +26,6 @@ qt_add_qml_module(roost_qml_api
         terminal_item.hpp
         theme.cpp
         theme.hpp
-    # The default theme: Theme loads it from qrc:/qt/qml/Roost/Api/themes.
-    RESOURCES
-        themes/default.json
     NO_CACHEGEN
 )
 

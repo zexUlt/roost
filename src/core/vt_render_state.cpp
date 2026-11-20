@@ -249,6 +249,15 @@ VtRenderState::Rgb VtRenderState::DefaultBackground() const {
         GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND));
 }
 
+std::optional<VtRenderState::Rgb> VtRenderState::CursorColor() const {
+    if (!State_ || State_->Updating ||
+        !State_->Get<bool>(GHOSTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE)) {
+        return std::nullopt;
+    }
+    return FromLibrary(
+        State_->Get<GhosttyColorRgb>(GHOSTTY_RENDER_STATE_DATA_COLOR_CURSOR));
+}
+
 QList<VtRenderState::Row> VtRenderState::Rows() const {
     QList<Row> rows;
     if (!State_ || State_->Updating) {

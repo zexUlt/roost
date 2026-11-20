@@ -18,6 +18,7 @@
 #include "helpers/refusing_server.hpp"
 #include "helpers/scoped_env.hpp"
 #include "qml_api/roost_singleton.hpp"
+#include "roost/controls_style.hpp"
 #include "roost/daemon_launcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
@@ -83,6 +84,9 @@ private:
     int Starts_ = 0;
 
 private slots:
+    // The style of the window, as main() selects it, before the first engine.
+    void initTestCase() { roost::SelectControlsStyle(); }
+
     void cleanup() {
         // The shell before the loader, the loader before the engine.
         Shell_.reset();

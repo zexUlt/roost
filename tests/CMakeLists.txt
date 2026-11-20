@@ -78,6 +78,7 @@ roost_add_qt_test(key_chord_test core/key_chord_test.cpp)
 roost_add_qt_test(store_test core/store_test.cpp roost_test_helpers)
 roost_add_qt_test(vt_terminal_test core/vt_terminal_test.cpp)
 roost_add_qt_test(vt_render_state_test core/vt_render_state_test.cpp)
+roost_add_qt_test(vt_colors_test core/vt_colors_test.cpp)
 roost_add_qt_test(vt_key_encoder_test core/vt_key_encoder_test.cpp)
 roost_add_qt_test(vt_mouse_encoder_test core/vt_mouse_encoder_test.cpp)
 roost_add_qt_test(terminal_session_test terminal/terminal_session_test.cpp roost_terminal)
@@ -341,6 +342,18 @@ target_compile_definitions(terminal_panel_test PRIVATE
     TERMINAL_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/terminal")
 add_dependencies(terminal_panel_test roostd fake_tui claude-adapter)
 
+# The terminal colours follow settings.theme: the answers of the real roostd to
+# the queries of a fake TUI, and the default background of the window's terminal.
+roost_add_qt_test(terminal_theme_test roost/terminal_theme_test.cpp
+    roost_qml_api roost_qml_apiplugin roost_terminal roost_test_helpers
+    Qt6::Qml)
+target_compile_definitions(terminal_theme_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(terminal_theme_test roostd fake_tui claude-adapter)
+
 # The plugin sessions: its panel sessions.list in the window of the shell, with
 # the real terminal panel, against the real roostd with the real Claude plugin
 # behind a fake claude.
@@ -377,6 +390,10 @@ target_compile_definitions(theme_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(theme_test roostd fake_tui claude-adapter sessions_qml)
+
+# The terminal tokens of Roost.theme: defaults, follow(), bad tokens.
+roost_add_qt_test(theme_terminal_test qml_api/theme_terminal_test.cpp
+    roost_qml_api Qt6::Qml)
 
 # The commands of the sessions panel: d, x, r, R and n, their confirmations and
 # notices, and the reopen of a respawned session.
@@ -483,6 +500,7 @@ set_tests_properties(
     plugin_reload_test
     shell_test
     terminal_panel_test
+    terminal_theme_test
     sessions_panel_test
     warm_switch_test
     roost_sessions_test
@@ -645,6 +663,12 @@ target_compile_definitions(keymap_match_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(keymap_match_test roostd fixture_backend)
 set_tests_properties(keymap_match_test PROPERTIES LABELS "threads")
+
+# The Controls style of the window is Fusion and the palette of the window is
+# the theme's: a Button of the banner and the bug report dialog, painted.
+roost_add_qt_test(controls_style_test roost/controls_style_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
 
 # The layout model: the default tree, round trip, repair of broken documents;
 # pure data, no plugins or window.

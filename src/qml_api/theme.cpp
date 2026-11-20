@@ -1,18 +1,17 @@
 #include "qml_api/theme.hpp"
 
-#include <QFile>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QtLogging>
 
 #include <algorithm>
 #include <array>
 
+#include "core/theme_source.hpp"
+
 namespace roost {
 
 namespace {
 
-constexpr auto DEFAULT_THEME = ":/qt/qml/Roost/Api/themes/default.json";
 constexpr int CATEGORY_COUNT = 8;
 
 struct Token {
@@ -23,20 +22,30 @@ struct Token {
 }  // namespace
 
 Theme::Theme(QObject* parent) : QObject(parent) {
-    QFile file(QString::fromLatin1(DEFAULT_THEME));
-    if (!file.open(QIODevice::ReadOnly)) {
-        qWarning("roost: the default theme is missing: %s", DEFAULT_THEME);
-        return;
+    const ResolvedTheme theme = ResolveTheme({});
+    if (!theme.Problem.isEmpty()) {
+        qWarning("roost: %s", qUtf8Printable(theme.Problem));
     }
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    if (!document.isObject() || !load(document.object())) {
-        qWarning("roost: the default theme is not valid: %s", DEFAULT_THEME);
+    if (!load(theme.Tokens)) {
+        qWarning("roost: the default theme is not valid");
     }
+}
+
+QString Theme::follow(const QJsonObject& settings) {
+    const ResolvedTheme theme = ResolveTheme(settings);
+    if (!theme.Problem.isEmpty()) {
+        qWarning("roost: %s", qUtf8Printable(theme.Problem));
+    }
+    load(theme.Tokens);
+    return theme.Id;
 }
 
 bool Theme::load(const QJsonObject& tokens) {
     static const std::array TOKENS = {
         Token{"windowBackground", &Theme::WindowBackground_},
+        Token{"windowText", &Theme::WindowText_},
+        Token{"controlBackground", &Theme::ControlBackground_},
+        Token{"inputBackground", &Theme::InputBackground_},
         Token{"panelBackground", &Theme::PanelBackground_},
         Token{"overlayBackground", &Theme::OverlayBackground_},
         Token{"text", &Theme::Text_},
@@ -68,8 +77,15 @@ bool Theme::load(const QJsonObject& tokens) {
                                 : QColor();
     };
 
+    QJsonObject terminalTokens = TerminalTokens_;
+    bool terminalGiven = false;
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {
         const QString key = it.key();
+        if (key.startsWith(QLatin1String("terminal"))) {
+            terminalTokens.insert(key, it.value());
+            terminalGiven = true;
+            continue;
+        }
         if (key == QLatin1String("categories")) {
             QVariantList list;
             const QJsonArray array = it.value().toArray();
@@ -109,8 +125,31 @@ bool Theme::load(const QJsonObject& tokens) {
             differs = true;
         }
     }
-    if (differs) {
+    bool terminalDiffers = false;
+    if (terminalGiven) {
+        const ResolvedTerminalColors resolved =
+            ResolveTerminalColors(terminalTokens);
+        if (resolved.Fallback) {
+            qWarning("roost: theme: %s; the default terminal colours are used",
+                     qUtf8Printable(resolved.Problem));
+            taken = false;
+            terminalTokens = ResolveTheme({}).Tokens;
+        }
+        if (!resolved.Colors) {
+            qWarning("roost: theme: the default has no terminal colours: %s",
+                     qUtf8Printable(resolved.Problem));
+            taken = false;
+        } else {
+            TerminalTokens_ = terminalTokens;
+            terminalDiffers = !(*resolved.Colors == TerminalColors_);
+            TerminalColors_ = *resolved.Colors;
+        }
+    }
+    if (differs || terminalDiffers) {
         emit changed();
+    }
+    if (terminalDiffers) {
+        emit terminalColorsChanged();
     }
     return taken;
 }

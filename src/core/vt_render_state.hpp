@@ -117,6 +117,9 @@ public:
     Cursor GetCursor() const;
     Rgb DefaultForeground() const;
     Rgb DefaultBackground() const;
+    // The cursor colour the terminal has (VtTerminal::SetColors, OSC 12);
+    // empty when it has none, and the cursor takes the foreground.
+    std::optional<Rgb> CursorColor() const;
     // Every row of the viewport, top to bottom, with all of its cells.
     QList<Row> Rows() const;
     // One cell of the viewport, without copying the rest; empty when the

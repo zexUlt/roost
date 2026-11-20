@@ -1,5 +1,8 @@
 {
     "windowBackground": "#ffffff",
+    "windowText": "#000000",
+    "controlBackground": "#efefef",
+    "inputBackground": "#ffffff",
     "panelBackground": "#1e1e1e",
     "overlayBackground": "#f01e1e1e",
     "text": "#e0e0e0",
@@ -31,5 +34,27 @@
     "problemsText": "#ffd9a0",
     "warning": "#e0a060",
     "error": "#e06060",
-    "windowError": "#b00020"
+    "windowError": "#b00020",
+    "terminalForeground": "#ffffff",
+    "terminalBackground": "#000000",
+    "terminalCursor": "#ffffff",
+    "terminalSelection": "#ffffff",
+    "terminalAnsi": [
+        "#1d1f21",
+        "#cc6666",
+        "#b5bd68",
+        "#f0c674",
+        "#81a2be",
+        "#b294bb",
+        "#8abeb7",
+        "#c5c8c6",
+        "#666666",
+        "#d54e53",
+        "#b9ca4a",
+        "#e7c547",
+        "#7aa6da",
+        "#c397d8",
+        "#70c0b1",
+        "#eaeaea"
+    ]
 }

@@ -57,10 +57,14 @@ struct Run {
 };
 
 // Splits a row into runs that cover every cell of it exactly once, left to
-// right. Pure: no Qt Quick, no fonts.
+// right. Pure: no Qt Quick, no fonts. A selected cell is drawn on `selection`
+// (the theme's terminalSelection), in whichever default colour reads better
+// on it, and ignores inverse; any other cell takes its own colours, swapped
+// when inverse.
 QList<Run> SplitRow(const VtRenderState::Row& row,
                     VtRenderState::Rgb defaultForeground,
-                    VtRenderState::Rgb defaultBackground);
+                    VtRenderState::Rgb defaultBackground,
+                    VtRenderState::Rgb selection);
 
 // Within one run a glyph the primary face lacks, drawn by a fallback face of
 // another advance, can shift the rest of that run. What keeps the grid is the
@@ -112,6 +116,8 @@ private:
     // letter spacing that makes a glyph advance exactly one cell.
     std::array<QFont, 4> Variants_;
     quint16 Columns_ = 0;
+    // The selection colour of the last frame; a new one rebuilds every row.
+    VtRenderState::Rgb Selection_{.R = 255, .G = 255, .B = 255};
     bool Stale_ = true;
     std::atomic<int> RowsRebuilt_ = 0;
 };
