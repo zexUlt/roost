@@ -29,6 +29,31 @@ class BugReportDialogTest : public QObject {
     Q_OBJECT
 
 private:
+    // The item is read-only text that selects with the mouse and keyboard,
+    // and selectAll() takes `expected`.
+    static void ExpectSelectable(QQuickItem* item, const QString& expected) {
+        QVERIFY(item->property("readOnly").toBool());
+        QVERIFY(item->property("selectByMouse").toBool());
+        QVERIFY(item->property("selectByKeyboard").toBool());
+        QVERIFY(QMetaObject::invokeMethod(item, "selectAll"));
+        QVERIFY2(item->property("selectedText").toString().contains(expected),
+                 qPrintable(item->property("selectedText").toString()));
+    }
+
+    // The Repeater's delegates are children of the item, not of the QObject
+    // tree findChild() walks.
+    static QQuickItem* VisualChild(QQuickItem* parent, const QString& name) {
+        for (QQuickItem* child : parent->childItems()) {
+            if (child->objectName() == name) {
+                return child;
+            }
+            if (QQuickItem* found = VisualChild(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
     QObject* Dialog() {
         return Window_->findChild<QObject*>("bugReportDialog");
     }
@@ -111,6 +136,33 @@ private slots:
         QTest::qWait(200);
         QVERIFY(!Dialog()->property("visible").toBool());
 #endif
+    }
+
+    // The texts of the dialog can be selected and copied: read-only text
+    // with the mouse selection, not Labels.
+    void TheShownTextsAreSelectable() {
+        QMetaObject::invokeMethod(Window_, "reportBug");
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+
+        QQuickItem* entry = nullptr;
+        QTRY_VERIFY((entry = VisualChild(
+                         Dialog()->property("contentItem").value<QQuickItem*>(),
+                         "fileEntry")));
+        ExpectSelectable(entry, entry->property("text").toString());
+
+        Dialog()->setProperty("outputDirectory", Dir_.filePath("selectable"));
+        QVERIFY(QMetaObject::invokeMethod(
+            Window_->findChild<QObject*>("createButton"), "clicked"));
+        QVERIFY(Dialog()->property("done").toBool());
+        const QString zip = Dialog()
+                                ->property("report")
+                                .value<QObject*>()
+                                ->property("zipPath")
+                                .toString();
+        QVERIFY(!zip.isEmpty());
+        auto* saved = Window_->findChild<QQuickItem*>("zipPathText");
+        QVERIFY(saved != nullptr);
+        ExpectSelectable(saved, zip);
     }
 
     void TheDialogListsTheFilesAndWritesTheZip() {
