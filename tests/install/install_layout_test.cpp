@@ -253,11 +253,11 @@ private:
         if (!IS_MACOS || !HAS_SANITIZER_RUNTIME) {
             return paths;
         }
-        static const QRegularExpression runtimeDir(
+        static const QRegularExpression RUNTIME_DIR(
             QStringLiteral(R"(/lib/clang/[^/]+/lib/darwin$)"));
         paths.removeIf([](const QString& path) {
             return path == QLatin1String("@executable_path") ||
-                   runtimeDir.match(path).hasMatch();
+                   RUNTIME_DIR.match(path).hasMatch();
         });
         return paths;
     }
