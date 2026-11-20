@@ -960,7 +960,7 @@ FocusScope {
                 model: root.tabs
 
                 // A tap on a tab selects it.
-                delegate: Text {
+                delegate: Label {
                     id: tab
 
                     required property var modelData

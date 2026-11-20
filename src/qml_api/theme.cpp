@@ -62,8 +62,15 @@ void Theme::followFonts(const QJsonObject& settings) {
         // answer with a substitute, which may well be a monospace one.
         QFont named(wanted.TerminalFamily);
         named.setPointSizeF(terminal.pointSizeF());
-        if (QFontDatabase::hasFamily(wanted.TerminalFamily) &&
-            IsFixedPitch(named)) {
+        // The generic name is the system monospace font itself, which
+        // QFontDatabase does not list as a family.
+        const bool generic =
+            wanted.TerminalFamily.compare(QStringLiteral("monospace"),
+                                          Qt::CaseInsensitive) == 0;
+        if (generic) {
+            // The default font, at the size computed above.
+        } else if (QFontDatabase::hasFamily(wanted.TerminalFamily) &&
+                   IsFixedPitch(named)) {
             terminal = named;
         } else {
             problems.append(

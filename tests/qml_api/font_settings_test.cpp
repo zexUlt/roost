@@ -8,6 +8,7 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
@@ -79,6 +80,24 @@ private:
         return {{"terminalFont", font}};
     }
 
+    // The item named `name` below `parent` in the visual tree: the delegates of
+    // a Repeater and the content of a dialog are not in the tree of QObjects
+    // that findChild() walks.
+    static QQuickItem* VisualChild(QQuickItem* parent, const QString& name) {
+        if (parent == nullptr) {
+            return nullptr;
+        }
+        for (QQuickItem* child : parent->childItems()) {
+            if (child->objectName() == name) {
+                return child;
+            }
+            if (QQuickItem* found = VisualChild(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
     // What the strip of problems shows.
     QStringList Shown() {
         return Root()->property("shownProblems").toStringList();
@@ -143,6 +162,10 @@ private slots:
             << QJsonObject{{"uiFontSize", true}} << "" << 0.0 << 0.0 << 1;
         QTest::newRow("family is a number")
             << TerminalFont(12, 14) << "" << 14.0 << 0.0 << 1;
+        QTest::newRow("generic monospace")
+            << TerminalFont("monospace", 14) << "monospace" << 14.0 << 0.0 << 0;
+        QTest::newRow("generic monospace, any case")
+            << TerminalFont("MonoSpace", 14) << "MonoSpace" << 14.0 << 0.0 << 0;
         QTest::newRow("family is empty")
             << TerminalFont("  ", 14) << "" << 14.0 << 0.0 << 1;
         QTest::newRow("terminalFont is a string")
@@ -327,7 +350,18 @@ private slots:
             Slot(LIST)->findChild<QQuickItem*>("placeholderText");
         auto* const panelText =
             PanelOf(LIST)->findChild<QQuickItem*>("sessionsTitle");
+        // The tabs of the strip, the prompt input beside its label (a
+        // TextInput takes no font from the window) and the text of the bug
+        // report dialog (a TextEdit) are not Controls: each is bound.
+        auto* const tab = VisualChild(PanelOf(LIST), "sessionsTab");
+        auto* const prompt = VisualChild(PanelOf(LIST), "sessionsPromptInput");
+        auto* const dialog = Root()->findChild<QObject*>("bugReportDialog");
+        QVERIFY(dialog != nullptr);
+        auto* const report =
+            VisualChild(dialog->property("contentItem").value<QQuickItem*>(),
+                        "zipPathText");
         QVERIFY(button != nullptr && text != nullptr && panelText != nullptr);
+        QVERIFY(tab != nullptr && prompt != nullptr && report != nullptr);
         const auto sizeOf = [](const QQuickItem* item) {
             return item->property("font").value<QFont>().pointSizeF();
         };
@@ -340,6 +374,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), bigger, TIMEOUT_MS);
         QCOMPARE(sizeOf(text), bigger);
         QCOMPARE(sizeOf(panelText), bigger);
+        QCOMPARE(sizeOf(tab), bigger);
+        QCOMPARE(sizeOf(prompt), bigger);
+        QCOMPARE(sizeOf(report), bigger);
         QCOMPARE(Singleton_->theme()->uiFont().pointSizeF(), bigger);
         QCOMPARE(QGuiApplication::font().pointSizeF(), before);
         QVERIFY(Shown().isEmpty());
@@ -349,6 +386,24 @@ private slots:
         WriteSettings({});
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), before, TIMEOUT_MS);
         QCOMPARE(sizeOf(text), before);
+        QCOMPARE(sizeOf(tab), before);
+        QCOMPARE(sizeOf(prompt), before);
+        QCOMPARE(sizeOf(report), before);
+    }
+
+    // The generic name of the system monospace font is not an installed
+    // family to QFontDatabase, and not a problem either.
+    void TheGenericMonospaceIsTheSystemMonospace() {
+        BootOpen();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WriteSettings(TerminalFont("Monospace", BIG_SIZE));
+
+        QTRY_COMPARE_WITH_TIMEOUT(Terminal()->font().pointSizeF(), BIG_SIZE,
+                                  TIMEOUT_MS);
+        QCOMPARE(Terminal()->font().family(), DefaultTerminalFont().family());
+        QVERIFY(Shown().isEmpty());
     }
 
     // Every window follows the document: a second one, over its own API and
@@ -373,6 +428,21 @@ private slots:
             singleton->theme()->terminalFont().pointSizeF(), BIG_SIZE,
             TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Terminal()->font().pointSizeF(), BIG_SIZE,
+                                  TIMEOUT_MS);
+
+        // The window of `roost --session`, over the same theme: its terminal
+        // item has the font of the theme too.
+        QQmlComponent component(&engine, "Roost.Shell", "SessionMain");
+        std::unique_ptr<QObject> window(component.create());
+        QVERIFY2(window != nullptr, qPrintable(component.errorString()));
+        auto* const item =
+            window->findChild<TerminalItem*>(QStringLiteral("terminal"));
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->font(), singleton->theme()->terminalFont());
+        QCOMPARE(item->font().pointSizeF(), BIG_SIZE);
+
+        WriteSettings({});
+        QTRY_COMPARE_WITH_TIMEOUT(item->font(), DefaultTerminalFont(),
                                   TIMEOUT_MS);
     }
 };
