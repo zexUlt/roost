@@ -72,6 +72,14 @@ ApplicationWindow {
         bugReportDialog.open();
     }
 
+    // Shows the settings window, or raises it; macOS calls it from the
+    // "Settings…" item of the menu bar (the native menu puts it in the
+    // application menu) and Cmd+, (the command shell.settings), other
+    // platforms from the toolbar button.
+    function openSettings() {
+        settingsWindow.open();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -87,6 +95,12 @@ ApplicationWindow {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                ToolButton {
+                    objectName: "settingsButton"
+                    text: "Settings…"
+                    onClicked: root.openSettings()
                 }
 
                 ToolButton {
@@ -259,6 +273,7 @@ ApplicationWindow {
         if (Roost.commands !== null) {
             Roost.commands.registerCommand("shell.focusList", () => listSlot.forceActiveFocus());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
+            Roost.commands.registerCommand("shell.settings", () => root.openSettings());
         }
     }
 
@@ -290,12 +305,29 @@ ApplicationWindow {
         window: root
     }
 
+    SettingsWindow {
+        id: settingsWindow
+    }
+
     // The menu bar only where Qt Quick Controls makes it native (macOS):
     // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
-    // Bug…" is there instead of the toolbar button.
+    // Bug…" is there instead of the toolbar button. The item "Settings…" has
+    // no role in Qt Quick Controls; the Cocoa menu takes it for the
+    // application's settings by its text ("Setting", "Preferences", ...) and
+    // moves it to the application menu.
     Loader {
         active: Qt.platform.os === "osx"
         sourceComponent: MenuBar {
+            Menu {
+                title: "roost"
+
+                MenuItem {
+                    objectName: "settingsMenuItem"
+                    text: "Settings…"
+                    onTriggered: root.openSettings()
+                }
+            }
+
             Menu {
                 title: "Help"
 

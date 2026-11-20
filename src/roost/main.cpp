@@ -22,6 +22,7 @@
 #include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
+#include "roost/settings_pages.hpp"
 #include "roost/shell.hpp"
 #include "roost/single_session.hpp"
 #include "roost/window_icon.hpp"
@@ -238,6 +239,8 @@ int main(int argc, char* argv[]) {
     // the loader. The watcher goes first of all.
     std::optional<roost::PluginLoader> loader;
     std::optional<roost::Shell> shell;
+    // The pages of the settings window; goes before the loader too.
+    std::optional<roost::SettingsPages> settingsPages;
     std::optional<roost::PluginWatcher> watcher;
     // The key presses of the window against the keymap table (design.md §16);
     // it uses the services of `api`, which outlives it.
@@ -270,6 +273,10 @@ int main(int argc, char* argv[]) {
         shell.emplace(*engine.rootObjects().first(), *loader, *api,
                       roost::protocol::SocketPath(),
                       launcher ? &*launcher : nullptr);
+        if (auto* window = engine.rootObjects().first()->findChild<QObject*>(
+                QStringLiteral("settingsWindow"))) {
+            settingsPages.emplace(*window, *loader);
+        }
         if (parser.isSet(devOption)) {
             watcher.emplace(*loader);
         }
