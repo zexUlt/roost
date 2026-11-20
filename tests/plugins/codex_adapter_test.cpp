@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -67,6 +68,11 @@ int AppServer() {
                 return 1;
             }
         }
+    }
+    if (scenario == "home" &&
+        QFileInfo(QDir::currentPath()).canonicalFilePath() !=
+            QFileInfo(qEnvironmentVariable("HOME")).canonicalFilePath()) {
+        return 1;
     }
     const QDir project(qEnvironmentVariable("ROOST_TEST_PROJECT"));
     const QString failed = project.filePath("bad-page-sent");
@@ -198,6 +204,7 @@ private:
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("ROOST_TEST_PROJECT", WorkDirectory());
+        environment.insert("HOME", Project_.filePath("home"));
         environment.insert("ROOST_TEST_SCENARIO", scenario);
         environment.insert("ROOST_CODEX_EXECUTABLE", program);
         Process_.setProcessEnvironment(environment);
@@ -253,6 +260,9 @@ private slots:
     void init() {
         QVERIFY(Project_.isValid());
         QVERIFY(QDir(Project_.path()).mkpath("project with spaces"));
+        // A test may leave a file in its place.
+        QFile::remove(Project_.filePath("home"));
+        QVERIFY(QDir(Project_.path()).mkpath("home"));
         Events_.clear();
     }
 
@@ -386,6 +396,32 @@ private slots:
             qScopeGuard([oldUser] { ::signal(SIGUSR1, oldUser); });
 
         QVERIFY(Launch("signals", QCoreApplication::applicationFilePath()));
+        QCOMPARE(Call("agent.listSessions").value("result").toArray().size(),
+                 2);
+    }
+
+    void AppServerRunsInTheHomeDirectory() {
+        QVERIFY(Launch("home", QCoreApplication::applicationFilePath()));
+        QCOMPARE(Call("agent.listSessions").value("result").toArray().size(),
+                 2);
+    }
+
+    // A HOME that is no directory leaves the directory as it was before: the
+    // app server starts anyway.
+    void AppServerStartsWhenTheHomeIsNotADirectory_data() {
+        QTest::addColumn<bool>("isFile");
+        QTest::newRow("missing") << false;
+        QTest::newRow("file") << true;
+    }
+
+    void AppServerStartsWhenTheHomeIsNotADirectory() {
+        QFETCH(bool, isFile);
+        QVERIFY(QDir(Project_.filePath("home")).removeRecursively());
+        if (isFile) {
+            QFile file(Project_.filePath("home"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        QVERIFY(Launch("plain", QCoreApplication::applicationFilePath()));
         QCOMPARE(Call("agent.listSessions").value("result").toArray().size(),
                  2);
     }

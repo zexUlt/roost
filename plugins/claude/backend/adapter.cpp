@@ -217,6 +217,12 @@ void Adapter::Poll() {
     process->setArguments({QStringLiteral("agents"), QStringLiteral("--json"),
                            QStringLiteral("--all")});
     process->setStandardInputFile(QProcess::nullDevice());
+    // roostd starts the backend in the plugin directory, inside the installed
+    // package. claude treats its working directory as a project, so it runs
+    // from the home directory; --all lists every session from anywhere.
+    if (const QString home = plugin::HomeDirectory(); !home.isEmpty()) {
+        process->setWorkingDirectory(home);
+    }
     // A group of its own to kill on a timeout, and default signal handlers,
     // as roostd gives its backends.
     process->setUnixProcessParameters(
