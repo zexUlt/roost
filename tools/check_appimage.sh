@@ -187,8 +187,9 @@ else
 fi
 
 # --- icon ------------------------------------------------------------------
-# linuxdeploy puts the icon of the desktop file at the root of the AppDir and
-# links .DirIcon to it: file managers and the AppImage tools show that.
+# linuxdeploy links the hicolor icon nearest to 64 px to the root of the
+# AppDir, and appimagetool links .DirIcon to it from the Icon= of the desktop
+# file: file managers and the AppImage tools show that.
 if [ -s "$appdir/.DirIcon" ] && [ -s "$appdir/roost.png" ] &&
     [ "$(head -c8 "$appdir/.DirIcon" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]; then
     ok ".DirIcon is a PNG (roost.png)"
