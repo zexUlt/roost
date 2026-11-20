@@ -8,7 +8,13 @@
       { "id": "shell.reportBug", "title": "Report a bug" },
       { "id": "shell.palette", "title": "Command palette" },
       { "id": "shell.settings", "title": "Open the settings" },
-      { "id": "terminal.copy", "title": "Copy the selection of the terminal" }
+      { "id": "terminal.copy", "title": "Copy the selection of the terminal" },
+      { "id": "layout.splitRight", "title": "Split the panel to the right" },
+      { "id": "layout.splitDown", "title": "Split the panel down" },
+      { "id": "layout.intoTabs", "title": "Move the panel into tabs" },
+      { "id": "layout.outOfTabs", "title": "Move the panel out of tabs" },
+      { "id": "layout.close", "title": "Close the panel" },
+      { "id": "layout.editLinks", "title": "Edit the links of the panel" }
     ],
     "keybindings": [
       { "command": "shell.focusList", "key": "Ctrl+\\" },

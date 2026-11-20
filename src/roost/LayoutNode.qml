@@ -83,6 +83,18 @@ Item {
             panelType: root.node.panel
             resolveSource: instance => root.view.slotOf(instance)
 
+            // The keyboard is where the layout commands act, and the menu
+            // takes it first: a right click chooses the panel.
+            onActiveFocusChanged: {
+                if (slot.activeFocus) {
+                    root.view.lastFocused = slot.instanceId;
+                }
+            }
+            onMenuRequested: (x, y) => {
+                slot.forceActiveFocus();
+                root.view.openMenu(slot, x, y);
+            }
+
             // The first leaf takes the keyboard at start, once the window has
             // none in it. (Not by `focus`: a Loader is a focus scope, and the
             // leaf and the nodes above it are made one after another.)

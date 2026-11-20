@@ -498,6 +498,18 @@ target_compile_definitions(layout_restore_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_restore_test roostd fake_tui claude-adapter sessions_qml)
 
+# Editing the layout: split, tabs, close and links, as pure edits and through
+# the window; every edit is one write of the layout document.
+roost_add_qt_test(layout_edit_test roost/layout_edit_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_edit_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_edit_test roostd fake_tui claude-adapter sessions_qml)
+
 # terminal.copy with two terminal panels runs in the one that has the focus.
 roost_add_qt_test(terminal_copy_focus_test roost/terminal_copy_focus_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin

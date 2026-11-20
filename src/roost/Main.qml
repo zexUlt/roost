@@ -38,6 +38,22 @@ ApplicationWindow {
     signal slotCreated(var slot)
     // The user finished resizing a split (path, sizes); C++ saves it.
     signal splitResized(var path, var sizes)
+    // An edit of the layout (action, args), see LayoutView; C++ applies it.
+    signal layoutEdit(string action, var args)
+    // The panel types the layout can be split with; written by C++.
+    property var panelTypes: []
+    // Those of them that have inputs, so links to edit; written by C++.
+    property var panelsWithInputs: []
+
+    // C++ calls these: the keyboard to a panel after an edit, and the link
+    // editor with the state of a panel.
+    function focusInstance(instance) {
+        layoutView.focusInstance(instance);
+    }
+
+    function openLinkEditor(state) {
+        layoutView.openLinkEditor(state);
+    }
 
     width: 960
     height: 600
@@ -234,6 +250,9 @@ ApplicationWindow {
             tree: root.layoutTree
             onSlotCreated: slot => root.slotCreated(slot)
             onSplitResized: (path, sizes) => root.splitResized(path, sizes)
+            panelTypes: root.panelTypes
+            panelsWithInputs: root.panelsWithInputs
+            onLayoutEdit: (action, args) => root.layoutEdit(action, args)
         }
 
         Rectangle {

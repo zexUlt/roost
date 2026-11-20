@@ -16,6 +16,7 @@
 
 #include "core/protocol.hpp"
 #include "core/version.hpp"
+#include "roost/layout_commands.hpp"
 
 namespace roost {
 
@@ -109,18 +110,6 @@ void CollectLeaves(const LayoutNode& node,
     }
 }
 
-const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance) {
-    if (node.Kind == ELayoutNodeKind::Leaf) {
-        return node.Instance == instance ? &node : nullptr;
-    }
-    for (const LayoutNode& child : node.Children) {
-        if (const LayoutNode* found = FindLeaf(child, instance)) {
-            return found;
-        }
-    }
-    return nullptr;
-}
-
 // The tree as the layout view takes it (LayoutView.qml): a size is a number of
 // pixels, 0 for the rest.
 QVariant NodeToVariant(const LayoutNode& node) {
@@ -161,6 +150,13 @@ QVariantList AsList(const QVariant& value) {
         return value.value<QJSValue>().toVariant().toList();
     }
     return value.toList();
+}
+
+QVariantMap AsMap(const QVariant& value) {
+    if (value.metaType() == QMetaType::fromType<QJSValue>()) {
+        return value.value<QJSValue>().toVariant().toMap();
+    }
+    return value.toMap();
 }
 
 QQuickItem* AsItem(const QVariant& value) {
@@ -216,6 +212,8 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
                 SLOT(OnSlotCreated(QVariant)));
         connect(&Root_, SIGNAL(splitResized(QVariant, QVariant)), this,
                 SLOT(OnSplitResized(QVariant, QVariant)));
+        connect(&Root_, SIGNAL(layoutEdit(QString, QVariant)), this,
+                SLOT(OnLayoutEdit(QString, QVariant)));
     } else {
         for (auto* item : root.findChildren<QQuickItem*>("panelSlot")) {
             Slots_.append({.Item = item,
@@ -405,6 +403,7 @@ Shell::Slot* Shell::SlotOf(const QString& instance) {
 }
 
 void Shell::OnPanelTypesChanged() {
+    PublishPanelTypes();
     TrySettle();
     Refill();
     UpdateLinks();
@@ -687,13 +686,7 @@ void Shell::TrySettle() {
         !Api_.Plugins().IsLoaded()) {
         return;
     }
-    LayoutKnownPanels known;
-    for (const QString& type : Loader_.PanelTypes()) {
-        if (const auto info = Loader_.Info(type)) {
-            known.insert(type,
-                         {.Inputs = info->Inputs, .Outputs = info->Outputs});
-        }
-    }
+    const LayoutKnownPanels known = KnownPanels();
     // No document is the default layout, and says nothing.
     LayoutParseResult parsed{
         .Tree = DefaultLayout(), .Problems = {}, .Writable = true};
@@ -761,17 +754,163 @@ void Shell::PublishLayout() {
 }
 
 void Shell::SaveLayout() {
-    if (!LayoutSettled_ || !LayoutWritable_) {
+    if (!LayoutSettled_) {
+        return;
+    }
+    if (!LayoutWritable_) {
+        // The edit stays in the window; the user is told it will not last.
+        WriteProblem_ = QStringLiteral(
+            "the stored layout is not writable: edits are not saved");
+        UpdateProblems();
         return;
     }
     Api_.Store()
         .Patch(QStringLiteral("layout"), LayoutPatch(Layout_))
-        .then(this, [](rpc::Result answer) {
+        .then(this, [this](rpc::Result answer) {
+            const QString problem =
+                answer ? QString()
+                       : QStringLiteral("the layout was not saved: %1")
+                             .arg(answer.error().Message);
             if (!answer) {
                 qWarning("roost: the layout was not saved: %s",
                          qPrintable(answer.error().Message));
             }
+            if (problem != WriteProblem_) {
+                WriteProblem_ = problem;
+                UpdateProblems();
+            }
         });
+}
+
+LayoutKnownPanels Shell::KnownPanels() const {
+    LayoutKnownPanels known;
+    for (const QString& type : Loader_.PanelTypes()) {
+        if (const auto info = Loader_.Info(type)) {
+            known.insert(type,
+                         {.Inputs = info->Inputs, .Outputs = info->Outputs});
+        }
+    }
+    return known;
+}
+
+void Shell::PublishPanelTypes() {
+    if (!LayoutMode_) {
+        return;
+    }
+    const QStringList types = Loader_.PanelTypes();
+    if (Root_.property("panelTypes").toStringList() != types) {
+        Root_.setProperty("panelTypes", types);
+    }
+    QStringList withInputs;
+    for (const QString& type : types) {
+        if (const auto info = Loader_.Info(type);
+            info && !info->Inputs.isEmpty()) {
+            withInputs.append(type);
+        }
+    }
+    if (Root_.property("panelsWithInputs").toStringList() != withInputs) {
+        Root_.setProperty("panelsWithInputs", withInputs);
+    }
+}
+
+void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
+    const QVariantMap map = AsMap(args);
+    const QString instance = map.value(QStringLiteral("instance")).toString();
+    if (!LayoutSettled_) {
+        EditProblem_ = QStringLiteral("the layout is not loaded yet");
+        UpdateProblems();
+        return;
+    }
+    if (instance.isEmpty()) {
+        EditProblem_ = QStringLiteral("no panel to edit");
+        UpdateProblems();
+        return;
+    }
+    const LayoutKnownPanels known = KnownPanels();
+    const auto text = [&map](const char* key) {
+        return map.value(QLatin1String(key)).toString();
+    };
+    LayoutEdit edit;
+    if (action == QLatin1String("editLinks")) {
+        if (FindLeaf(Layout_.Root, instance) == nullptr) {
+            EditProblem_ = QStringLiteral("there is no panel %1").arg(instance);
+            UpdateProblems();
+            return;
+        }
+        // A panel with no inputs has no links to edit: nothing to open.
+        if (LinkChoices(Layout_, instance, known).empty()) {
+            return;
+        }
+        EditProblem_.clear();
+        UpdateProblems();
+        OpenLinkEditor(instance);
+        return;
+    }
+    if (action == QLatin1String("splitRight") ||
+        action == QLatin1String("splitDown")) {
+        edit =
+            SplitPanel(Layout_, instance, action == QLatin1String("splitRight"),
+                       text("panel"), known);
+    } else if (action == QLatin1String("intoTabs")) {
+        edit = MoveIntoTabs(Layout_, instance);
+    } else if (action == QLatin1String("outOfTabs")) {
+        edit = MoveOutOfTabs(Layout_, instance);
+    } else if (action == QLatin1String("close")) {
+        edit = ClosePanel(Layout_, instance);
+    } else if (action == QLatin1String("setLink")) {
+        edit = text("from").isEmpty()
+                   ? RemoveLink(Layout_, instance, text("input"))
+                   : SetLink(Layout_, instance, text("input"), text("from"),
+                             text("output"), known);
+    } else {
+        EditProblem_ = QStringLiteral("unknown layout edit %1").arg(action);
+        UpdateProblems();
+        return;
+    }
+    EditProblem_ = edit.Refused;
+    if (edit.Refused.isEmpty() && edit.Changed) {
+        ApplyLayout(edit.Tree);
+        SaveLayout();
+    }
+    UpdateProblems();
+    if (action == QLatin1String("setLink")) {
+        OpenLinkEditor(instance);
+    }
+    if (!edit.Focus.isEmpty() && edit.Refused.isEmpty() &&
+        Root_.metaObject()->indexOfMethod("focusInstance(QVariant)") >= 0) {
+        QMetaObject::invokeMethod(&Root_, "focusInstance",
+                                  Q_ARG(QVariant, edit.Focus));
+    }
+}
+
+void Shell::OpenLinkEditor(const QString& instance) {
+    const LayoutNode* leaf = FindLeaf(Layout_.Root, instance);
+    if (leaf == nullptr ||
+        Root_.metaObject()->indexOfMethod("openLinkEditor(QVariant)") < 0) {
+        return;
+    }
+    QVariantList inputs;
+    for (const LayoutInputChoices& input :
+         LinkChoices(Layout_, instance, KnownPanels())) {
+        QVariantList choices;
+        for (const LayoutLinkChoice& choice : input.Choices) {
+            choices.append(QVariantMap{
+                {"from", choice.From},
+                {"output", choice.Output},
+                {"label",
+                 QStringLiteral("%1.%2").arg(choice.From, choice.Output)}});
+        }
+        inputs.append(QVariantMap{
+            {"input", input.Input},
+            {"type", input.Type},
+            {"from", input.Current ? input.Current->From : QString()},
+            {"output", input.Current ? input.Current->Output : QString()},
+            {"problem", input.Current ? input.Current->Problem : QString()},
+            {"choices", choices}});
+    }
+    const QVariant state = QVariantMap{
+        {"instance", instance}, {"panel", leaf->Panel}, {"inputs", inputs}};
+    QMetaObject::invokeMethod(&Root_, "openLinkEditor", Q_ARG(QVariant, state));
 }
 
 void Shell::OnRefused(const rpc::Error& error) {
@@ -879,6 +1018,12 @@ void Shell::UpdateProblems() {
         problems.append(slot.LinkProblems);
     }
     problems.append(LayoutProblems_);
+    if (!EditProblem_.isEmpty()) {
+        problems.append(EditProblem_);
+    }
+    if (!WriteProblem_.isEmpty()) {
+        problems.append(WriteProblem_);
+    }
     if (Root_.property("problems").toStringList() != problems) {
         Root_.setProperty("problems", problems);
     }
