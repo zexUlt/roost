@@ -38,9 +38,9 @@ QString UserAgentIconsDirectory() {
 }
 
 bool IsAgentIconName(const QString& agent) {
-    static const QRegularExpression plain(
+    static const QRegularExpression PATTERN(
         QStringLiteral("\\A[A-Za-z0-9._-]+\\z"));
-    return plain.match(agent).hasMatch() && agent != QStringLiteral(".") &&
+    return PATTERN.match(agent).hasMatch() && agent != QStringLiteral(".") &&
            agent != QStringLiteral("..");
 }
 
