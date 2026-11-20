@@ -71,7 +71,7 @@ Item {
             objectName: "panelSlot"
             instanceId: root.node.instance
             panelType: root.node.panel
-                resolveSource: instance => root.view.slotOf(instance)
+            resolveSource: instance => root.view.slotOf(instance)
 
             // The first leaf takes the keyboard at start, once the window has
             // none in it. (Not by `focus`: a Loader is a focus scope, and the
