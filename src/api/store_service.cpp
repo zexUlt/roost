@@ -12,6 +12,7 @@ namespace {
 
 const QString PLUGIN = QStringLiteral("plugin");
 const QString DOCUMENT = QStringLiteral("document");
+const QString PATCH = QStringLiteral("patch");
 
 }  // namespace
 
@@ -62,6 +63,15 @@ QFuture<rpc::Result> StoreService::Set(const QString& plugin,
     }
     return Io_.Request(QStringLiteral("store.set"),
                        QJsonObject{{PLUGIN, plugin}, {DOCUMENT, document}});
+}
+
+QFuture<rpc::Result> StoreService::Patch(const QString& plugin,
+                                         const QJsonValue& patch) {
+    if (!CheckThread(*this, "StoreService::Patch")) {
+        return rpc::Ready(std::unexpected(WrongThread()));
+    }
+    return Io_.Request(QStringLiteral("store.patch"),
+                       QJsonObject{{PLUGIN, plugin}, {PATCH, patch}});
 }
 
 bool StoreService::IsWarm(const QString& plugin) const {

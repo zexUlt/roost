@@ -90,6 +90,9 @@ QtObject {
     function storeSet(plugin, document) {
         Roost.store.set(plugin, document, function (e, r) { rec("set", e, r) })
     }
+    function storePatch(plugin, patch) {
+        Roost.store.patch(plugin, patch, function (e, r) { rec("patch", e, r) })
+    }
     // Whether the callback ran inside the call itself.
     function runsInside(method, params) {
         var hit = false
@@ -405,6 +408,46 @@ private slots:
                  QJsonValue(QJsonObject{{"document", Doc(2)}}));
     }
 
+    void ALayoutPatchOfAnotherWindowIsHeardAsTheWholeDocument() {
+        QVERIFY(Setup());
+        // The window reads layout, so that it is kept fresh, and listens.
+        Invoke("storeGet", {"layout"});
+        QVERIFY2(!WaitForTag("get").contains("timedOut"), "no answer");
+        Invoke("storeWatch");
+
+        const auto lastChanged = [this] {
+            QJsonObject found;
+            for (const QJsonObject& record : Got()) {
+                if (record.value("tag").toString() == "changed") {
+                    found = record;
+                }
+            }
+            return found;
+        };
+        const auto second = ConnectApi();
+        QVERIFY(second);
+        const QJsonObject first{{"version", 1}, {"root", "a"}};
+        QVERIFY(Wait(second->Store().Set("layout", first)));
+        QTRY_COMPARE_WITH_TIMEOUT(CountTag("changed"), 1, TIMEOUT_MS);
+        QVERIFY(
+            Wait(second->Store().Patch("layout", QJsonObject{{"root", "b"}})));
+        QTRY_COMPARE_WITH_TIMEOUT(CountTag("changed"), 2, TIMEOUT_MS);
+        const QJsonObject changed = lastChanged();
+        QCOMPARE(changed.value("err").toString(), QString("layout"));
+        QCOMPARE(changed.value("res"),
+                 QJsonValue(QJsonObject{{"version", 1}, {"root", "b"}}));
+
+        // The window's own patch, from QML, is a patch too.
+        Invoke("storePatch", {"layout", QJsonObject{{"extra", true}}});
+        const QJsonObject patched = WaitForTag("patch");
+        QVERIFY2(!patched.contains("timedOut"), "no answer");
+        QVERIFY(patched.value("err").isNull());
+        QTRY_COMPARE_WITH_TIMEOUT(CountTag("changed"), 3, TIMEOUT_MS);
+        QCOMPARE(lastChanged().value("res"),
+                 QJsonValue(QJsonObject{
+                     {"version", 1}, {"root", "b"}, {"extra", true}}));
+    }
+
     void AValueIsStoredAsJsonStringifyHasIt() {
         QVERIFY(Setup());
         Invoke("setConverted", {"fixture"});
@@ -534,6 +577,8 @@ private slots:
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},
+            {"store.patch",
+             {{"plugin", "fixture"}, {"patch", QJsonObject{{"n", 1}}}}},
             {"store.set", {{"plugin", "fixture"}, {"document", document}}},
         };
         const QStringList methods = Api_->Dispatch().Methods();

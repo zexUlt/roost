@@ -305,8 +305,10 @@ private slots:
             QTest::addRow("id %s", id)
                 << Json(Minimal(QString::fromUtf8(id))) << "\"id\"";
         }
-        QTest::newRow("reserved id keymap")
-            << Json(Minimal("keymap")) << "\"id\"";
+        for (const char* id : {"keymap", "layout", "settings"}) {
+            QTest::addRow("reserved id %s", id)
+                << Json(Minimal(QString::fromUtf8(id))) << "\"id\"";
+        }
         QTest::newRow("id as number")
             << Json(With(Minimal(), "id", 1)) << "\"id\"";
 

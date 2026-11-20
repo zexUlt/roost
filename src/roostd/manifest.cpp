@@ -293,7 +293,8 @@ std::expected<PluginManifest, QString> ParseManifest(const QByteArray& json,
     if (Store::IsReservedPluginId(id.toString())) {
         return std::unexpected(
             QStringLiteral("\"id\" \"%1\" is reserved: the state directory "
-                           "keeps the user's file of that name")
+                           "keeps a file of that name that is not a "
+                           "plugin's")
                 .arg(id.toString()));
     }
     manifest.Id = id.toString();

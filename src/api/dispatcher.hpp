@@ -24,14 +24,16 @@ class StoreService;
 // rpc::Dispatcher's method table without the bytes: a name, a JSON value of
 // params, a future of rpc::Result.
 //
-// Exposed: sessions.list, plugins.list, store.get, store.set, commands.run,
-// bus.publish. Not exposed: hello and session.open, session.resize and
-// session.close, which belong to the window itself. Subscribing takes a
-// callback, so it is a pair of methods here and not a by-name call.
+// Exposed: sessions.list, plugins.list, store.get, store.set, store.patch,
+// commands.run, bus.publish. Not exposed: hello and session.open,
+// session.resize and session.close, which belong to the window itself.
+// Subscribing takes a callback, so it is a pair of methods here and not a
+// by-name call.
 //
 // The methods that have a cache go through its service: sessions.list always
 // asks roostd and refreshes the rows, store.get answers from the documents
-// that are warm, store.set leaves the cache to the event that follows it.
+// that are warm, store.set and store.patch leave the cache to the event that
+// follows them.
 //
 // Use it from the GUI thread.
 class Dispatcher : public QObject {

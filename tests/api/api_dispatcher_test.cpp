@@ -89,7 +89,8 @@ private slots:
         Api_ = std::make_unique<api::Api>();
         QCOMPARE(Api_->Dispatch().Methods(),
                  (QStringList{"bus.publish", "commands.run", "plugins.list",
-                              "sessions.list", "store.get", "store.set"}));
+                              "sessions.list", "store.get", "store.patch",
+                              "store.set"}));
     }
 
     void EveryMethodRoundTripsInTheGuiThread() {
@@ -105,6 +106,8 @@ private slots:
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},
+            {"store.patch",
+             {{"plugin", "fixture"}, {"patch", QJsonObject{{"n", 1}}}}},
             {"store.set", {{"plugin", "fixture"}, {"document", document}}},
         };
         const QStringList methods = Api_->Dispatch().Methods();

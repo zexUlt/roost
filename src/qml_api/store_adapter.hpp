@@ -12,8 +12,8 @@
 
 namespace roost {
 
-// Roost.store: store.get and store.set of the dispatcher, and the changes of
-// the documents that have been read.
+// Roost.store: store.get, store.set and store.patch of the dispatcher, and the
+// changes of the documents that have been read.
 class StoreAdapter : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -28,6 +28,12 @@ public:
     // checks. Whoever writes, `changed` follows.
     Q_INVOKABLE void set(const QString& plugin, const QJSValue& document,
                          const QJSValue& callback = QJSValue());
+
+    // callback(error, null); the patch is a JSON object that is merged into
+    // the document (RFC 7386: a null removes a key, an object is merged, the
+    // rest replaces), which roostd checks. `changed` follows.
+    Q_INVOKABLE void patch(const QString& plugin, const QJSValue& patch,
+                           const QJSValue& callback = QJSValue());
 
 signals:
     // The document of a plugin that has been read was replaced, by this window
