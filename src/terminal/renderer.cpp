@@ -85,9 +85,11 @@ bool SameStyle(const Run& run, const Run& other) {
            run.Strikethrough == other.Strikethrough;
 }
 
-// Whether the face the font resolves to is fixed pitch. The platform's own
-// flag is not enough: offscreen, the fixed font can resolve to a proportional
-// face that still claims to be fixed, so the advances are compared as well.
+}  // namespace
+
+// The platform's own flag is not enough: offscreen, the fixed font can resolve
+// to a proportional face that still claims to be fixed, so the advances are
+// compared as well.
 bool IsFixedPitch(const QFont& font) {
     if (!QFontInfo(font).fixedPitch()) {
         return false;
@@ -95,8 +97,6 @@ bool IsFixedPitch(const QFont& font) {
     const QFontMetricsF metrics(font);
     return metrics.horizontalAdvance(u'i') == metrics.horizontalAdvance(u'W');
 }
-
-}  // namespace
 
 CellMetrics MeasureCell(const QFont& font) {
     const QFontMetricsF metrics(font);

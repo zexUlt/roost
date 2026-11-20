@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include <cmath>
 #include <optional>
 
 namespace roost {
@@ -22,6 +23,23 @@ std::optional<QJsonObject> ReadTokens(const QString& path) {
         return std::nullopt;
     }
     return document.object();
+}
+
+// The size in `value` (named `key` in a problem), or 0 and a problem.
+double ReadFontSize(const QJsonValue& value, const QString& key,
+                    QStringList& problems) {
+    const double size = value.toDouble(0);
+    if (value.isDouble() && std::isfinite(size) && size >= MIN_FONT_SIZE &&
+        size <= MAX_FONT_SIZE) {
+        return size;
+    }
+    problems.append(
+        QStringLiteral("%1 must be a number from %2 to %3; the default size "
+                       "is used")
+            .arg(key)
+            .arg(MIN_FONT_SIZE)
+            .arg(MAX_FONT_SIZE));
+    return 0;
 }
 
 }  // namespace
@@ -74,6 +92,39 @@ ResolvedTerminalColors ResolveTerminalColors(const QJsonObject& tokens) {
                 .Fallback = false};
     }
     return {.Colors = *fallback, .Problem = problem, .Fallback = true};
+}
+
+FontSettings ResolveFontSettings(const QJsonObject& settings) {
+    FontSettings fonts;
+    const QJsonValue terminal = settings.value(QStringLiteral("terminalFont"));
+    if (terminal.isObject()) {
+        const QJsonObject object = terminal.toObject();
+        const QJsonValue family = object.value(QStringLiteral("family"));
+        if (family.isString() && !family.toString().trimmed().isEmpty()) {
+            fonts.TerminalFamily = family.toString().trimmed();
+        } else if (!family.isUndefined()) {
+            fonts.Problems.append(
+                QStringLiteral("settings.terminalFont.family must be a font "
+                               "family name; the system monospace font is "
+                               "used"));
+        }
+        const QJsonValue size = object.value(QStringLiteral("size"));
+        if (!size.isUndefined()) {
+            fonts.TerminalSize =
+                ReadFontSize(size, QStringLiteral("settings.terminalFont.size"),
+                             fonts.Problems);
+        }
+    } else if (!terminal.isUndefined()) {
+        fonts.Problems.append(
+            QStringLiteral("settings.terminalFont must be an object with "
+                           "family and size; the defaults are used"));
+    }
+    const QJsonValue ui = settings.value(QStringLiteral("uiFontSize"));
+    if (!ui.isUndefined()) {
+        fonts.UiSize = ReadFontSize(ui, QStringLiteral("settings.uiFontSize"),
+                                    fonts.Problems);
+    }
+    return fonts;
 }
 
 }  // namespace roost

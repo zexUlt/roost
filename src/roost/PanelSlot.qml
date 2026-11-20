@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Roost.Api
 
 // A place of the window's layout that shows one panel of a plugin. The shell
@@ -29,7 +30,7 @@ FocusScope {
         panel.focus = true;
     }
 
-    Text {
+    Label {
         objectName: "placeholderText"
         anchors.fill: parent
         anchors.margins: 12

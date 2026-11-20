@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtCore
 import Roost.Api
 import RoostSessions
@@ -933,14 +934,14 @@ FocusScope {
             width: parent.width
             spacing: 8
 
-            Text {
+            Label {
                 objectName: "sessionsTitle"
                 color: root.textColor
                 font.bold: true
                 text: sessionsList.viewArchive ? "Archive" : "Sessions"
             }
 
-            Text {
+            Label {
                 objectName: "sessionsQuery"
                 visible: sessionsList.query !== ""
                 // The query takes what the title leaves.
@@ -1088,7 +1089,7 @@ FocusScope {
             // the number of its sessions, and a mark of a folded one; at the
             // right the marks of a pinned category and of the unread sessions
             // of a folded one.
-            Text {
+            Label {
                 id: headerText
 
                 objectName: "headerTitle"
@@ -1113,14 +1114,14 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 8
 
-                Text {
+                Label {
                     objectName: "pinMark"
                     visible: row.isHeader && row.model.pinned
                     color: Roost.theme.textSecondary
                     text: "▲"
                 }
 
-                Text {
+                Label {
                     objectName: "headerUnread"
                     visible: row.isHeader && row.model.folded && row.model.unreadCount > 0
                     color: Roost.theme.accent
@@ -1128,7 +1129,7 @@ FocusScope {
                 }
             }
 
-            Text {
+            Label {
                 objectName: "unreadDot"
                 visible: !row.isHeader && row.model.unread
                 x: 10
@@ -1171,7 +1172,7 @@ FocusScope {
                 anchors.rightMargin: 8
                 anchors.topMargin: 6
 
-                Text {
+                Label {
                     id: titleText
 
                     objectName: "sessionTitle"
@@ -1183,7 +1184,7 @@ FocusScope {
                     text: row.isHeader ? "" : row.model.title
                 }
 
-                Text {
+                Label {
                     id: detailText
 
                     objectName: "sessionDetail"
@@ -1212,7 +1213,7 @@ FocusScope {
         }
     }
 
-    Text {
+    Label {
         objectName: "sessionsStatus"
         anchors.fill: list
         anchors.margins: 12
@@ -1235,7 +1236,7 @@ FocusScope {
     // An agent whose adapter did not answer with a list: the status above does
     // not say "No sessions." while there is such an agent, so a missing
     // `claude` does not look like an empty list.
-    Text {
+    Label {
         id: unavailable
 
         objectName: "sessionsUnavailable"
@@ -1264,7 +1265,7 @@ FocusScope {
         spacing: 2
 
         // A list that cannot be written says why; the list itself works.
-        Text {
+        Label {
             objectName: "sessionsProblem"
             width: parent.width
             leftPadding: 8
@@ -1277,7 +1278,7 @@ FocusScope {
         }
 
         // A command that waits for y.
-        Text {
+        Label {
             objectName: "sessionsConfirm"
             textFormat: Text.PlainText
             width: parent.width
@@ -1304,7 +1305,7 @@ FocusScope {
                 width: parent.width
                 height: promptInput.implicitHeight + 4
 
-                Text {
+                Label {
                     id: promptLabel
 
                     objectName: "sessionsPromptLabel"
@@ -1325,6 +1326,9 @@ FocusScope {
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     clip: true
+                    // A TextInput does not inherit the font of the window; the
+                    // label beside it does.
+                    font: promptLabel.font
                     color: root.textColor
                     selectionColor: Roost.theme.selection
                     selectByMouse: true
@@ -1369,7 +1373,7 @@ FocusScope {
             }
 
             // The categories the digits pick.
-            Text {
+            Label {
                 objectName: "sessionsPromptHint"
                 width: parent.width
                 leftPadding: 8
@@ -1382,7 +1386,7 @@ FocusScope {
         }
 
         // The outcome of a command, for `noticeMs`.
-        Text {
+        Label {
             objectName: "sessionsNotice"
             textFormat: Text.PlainText
             width: parent.width
@@ -1412,34 +1416,34 @@ FocusScope {
             anchors.margins: 12
             spacing: 10
 
-            Text {
+            Label {
                 color: root.textColor
                 font.bold: true
                 text: "Keyboard shortcuts"
             }
 
-            Text {
+            Label {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap
                 text: "Move\n↑ ↓ j k   move the cursor\nEnter   open the session, unfold a folded category"
             }
 
-            Text {
+            Label {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap
                 text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor\n/   search, live (Enter keeps it, Esc clears it)\nc   category of the session under the cursor (1-9 picks a known one, empty clears)\ne   rename the session under the cursor (empty restores the agent's title)"
             }
 
-            Text {
+            Label {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap
                 text: "Sessions\nd   delete the session under the cursor (asks)\nx   archive and stop it (asks); in the archive: restore it\nr   respawn it (asks)\nShift+r   respawn all sessions (asks)\nn   new session: Task, then Category"
             }
 
-            Text {
+            Label {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap

@@ -1,5 +1,7 @@
 #include "qml_api/theme.hpp"
 
+#include <QFontDatabase>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QtLogging>
 
@@ -7,6 +9,7 @@
 #include <array>
 
 #include "core/theme_source.hpp"
+#include "terminal/renderer.hpp"
 
 namespace roost {
 
@@ -21,7 +24,12 @@ struct Token {
 
 }  // namespace
 
-Theme::Theme(QObject* parent) : QObject(parent) {
+Theme::Theme(QObject* parent)
+    : QObject(parent),
+      DefaultTerminalFont_(DefaultTerminalFont()),
+      DefaultUiFont_(QGuiApplication::font()),
+      TerminalFont_(DefaultTerminalFont_),
+      UiFont_(DefaultUiFont_) {
     const ResolvedTheme theme = ResolveTheme({});
     if (!theme.Problem.isEmpty()) {
         qWarning("roost: %s", qUtf8Printable(theme.Problem));
@@ -37,7 +45,53 @@ QString Theme::follow(const QJsonObject& settings) {
         qWarning("roost: %s", qUtf8Printable(theme.Problem));
     }
     load(theme.Tokens);
+    followFonts(settings);
     return theme.Id;
+}
+
+void Theme::followFonts(const QJsonObject& settings) {
+    const FontSettings wanted = ResolveFontSettings(settings);
+    QStringList problems = wanted.Problems;
+
+    QFont terminal = DefaultTerminalFont_;
+    if (wanted.TerminalSize > 0) {
+        terminal.setPointSizeF(wanted.TerminalSize);
+    }
+    if (!wanted.TerminalFamily.isEmpty()) {
+        // A family that is not installed is not tried as a font: Qt would
+        // answer with a substitute, which may well be a monospace one.
+        QFont named(wanted.TerminalFamily);
+        named.setPointSizeF(terminal.pointSizeF());
+        if (QFontDatabase::hasFamily(wanted.TerminalFamily) &&
+            IsFixedPitch(named)) {
+            terminal = named;
+        } else {
+            problems.append(
+                QStringLiteral("settings.terminalFont.family \"%1\" is not "
+                               "an installed monospace font; the system "
+                               "monospace font is used")
+                    .arg(wanted.TerminalFamily));
+        }
+    }
+    QFont ui = DefaultUiFont_;
+    if (wanted.UiSize > 0) {
+        ui.setPointSizeF(wanted.UiSize);
+    }
+
+    const bool terminalDiffers = terminal != TerminalFont_;
+    const bool uiDiffers = ui != UiFont_;
+    const bool problemsDiffer = problems != FontProblems_;
+    if (problemsDiffer) {
+        for (const QString& problem : problems) {
+            qWarning("roost: %s", qUtf8Printable(problem));
+        }
+    }
+    TerminalFont_ = terminal;
+    UiFont_ = ui;
+    FontProblems_ = problems;
+    if (terminalDiffers || uiDiffers || problemsDiffer) {
+        emit changed();
+    }
 }
 
 bool Theme::load(const QJsonObject& tokens) {

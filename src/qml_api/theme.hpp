@@ -2,9 +2,11 @@
 
 #include <QtQml/qqmlregistration.h>
 #include <QColor>
+#include <QFont>
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 
 #include "core/terminal_theme.hpp"
@@ -22,6 +24,12 @@ namespace roost {
 // current one, and follow() takes the theme that a settings document names
 // (both C++ only). The terminal tokens (terminalForeground, ...) are not
 // properties: the terminals take them as terminalColors().
+//
+// The fonts are tokens too, but they come from the settings and not from a
+// theme: terminalFont (the terminals' font) and uiFont (the font of the
+// window), both `font` values. follow() reads settings.terminalFont
+// {family, size} and settings.uiFontSize; what they leave out is the system
+// monospace font at its size of today and the application's default font.
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -53,6 +61,16 @@ class Theme : public QObject {
     Q_PROPERTY(QColor stateWorking READ stateWorking NOTIFY changed)
     Q_PROPERTY(QColor stateBlocked READ stateBlocked NOTIFY changed)
     Q_PROPERTY(QColor stateFailed READ stateFailed NOTIFY changed)
+    // The font of the terminals; the default is DefaultTerminalFont().
+    Q_PROPERTY(QFont terminalFont READ terminalFont NOTIFY changed)
+    // The font of the window: the application's default font, at the size of
+    // settings.uiFontSize if there is one. The window (Main.qml) takes it as
+    // its `font`, which the Controls and the Labels below it inherit; a plain
+    // Text does not, so the panels use Label.
+    Q_PROPERTY(QFont uiFont READ uiFont NOTIFY changed)
+    // What is wrong with the font settings, one line each; empty when
+    // nothing is. The window shows them in the strip of problems.
+    Q_PROPERTY(QStringList fontProblems READ fontProblems NOTIFY changed)
     // The colours of the categories, eight, indexed by the model's colorIndex.
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
     // The connection banner: normal, refused, and its text.
@@ -88,6 +106,13 @@ public:
     // a warning. Returns the id of the theme taken.
     QString follow(const QJsonObject& settings);
 
+    // The fonts that the settings document names, over the default ones. A
+    // family that is not installed or not monospace, and a size outside
+    // MIN_FONT_SIZE..MAX_FONT_SIZE, are the defaults with a line in
+    // fontProblems (and a warning). `changed` follows if a font or a problem
+    // changed.
+    void followFonts(const QJsonObject& settings);
+
     // The colours of the terminals, from the terminal tokens.
     const TerminalColors& terminalColors() const { return TerminalColors_; }
 
@@ -109,6 +134,9 @@ public:
     QColor stateWorking() const { return StateWorking_; }
     QColor stateBlocked() const { return StateBlocked_; }
     QColor stateFailed() const { return StateFailed_; }
+    QFont terminalFont() const { return TerminalFont_; }
+    QFont uiFont() const { return UiFont_; }
+    QStringList fontProblems() const { return FontProblems_; }
     QVariantList categories() const { return Categories_; }
     QColor bannerBackground() const { return BannerBackground_; }
     QColor bannerRefusedBackground() const { return BannerRefusedBackground_; }
@@ -156,6 +184,12 @@ private:
     // what they parse to.
     QJsonObject TerminalTokens_;
     TerminalColors TerminalColors_;
+    // The fonts of the settings; the defaults they start from are taken once.
+    QFont DefaultTerminalFont_;
+    QFont DefaultUiFont_;
+    QFont TerminalFont_;
+    QFont UiFont_;
+    QStringList FontProblems_;
 };
 
 }  // namespace roost

@@ -6,7 +6,7 @@ import Roost.Api
 // The window of the shell (design.md §6): the fixed layout "list | terminal".
 // roost::Shell fills the slots and writes the properties below; the one link
 // of the layout is the Binding at the bottom.
-Window {
+ApplicationWindow {
     id: root
 
     // "connecting", "starting" (roostd is being started by the window),
@@ -22,6 +22,9 @@ Window {
     property bool restartOffered: false
     // Strings: the problems of roostd's plugins, of the panels and of links.
     property var problems: []
+    // What the strip shows: those, then the problems of the font settings
+    // (the window's own: other windows have theirs).
+    readonly property var shownProblems: problems.concat(Roost.theme.fontProblems)
 
     // The Retry button of a refused connection.
     signal retryRequested
@@ -39,6 +42,10 @@ Window {
     visible: true
     title: "roost"
     color: Roost.theme.windowBackground
+    // The font of every Qt Quick Controls item below and of the Labels of the
+    // panels: they inherit the font of the window, as they do its palette.
+    // (A plain Text does not; the panels use Label.)
+    font: Roost.theme.uiFont
 
     // The colours of every Qt Quick Controls item below, the dialogs and the
     // panels' Controls included: they inherit the palette of the window. The
@@ -171,7 +178,7 @@ Window {
         Rectangle {
             objectName: "problemsStrip"
             Layout.fillWidth: true
-            visible: root.problems.length > 0
+            visible: root.shownProblems.length > 0
             implicitHeight: Math.min(problemsList.contentHeight, 96) + 8
             color: Roost.theme.problemsBackground
 
@@ -181,7 +188,7 @@ Window {
                 anchors.fill: parent
                 anchors.margins: 4
                 clip: true
-                model: root.problems
+                model: root.shownProblems
                 delegate: Label {
                     required property string modelData
 

@@ -84,12 +84,18 @@ constexpr const char* OLD_CATEGORIES[] = {"#0087d7", "#d70000", "#008700",
                                           "#d75f00", "#8700d7", "#008787",
                                           "#d700af", "#875f00"};
 
-// The tokens that are colours, by the Q_PROPERTY of Theme.
+// The tokens that are colours, by the Q_PROPERTY of Theme; the fonts (and what
+// is wrong with them) are not colours, font_settings_test has them.
 QStringList TokenNames() {
     QStringList names;
     const QMetaObject& meta = Theme::staticMetaObject;
     for (int i = meta.propertyOffset(); i < meta.propertyCount(); ++i) {
-        names << QString::fromLatin1(meta.property(i).name());
+        const QMetaProperty property = meta.property(i);
+        if (property.metaType() == QMetaType::fromType<QFont>() ||
+            property.metaType() == QMetaType::fromType<QStringList>()) {
+            continue;
+        }
+        names << QString::fromLatin1(property.name());
     }
     return names;
 }
@@ -158,7 +164,7 @@ private slots:
     void cleanup() { Teardown(); }
 
     void DefaultTokensAreTheOldLiterals() {
-        QTest::failOnWarning();
+        FailOnWarnings();
         const Theme theme;
         for (const OldColor& old : OLD_COLORS) {
             const QVariant value = theme.property(old.Token);

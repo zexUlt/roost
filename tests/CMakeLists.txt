@@ -391,6 +391,19 @@ target_compile_definitions(theme_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(theme_test roostd fake_tui claude-adapter sessions_qml)
 
+# The fonts of settings.terminalFont and settings.uiFontSize: the cell and the
+# grid of the terminal, the size the TUI reads from its PTY, the fonts of the
+# window, the strip of problems.
+roost_add_qt_test(font_settings_test qml_api/font_settings_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(font_settings_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(font_settings_test roostd fake_tui claude-adapter sessions_qml)
+
 # The terminal tokens of Roost.theme: defaults, follow(), bad tokens.
 roost_add_qt_test(theme_terminal_test qml_api/theme_terminal_test.cpp
     roost_qml_api Qt6::Qml)
