@@ -35,7 +35,7 @@ constexpr quint16 METHOD_DEFLATE = 8;
 constexpr quint16 VERSION_NEEDED = 20;
 // Made by Unix (3), so that the external attributes are a Unix mode.
 constexpr quint16 VERSION_MADE_BY = (3U << 8) | VERSION_NEEDED;
-constexpr quint32 UNIX_FILE_modE = 0100644U << 16;
+constexpr quint32 UNIX_FILE_MODE = 0100644U << 16;
 constexpr qsizetype ZLIB_PREFIX_LENGTH = 4;  // qCompress: the size, big-endian
 constexpr qsizetype ZLIB_HEADER_LENGTH = 2;
 constexpr qsizetype ZLIB_TRAILER_LENGTH = 4;  // adler32
@@ -213,7 +213,7 @@ public:
             Put16(directory, 0);  // comment
             Put16(directory, 0);  // disk
             Put16(directory, 0);  // internal attributes
-            Put32(directory, UNIX_FILE_modE);
+            Put32(directory, UNIX_FILE_MODE);
             Put32(directory, e.Offset);
             directory.append(e.Name);
         }

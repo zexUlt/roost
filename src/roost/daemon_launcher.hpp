@@ -83,9 +83,6 @@ public:
     // and StartLog `<dir of the socket>/roostd.start.log` either way.
     static Command DefaultCommand(const QString& socketPath);
 
-    // The directory of the logs: the one of the socket.
-    static QString LogDirectory(const QString& socketPath);
-
     // DefaultCommand with the environment and the directory of the executable
     // given.
     static Command CommandFor(const QString& socketPath,

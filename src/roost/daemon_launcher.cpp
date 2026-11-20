@@ -32,10 +32,6 @@ DaemonLauncher::Command DaemonLauncher::DefaultCommand(
                       QCoreApplication::applicationDirPath());
 }
 
-QString DaemonLauncher::LogDirectory(const QString& socketPath) {
-    return QFileInfo(socketPath).absolutePath();
-}
-
 DaemonLauncher::Command DaemonLauncher::CommandFor(
     const QString& socketPath, const QString& appImage, const QString& appDir,
     const QString& executableDir) {
