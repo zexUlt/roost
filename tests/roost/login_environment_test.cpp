@@ -465,7 +465,9 @@ private slots:
             &DaemonLauncher::StartDetached, settings);
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(Socket());
-        return connected.wait(TIMEOUT_MS);
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        return !connected.isEmpty() || connected.wait(TIMEOUT_MS);
     }
 
     bool WriteFakeClaude() {

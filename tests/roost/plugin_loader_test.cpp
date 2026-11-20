@@ -212,8 +212,8 @@ private:
     // The loader is made after the list of plugins is loaded (its constructor
     // reads it) or, with `listLoaded` false, before the connection is even
     // asked for. The list may then arrive before Boot returns (inside Connect,
-    // if roostd answers first); LoaderTypes_ sees every change of the loader's
-    // types from the start.
+    // if roostd answers first); LoaderTypes_ and LoaderProblems_ see every
+    // change of the loader's types and problems from the start.
     bool Boot(bool listLoaded = true) {
         // Names the step that failed and what the Api saw until then, so that
         // a failure in CI says whether a start failed or a wait ran out, and
@@ -283,6 +283,8 @@ private:
             }
             LoaderTypes_ = std::make_unique<QSignalSpy>(
                 Loader_.get(), &PluginLoader::PanelTypesChanged);
+            LoaderProblems_ = std::make_unique<QSignalSpy>(
+                Loader_.get(), &PluginLoader::ProblemsChanged);
             Api_->Connect(Daemon_->SocketPath());
             return true;
         }
@@ -379,6 +381,8 @@ private:
     std::unique_ptr<PluginLoader> Loader_;
     // Set by Boot(false): the changes of Loader_'s types since before Connect.
     std::unique_ptr<QSignalSpy> LoaderTypes_;
+    // The same for the loader's ProblemsChanged.
+    std::unique_ptr<QSignalSpy> LoaderProblems_;
 
 private slots:
     void init() {
@@ -389,6 +393,7 @@ private slots:
 
     void cleanup() {
         // Before the engine, as documented; the Api outlives the engine.
+        LoaderProblems_.reset();
         LoaderTypes_.reset();
         Loader_.reset();
         delete Shell_.data();
@@ -1017,7 +1022,7 @@ private slots:
         QVERIFY(AddPlugin("a-one", {Panel("p", "missing.qml")}, {}));
         ExpectWarnings(1);
         QVERIFY(Boot(false));
-        QSignalSpy problems(Loader_.get(), &PluginLoader::ProblemsChanged);
+        QSignalSpy& problems = *LoaderProblems_;
         QTRY_COMPARE_WITH_TIMEOUT(problems.count(), 1, TIMEOUT_MS);
         QCOMPARE(Loader_->Problems().size(), 1);
 

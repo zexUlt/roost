@@ -126,7 +126,7 @@ private slots:
         QSignalSpy starting(&launcher, &DaemonLauncher::StartingChanged);
         QVERIFY(!QFile::exists(Socket()));
         api.Connect(Socket());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QCOMPARE(Starts_.load(), 1);
         QVERIFY(!launcher.Starting());
         // True, then false once connected.
@@ -163,7 +163,7 @@ private slots:
         QSignalSpy noListener(&api, &api::Api::NoListener);
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(Socket());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QVERIFY(!noListener.isEmpty());
         QCOMPARE(Starts_.load(), 1);
         QVERIFY(testing::DetachedDaemons::IsAlive(
@@ -313,7 +313,7 @@ private slots:
             });
         QSignalSpy connected(&api, &api::Api::Connected);
         api.Connect(Socket());
-        QVERIFY(connected.wait(TIMEOUT_MS));
+        QVERIFY(!connected.isEmpty() || connected.wait(TIMEOUT_MS));
         QVERIFY(calls >= 2);
         QVERIFY2(launcher.Failure().isEmpty(), qPrintable(launcher.Failure()));
     }

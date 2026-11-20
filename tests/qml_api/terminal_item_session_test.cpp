@@ -156,7 +156,10 @@ private:
         }
         QSignalSpy connected(Api_.get(), &api::Api::Connected);
         Api_->Connect(Daemon_->SocketPath());
-        return connected.wait(TIMEOUT_MS) || Api_->IsConnected();
+        // The signal may be said inside Connect: look at the spy before
+        // waiting.
+        return !connected.isEmpty() || Api_->IsConnected() ||
+               connected.wait(TIMEOUT_MS);
     }
 
     // The page in the window, sized to a grid unless `sized` is false; then
