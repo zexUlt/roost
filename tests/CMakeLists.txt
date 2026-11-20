@@ -171,6 +171,10 @@ roost_add_qt_test(roostd_store_test roostd/roostd_store_test.cpp)
 target_compile_definitions(roostd_store_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(roostd_store_test roostd)
+roost_add_qt_test(keymap_service_test roostd/keymap_service_test.cpp roost_test_helpers)
+target_compile_definitions(keymap_service_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(keymap_service_test roostd)
 
 # The window comes up and renders a frame under the offscreen platform.
 add_test(NAME roost_smoke COMMAND roost --no-spawn --smoke)

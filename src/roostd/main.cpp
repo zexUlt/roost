@@ -14,6 +14,7 @@
 #include "core/store.hpp"
 #include "core/version.hpp"
 #include "roostd/dump.hpp"
+#include "roostd/keymap_service.hpp"
 #include "roostd/manifest.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
@@ -134,6 +135,9 @@ int main(int argc, char* argv[]) {
     // Gone before the plugins, like the channels.
     roost::StoreService store(roost::Store(*config), server,
                               plugins.Registry());
+
+    // Gone before the plugins.
+    roost::KeymapService keymap(*config, server, plugins.Registry());
 
     // Gone before the plugins.
     roost::SessionChannels sessions(server, plugins);
