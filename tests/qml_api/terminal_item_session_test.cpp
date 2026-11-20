@@ -99,6 +99,18 @@ QString Screen(const std::shared_ptr<TerminalSession>& session) {
     return QString::fromUtf8(session->Dump(lock).value_or("dump failed"));
 }
 
+// The last size line fake_tui drew: a terminal under a few rows keeps the
+// older lines in its scrollback, which the dump shows too.
+QString LastSizeLine(const std::shared_ptr<TerminalSession>& session) {
+    const QRegularExpression sizeLine(QStringLiteral(R"(size \d+x\d+)"));
+    QString last;
+    auto matches = sizeLine.globalMatch(Screen(session));
+    while (matches.hasNext()) {
+        last = matches.next().captured();
+    }
+    return last;
+}
+
 }  // namespace
 
 class TerminalItemSessionTest : public QObject {
@@ -293,6 +305,9 @@ private slots:
         });
         QCOMPARE(Item_->status(), QStringLiteral("none"));
         QCOMPARE(Item_->sessionRef(), QVariant(Ref("fast-agent", "s1")));
+        // Under a cell is no size either.
+        Page_->setSize(QSizeF(3, 3));
+        QCOMPARE(Item_->status(), QStringLiteral("none"));
 
         ResizeGrid(COLUMNS, ROWS);
         QVERIFY(ShowWindow());
@@ -405,6 +420,45 @@ private slots:
 
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(SessionOf()).contains(SizeLine(100, 30)), TIMEOUT_MS);
+    }
+
+    // A layout that is being rearranged gives the item no size for a moment,
+    // or one under a cell; the PTY must not be sized 1x1 for it: the program
+    // redraws for that, and the terminals reflow their text through it and
+    // back. Back at a real size the PTY gets that size.
+    void AnItemSmallerThanACellLeavesThePtyAlone_data() {
+        QTest::addColumn<qreal>("width");
+        QTest::addColumn<qreal>("height");
+        QTest::newRow("nothing") << 0.0 << 0.0;
+        QTest::newRow("no width") << 0.0 << 400.0;
+        QTest::newRow("no height") << 640.0 << 0.0;
+        QTest::newRow("under a cell") << 3.0 << 3.0;
+        QTest::newRow("narrower than a cell") << 3.0 << 400.0;
+    }
+
+    void AnItemSmallerThanACellLeavesThePtyAlone() {
+        QFETCH(qreal, width);
+        QFETCH(qreal, height);
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML));
+        Page_->setProperty("ref", Ref("fast-agent", "s1"));
+        SettleOpen();
+        Item_->forceActiveFocus();
+        QVERIFY(QTest::qWaitFor([&] { return Item_->hasActiveFocus(); }));
+
+        Page_->setSize(QSizeF(width, height));
+        // Behind the resize on the connection, so that when fake_tui has
+        // answered it again, it has drawn its size for any resize before.
+        QTest::keyClick(Window_.get(), 'q');
+
+        QTRY_VERIFY_WITH_TIMEOUT(Screen(SessionOf()).contains(ANSWERED_TWICE),
+                                 TIMEOUT_MS);
+        QCOMPARE(LastSizeLine(SessionOf()), SizeLine(COLUMNS, ROWS));
+
+        ResizeGrid(100, 30);
+
+        QTRY_COMPARE_WITH_TIMEOUT(LastSizeLine(SessionOf()), SizeLine(100, 30),
+                                  TIMEOUT_MS);
     }
 
     void ATuiThatExitsEndsTheStatusAndEnterReopensWithReopen() {

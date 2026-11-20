@@ -211,6 +211,11 @@ private:
     // Recomputes the grid from the size and the cell; emits gridSizeChanged
     // if it differs.
     void updateGridSize();
+    // Whether the item is at least one cell wide and high; below that the
+    // grid is only the clamp's 1x1 and says nothing about the size.
+    bool holdsACell() const;
+    // Gives the pane the grid, if the item holds a cell.
+    void sendGrid();
 
     // Both are read and written by the render thread inside updatePaintNode,
     // which runs while the GUI thread is blocked in the scene graph's sync;

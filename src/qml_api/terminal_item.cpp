@@ -265,10 +265,7 @@ bool TerminalItem::ensurePane() {
     // Before the first Show: a hidden item does not acquire.
     pane->SetVisible(isVisible());
     connect(this, &TerminalItem::input, pane, &SessionPane::SendInput);
-    connect(this, &TerminalItem::gridSizeChanged, pane, [this, pane] {
-        pane->SetGrid(static_cast<quint16>(Columns_),
-                      static_cast<quint16>(Rows_));
-    });
+    connect(this, &TerminalItem::gridSizeChanged, pane, [this] { sendGrid(); });
     connect(pane, &SessionPane::SessionChanged, this, [this, pane] {
         qCInfo(
             TerminalCategory, "SessionChanged: pane shows %s, session %s",
@@ -288,8 +285,27 @@ bool TerminalItem::ensurePane() {
         setStatus(statusName(pane->Status()), pane->Message());
         syncSuperseded();
     });
-    pane->SetGrid(static_cast<quint16>(Columns_), static_cast<quint16>(Rows_));
+    sendGrid();
     return true;
+}
+
+bool TerminalItem::holdsACell() const {
+    const auto cell = Renderer_.Metrics();
+    // A cell cannot be empty; the max keeps a broken font from making every
+    // size hold one.
+    return width() >= std::max(cell.Width, 1) &&
+           height() >= std::max(cell.Height, 1);
+}
+
+void TerminalItem::sendGrid() {
+    // A layout that is being rearranged gives the item no size for a moment,
+    // or one under a cell: the grid is 1x1 then (the clamp in updateGridSize),
+    // and the PTY keeps its size rather than go 1x1 and back, which the
+    // program sees and the terminals reflow their text through.
+    if (Pane_ && holdsACell()) {
+        Pane_->SetGrid(static_cast<quint16>(Columns_),
+                       static_cast<quint16>(Rows_));
+    }
 }
 
 void TerminalItem::setStatus(const QString& status, const QString& message) {
@@ -343,7 +359,7 @@ void TerminalItem::updateGridSize() {
         Rows_ = rows;
         emit gridSizeChanged();
     }
-    if (!GridKnown_ && width() > 0 && height() > 0) {
+    if (!GridKnown_ && holdsACell()) {
         GridKnown_ = true;
         applySessionRef();
     }
