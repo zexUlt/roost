@@ -1112,10 +1112,25 @@ FocusScope {
                 text: "●"
             }
 
+            // The icon of the agent of the session, at the left of the title
+            // line; the user's folder agent-icons overrides the bundled one.
+            Image {
+                objectName: "agentIcon"
+                visible: !row.isHeader
+                x: 26
+                y: 6 + (titleText.implicitHeight - height) / 2
+                width: 16
+                height: 16
+                sourceSize: Qt.size(32, 32)
+                smooth: false
+                asynchronous: false
+                source: row.isHeader ? "" : sessionsList.agentIcon(row.model.agent)
+            }
+
             Column {
                 visible: !row.isHeader
                 anchors.fill: parent
-                anchors.leftMargin: 26
+                anchors.leftMargin: 48
                 anchors.rightMargin: 8
                 anchors.topMargin: 6
 

@@ -188,21 +188,22 @@ done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
 # smoke fails without QtQuick.Controls.Fusion) and Basic (its base), with
 # Layouts and Templates; the other styles, Dialogs, Effects, Particles,
 # Shapes, VectorImage, LocalStorage, XmlListModel and DesignSupport are
-# imported by no QML of roost, Fusion or Basic. The image formats and the TLS
-# backends: roost loads no image and makes no TLS connection. The Qt libraries
-# that only these needed go below.
+# imported by no QML of roost, Fusion or Basic. The image formats but qsvg (the
+# agent icons of the sessions list are SVG) and the TLS backends: roost makes no
+# TLS connection. The Qt libraries that only these needed go below.
 unused=(
     usr/qml/QtQuick/Controls/{Imagine,Material,Universal,FluentWinUI3,Native,designer,iOS,macOS}
     usr/qml/QtQuick/{Dialogs,Effects,Particles,Shapes,VectorImage,LocalStorage,tooling}
     usr/qml/QtQml/{DesignSupport,XmlListModel}
-    usr/plugins/{imageformats,tls}
+    usr/plugins/tls
 )
 for path in "${unused[@]}"; do
     rm -rf "${appdir:?}/$path"
 done
+find "$appdir/usr/plugins/imageformats" -type f ! -name 'libqsvg.so' -delete 2>/dev/null || true
 
 # A Qt library that no ELF left in the AppDir lists as needed is dead weight
-# now (the style, Dialogs, VectorImage, Svg, Sql libraries): off, until
+# now (the style, Dialogs, VectorImage, Sql libraries): off, until
 # nothing is left to go. Nothing loads a Qt library by name.
 needed() {
     find "$appdir" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 |

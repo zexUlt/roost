@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QJsonObject>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVariant>
 #include <QVariantMap>
 
@@ -143,6 +145,12 @@ public:
     Q_INVOKABLE void saveFinished(const QString& error);
     Q_INVOKABLE void storeLost();
 
+    // The icon of an agent for the row of its session (agent_icon.hpp): a file
+    // URL of the user's folder or a qrc URL of the bundled icon. Kept per
+    // agent for the life of this list: the folder is read again when the panel
+    // is created, not when a file appears.
+    Q_INVOKABLE QUrl agentIcon(const QString& agent);
+
 signals:
     void sourceChanged();
     void sourceLoadedChanged();
@@ -194,6 +202,7 @@ private:
     TabCounts Counts_;
     QStringList Known_;
     QHash<QString, int> ShownColors_;
+    QHash<QString, QUrl> AgentIcons_;
 
     QPointer<QAbstractItemModel> Source_;
     bool SourceLoaded_ = false;

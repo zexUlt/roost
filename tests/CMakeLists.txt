@@ -497,6 +497,14 @@ target_compile_definitions(sessions_list_test PRIVATE
     SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
 add_dependencies(sessions_list_test sessions_qml)
 
+# The icon of an agent in the list: the user's folder, the bundled icons, the
+# default, with the module loaded from the plugin directory.
+roost_add_qt_test(agent_icon_test plugins/agent_icon_test.cpp
+    roost_test_helpers Qt6::Qml)
+target_compile_definitions(agent_icon_test PRIVATE
+    SESSIONS_QML_IMPORT_PATH="${PROJECT_BINARY_DIR}/roost-plugins/sessions/qml")
+add_dependencies(agent_icon_test sessions_qml)
+
 # The install layout: `cmake --install` of this build into a temporary prefix,
 # and the installed roostd against a fake `claude`. The test installs by itself,
 # so the targets it installs are built first.

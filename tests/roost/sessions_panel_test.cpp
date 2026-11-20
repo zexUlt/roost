@@ -21,6 +21,7 @@
 
 #include <algorithm>
 
+#include "helpers/scoped_env.hpp"
 #include "helpers/sessions_window.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "terminal/session_pane.hpp"
@@ -76,6 +77,34 @@ private slots:
         QCOMPARE(RowText(2, "sessionDetail"), QString("done · /work/gamma"));
         QVERIFY(ListStatusNow().isEmpty());
         QVERIFY(!ListStatus()->isVisible());
+    }
+
+    // The image loads for real: the svg of the module's resources needs the
+    // image format plugin of Qt Svg, and a row that shows no icon has none.
+    void ASessionRowShowsTheIconOfItsAgent() {
+        // Not the icons of the real user's folder.
+        const ScopedEnv config("ROOST_CONFIG",
+                               Dir_->filePath("config").toUtf8());
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        for (int row = 0; row < ORDER.size(); ++row) {
+            QQuickItem* item = RowItem(row);
+            QVERIFY(item != nullptr);
+            QQuickItem* icon = item->findChild<QQuickItem*>("agentIcon");
+            QVERIFY2(icon != nullptr, qPrintable(QString::number(row)));
+            QVERIFY(icon->isVisible());
+            QVERIFY2(icon->property("source").toUrl().toString().endsWith(
+                         "/agent-icons/claude.svg"),
+                     qPrintable(icon->property("source").toString()));
+            // Image.Ready.
+            QTRY_COMPARE(icon->property("status").toInt(), 1);
+            QCOMPARE(icon->width(), 16.0);
+            QCOMPARE(icon->height(), 16.0);
+        }
     }
 
     void TheKeysMoveTheCursorAndChangeNeitherTheSelectionNorTheTerminal() {

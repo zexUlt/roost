@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "sessions/model/agent_icon.hpp"
 #include "sessions/model/row_diff.hpp"
 
 namespace roost::sessions {
@@ -240,6 +241,14 @@ QString SessionsList::problem() const {
         return State_.Problem();
     }
     return !ReadProblem_.isEmpty() ? ReadProblem_ : SaveProblem_;
+}
+
+QUrl SessionsList::agentIcon(const QString& agent) {
+    auto found = AgentIcons_.constFind(agent);
+    if (found == AgentIcons_.constEnd()) {
+        found = AgentIcons_.insert(agent, ResolveAgentIcon(agent));
+    }
+    return *found;
 }
 
 QString SessionsList::query() const { return State_.View().Query; }
