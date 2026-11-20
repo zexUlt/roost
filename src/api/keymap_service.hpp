@@ -68,6 +68,12 @@ public:
 
     bool IsLoaded() const;
 
+    // {bindings, problems} as roostd said them (the entries of
+    // keymap.get); empty while not loaded. For a list of the commands with
+    // their keys (the palette); a key press is found with Find. Good until the
+    // next signal Changed.
+    const QJsonObject& Table() const { return Table_; }
+
     // The binding of the pair (chord, when) or null; `chord` is in MatchForm
     // (a pressed key is turned into it by the matcher). An empty `when` is the
     // pair without one. The pointer is good until the next signal Changed.

@@ -444,6 +444,24 @@ target_compile_definitions(shell_commands_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(shell_commands_test roostd fake_tui claude-adapter sessions_qml)
 
+# The command palette in the window of the shell: its rows and marks from the
+# manifests and the keymap table of the real roostd, Enter through the commands.
+roost_add_qt_test(palette_test roost/palette_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(palette_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(palette_test roostd fake_tui fixture_backend claude-adapter sessions_qml)
+
+# PaletteModel::BuildEntries on hand-written tables, for both platforms: the
+# mark of captured input and the text of conflicts; pure data.
+roost_add_qt_test(palette_entries_test roost/palette_entries_test.cpp
+    roost_shell roost_app Qt6::Qml Qt6::Quick)
+
 # The prompt of the sessions panel's footer: search, category and name.
 roost_add_qt_test(sessions_prompt_test roost/sessions_prompt_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
@@ -572,6 +590,7 @@ set_tests_properties(
     plugin_reload_test
     command_local_test
     shell_commands_test
+    palette_test
     shell_test
     terminal_panel_test
     terminal_theme_test

@@ -6,12 +6,14 @@
     "commands": [
       { "id": "shell.focusList", "title": "Focus the session list" },
       { "id": "shell.reportBug", "title": "Report a bug" },
+      { "id": "shell.palette", "title": "Command palette" },
       { "id": "shell.settings", "title": "Open the settings" },
       { "id": "terminal.copy", "title": "Copy the selection of the terminal" }
     ],
     "keybindings": [
       { "command": "shell.focusList", "key": "Ctrl+\\" },
       { "command": "shell.reportBug", "mac": "Cmd+Shift+B" },
+      { "command": "shell.palette", "key": "Ctrl+Shift+P", "mac": "Cmd+Shift+P" },
       { "command": "shell.settings", "mac": "Cmd+," },
       { "command": "terminal.copy", "key": "Ctrl+Shift+C", "mac": "Cmd+C", "when": "terminal.view" }
     ]
