@@ -46,6 +46,37 @@ FetchContent_Declare(ghostty
     GIT_SHALLOW TRUE
     SYSTEM
 )
+
+# Zig builds for the CPU of the build machine unless told otherwise, and a
+# package runs on other machines: libghostty-vt built on a runner with AVX-512
+# dies of SIGILL on one without. Pin the CPU, unless the flags already name a
+# CPU or a target. The levels are the floor of what roost runs on:
+#   x86_64         x86_64_v3 (AVX2: Intel Haswell, 2013, or AMD Zen and newer)
+#   Linux aarch64  baseline
+#   Apple arm64    apple_m1 (ghostty's own build replaces the target on a Mac
+#                  with its generic one, so this changes nothing there today)
+# The SIMD code of libghostty-vt (highway, simdutf) picks AVX2 or AVX-512 at
+# run time, whatever the CPU of the build.
+if(NOT GHOSTTY_ZIG_BUILD_FLAGS MATCHES "-D(cpu|target)=")
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ROOST_ZIG_ARCH)
+    if(ROOST_ZIG_ARCH MATCHES "^(x86_64|amd64)$")
+        set(ROOST_ZIG_CPU x86_64_v3)
+    elseif(APPLE AND ROOST_ZIG_ARCH MATCHES "^(arm64|aarch64)$")
+        set(ROOST_ZIG_CPU apple_m1)
+    elseif(ROOST_ZIG_ARCH MATCHES "^(arm64|aarch64)$")
+        set(ROOST_ZIG_CPU baseline)
+    else()
+        message(FATAL_ERROR "no Zig CPU is pinned for ${CMAKE_SYSTEM_PROCESSOR}: "
+            "add one to cmake/ghostty.cmake or pass -Dcpu= in GHOSTTY_ZIG_BUILD_FLAGS")
+    endif()
+    # In the cache: ghostty's own `set(... CACHE)` of this variable would
+    # drop a normal variable.
+    list(APPEND GHOSTTY_ZIG_BUILD_FLAGS "-Dcpu=${ROOST_ZIG_CPU}")
+    set(GHOSTTY_ZIG_BUILD_FLAGS "${GHOSTTY_ZIG_BUILD_FLAGS}" CACHE STRING
+        "Additional flags to pass to zig build" FORCE)
+    message(STATUS "libghostty-vt: zig -Dcpu=${ROOST_ZIG_CPU}")
+endif()
+
 FetchContent_MakeAvailable(ghostty)
 
 # libghostty-vt is linked statically into roost and roostd: its own install

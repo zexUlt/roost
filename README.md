@@ -1,5 +1,10 @@
 # roost
 
+[![CI](https://github.com/zexUlt/roost/actions/workflows/ci.yml/badge.svg?branch=trunk)](https://github.com/zexUlt/roost/actions/workflows/ci.yml)
+[![Package](https://github.com/zexUlt/roost/actions/workflows/package.yml/badge.svg?branch=trunk)](https://github.com/zexUlt/roost/actions/workflows/package.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/zexUlt/roost)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/zexUlt/roost)](https://github.com/zexUlt/roost/releases)
+
 A desktop app for macOS and Linux that finds every background coding-agent
 session, groups them, and shows each agent's own TUI in a terminal panel, all
 driven from the keyboard. Claude Code first; Codex and other agents through the
@@ -7,10 +12,70 @@ same adapter interface. Built on Qt Quick and C++, with libghostty-vt as the
 terminal emulator. Every feature is a plugin, and panels can be linked to each
 other.
 
-Status: skeleton. Both binaries build and start, nothing more yet; see
+Status: the window lists your Claude Code sessions and opens each one in a
+terminal panel, and ships as a macOS `.dmg` and a Linux AppImage. The panel
+layout, the keymap file and notifications are not there yet; see
 `docs/design.md` for the design and the plan.
 
-## Build
+## Install
+
+Download a package from the
+[releases page](https://github.com/zexUlt/roost/releases).
+
+### macOS
+
+`roost-<version>-macos-arm64.dmg`, Apple silicon only. Open it and drag
+`roost.app` to Applications.
+
+The app is signed ad hoc, not with a Developer ID, so Gatekeeper refuses it
+on the first start: the dialog says Apple could not verify that the app is
+free of malware. Remove the quarantine attribute once, then start it from
+Finder:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/roost.app
+```
+
+### Linux
+
+`roost-x86_64.AppImage` or `roost-aarch64.AppImage`, built on Ubuntu 24.04:
+it needs glibc 2.39 or newer and the libstdc++ of GCC 14. The window runs on
+X11 or XWayland.
+
+```sh
+chmod +x roost-x86_64.AppImage
+./roost-x86_64.AppImage
+```
+
+The AppImage mounts itself through FUSE 3: install the `fuse3` package
+(`sudo apt install fuse3`). It does not need `libfuse2`.
+
+### After the start
+
+The window starts `roostd` itself when nobody listens on the socket;
+`roost --no-spawn` (on Linux `./roost-x86_64.AppImage --no-spawn`) turns that
+off. `roostd` outlives the window: quitting the window (Cmd+Q on macOS) leaves
+the daemon and the open sessions running, and the next window finds them
+again. To stop the daemon, `pkill roostd`. Sessions come from `claude agents`,
+run by `roostd`, so `claude` must be on the `PATH` it starts with: a window
+started from Finder or a desktop menu gives it the `PATH` of your login shell,
+a window started from a terminal gives it that terminal's `PATH`. A `roostd`
+that already runs keeps the `PATH` it was started with.
+
+Logs are in the directory of the socket: `roostd.log` (the previous run is
+`roostd.log.1`) and `roostd.start.log` (what `roostd` prints before it holds
+the socket). The directory is the first of these that applies:
+
+| Where | Directory |
+|---|---|
+| `ROOST_SOCKET` is set | the directory of that path |
+| `XDG_RUNTIME_DIR` is an absolute path (Linux desktops: `/run/user/<uid>`) | `$XDG_RUNTIME_DIR/roost/` |
+| otherwise (macOS, or Linux without it) | `$TMPDIR/roost-<uid>/`; on macOS a `/var/folders/…/T/roost-<uid>/` path, `echo $TMPDIR` shows it. No `TMPDIR`: `/tmp/roost-<uid>/` |
+
+State and settings are in `~/.config/roost` (`ROOST_CONFIG` or
+`XDG_CONFIG_HOME` change it).
+
+## Build from source
 
 Needs Clang 17+ (Apple clang on macOS), CMake 3.25+, Ninja, Qt 6.8+ and
 Zig 0.17+. On macOS: `brew install cmake ninja qt zig`.
@@ -25,7 +90,7 @@ Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release
 `tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
 `ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
 
-## Install
+### Install the build
 
 ```sh
 cmake --install build/release --prefix <dir> --component roost
@@ -58,9 +123,9 @@ a roostd, waits up to 5 s for it to leave and starts the new one; warm
 terminals close, Claude sessions keep running. Nothing is stopped without the
 click. A live roostd with a full accept backlog also refuses connections, so a
 second one may be started; it loses the socket lock and exits. `roost
---no-spawn` turns the start off. The start from an AppImage
-(`$APPIMAGE --roostd`, handled by AppRun) arrives with the AppImage packaging
-step and does not work before it.
+--no-spawn` turns the start off. Inside an AppImage the window starts the
+daemon as `$APPIMAGE --roostd` (AppRun runs `usr/bin/roostd` for that
+argument), so the daemon keeps a mount of the image of its own while it lives.
 A window started from the desktop (no `TERM` in its environment, or stdin is not
 a tty) has the bare desktop `PATH`, so before the first start it reads the
 environment of your login shell once (`$SHELL -l -i -c 'env -0'` between two

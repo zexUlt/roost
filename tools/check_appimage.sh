@@ -10,6 +10,13 @@
 #     component of the inventory that is in the AppImage has its heading in the
 #     THIRD_PARTY_LICENSES the AppImage carries: a library nobody has put
 #     through the licence review fails here;
+#   - none of roost's own ELF files (usr/bin, usr/lib/roost: libghostty-vt is
+#     linked into them) has an AVX-512 instruction (`%zmm`, `%xmm16`-`%ymm31`,
+#     `%k0`-`%k7` in `objdump -d`; EVEX-only instructions on the lower
+#     registers are not caught) outside the functions that are picked at run time by the
+#     CPU (the icelake implementation of simdutf, the AVX3 targets of
+#     highway): an image built for the CPU of the build machine would die of
+#     SIGILL on a machine without AVX-512;
 #   - the QtCore QML module (a plugin imports it, and a QML scan that did not
 #     see the plugins' QML would leave it out) and the licence texts are there;
 #   - the AppImage itself, run with `--smoke-sessions` (offscreen, a temporary
@@ -135,6 +142,48 @@ if [ "$rpath_count" -gt 0 ]; then
     ok "$rpath_count RPATH/RUNPATH entries were checked, each relative to \$ORIGIN unless FAILed above"
 else
     fail "no RPATH/RUNPATH entry found in any ELF: readelf failed?"
+fi
+
+# --- AVX-512 ---------------------------------------------------------------
+# The CPU of libghostty-vt is pinned in cmake/ghostty.cmake. simdutf and
+# highway carry AVX-512 variants on purpose and call them only on a CPU that has
+# it; anything else with a `zmm` register was compiled for the build machine.
+echo "build machine: $(grep -m1 'model name' /proc/cpuinfo 2>/dev/null || uname -m)"
+if command -v objdump >/dev/null 2>&1; then
+    avx512_count=0
+    avx512_dispatched=0
+    avx512_bad=0
+    while IFS= read -r -d '' file; do
+        [ "$(head -c4 "$file" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ] || continue
+        avx512_count=$((avx512_count + 1))
+        # <count of instructions> <function>, one line per function.
+        if ! report=$(set -o pipefail; objdump -d --no-show-raw-insn "$file" | awk '
+            /^[0-9a-f]+ <.*>:$/ { sym = $2; next }
+            /%zmm|%[xy]mm(1[6-9]|2[0-9]|3[01])|%k[0-7]/ { n[sym]++ }
+            END { for (s in n) print n[s], s }'); then
+            fail "objdump failed on ${file#"$appdir"/}"
+            avx512_bad=1
+            continue
+        fi
+        bad=$(printf '%s\n' "$report" | grep -v -e '^$' -e 'simdutf7icelake' -e 'N_AVX3' || true)
+        if [ -n "$bad" ]; then
+            fail "${file#"$appdir"/} has AVX-512 instructions outside the run-time dispatched functions (built for the CPU of the build machine?):"
+            printf '%s\n' "$bad" | sort -rn | head -5 | sed 's/^/        /'
+            avx512_bad=1
+        fi
+        avx512_dispatched=$((avx512_dispatched + $(printf '%s\n' "$report" | grep -c -e 'simdutf7icelake' -e 'N_AVX3')))
+    done < <(find "$appdir/usr/bin" "$appdir/usr/lib/roost" -type f -print0)
+    if [ "$avx512_count" -eq 0 ]; then
+        fail "no ELF file found for the AVX-512 check"
+    elif [ "$(uname -m)" = x86_64 ] && [ "$avx512_dispatched" -eq 0 ]; then
+        # simdutf and highway always carry them on x86_64: none found means
+        # the check sees nothing (objdump output or symbol names changed).
+        fail "no run-time dispatched AVX-512 function found on x86_64: the AVX-512 check sees nothing"
+    elif [ "$avx512_bad" -eq 0 ]; then
+        ok "no AVX-512 instruction in $avx512_count ELF files of roost outside the $avx512_dispatched run-time dispatched functions"
+    fi
+else
+    fail "objdump is missing: the AVX-512 check cannot run (install binutils)"
 fi
 
 # --- licences --------------------------------------------------------------
