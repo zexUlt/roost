@@ -50,6 +50,8 @@ public:
     Q_INVOKABLE QVariantList files(bool includeSettings) const;
     // Writes the zip; false and `error` if that failed.
     Q_INVOKABLE bool create(const QString& description, bool includeSettings);
+    // Forgets the error of the last create(); a reopened dialog starts clean.
+    Q_INVOKABLE void clearError();
     // Reveals the zip in the file manager. Only on a call from the user.
     Q_INVOKABLE void showInFolder() const;
     // Opens the new-issue page of GitHub in the browser, the description

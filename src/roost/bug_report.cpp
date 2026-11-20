@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -262,35 +263,55 @@ private:
     std::vector<Entry> Entries_;
 };
 
-std::expected<QByteArray, QString> ReadFile(const BugReportFile& file) {
+QByteArray CutMarker(qint64 cut) {
+    return QByteArray("[roost: first ") + QByteArray::number(cut) +
+           " bytes cut]\n";
+}
+
+// A log is read from `size - maxBytes` on, with the marker in front; what
+// grew after `size` was taken is left out.
+std::expected<QByteArray, QString> ReadFile(const BugReportFile& file,
+                                            qint64 maxBytes) {
     QFile in(file.Path);
     if (!in.open(QIODevice::ReadOnly)) {
         return std::unexpected(QStringLiteral("cannot read %1: %2")
                                    .arg(file.Path, in.errorString()));
     }
-    if (static_cast<quint64>(in.size()) > ZIP_MAX ||
-        in.size() > std::numeric_limits<int>::max()) {
+    const qint64 size = in.size();
+    const qint64 cut = file.IsLog ? std::max<qint64>(0, size - maxBytes) : 0;
+    if (static_cast<quint64>(size - cut) > ZIP_MAX ||
+        size - cut > std::numeric_limits<int>::max()) {
         return std::unexpected(
             QStringLiteral("%1 is over 4 GiB; zip64 is not supported")
                 .arg(file.Path));
     }
-    QByteArray data = in.readAll();
+    if (cut > 0 && !in.seek(cut)) {
+        return std::unexpected(QStringLiteral("cannot read %1: %2")
+                                   .arg(file.Path, in.errorString()));
+    }
+    QByteArray data = file.IsLog ? in.read(size - cut) : in.readAll();
     if (in.error() != QFileDevice::NoError) {
         return std::unexpected(QStringLiteral("cannot read %1: %2")
                                    .arg(file.Path, in.errorString()));
+    }
+    if (cut > 0) {
+        data.prepend(CutMarker(cut));
     }
     return data;
 }
 
 }  // namespace
 
-QList<BugReportFile> LogFiles(const QString& logDirectory) {
+QList<BugReportFile> LogFiles(const QString& logDirectory, qint64 maxBytes) {
     QList<BugReportFile> files;
     for (const QLatin1StringView name : LOG_NAMES) {
         const QFileInfo info(logDirectory + u'/' + name);
         if (info.isFile()) {
+            const qint64 cut = std::max<qint64>(0, info.size() - maxBytes);
+            const qint64 size =
+                cut > 0 ? maxBytes + CutMarker(cut).size() : info.size();
             files.push_back({QStringLiteral("logs/") + name,
-                             info.absoluteFilePath(), info.size()});
+                             info.absoluteFilePath(), size, true});
         }
     }
     return files;
@@ -384,7 +405,8 @@ QString IssueUrl(const QString& description, const QString& zipName) {
 std::expected<QString, QString> CreateBugReport(
     const BugReportRequest& request) {
     const QString name = ReportName(request.Time);
-    QList<BugReportFile> files = LogFiles(request.LogDirectory);
+    QList<BugReportFile> files =
+        LogFiles(request.LogDirectory, request.MaxLogBytes);
     if (request.IncludeSettings) {
         files += SettingsFiles(request.ConfigDirectory);
     }
@@ -395,7 +417,7 @@ std::expected<QString, QString> CreateBugReport(
     entries.push_back(
         {QStringLiteral("description.txt"), request.Description.toUtf8()});
     for (const BugReportFile& file : files) {
-        auto data = ReadFile(file);
+        auto data = ReadFile(file, request.MaxLogBytes);
         if (!data) {
             return std::unexpected(data.error());
         }

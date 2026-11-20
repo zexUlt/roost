@@ -101,6 +101,13 @@ bool BugReport::create(const QString& description, bool includeSettings) {
     return path.has_value();
 }
 
+void BugReport::clearError() {
+    if (!Error_.isEmpty()) {
+        Error_.clear();
+        emit errorChanged();
+    }
+}
+
 void BugReport::showInFolder() const {
     if (ZipPath_.isEmpty()) {
         return;

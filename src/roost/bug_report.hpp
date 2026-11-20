@@ -13,12 +13,17 @@ namespace roost {
 // for, the settings. Plain C++ and QtCore; the QML side is BugReport
 // (bug_report_controller.hpp).
 
+// Of each log, at most this many last bytes go into the zip.
+constexpr qint64 MAX_LOG_BYTES = 8LL * 1024 * 1024;
+
 // A file that goes into the zip: its name in the zip under the folder of the
-// report, its path on disk and its size.
+// report, its path on disk and the size that goes in (for a cut log: the tail
+// and the marker line). A log is read from its tail only.
 struct BugReportFile {
     QString Name;
     QString Path;
     qint64 Size = 0;
+    bool IsLog = false;
 };
 
 struct BugReportRequest {
@@ -32,6 +37,8 @@ struct BugReportRequest {
     // IncludeSettings.
     QString ConfigDirectory;
     bool IncludeSettings = false;
+    // The most of a log that goes in; see MAX_LOG_BYTES. A test lowers it.
+    qint64 MaxLogBytes = MAX_LOG_BYTES;
     // Where the zip goes; created if missing. See DefaultOutputDirectory().
     QString OutputDirectory;
     // Names the report; local time.
@@ -39,8 +46,11 @@ struct BugReportRequest {
 };
 
 // The logs that exist in `logDirectory`: roostd.log, roostd.log.1,
-// roostd.start.log, roost.log, roost.log.1, as "logs/<name>".
-QList<BugReportFile> LogFiles(const QString& logDirectory);
+// roostd.start.log, roost.log, roost.log.1, as "logs/<name>". A log over
+// `maxBytes` goes in as its last `maxBytes` bytes, after the line
+// "[roost: first <N> bytes cut]"; its Size counts both.
+QList<BugReportFile> LogFiles(const QString& logDirectory,
+                              qint64 maxBytes = MAX_LOG_BYTES);
 
 // The store's own files in `configDirectory`: "<plugin id>.json" with a valid
 // id (the keymap included), as "settings/<name>". Nothing else of the

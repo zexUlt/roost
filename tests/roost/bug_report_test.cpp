@@ -146,6 +146,33 @@ private slots:
                               FOLDER + "logs/roostd.log"}));
     }
 
+    // The cap is lowered for the test: a log over it goes in as its tail
+    // behind the marker, one under it whole.
+    void ALogOverTheCapGoesInAsItsTail() {
+        Write(Dir_.filePath("run/roostd.log"), "0123456789abcdefghij");
+        Write(Dir_.filePath("run/roost.log"), "short\n");
+        BugReportRequest request = Request();
+        request.MaxLogBytes = 8;
+        const QByteArray marker = "[roost: first 12 bytes cut]\n";
+        const QList<BugReportFile> listed =
+            LogFiles(request.LogDirectory, request.MaxLogBytes);
+        QCOMPARE(listed.size(), 2);
+        QCOMPARE(listed[0].Name, QString("logs/roostd.log"));
+        QCOMPARE(listed[0].Size, 8 + marker.size());
+        QCOMPARE(listed[1].Size, 6);
+        const auto zip = CreateBugReport(request);
+        QVERIFY2(zip.has_value(), qPrintable(zip ? QString() : zip.error()));
+        QCOMPARE(Content(*zip, "logs/roostd.log"),
+                 marker + QByteArray("cdefghij"));
+        QCOMPARE(Content(*zip, "logs/roost.log"), QByteArray("short\n"));
+        // Exactly the cap is not cut.
+        request.MaxLogBytes = 20;
+        const auto whole = CreateBugReport(request);
+        QVERIFY(whole.has_value());
+        QCOMPARE(Content(*whole, "logs/roostd.log"),
+                 QByteArray("0123456789abcdefghij"));
+    }
+
     void NoLogsIsStillAReport() {
         const auto zip = CreateBugReport(Request());
         QVERIFY2(zip.has_value(), qPrintable(zip ? QString() : zip.error()));
@@ -225,12 +252,15 @@ private slots:
         QVERIFY(QFile::setPermissions(Dir_.filePath("ro"),
                                       QFile::ReadOwner | QFile::ExeOwner));
         request.OutputDirectory = Dir_.filePath("ro");
-        const bool writable = QFileInfo(Dir_.filePath("ro")).isWritable();
-        if (!writable) {
-            const auto result = CreateBugReport(request);
-            QVERIFY(!result.has_value());
-            QVERIFY(!result.error().isEmpty());
+        if (QFileInfo(Dir_.filePath("ro")).isWritable()) {
+            QFile::setPermissions(Dir_.filePath("ro"), QFile::ReadOwner |
+                                                           QFile::WriteOwner |
+                                                           QFile::ExeOwner);
+            QSKIP("the process writes to a 0500 directory (root?)");
         }
+        const auto result = CreateBugReport(request);
+        QVERIFY(!result.has_value());
+        QVERIFY(!result.error().isEmpty());
         QFile::setPermissions(Dir_.filePath("ro"), QFile::ReadOwner |
                                                        QFile::WriteOwner |
                                                        QFile::ExeOwner);
@@ -242,15 +272,16 @@ private slots:
         Write(Dir_.filePath("run/roostd.log"), "x");
         QVERIFY(QFile::setPermissions(Dir_.filePath("run/roostd.log"),
                                       QFileDevice::Permissions()));
-        if (!QFile(Dir_.filePath("run/roostd.log")).open(QIODevice::ReadOnly)) {
-            request.OutputDirectory = Dir_.filePath("out");
-            QVERIFY(!CreateBugReport(request).has_value());
-            QVERIFY(!QDir(Dir_.filePath("out")).exists() ||
-                    QDir(Dir_.filePath("out"))
-                        .entryList(QDir::AllEntries | QDir::NoDotAndDotDot |
-                                   QDir::Hidden)
-                        .isEmpty());
+        if (QFile(Dir_.filePath("run/roostd.log")).open(QIODevice::ReadOnly)) {
+            QSKIP("the process reads a 000 file (root?)");
         }
+        request.OutputDirectory = Dir_.filePath("out");
+        QVERIFY(!CreateBugReport(request).has_value());
+        QVERIFY(!QDir(Dir_.filePath("out")).exists() ||
+                QDir(Dir_.filePath("out"))
+                    .entryList(QDir::AllEntries | QDir::NoDotAndDotDot |
+                               QDir::Hidden)
+                    .isEmpty());
         QFile::setPermissions(Dir_.filePath("run/roostd.log"),
                               QFile::ReadOwner | QFile::WriteOwner);
     }

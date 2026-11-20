@@ -82,15 +82,21 @@ private slots:
         QTRY_VERIFY(Dialog()->property("visible").toBool());
     }
 
+    // macOS only (Cmd+Shift+B); elsewhere the key is the terminal program's.
     // With the keyboard in a terminal: TerminalItem does not take the key.
-    void TheShortcutOpensTheDialogFromTheTerminal() {
+    void TheShortcutIsMacOnly() {
         auto* terminal = new TerminalItem(Window_->contentItem());
         terminal->setSize(QSizeF(100, 100));
         terminal->forceActiveFocus();
         QVERIFY(terminal->hasActiveFocus());
         QTest::keyClick(Window_, Qt::Key_B,
                         Qt::ControlModifier | Qt::ShiftModifier);
+#ifdef Q_OS_MACOS
         QTRY_VERIFY(Dialog()->property("visible").toBool());
+#else
+        QTest::qWait(200);
+        QVERIFY(!Dialog()->property("visible").toBool());
+#endif
     }
 
     void TheDialogListsTheFilesAndWritesTheZip() {
@@ -175,6 +181,27 @@ private slots:
                      ->property("text")
                      .toString()
                      .isEmpty());
+    }
+
+    void AReopenedDialogShowsNoOldError() {
+        QMetaObject::invokeMethod(Window_, "reportBug");
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+        QFile blocker(Dir_.filePath("blocker"));
+        QVERIFY(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+        Dialog()->setProperty("outputDirectory", Dir_.filePath("blocker/out"));
+        QVERIFY(QMetaObject::invokeMethod(
+            Window_->findChild<QObject*>("createButton"), "clicked"));
+        auto* errorText = Window_->findChild<QQuickItem*>("errorText");
+        QVERIFY(errorText->isVisible());
+        QVERIFY(!errorText->property("text").toString().isEmpty());
+
+        QVERIFY(QMetaObject::invokeMethod(Dialog(), "close"));
+        QTRY_VERIFY(!Dialog()->property("visible").toBool());
+        QMetaObject::invokeMethod(Window_, "reportBug");
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+        QVERIFY(errorText->property("text").toString().isEmpty());
+        QVERIFY(!errorText->isVisible());
     }
 };
 

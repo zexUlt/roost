@@ -41,6 +41,7 @@ Dialog {
 
     onAboutToShow: {
         done = false;
+        bugReport.clearError();
         descriptionField.text = "";
         settingsBox.checked = false;
         refresh();

@@ -228,9 +228,12 @@ Window {
         window: root
     }
 
-    // Cmd+Shift+B on macOS. The terminal does not take it: TerminalItem
-    // leaves ShortcutOverride alone, so the shortcut fires from there too.
+    // Cmd+Shift+B, on macOS only: on Linux Ctrl+Shift+B must reach the
+    // program in the terminal. The terminal does not take the key on macOS:
+    // TerminalItem leaves ShortcutOverride alone, so the shortcut fires from
+    // there too.
     Shortcut {
+        enabled: Qt.platform.os === "osx"
         context: Qt.WindowShortcut
         sequence: "Ctrl+Shift+B"
         onActivated: root.reportBug()
