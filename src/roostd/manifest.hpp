@@ -106,6 +106,16 @@ QStringList PluginSearchPath(const QString& configDirectory,
 // directories are skipped.
 QStringList FindPluginDirectories(const QStringList& searchPath);
 
+// A keybinding that counts, as the registry holds it for its platform.
+struct KeyContribution {
+    KeyChord Chord;
+    // The panel type that must have focus; empty for any panel.
+    QString When;
+    QString Command;
+    // The id of the plugin that owns the key.
+    QString Plugin;
+};
+
 // The loaded plugins and who owns each contribution (design.md §5). The
 // earlier plugin wins a conflict: a second plugin with a taken id is not
 // loaded, and a command id, an agent id or a key that is taken stays with its
@@ -151,7 +161,17 @@ public:
 
     const QStringList& Problems() const { return Problems_; }
 
+    // The keybindings that count, in load order, and the part of Problems()
+    // that is about keybindings: the user sees these two as the contributions
+    // of the keymap (design.md §16).
+    const std::vector<KeyContribution>& KeyContributions() const {
+        return KeyContributions_;
+    }
+    const QStringList& KeyProblems() const { return KeyProblems_; }
+
 private:
+    void KeyProblem(QString problem);
+
     std::vector<PluginManifest> Plugins_;
     QHash<QString, std::size_t> ById_;
     QHash<QString, std::size_t> Commands_;
@@ -159,6 +179,8 @@ private:
     QHash<QString, std::size_t> Keys_;
     QHash<QString, std::size_t> Agents_;
     QStringList Problems_;
+    std::vector<KeyContribution> KeyContributions_;
+    QStringList KeyProblems_;
     EPlatform Platform_;
 };
 

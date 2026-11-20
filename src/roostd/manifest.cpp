@@ -480,7 +480,7 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         // the commands it kept.
         if (const auto command = Commands_.constFind(binding.Command);
             command == Commands_.cend() || *command != index) {
-            Problems_.append(
+            KeyProblem(
                 command == Commands_.cend()
                     ? QStringLiteral("key %1 of plugin %2 is ignored: the "
                                      "plugin has no command %3")
@@ -493,7 +493,7 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         }
         const auto chord = ChooseKeyChord(binding.Key, binding.Mac, Platform_);
         if (!chord) {
-            Problems_.append(
+            KeyProblem(
                 QStringLiteral("keybinding %1 of plugin %2 is ignored: %3")
                     .arg(position)
                     .arg(manifest.Id, chord.error()));
@@ -505,7 +505,7 @@ bool PluginRegistry::Add(PluginManifest manifest) {
         }
         const QString key = KeyOf(**chord, binding.When);
         if (const auto taken = Keys_.constFind(key); taken != Keys_.cend()) {
-            Problems_.append(
+            KeyProblem(
                 QStringLiteral("key %1%2 of plugin %3 is ignored: plugin %4 "
                                "binds it")
                     .arg(WriteKeyChord(**chord),
@@ -516,6 +516,8 @@ bool PluginRegistry::Add(PluginManifest manifest) {
             continue;
         }
         Keys_.insert(key, index);
+        KeyContributions_.push_back(
+            {**chord, binding.When, binding.Command, manifest.Id});
     }
     for (const PluginAgent& agent : manifest.Agents) {
         if (const auto taken = Agents_.constFind(agent.Id);
@@ -531,6 +533,11 @@ bool PluginRegistry::Add(PluginManifest manifest) {
     ById_.insert(manifest.Id, index);
     Plugins_.push_back(std::move(manifest));
     return true;
+}
+
+void PluginRegistry::KeyProblem(QString problem) {
+    KeyProblems_.append(problem);
+    Problems_.append(std::move(problem));
 }
 
 void PluginRegistry::AddProblem(QString problem) {
