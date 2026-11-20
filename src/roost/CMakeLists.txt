@@ -17,6 +17,8 @@ add_library(roost_app STATIC
     plugin_loader.hpp
     plugin_watcher.cpp
     plugin_watcher.hpp
+    settings_pages.cpp
+    settings_pages.hpp
     shell.cpp
     shell.hpp
     single_session.cpp
@@ -53,7 +55,7 @@ qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
     QML_FILES BugReportDialog.qml LayoutNode.qml LayoutView.qml Main.qml
-        PanelSlot.qml SessionMain.qml SplitNode.qml TabNode.qml
+        PanelSlot.qml SessionMain.qml SettingsWindow.qml SplitNode.qml TabNode.qml
     SOURCES bug_report_controller.cpp bug_report_controller.hpp
     NO_CACHEGEN
 )

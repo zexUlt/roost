@@ -733,6 +733,15 @@ roost_add_qt_test(bug_report_dialog_test roost/bug_report_dialog_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
     roost_test_helpers Qt6::Qml Qt6::Quick)
 
+# The settings window: the general section, the page of a fixture plugin and the
+# keys, against the real roostd.
+roost_add_qt_test(settings_window_test roost/settings_window_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(settings_window_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(settings_window_test roostd)
+
 # The keymap table against key presses in a real window: the matcher, with the
 # real roostd and the fixture backend behind the commands.
 roost_add_qt_test(keymap_match_test roost/keymap_match_test.cpp roost_app

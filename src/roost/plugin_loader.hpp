@@ -42,6 +42,13 @@ namespace roost {
 // A panel id in a manifest is a name relative to the plugin; the full id of
 // the panel type is "<plugin id>.<name>".
 //
+// The manifest key `contributes.settings` names the QML file of the settings
+// page of the plugin (05-plugins.md). It is loaded like a panel, inside the
+// plugin's directory, but it has no type id, inputs or outputs: a plugin has
+// at most one page, and CreateSettingsPage(pluginId) makes an instance of it.
+// A page that cannot be loaded is a problem with the panel name "(settings)";
+// a plugin without the key has no page and no problem.
+//
 // A plugin that declares `native.qmlImportPath` gets that directory on the
 // import path of the engine, so its panels can import the QML module in it.
 // The directories of the plugins go after every path the engine had, in load
@@ -116,6 +123,23 @@ public:
     QQuickItem* CreatePanel(const QString& panelId,
                             const QString& instanceId = QString());
 
+    // The ids of the plugins that have a settings page that can be created,
+    // in load order.
+    QStringList SettingsPlugins() const;
+
+    // A new instance of the settings page of the plugin, or nullptr: the
+    // plugin is unknown, being unloaded or has no page, or the creation
+    // failed (the root is not a QQuickItem, or the component could not make
+    // it). A failure is a problem and disables the page until the plugin is
+    // loaded again (SettingsPagesChanged). Made as CreatePanel makes a panel:
+    // its own QQmlContext, registered as the owner of its one-shot calls, the
+    // properties `pluginId` and `instanceId` (empty) set before
+    // Component.onCompleted when the root has them. The page keeps its values
+    // in the document of its plugin under the key `settings` (08-state.md).
+    // It is torn down with DestroyPanel, and with the plugin: the signal
+    // PanelAboutToBeDestroyed is emitted for it too.
+    QQuickItem* CreateSettingsPage(const QString& pluginId);
+
     // Tears the instance down: PanelAboutToBeDestroyed (the item is alive, a
     // slot drops it and its bindings), then the owner of its calls, the item,
     // its context. Not through deleteLater. Does nothing for an item that is
@@ -148,6 +172,11 @@ signals:
     // after all loads.
     void PanelTypesChanged();
     void ProblemsChanged();
+    // The set of the plugins that have a settings page that can be created
+    // changed, or a plugin was loaded again (its pages are gone). Once per
+    // list that PluginService gave and once per Reload, after the other
+    // signals; also when CreateSettingsPage disables a page.
+    void SettingsPagesChanged();
     // Before an instance is deleted, with the item alive. Also while a plugin
     // is unloaded. The slot must be direct: after the signal the item is gone.
     void PanelAboutToBeDestroyed(QQuickItem* panel);
@@ -177,6 +206,11 @@ private:
         QJsonObject Contributes;
         std::unique_ptr<QQmlContext> Context;
         std::vector<PanelType> Panels;
+        // The settings page: null when there is none or it could not be made.
+        std::unique_ptr<QQmlComponent> Settings;
+        // The creation of the page failed once; until the plugin is loaded
+        // again.
+        bool SettingsDisabled = false;
         std::vector<Instance> Instances;
         // The ids this plugin has taken so far while loading.
         QSet<QString> Claimed;
@@ -201,6 +235,13 @@ private:
     void SetImportPaths(const std::vector<Declared>& declared);
     std::unique_ptr<Plugin> Load(const Declared& declared);
     void LoadPanel(Plugin& plugin, const QJsonValue& entry);
+    void LoadSettings(Plugin& plugin);
+    // Makes an instance of the component for the plugin and records it in
+    // Instances; nullptr with the reason in `error`.
+    // `what` names the kind in the message ("panel", "settings page").
+    QQuickItem* Instantiate(Plugin& plugin, QQmlComponent& component,
+                            const QString& instanceId, const QString& what,
+                            QString& error);
     // Destroys the instances, the components, the context and the problems.
     // Marks the plugin Unloading first.
     void Unload(Plugin& plugin);
