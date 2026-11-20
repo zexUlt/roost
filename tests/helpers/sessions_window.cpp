@@ -521,11 +521,9 @@ bool SessionsWindow::PressAccepted(Qt::Key key,
 void SessionsWindow::WaitForThePanelToStopWriting() {
     QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->property("restored").toBool(),
                              TIMEOUT_MS);
-    QTRY_VERIFY_WITH_TIMEOUT(!PanelOf(LIST)
-                                  ->findChild<QObject*>("sessionsModel")
-                                  ->property("saving")
-                                  .toBool(),
-                             TIMEOUT_MS);
+    QObject* model = PanelOf(LIST)->findChild<QObject*>("sessionsModel");
+    QVERIFY2(model != nullptr, "the list panel has no sessionsModel");
+    QTRY_VERIFY_WITH_TIMEOUT(!model->property("saving").toBool(), TIMEOUT_MS);
 }
 
 }  // namespace roost::testing
