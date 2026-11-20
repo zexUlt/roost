@@ -63,10 +63,8 @@ bool CommandsAdapter::registerCommand(const QString& command,
             return value.isUndefined() ? QJsonValue(QJsonValue::Null) : value;
         });
     if (!added) {
-        qWarning(
-            "roost: the command %s has a handler already (or the id is "
-            "empty): not replaced",
-            qUtf8Printable(command));
+        qWarning("roost: no handler set for the command %s: the id is empty",
+                 qUtf8Printable(command));
     }
     return added;
 }

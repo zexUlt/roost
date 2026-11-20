@@ -34,8 +34,8 @@ FocusScope {
     // The command terminal.copy (declared by the manifest of the plugin
     // `shell`, which gives it Cmd+C and Ctrl+Shift+C in this panel) copies the
     // selection. It goes when the panel does. The item still copies on the same
-    // keys by itself (IsCopyShortcut), for a window without a keymap. One panel
-    // has the handler: another terminal panel's registration is refused.
+    // keys by itself (IsCopyShortcut) whenever the table does not take the
+    // key. With two terminal panels the later registration runs.
     // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
         if (Roost.commands !== null) {

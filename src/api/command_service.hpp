@@ -3,6 +3,7 @@
 #include <QFuture>
 #include <QHash>
 #include <QJsonValue>
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -28,11 +29,17 @@ public:
 
     explicit CommandService(IoThread& io, QObject* parent = nullptr);
 
-    // Gives `command` a handler in the window. False if the command already
-    // has one (a handler is not replaced). With an `owner`, the handler goes
-    // when the owner is destroyed; without one, with the service. The id is
-    // declared by a plugin manifest (`contributes.commands`): that is what
-    // gives it a key and a place in the palette, this only runs it.
+    // Gives `command` a handler in the window; False for an empty id or no
+    // handler. A command may have several: they are kept in the order they
+    // came, Run uses the most recent one that is still alive, and the end of
+    // an owner takes away only its own. So a panel that is created again
+    // before the old one is destroyed does not lose the command, and the
+    // second of two panels keeps it when the first is closed. (Which one runs
+    // is the last registered, not the one that has the focus.) With an
+    // `owner`, the handler goes when the owner is destroyed; without one, with
+    // the service. The id is declared by a plugin manifest
+    // (`contributes.commands`): that is what gives it a key and a place in the
+    // palette, this only runs it.
     [[nodiscard]] bool Register(const QString& command, const QObject* owner,
                                 LocalHandler handler);
 
@@ -52,7 +59,9 @@ private:
     };
 
     IoThread& Io_;
-    QHash<QString, Local> Locals_;
+    // By command: the registrations in the order they came, the last first to
+    // run.
+    QHash<QString, QList<Local>> Locals_;
 };
 
 }  // namespace roost::api

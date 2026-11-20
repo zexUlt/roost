@@ -12,16 +12,21 @@ CommandService::CommandService(IoThread& io, QObject* parent)
 bool CommandService::Register(const QString& command, const QObject* owner,
                               LocalHandler handler) {
     if (!CheckThread(*this, "CommandService::Register") || command.isEmpty() ||
-        !handler || Locals_.contains(command)) {
+        !handler) {
         return false;
     }
-    Locals_.insert(command, {.Handler = std::move(handler), .Owner = owner});
+    Locals_[command].append({.Handler = std::move(handler), .Owner = owner});
     if (owner != nullptr) {
-        // The owner is gone before its handler could run again; the entry is
-        // looked up by owner, in case the id was freed and taken by another.
+        // The owner is gone before its handlers could run again; only its own
+        // entries go, the others of the id stay.
         connect(owner, &QObject::destroyed, this, [this, command, owner] {
-            if (const auto it = Locals_.constFind(command);
-                it != Locals_.cend() && it->Owner == owner) {
+            const auto it = Locals_.find(command);
+            if (it == Locals_.end()) {
+                return;
+            }
+            it->removeIf(
+                [owner](const Local& local) { return local.Owner == owner; });
+            if (it->isEmpty()) {
                 Locals_.erase(it);
             }
         });
@@ -40,7 +45,7 @@ QFuture<rpc::Result> CommandService::Run(const QString& command,
     }
     if (const auto it = Locals_.constFind(command); it != Locals_.cend()) {
         // A copy: the handler may take its own registration away.
-        const LocalHandler handler = it->Handler;
+        const LocalHandler handler = it->last().Handler;
         return rpc::Ready(handler(args));
     }
     return Io_.Request(QStringLiteral("commands.run"),

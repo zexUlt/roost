@@ -214,20 +214,44 @@ private slots:
         QCOMPARE(Proxy_->CommandRequests(), 2);
     }
 
-    void AHandlerIsNotReplaced() {
+    // The most recent live registration runs; the end of an owner takes away
+    // only its own entries, in whatever order the owners go.
+    void TheMostRecentLiveHandlerRuns() {
         QVERIFY(Boot());
-        QObject first;
+        auto first = std::make_unique<QObject>();
         auto second = std::make_unique<QObject>();
         QVERIFY(Api_->Commands().Register(
-            "local.hello", &first,
+            "local.hello", first.get(),
             [](const QJsonValue&) { return rpc::Result("first"); }));
-        QVERIFY(!Api_->Commands().Register(
+        QVERIFY(Api_->Commands().Register(
             "local.hello", second.get(),
             [](const QJsonValue&) { return rpc::Result("second"); }));
-        // The end of the owner that was refused takes nothing away.
-        second.reset();
+        QCOMPARE(*Run("local.hello"), QJsonValue("second"));
+        // The first goes while the second is there: nothing changes.
+        first.reset();
         QVERIFY(Api_->Commands().HasLocal("local.hello"));
-        QCOMPARE(*Run("local.hello"), QJsonValue("first"));
+        QCOMPARE(*Run("local.hello"), QJsonValue("second"));
+        // A new owner before the old one is destroyed (a reloaded panel).
+        auto third = std::make_unique<QObject>();
+        QVERIFY(Api_->Commands().Register(
+            "local.hello", third.get(),
+            [](const QJsonValue&) { return rpc::Result("third"); }));
+        second.reset();
+        QCOMPARE(*Run("local.hello"), QJsonValue("third"));
+        third.reset();
+        QVERIFY(!Api_->Commands().HasLocal("local.hello"));
+        // The older goes after the newer: the newer's end brings it back.
+        auto older = std::make_unique<QObject>();
+        auto newer = std::make_unique<QObject>();
+        QVERIFY(Api_->Commands().Register(
+            "local.hello", older.get(),
+            [](const QJsonValue&) { return rpc::Result("older"); }));
+        QVERIFY(Api_->Commands().Register(
+            "local.hello", newer.get(),
+            [](const QJsonValue&) { return rpc::Result("newer"); }));
+        newer.reset();
+        QCOMPARE(*Run("local.hello"), QJsonValue("older"));
+        QCOMPARE(Proxy_->CommandRequests(), 0);
     }
 
     void ACommandRegisteredByAPanelGoesWithThePanel() {
@@ -251,15 +275,13 @@ private slots:
         QCOMPARE(thrown.error().Code, INTERNAL_ERROR);
         QVERIFY2(thrown.error().Message.contains("boom"),
                  qPrintable(thrown.error().Message));
-        // A second handler for the id is refused, and so is one that is not a
-        // function.
-        QTest::ignoreMessage(
-            QtWarningMsg, QRegularExpression(
-                              "^roost: the command panel.hello has a handler"));
+        // A second handler for the id is taken (the later one runs, until
+        // the panel goes), a handler that is not a function is refused.
         QVariant again;
         QVERIFY(QMetaObject::invokeMethod(panel, "again",
                                           Q_RETURN_ARG(QVariant, again)));
-        QVERIFY(!again.toBool());
+        QVERIFY(again.toBool());
+        QCOMPARE(*Run("panel.hello"), QJsonValue(1));
         QVariant name;
         QVERIFY(QMetaObject::invokeMethod(panel, "notAFunction",
                                           Q_RETURN_ARG(QVariant, name)));

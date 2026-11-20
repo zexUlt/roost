@@ -33,10 +33,11 @@ public:
     // a throw is an error. The handler lives as long as the caller does, as a
     // call of `run` does (the calling panel's owner, 05-plugins.md): it is
     // removed when the panel is torn down; in the shell it lives as long as
-    // the window. Returns false, and the handler is not set, if the command
-    // has one already or the caller is being torn down. A handler that is not
-    // a function throws TypeError. The name is not `register`: that is a C++
-    // keyword, and moc names the method as it is written.
+    // the window. A command may have handlers of several panels: the most
+    // recent one that is alive runs. Returns false, and the handler is not
+    // set, if the id is empty or the caller is being torn down. A handler that
+    // is not a function throws TypeError. The name is not `register`: that is a
+    // C++ keyword, and moc names the method as it is written.
     Q_INVOKABLE bool registerCommand(const QString& command,
                                      const QJSValue& handler);
 

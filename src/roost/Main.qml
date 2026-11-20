@@ -238,9 +238,10 @@ Window {
 
     // The commands of the window (the manifest of the built-in plugin `shell`
     // declares them and gives them keys; the matcher runs them, key and
-    // palette alike). They are not Shortcuts: Qt tries a Shortcut before the
-    // key press reaches the matcher, so a key that is both would never be
-    // looked up in the table.
+    // palette alike). Not Shortcuts while the table is there: Qt tries a
+    // Shortcut before the key press reaches the matcher, so a key that is
+    // both would never be looked up in the table (the two Shortcuts below
+    // are on only without a table).
     //
     // shell.focusList, Ctrl+\ (the physical Control key) by default: moves the
     // keyboard to the list from anywhere, the terminal included. Not a toggle:
@@ -252,6 +253,28 @@ Window {
             Roost.commands.registerCommand("shell.focusList", () => listSlot.forceActiveFocus());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
         }
+    }
+
+    // The same two keys while the window has no keymap table (before roostd
+    // has answered keymap.get, roostd down or crashed): the bug report must be
+    // reachable exactly when roostd is broken, and a key that moves the
+    // keyboard to the list is the way out of a panel. While the table is
+    // there, they are off: the key is then an entry of the table, and an
+    // enabled Shortcut would take it before the matcher (a double run, and no
+    // way for keymap.json to change it). Ctrl is the physical Control key;
+    // Qt's Ctrl is Command on macOS.
+    Shortcut {
+        enabled: !Roost.keymapLoaded
+        context: Qt.WindowShortcut
+        sequence: Qt.platform.os === "osx" ? "Meta+\\" : "Ctrl+\\"
+        onActivated: listSlot.forceActiveFocus()
+    }
+
+    Shortcut {
+        enabled: Qt.platform.os === "osx" && !Roost.keymapLoaded
+        context: Qt.WindowShortcut
+        sequence: "Ctrl+Shift+B"
+        onActivated: root.reportBug()
     }
 
     BugReportDialog {

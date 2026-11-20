@@ -174,6 +174,18 @@ bool KeyMatcher::eventFilter(QObject* watched, QEvent* event) {
     }
 }
 
+const api::KeyBinding* KeyMatcher::Usable(
+    const api::KeyBinding* binding) const {
+    // A command of the built-in `shell` plugin has no backend: with no handler
+    // in the window the request would only come back as -32003, and the key
+    // is not ours (a terminal copies on its own, IsCopyShortcut).
+    if (binding != nullptr && binding->Source == QStringLiteral("shell") &&
+        !Commands_.HasLocal(binding->Command)) {
+        return nullptr;
+    }
+    return binding;
+}
+
 bool KeyMatcher::OnPress(QObject* watched, const QKeyEvent& event) {
     auto* const window = qobject_cast<QQuickWindow*>(watched);
     if (window == nullptr || Composing_ || !Keymap_.IsLoaded()) {
@@ -192,9 +204,9 @@ bool KeyMatcher::OnPress(QObject* watched, const QKeyEvent& event) {
     }
     const QString panel = PanelTypeOf(focus);
     const api::KeyBinding* binding =
-        panel.isEmpty() ? nullptr : Keymap_.Find(*chord, panel);
+        panel.isEmpty() ? nullptr : Usable(Keymap_.Find(*chord, panel));
     if (binding == nullptr) {
-        binding = Keymap_.Find(*chord, QString());
+        binding = Usable(Keymap_.Find(*chord, QString()));
     }
     if (binding == nullptr) {
         return false;

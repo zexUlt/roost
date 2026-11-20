@@ -100,6 +100,15 @@ void RoostSingleton::setApi(api::Api& api) {
     connect(&api, &api::Api::Connected, this, [this] { setConnected(true); });
     connect(&api, &api::Api::Disconnected, this,
             [this] { setConnected(false); });
+    // Changed comes at each load, replacement and drop of the table.
+    KeymapLoaded_ = api.Keymap().IsLoaded();
+    connect(&api.Keymap(), &api::KeymapService::Changed, this, [this] {
+        if (const bool loaded = Api_->Keymap().IsLoaded();
+            loaded != KeymapLoaded_) {
+            KeymapLoaded_ = loaded;
+            emit keymapLoadedChanged();
+        }
+    });
 }
 
 void RoostSingleton::call(const QString& method, const QJSValue& params,

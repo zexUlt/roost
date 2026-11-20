@@ -31,6 +31,9 @@ namespace roost {
 //     string was the last one seen, no one with an empty string since);
 //   - while the focus is in a Popup or a Dialog (the keys are the dialog's);
 //   - before the table is loaded;
+//   - a key whose command the built-in `shell` plugin declares (no backend)
+//     when the window has no handler for it: the key falls through to the
+//     item (the terminal copies on its own) instead of ending in -32003;
 //   - a key without Cmd, Ctrl or Alt other than F1 to F24 while the focus is
 //     in the terminal or in an item that takes text (it has the flag
 //     ItemAcceptsInputMethod): such a key is text there;
@@ -76,6 +79,9 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    // `binding` unless it is an entry of the plugin `shell` whose command has
+    // no handler in the window; null for null.
+    const api::KeyBinding* Usable(const api::KeyBinding* binding) const;
     bool OnPress(QObject* watched, const QKeyEvent& event);
 
     api::KeymapService& Keymap_;
