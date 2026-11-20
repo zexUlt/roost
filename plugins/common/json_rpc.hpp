@@ -12,11 +12,9 @@
 #include <optional>
 
 // JSON-RPC 2.0 (https://www.jsonrpc.org/specification), the server side, as the
-// Claude adapter needs it: a method table and the dispatch of requests,
-// notifications and batches. No I/O: a message body comes in, a response body
-// comes out. A plugin keeps its own copy of this small piece instead of linking
-// roost's internals (design.md §5, built-in plugins use the public API only).
-namespace roost::claude::jsonrpc {
+// adapter backends need it: a method table and the dispatch of requests,
+// notifications and batches. No I/O and no dependency on roost internals.
+namespace roost::plugin::jsonrpc {
 
 // The error codes the specification reserves.
 enum class EErrorCode : int {
@@ -73,4 +71,4 @@ private:
     QHash<QString, Handler> Handlers_;
 };
 
-}  // namespace roost::claude::jsonrpc
+}  // namespace roost::plugin::jsonrpc

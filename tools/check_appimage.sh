@@ -230,7 +230,8 @@ for module in QtCore QtQuick/Controls QtQuick/Controls/Basic QtQuick/Layouts; do
     [ -f "$appdir/usr/qml/$module/qmldir" ] ||
         fail "usr/qml/$module/qmldir is missing"
 done
-for file in plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \
+for file in plugins/codex/plugin.json plugins/codex/backend/codex-adapter \
+    plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \
     plugins/sessions/qml/RoostSessions/libsessions_qml.so plugins/claude/plugin.json; do
     [ -e "$appdir/usr/lib/roost/$file" ] || fail "usr/lib/roost/$file is missing"
 done

@@ -19,13 +19,15 @@
 
 #include "claude/backend/agents.hpp"
 #include "claude/backend/claude_run.hpp"
-#include "claude/backend/json_rpc.hpp"
+#include "common/json_rpc.hpp"
 
 class QJsonObject;
 class QJsonValue;
 class QProcess;
 
 namespace roost::claude {
+
+namespace jsonrpc = plugin::jsonrpc;
 
 struct AdapterOptions {
     QString Program = QStringLiteral("claude");

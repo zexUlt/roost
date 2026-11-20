@@ -212,6 +212,8 @@ private:
         QSet<QString> files{
             plugins + "/claude/plugin.json",
             plugins + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
+            plugins + "/codex/plugin.json",
+            plugins + "/codex/backend/" + CODEX_ADAPTER_FILE,
             plugins + "/sessions/plugin.json",
             plugins + "/sessions/qml/SessionsPanel.qml",
             plugins + "/sessions/qml/RoostSessions/qmldir",
@@ -231,6 +233,7 @@ private:
                 "roost.app/Contents/MacOS/roost",
                 "roost.app/Contents/MacOS/roostd",
                 QString("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE,
+                QString("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE,
                 QString("roost.app/Contents/PlugIns/roost/") +
                     SESSIONS_MODULE_FILE,
             });
@@ -331,7 +334,8 @@ private slots:
     void ProgramsAreExecutable() {
         QStringList programs{
             BinDir() + "/roost", BinDir() + "/roostd",
-            PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE};
+            PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
+            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE};
         for (const QString& program : programs) {
             QVERIFY2(QFileInfo(program).isExecutable(), qPrintable(program));
         }
@@ -342,9 +346,12 @@ private slots:
     void PluginBinariesAreWhereTheManifestsExpectThem() {
         const QString adapter =
             PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE;
+        const QString codex =
+            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE;
         const QString module = SessionsModuleDir() + "/" + SESSIONS_MODULE_FILE;
         if (!IS_MACOS) {
             QVERIFY(!QFileInfo(adapter).isSymLink());
+            QVERIFY(!QFileInfo(codex).isSymLink());
             QVERIFY(!QFileInfo(module).isSymLink());
             return;
         }
@@ -354,6 +361,7 @@ private slots:
         };
         const QList<Link> links{
             {adapter, Path("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE},
+            {codex, Path("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE},
             {module,
              Path("roost.app/Contents/PlugIns/roost/") + SESSIONS_MODULE_FILE},
         };
@@ -448,6 +456,11 @@ private slots:
             IS_MACOS ? BinDir() + "/" + CLAUDE_ADAPTER_FILE
                      : PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
             ADAPTER_RUN_PATH);
+        CheckRunPath(
+            tool,
+            IS_MACOS ? BinDir() + "/" + CODEX_ADAPTER_FILE
+                     : PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE,
+            ADAPTER_RUN_PATH);
         CheckRunPath(tool,
                      IS_MACOS
                          ? Path("roost.app/Contents/PlugIns/roost/") +
@@ -530,7 +543,7 @@ private slots:
                      qPrintable(directory));
         }
         ids.sort();
-        QCOMPARE(ids, (QStringList{"claude", "sessions", "terminal"}));
+        QCOMPARE(ids, (QStringList{"claude", "codex", "sessions", "terminal"}));
 
         // The adapter is started from its place in the plugin directory (on
         // macOS a symlink to the one in Contents/MacOS), runs the fake claude.

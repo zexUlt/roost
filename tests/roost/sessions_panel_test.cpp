@@ -79,6 +79,43 @@ private slots:
         QVERIFY(!ListStatus()->isVisible());
     }
 
+    void SessionLabelsAndMessagesUsePlainText() {
+        FailOnWarnings();
+        QVERIFY(WriteFakeClaude(FAKE_CLAUDE));
+        const QString title = "<b>x</b>";
+        const QString cwd = "/work/<b>alpha</b>";
+        const QJsonArray rows{QJsonObject{{"id", ALPHA},
+                                          {"name", title},
+                                          {"cwd", cwd},
+                                          {"kind", "background"},
+                                          {"state", "working"},
+                                          {"status", "busy"}}};
+        QSaveFile agents(AgentsPath());
+        QVERIFY(agents.open(QIODevice::WriteOnly));
+        QVERIFY(agents.write(QJsonDocument(rows).toJson()) > 0);
+        QVERIFY(agents.commit());
+        QVERIFY(StartDaemon());
+        OpenWindow();
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(RowItem(0) != nullptr, TIMEOUT_MS);
+
+        QCOMPARE(RowText(0, "sessionTitle"), title);
+        QCOMPARE(RowText(0, "sessionDetail"), QString("working · ") + cwd);
+        for (const char* name : {"sessionTitle", "sessionDetail"}) {
+            const QObject* label = RowItem(0)->findChild<QObject*>(name);
+            QVERIFY(label != nullptr);
+            QCOMPARE(label->property("textFormat").toInt(),
+                     static_cast<int>(Qt::PlainText));
+        }
+        for (const char* name :
+             {"sessionsUnavailable", "sessionsConfirm", "sessionsNotice"}) {
+            const QObject* label = PanelOf(LIST)->findChild<QObject*>(name);
+            QVERIFY(label != nullptr);
+            QCOMPARE(label->property("textFormat").toInt(),
+                     static_cast<int>(Qt::PlainText));
+        }
+    }
+
     // The image loads for real: the svg of the module's resources needs the
     // image format plugin of Qt Svg, and a row that shows no icon has none.
     void ASessionRowShowsTheIconOfItsAgent() {

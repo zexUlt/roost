@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "claude/backend/claude_run.hpp"
+#include "common/backend_process.hpp"
 
 namespace roost::claude {
 
@@ -194,7 +195,7 @@ Adapter::~Adapter() {
     }
     if (Process_ != nullptr) {
         Process_->disconnect(this);
-        StopRun(*Process_);
+        plugin::StopRun(*Process_);
     }
     for (Waiting& waiting : Waiting_) {
         Settle(waiting.Promise,
@@ -232,7 +233,7 @@ void Adapter::Poll() {
         TimeoutTimer_.stop();
         TimeoutTimer_.disconnect();
         process->disconnect(this);
-        StopRun(*process);
+        plugin::StopRun(*process);
         process->deleteLater();
         OnPolled(std::move(result));
         PollTimer_.start(std::exchange(PollAgain_, false)

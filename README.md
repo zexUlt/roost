@@ -7,15 +7,14 @@
 
 A desktop app for macOS and Linux that finds every background coding-agent
 session, groups them, and shows each agent's own TUI in a terminal panel, all
-driven from the keyboard. Claude Code first; Codex and other agents through the
-same adapter interface. Built on Qt Quick and C++, with libghostty-vt as the
-terminal emulator. Every feature is a plugin, and panels can be linked to each
-other.
+driven from the keyboard. Claude Code and Codex use the same adapter
+interface. Built on Qt Quick and C++, with libghostty-vt as the terminal
+emulator. Every feature is a plugin, and panels can be linked to each other.
 
-Status: the window lists your Claude Code sessions and opens each one in a
-terminal panel, and ships as a macOS `.dmg` and a Linux AppImage. The panel
-layout, the keymap file and notifications are not there yet; see
-`docs/design.md` for the design and the plan.
+Status: the window lists Claude Code background sessions and saved Codex
+threads, and opens them in a terminal panel. It ships as a macOS `.dmg` and a
+Linux AppImage. The panel layout, the keymap file and notifications are not
+there yet; see `docs/design.md` for the design and the plan.
 
 ## Install
 
@@ -68,6 +67,12 @@ agent (`$ROOST_CONFIG/agent-icons/` if `ROOST_CONFIG` is set), and
 `default.svg` or `default.png` there replaces the default icon of the agents
 that have none. A file that fails to load falls back to the bundled icon. The
 panel reads the folder when it is created.
+
+For Codex, put `codex` on that same `PATH` or set `ROOST_CODEX_EXECUTABLE` to
+the full path of the CLI. The adapter uses `codex app-server` to list local,
+unarchived interactive threads and opens them with `codex resume` in their
+original directories. Create new Codex sessions in Codex. Roost lists saved
+threads but does not track live status in other Codex processes.
 
 Logs are in the directory of the socket: `roostd.log` (the previous run is
 `roostd.log.1`) and `roostd.start.log` (what `roostd` prints before it holds
@@ -176,7 +181,6 @@ opens the file only once it holds the socket lock: a second roostd that loses
 the lock exits with code 1 and leaves the log alone.
 
 The window shows the session list on the left and the terminal on the right.
-The list comes from `claude agents`, so `claude` must be on `PATH` of roostd.
 In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and moves
 the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS) moves it
 back to the list.
