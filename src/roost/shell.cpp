@@ -294,7 +294,12 @@ void Shell::Refill() {
 
 void Shell::Fill(Slot& slot) {
     const auto info = Loader_.Info(slot.Type);
-    QQuickItem* panel = info ? Loader_.CreatePanel(slot.Type) : nullptr;
+    const bool isList = slot.Type == QLatin1String(LIST_PANEL);
+    QQuickItem* panel =
+        info ? Loader_.CreatePanel(
+                   slot.Type,
+                   QLatin1String(isList ? LIST_INSTANCE : TERMINAL_INSTANCE))
+             : nullptr;
     if (panel == nullptr) {
         Write(slot, "error", ErrorFor(slot.Type));
         return;

@@ -15,6 +15,7 @@ add_library(sessions_list_lib STATIC
     model/agent_icon.cpp
     model/session_rows.cpp
     model/list_state.cpp
+    model/merge_patch.cpp
     model/row_diff.cpp
     qml_types/sessions_list.cpp
 )

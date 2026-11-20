@@ -903,6 +903,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
                                       .value("view")
                                       .toObject()
+                                      .value("list")
+                                      .toObject()
                                       .value("opened")
                                       .toString(),
                                   QString("claude/" + BETA), TIMEOUT_MS);
@@ -932,6 +934,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
                                       .value("view")
                                       .toObject()
+                                      .value("list")
+                                      .toObject()
                                       .value("opened")
                                       .toString(),
                                   QString("claude/" + BETA), TIMEOUT_MS);
@@ -957,6 +961,8 @@ private slots:
         // The document does not keep it as the open one.
         QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
                                       .value("view")
+                                      .toObject()
+                                      .value("list")
                                       .toObject()
                                       .value("opened")
                                       .toString(),
@@ -1020,6 +1026,45 @@ private slots:
                          "session"}),
             30000);
         QCOMPARE(Ids(), (QStringList{BETA, ALPHA, GAMMA, DELTA}));
+    }
+
+    // The list keeps what it changed while roostd was away over what the
+    // document of the next connection says, and takes the rest of it.
+    void AnEditMadeWhileRoostdIsDownSurvivesTheReread() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(Kinds().count("header"), 1);
+
+        StopDaemon();
+        QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
+                                  QString("disconnected"), TIMEOUT_MS);
+        // Nowhere to write: the fold waits (the list shows nothing meanwhile).
+        Invoke("toggleFold", QString());
+        QTest::qWait(200);
+        // The document meanwhile: a category for BETA, written by someone else.
+        QVERIFY(WriteStoreFile(
+            QStringLiteral(
+                R"({"version": 1, "categories": {"claude/%1": "work"}})")
+                .arg(BETA)
+                .toUtf8()));
+        QVERIFY(StartDaemon());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Root()->property("connection").toString(),
+                                  QString("connected"), 30000);
+        // Ours: the fold of the uncategorized. Theirs: the category.
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument().value("folded").toArray(),
+                                  QJsonArray{QString()}, 30000);
+        QCOMPARE(StoredDocument()
+                     .value("categories")
+                     .toObject()
+                     .value("claude/" + BETA)
+                     .toString(),
+                 QString("work"));
+        // Its fold is not the fold of "work": the session is shown.
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(BETA), 30000);
     }
 
     void EnterOnAFoldedHeaderUnfoldsAndOpensNothing() {

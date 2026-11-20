@@ -46,6 +46,10 @@ class Shell : public QObject {
 public:
     static constexpr const char* LIST_PANEL = "sessions.list";
     static constexpr const char* TERMINAL_PANEL = "terminal.view";
+    // The ids of the two panels in the layout of the window (06-panels.md): the
+    // list keeps its view in the document under its own.
+    static constexpr const char* LIST_INSTANCE = "list";
+    static constexpr const char* TERMINAL_INSTANCE = "terminal";
     static constexpr const char* SESSION_REF = "SessionRef";
 
     // `root` is the QML root (the slots are its descendants), `loader`,

@@ -164,6 +164,17 @@ QHash<int, QByteArray> SessionsList::roleNames() const {
 
 // Properties.
 
+QString SessionsList::instanceId() const { return State_.Instance(); }
+
+void SessionsList::setInstanceId(const QString& instanceId) {
+    // The view of the state read is that of the instance it was read for.
+    if (Ready_ || instanceId == State_.Instance()) {
+        return;
+    }
+    State_.SetInstance(instanceId);
+    emit instanceIdChanged();
+}
+
 QAbstractItemModel* SessionsList::source() const { return Source_; }
 
 void SessionsList::setSource(QAbstractItemModel* source) {
@@ -232,7 +243,9 @@ void SessionsList::setOpened(const QVariant& ref) {
 
 bool SessionsList::ready() const { return Ready_; }
 
-bool SessionsList::saving() const { return InFlight_ || Dirty_ || SyncQueued_; }
+bool SessionsList::saving() const {
+    return InFlight_ || !Dirty_.isEmpty() || SyncQueued_;
+}
 
 bool SessionsList::readOnly() const { return ReadFailed_ || State_.ReadOnly(); }
 
@@ -432,27 +445,54 @@ void SessionsList::restore(const QVariantMap& document) {
     if (Ready_ && !ReadFailed_ && Echo_ && *Echo_ == doc) {
         Echo_.reset();
         Reading_ = false;
+        Stored_ = doc;
+        refreshDirty();
         return;
     }
     changing([&] {
-        // A foreign document replaces the state, our unsent edits with it. A
-        // write of ours still in flight is later in the store than this
-        // document, so its echo is a foreign one too and is taken in.
+        // A foreign document is taken in, except the keys where our state
+        // differs from the last document of the store: unsent edits and those
+        // of a write in flight. They stay ours, and go out as a patch. A write
+        // of ours still in flight is later in the store than this document;
+        // its echo is a foreign document too, and brings nothing new.
+        QJsonObject merged = doc;
+        if (Ready_ && !ReadFailed_) {
+            if (const std::optional<QJsonObject> ours = currentDocument()) {
+                for (const KeyPath& path : PatchPaths(DiffOf(Stored_, *ours))) {
+                    // Whoever wrote the document says what version it is.
+                    if (path == KeyPath{QStringLiteral("version")}) {
+                        continue;
+                    }
+                    // A leaf of the view of an instance that the document
+                    // lacks: the whole view is ours, as the instance shows it,
+                    // else a lone leaf would pass for the view of the instance
+                    // and hide the shared one it was seeded from.
+                    const KeyPath own{QStringLiteral("view"),
+                                      State_.Instance()};
+                    if (!State_.Instance().isEmpty() &&
+                        path.size() > own.size() &&
+                        path.first(own.size()) == own &&
+                        !ValueAt(merged, own).isObject()) {
+                        SetAt(merged, own, ValueAt(*ours, own));
+                        continue;
+                    }
+                    SetAt(merged, path, ValueAt(*ours, path));
+                }
+            }
+        }
         Echo_.reset();
-        Dirty_ = false;
         Reading_ = false;
-        bool save = State_.Restore(doc);
+        State_.Restore(merged);
+        Stored_ = doc;
         ReadFailed_ = false;
         ReadProblem_.clear();
         Ready_ = true;
         if (EarlyOpened_) {
-            save |= State_.SetOpened(keyOf(*EarlyOpened_));
+            State_.SetOpened(keyOf(*EarlyOpened_));
             EarlyOpened_.reset();
         }
         syncBody();
-        if (save) {
-            requestSave();
-        }
+        requestSave();
     });
 }
 
@@ -477,16 +517,22 @@ void SessionsList::saveFinished(const QString& error) {
     }
     changing([&] {
         InFlight_ = false;
+        // The echo comes before the answer; one that did not come (or was a
+        // document of another writer) leaves the store as our write made it.
+        if (error.isEmpty() && Echo_) {
+            Stored_ = *Echo_;
+        }
         Echo_.reset();
+        // After a failed write the paths are still ours to write: nothing will
+        // come back from it, and the next edit or change of the source
+        // writes them again.
+        refreshDirty();
         if (!error.isEmpty()) {
-            // The write did not happen: nothing will come back from it, and
-            // the next edit or change of the source writes the state again.
-            Dirty_ = true;
             SaveProblem_ = error;
             return;
         }
         SaveProblem_.clear();
-        if (Dirty_ && !Reading_) {
+        if (!Dirty_.isEmpty() && !Reading_) {
             sendSave();
         }
     });
@@ -497,32 +543,50 @@ void SessionsList::storeLost() {
     Reading_ = true;
 }
 
-void SessionsList::requestSave() {
+std::optional<QJsonObject> SessionsList::currentDocument() const {
+    return State_.ToDocument(Stored_);
+}
+
+void SessionsList::refreshDirty() {
+    Dirty_.clear();
     if (!Ready_ || readOnly()) {
         return;
     }
-    Dirty_ = true;
-    if (!InFlight_ && !Reading_) {
+    if (const std::optional<QJsonObject> ours = currentDocument()) {
+        Dirty_ = PatchPaths(DiffOf(Stored_, *ours));
+    }
+}
+
+void SessionsList::requestSave() {
+    if (!Ready_) {
+        return;
+    }
+    refreshDirty();
+    if (!Dirty_.isEmpty() && !InFlight_ && !Reading_) {
         sendSave();
     }
 }
 
 void SessionsList::retrySave() {
-    if (Dirty_ && !InFlight_ && !Reading_ && Ready_ && !readOnly()) {
+    if (!Dirty_.isEmpty() && !InFlight_ && !Reading_ && Ready_ && !readOnly()) {
         sendSave();
     }
 }
 
 void SessionsList::sendSave() {
-    const std::optional<QJsonObject> document = State_.ToDocument();
+    const std::optional<QJsonObject> document = currentDocument();
     if (!document || readOnly()) {
-        Dirty_ = false;
+        Dirty_.clear();
+        return;
+    }
+    const QJsonObject patch = DiffOf(Stored_, *document);
+    if (patch.isEmpty()) {
+        Dirty_.clear();
         return;
     }
     InFlight_ = true;
-    Dirty_ = false;
     Echo_ = *document;
-    emit saveRequested(document->toVariantMap());
+    emit saveRequested(patch.toVariantMap());
 }
 
 // Rows.

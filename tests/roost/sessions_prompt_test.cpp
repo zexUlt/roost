@@ -182,9 +182,12 @@ private slots:
         QVERIFY(Part("sessionsQuery")->isVisible());
         QCOMPARE(Part("sessionsQuery")->property("text").toString(),
                  QString("/ flaky"));
-        QTRY_COMPARE_WITH_TIMEOUT(
-            StoredSection("view").value("query").toString(), QString("flaky"),
-            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredSection("view")
+                                      .value("list")
+                                      .toObject()
+                                      .value("query")
+                                      .toString(),
+                                  QString("flaky"), TIMEOUT_MS);
 
         // Enter keeps the query, gives the list the keyboard and opens nothing.
         Press(Qt::Key_Return);
