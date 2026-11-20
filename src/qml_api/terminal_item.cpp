@@ -192,6 +192,21 @@ void TerminalItem::reopen() {
     }
 }
 
+void TerminalItem::takeBack() {
+    if (Pane_) {
+        Pane_->TakeBack();
+        syncSuperseded();
+    }
+}
+
+void TerminalItem::syncSuperseded() {
+    const bool superseded = Pane_ != nullptr && Pane_->Superseded();
+    if (superseded != Superseded_) {
+        Superseded_ = superseded;
+        emit supersededChanged();
+    }
+}
+
 void TerminalItem::componentComplete() {
     QQuickItem::componentComplete();
     // The engine and the size are known now; a ref set during creation waited
@@ -259,6 +274,7 @@ bool TerminalItem::ensurePane() {
                                    : QStringLiteral("nothing")),
             pane->Session() ? "present" : "none");
         setSession(pane->Session());
+        syncSuperseded();
     });
     connect(pane, &SessionPane::Updated, this, [this] { update(); });
     connect(pane, &SessionPane::StatusChanged, this, [this, pane] {
@@ -268,6 +284,7 @@ bool TerminalItem::ensurePane() {
             return;
         }
         setStatus(statusName(pane->Status()), pane->Message());
+        syncSuperseded();
     });
     pane->SetGrid(static_cast<quint16>(Columns_), static_cast<quint16>(Rows_));
     return true;

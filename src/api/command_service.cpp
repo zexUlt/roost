@@ -2,6 +2,8 @@
 
 #include <QJsonObject>
 
+#include <algorithm>
+
 #include "api/thread_check.hpp"
 
 namespace roost::api {
@@ -10,12 +12,14 @@ CommandService::CommandService(IoThread& io, QObject* parent)
     : QObject(parent), Io_(io) {}
 
 bool CommandService::Register(const QString& command, const QObject* owner,
-                              LocalHandler handler) {
+                              LocalHandler handler, FocusProbe focused) {
     if (!CheckThread(*this, "CommandService::Register") || command.isEmpty() ||
         !handler) {
         return false;
     }
-    Locals_[command].append({.Handler = std::move(handler), .Owner = owner});
+    Locals_[command].append({.Handler = std::move(handler),
+                             .Owner = owner,
+                             .Focused = std::move(focused)});
     if (owner != nullptr) {
         // The owner is gone before its handlers could run again; only its own
         // entries go, the others of the id stay.
@@ -44,8 +48,16 @@ QFuture<rpc::Result> CommandService::Run(const QString& command,
         return rpc::Ready(std::unexpected(WrongThread()));
     }
     if (const auto it = Locals_.constFind(command); it != Locals_.cend()) {
-        // A copy: the handler may take its own registration away.
-        const LocalHandler handler = it->last().Handler;
+        // From the most recent: the first that has no focus to tell of (a
+        // registration without a probe is the stack's own) or has the focus;
+        // else the most recent. A copy: the handler may take its own
+        // registration away.
+        const auto chosen =
+            std::find_if(it->rbegin(), it->rend(), [](const Local& local) {
+                return !local.Focused || local.Focused();
+            });
+        const LocalHandler handler =
+            chosen != it->rend() ? chosen->Handler : it->last().Handler;
         return rpc::Ready(handler(args));
     }
     return Io_.Request(QStringLiteral("commands.run"),

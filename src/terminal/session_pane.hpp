@@ -69,6 +69,12 @@ public:
     QString Message() const;
     const std::optional<SessionKey>& Key() const { return Key_; }
 
+    // Whether the pane has a session to show that another pane took over.
+    bool Superseded() const { return Key_ && !Owns(); }
+    // Takes the session back from the pane that took it over (which then is
+    // Superseded). Otherwise does nothing.
+    void TakeBack();
+
 signals:
     // Session() is another terminal, or null.
     void SessionChanged();

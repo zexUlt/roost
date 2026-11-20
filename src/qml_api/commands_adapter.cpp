@@ -3,6 +3,7 @@
 #include <QJSValueList>
 #include <QJsonObject>
 #include <QPointer>
+#include <QQuickItem>
 #include <QtLogging>
 
 #include "qml_api/js_callback.hpp"
@@ -41,6 +42,17 @@ bool CommandsAdapter::registerCommand(const QString& command,
     if (owner == nullptr) {
         return false;
     }
+    // The panel that registers has the focus when it, or an item in it, has.
+    // The probe is weak on both sides: a panel that is gone has no focus.
+    const auto focused = [owners = QPointer<const CallOwners>(&Owners_),
+                          owner = QPointer<const QObject>(owner)] {
+        if (!owners || !owner) {
+            return false;
+        }
+        const auto* panel =
+            qobject_cast<const QQuickItem*>(owners->panelOf(owner));
+        return panel != nullptr && panel->hasActiveFocus();
+    };
     const bool added = Api_.Commands().Register(
         command, owner,
         [engine = QPointer<QJSEngine>(&Engine_), handler,
@@ -61,7 +73,8 @@ bool CommandsAdapter::registerCommand(const QString& command,
             }
             const QJsonValue value = toJson(*engine, returned);
             return value.isUndefined() ? QJsonValue(QJsonValue::Null) : value;
-        });
+        },
+        focused);
     if (!added) {
         qWarning("roost: no handler set for the command %s: the id is empty",
                  qUtf8Printable(command));

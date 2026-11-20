@@ -71,6 +71,10 @@ public:
     // start unloading; deleting the context alone is also enough. A call from
     // a context with no registered one above it belongs to the singleton.
     // GUI thread.
+    void bindCallOwnerPanel(const QObject* owner, QObject* panel) {
+        Owners_.bindPanel(owner, panel);
+    }
+
     QObject* registerCallOwner(QQmlContext* context) {
         return Owners_.add(context);
     }

@@ -93,6 +93,10 @@ class TerminalItem : public QQuickItem {
     // "none", "opening", "open", "ended", "failed" or "disconnected".
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusChanged)
+    // Another panel took the session this one shows over: the status is "none"
+    // until takeBack(). Two terminals can be linked to one session, the later
+    // one shows it.
+    Q_PROPERTY(bool superseded READ superseded NOTIFY supersededChanged)
 
 public:
     explicit TerminalItem(QQuickItem* parent = nullptr);
@@ -120,6 +124,9 @@ public:
     QString statusMessage() const { return StatusMessage_; }
     // Opens the session again if it is ended, failed or disconnected.
     Q_INVOKABLE void reopen();
+    bool superseded() const { return Superseded_; }
+    // Shows the session here again if another panel took it over.
+    Q_INVOKABLE void takeBack();
 
     bool hasSelection() const;
     // Puts the selected text on the system clipboard; nothing is copied, and
@@ -137,6 +144,7 @@ signals:
     void sessionRefChanged();
     // status or statusMessage changed.
     void statusChanged();
+    void supersededChanged();
     // Bytes to write to the program.
     void input(const QByteArray& bytes);
 
@@ -193,6 +201,8 @@ private:
     // status "failed") if the window has no API.
     bool ensurePane();
     void setStatus(const QString& status, const QString& message);
+    // Reads `superseded` from the pane.
+    void syncSuperseded();
     // "agent/id" of the session shown, "none" without one: for roost.terminal.
     QString logLabel(bool hasSession) const;
     // Recomputes the grid from the size and the cell; emits gridSizeChanged
@@ -239,6 +249,7 @@ private:
     QPointer<SessionPane> Pane_;
     QString Status_ = QStringLiteral("none");
     QString StatusMessage_;
+    bool Superseded_ = false;
 };
 
 }  // namespace roost

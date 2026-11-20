@@ -23,6 +23,24 @@ QQmlContext* callingContext(QJSEngine& engine) {
 
 CallOwners::CallOwners(QObject* parent) : QObject(parent) {}
 
+void CallOwners::bindPanel(const QObject* owner, QObject* panel) {
+    if (owner == nullptr) {
+        return;
+    }
+    if (panel == nullptr) {
+        Panels_.remove(owner);
+        return;
+    }
+    Panels_.insert(owner, panel);
+    // The owner is a child of the context: it is gone with the panel.
+    connect(owner, &QObject::destroyed, this,
+            [this, owner] { Panels_.remove(owner); });
+}
+
+QObject* CallOwners::panelOf(const QObject* owner) const {
+    return Panels_.value(owner).data();
+}
+
 QObject* CallOwners::add(QQmlContext* context) {
     if (context == nullptr) {
         qWarning("roost: registerCallOwner needs a context");

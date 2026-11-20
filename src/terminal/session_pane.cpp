@@ -63,6 +63,15 @@ void SessionPane::Reopen() {
     }
 }
 
+void SessionPane::TakeBack() {
+    if (!Superseded()) {
+        return;
+    }
+    Terminals_.Acquire(*Key_, this, Grid_.first, Grid_.second);
+    SyncSession();
+    SyncStatus();
+}
+
 void SessionPane::SetGrid(quint16 columns, quint16 rows) {
     Grid_ = {columns, rows};
     if (Owns()) {
