@@ -11,7 +11,8 @@
 
 namespace roost {
 
-RoostSingleton::RoostSingleton(QJSEngine& engine) : Engine_(engine) {}
+RoostSingleton::RoostSingleton(QJSEngine& engine)
+    : Engine_(engine), Theme_(new Theme(this)) {}
 
 RoostSingleton* RoostSingleton::create(QQmlEngine* /*qmlEngine*/,
                                        QJSEngine* jsEngine) {

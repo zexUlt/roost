@@ -403,5 +403,8 @@ jobs:
       - name: Plugin link gate catches each violation
         run: tools/check_plugin_links.sh
 
+      - name: QML colours gate is green on the tree and catches each violation
+        run: tools/check_qml_colors.sh
+
       - name: The CI change filter answers its table
         run: tools/ci_changes_test.sh

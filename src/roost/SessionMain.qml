@@ -6,6 +6,7 @@ Window {
     height: 600
     visible: true
     title: "roost"
+    color: Roost.theme.windowBackground
 
     TerminalItem {
         objectName: "terminal"
