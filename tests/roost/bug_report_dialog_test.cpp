@@ -1,8 +1,8 @@
 // The "Report a Bug…" dialog in the window of the shell (Main.qml), offscreen:
-// the toolbar button and the shortcut open it, it takes a description and
-// writes the zip into a temporary directory. Show and Open are never pressed.
-// The logs and the settings are the ones of temporary directories
-// (ROOST_SOCKET, ROOST_CONFIG); HOME and Downloads are not touched.
+// the toolbar button (the Help menu on macOS) and the shortcut open it, it
+// takes a description and writes the zip into a temporary directory. Show and
+// Open are never pressed. The logs and the settings are the ones of temporary
+// directories (ROOST_SOCKET, ROOST_CONFIG); HOME and Downloads are not touched.
 
 #include <QDir>
 #include <QFile>
@@ -69,7 +69,20 @@ private slots:
         Socket_.reset();
     }
 
-    void TheToolbarButtonOpensTheDialog() {
+    // Linux: the toolbar button. macOS: no toolbar, the Help menu item.
+    void TheToolbarOrTheHelpMenuOpensTheDialog() {
+#ifdef Q_OS_MACOS
+        auto* toolBar = Window_->findChild<QQuickItem*>("toolBar");
+        QVERIFY(toolBar != nullptr);
+        QVERIFY(!toolBar->isVisible());
+        QObject* item = Engine_->rootObjects().first()->findChild<QObject*>(
+            "reportBugMenuItem");
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->property("text").toString(),
+                 QString::fromUtf8("Report a Bug…"));
+        QVERIFY(QMetaObject::invokeMethod(item, "triggered"));
+        QTRY_VERIFY(Dialog()->property("visible").toBool());
+#else
         auto* button = Window_->findChild<QQuickItem*>("reportBugButton");
         QVERIFY(button != nullptr);
         QCOMPARE(button->property("text").toString(),
@@ -80,6 +93,7 @@ private slots:
                 .toPoint();
         QTest::mouseClick(Window_, Qt::LeftButton, Qt::NoModifier, center);
         QTRY_VERIFY(Dialog()->property("visible").toBool());
+#endif
     }
 
     // macOS only (Cmd+Shift+B); elsewhere the key is the terminal program's.

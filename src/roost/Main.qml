@@ -38,8 +38,8 @@ Window {
     visible: true
     title: "roost"
 
-    // Opens the bug report dialog; the toolbar button, the shortcut and the
-    // menu of macOS call it.
+    // Opens the bug report dialog; macOS calls it from the Help menu and
+    // Cmd+Shift+B, other platforms from the toolbar button.
     function reportBug() {
         bugReportDialog.open();
     }
@@ -48,8 +48,10 @@ Window {
         anchors.fill: parent
         spacing: 0
 
+        // Not on macOS: there the action is in the native menu bar.
         ToolBar {
             objectName: "toolBar"
+            visible: Qt.platform.os !== "osx"
             Layout.fillWidth: true
 
             RowLayout {
@@ -240,7 +242,8 @@ Window {
     }
 
     // The menu bar only where Qt Quick Controls makes it native (macOS):
-    // elsewhere MenuBar would draw a bar inside the window.
+    // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
+    // Bug…" is there instead of the toolbar button.
     Loader {
         active: Qt.platform.os === "osx"
         sourceComponent: MenuBar {

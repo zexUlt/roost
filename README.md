@@ -186,10 +186,9 @@ the list.
 
 ### Reporting a bug
 
-Click "Report a Bug…" in the toolbar, press `Cmd+Shift+B` (macOS only; on
-Linux `Ctrl+Shift+B` goes to the terminal program) or choose Help → "Report a
-Bug…" (macOS). Describe the problem and press
-Create. roost writes `roost-bug-<YYYYMMDD-HHMMSS>.zip` to your Downloads folder
+On macOS choose Help → "Report a Bug…" or press `Cmd+Shift+B`; on Linux click
+"Report a Bug…" in the toolbar (`Ctrl+Shift+B` goes to the terminal program
+there). Describe the problem and press Create. roost writes `roost-bug-<YYYYMMDD-HHMMSS>.zip` to your Downloads folder
 (your home directory if there is none) and never overwrites an earlier zip.
 Nothing is sent: "Show in Finder" (Linux: "Show in Folder") reveals the zip, and
 "Open GitHub Issue" opens a new issue in the browser with your text in it, so
