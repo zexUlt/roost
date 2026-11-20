@@ -39,6 +39,10 @@ class RoostSingleton : public QObject {
     Q_PROPERTY(roost::Theme* theme READ theme CONSTANT)
     // Whether the window is connected to roostd now.
     Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
+    // Whether the window has the keymap table (design.md §16). False before
+    // the first answer of roostd, after a lost connection, and in a window
+    // without an API: the keys of the table do not work then.
+    Q_PROPERTY(bool keymapLoaded READ keymapLoaded NOTIFY keymapLoadedChanged)
 
 public:
     static RoostSingleton* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
@@ -53,6 +57,7 @@ public:
     BusAdapter* bus() const { return Bus_; }
     Theme* theme() const { return Theme_; }
     bool connected() const { return Connected_; }
+    bool keymapLoaded() const { return KeymapLoaded_; }
 
     // From C++ only. The window's API, or null until setApi (and in a window
     // that has none, such as the one of `roost --session`). The terminal item
@@ -89,6 +94,7 @@ public:
 
 signals:
     void connectedChanged();
+    void keymapLoadedChanged();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -117,6 +123,7 @@ private:
     BusAdapter* Bus_ = nullptr;
     Theme* Theme_ = nullptr;
     bool Connected_ = false;
+    bool KeymapLoaded_ = false;
 };
 
 }  // namespace roost

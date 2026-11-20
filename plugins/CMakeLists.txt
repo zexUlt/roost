@@ -6,6 +6,7 @@ add_subdirectory(common)
 add_subdirectory(claude)
 add_subdirectory(codex)
 add_subdirectory(sessions)
+add_subdirectory(shell)
 add_subdirectory(terminal)
 
 # Built-in plugins use the public API only, like third-party ones (design.md

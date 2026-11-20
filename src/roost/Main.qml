@@ -59,7 +59,8 @@ Window {
     }
 
     // Opens the bug report dialog; macOS calls it from the Help menu and
-    // Cmd+Shift+B, other platforms from the toolbar button.
+    // Cmd+Shift+B (the command shell.reportBug), other platforms from the
+    // toolbar button.
     function reportBug() {
         bugReportDialog.open();
     }
@@ -235,30 +236,51 @@ Window {
         }
     }
 
-    // Ctrl+\ (the physical Control key; Qt's Ctrl is Command on macOS) moves
-    // the keyboard to the list from anywhere, the terminal included. Not a
-    // toggle: in the list it does nothing.
+    // The commands of the window (the manifest of the built-in plugin `shell`
+    // declares them and gives them keys; the matcher runs them, key and
+    // palette alike). Not Shortcuts while the table is there: Qt tries a
+    // Shortcut before the key press reaches the matcher, so a key that is
+    // both would never be looked up in the table (the two Shortcuts below
+    // are on only without a table).
+    //
+    // shell.focusList, Ctrl+\ (the physical Control key) by default: moves the
+    // keyboard to the list from anywhere, the terminal included. Not a toggle:
+    // in the list it does nothing. shell.reportBug, Cmd+Shift+B on macOS only:
+    // on Linux Ctrl+Shift+B must reach the program in the terminal.
+    // `Roost.commands` is null in a window that has no API (some tests).
+    Component.onCompleted: {
+        if (Roost.commands !== null) {
+            Roost.commands.registerCommand("shell.focusList", () => listSlot.forceActiveFocus());
+            Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
+        }
+    }
+
+    // The same two keys while the window has no keymap table (before roostd
+    // has answered keymap.get, roostd down or crashed): the bug report must be
+    // reachable exactly when roostd is broken, and a key that moves the
+    // keyboard to the list is the way out of a panel. While the table is
+    // there, they are off: the key is then an entry of the table, and an
+    // enabled Shortcut would take it before the matcher (a double run, and no
+    // way for keymap.json to change it). Ctrl is the physical Control key;
+    // Qt's Ctrl is Command on macOS.
     Shortcut {
+        enabled: !Roost.keymapLoaded
         context: Qt.WindowShortcut
         sequence: Qt.platform.os === "osx" ? "Meta+\\" : "Ctrl+\\"
         onActivated: listSlot.forceActiveFocus()
+    }
+
+    Shortcut {
+        enabled: Qt.platform.os === "osx" && !Roost.keymapLoaded
+        context: Qt.WindowShortcut
+        sequence: "Ctrl+Shift+B"
+        onActivated: root.reportBug()
     }
 
     BugReportDialog {
         id: bugReportDialog
 
         window: root
-    }
-
-    // Cmd+Shift+B, on macOS only: on Linux Ctrl+Shift+B must reach the
-    // program in the terminal. The terminal does not take the key on macOS:
-    // TerminalItem leaves ShortcutOverride alone, so the shortcut fires from
-    // there too.
-    Shortcut {
-        enabled: Qt.platform.os === "osx"
-        context: Qt.WindowShortcut
-        sequence: "Ctrl+Shift+B"
-        onActivated: root.reportBug()
     }
 
     // The menu bar only where Qt Quick Controls makes it native (macOS):

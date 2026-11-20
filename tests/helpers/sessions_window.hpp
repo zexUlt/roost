@@ -26,6 +26,7 @@
 #include "helpers/process_lifeline.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/terminal_item.hpp"
+#include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
 #include "terminal/terminal_session.hpp"
@@ -271,6 +272,10 @@ protected:
     RoostSingleton* Singleton_ = nullptr;
     std::unique_ptr<PluginLoader> Loader_;
     std::unique_ptr<Shell> Shell_;
+    // The key presses of the window against the keymap table, as main() has
+    // it: the keys of the built-in `shell` plugin (Ctrl+Backslash) are entries
+    // of the table, not of a Shortcut.
+    std::unique_ptr<KeyMatcher> KeyMatcher_;
 
 public:
     // Until the panel has nothing left to write: it writes the document by

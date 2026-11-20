@@ -224,6 +224,7 @@ private:
             plugins + "/sessions/qml/RoostSessions/qmldir",
             plugins + "/sessions/qml/RoostSessions/sessions_qml.qmltypes",
             plugins + "/sessions/qml/RoostSessions/" + SESSIONS_MODULE_FILE,
+            plugins + "/shell/plugin.json",
             plugins + "/terminal/plugin.json",
             plugins + "/terminal/qml/TerminalPanel.qml",
             licenses + "/LICENSE",
@@ -563,7 +564,8 @@ private slots:
                      qPrintable(directory));
         }
         ids.sort();
-        QCOMPARE(ids, (QStringList{"claude", "codex", "sessions", "terminal"}));
+        QCOMPARE(ids, (QStringList{"claude", "codex", "sessions", "shell",
+                                   "terminal"}));
 
         // The adapter is started from its place in the plugin directory (on
         // macOS a symlink to the one in Contents/MacOS), runs the fake claude.
