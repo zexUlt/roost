@@ -54,8 +54,8 @@ qt_add_library(roost_shell STATIC)
 qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
-    QML_FILES BugReportDialog.qml Main.qml PanelSlot.qml SessionMain.qml
-        SettingsWindow.qml
+    QML_FILES BugReportDialog.qml LayoutNode.qml LayoutView.qml Main.qml
+        PanelSlot.qml SessionMain.qml SettingsWindow.qml SplitNode.qml TabNode.qml
     SOURCES bug_report_controller.cpp bug_report_controller.hpp
     NO_CACHEGEN
 )

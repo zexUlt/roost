@@ -34,7 +34,13 @@ namespace roost {
 // Lives in the thread of the pool (the GUI thread). The pool must outlive the
 // pane. At most one pane shows a session: when another pane Shows it, the
 // newest takes it over, and this one presents no session, the status None, and
-// sends nothing, until it Shows something else.
+// sends nothing, until it Shows something else or takes it back. When the pane
+// that shows it lets it go (shows another session, is hidden or destroyed), a
+// visible pane that still wants it takes it back by itself.
+//
+// A pane that is not visible (a page of tabs that is not shown) does not
+// acquire its session, so it cannot take it from a visible pane; it does when
+// it becomes visible, and lets it go when it is hidden again.
 class SessionPane : public QObject {
     Q_OBJECT
 
@@ -69,6 +75,19 @@ public:
     QString Message() const;
     const std::optional<SessionKey>& Key() const { return Key_; }
 
+    // Whether the pane is shown to the human; it is until told otherwise. A
+    // hidden pane holds no session (Session() is null, the status None) and is
+    // not Superseded.
+    void SetVisible(bool visible);
+    bool Visible() const { return Visible_; }
+
+    // Whether the visible pane has a session to show that another pane took
+    // over.
+    bool Superseded() const { return Key_ && Visible_ && !Owns(); }
+    // Takes the session back from the pane that took it over (which then is
+    // Superseded). Otherwise does nothing.
+    void TakeBack();
+
 signals:
     // Session() is another terminal, or null.
     void SessionChanged();
@@ -84,9 +103,15 @@ private:
     // the pane last said.
     void SyncSession();
     void SyncStatus();
+    // Gives the session up to the pool; the pane's own slot for Released does
+    // not take it back.
+    void GiveUp();
 
     WarmTerminals& Terminals_;
     std::optional<SessionKey> Key_;
+    bool Visible_ = true;
+    // The pane is giving its session up: Released is not for it to answer.
+    bool GivingUp_ = false;
     std::pair<quint16, quint16> Grid_{80, 24};
     // What the pane last said.
     std::shared_ptr<TerminalSession> Announced_;

@@ -407,6 +407,9 @@ QQuickItem* PluginLoader::Instantiate(Plugin& plugin, QQmlComponent& component,
         return nullptr;
     }
     QJSEngine::setObjectOwnership(object, QJSEngine::CppOwnership);
+    // Before the item registers anything: a window command that several
+    // panels register runs in the one that has the focus.
+    Roost_.bindCallOwnerPanel(owner, object);
     // Initial properties, so that `required` is satisfied.
     QVariantMap initial;
     if (object->metaObject()->indexOfProperty("pluginId") >= 0) {

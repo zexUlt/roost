@@ -536,40 +536,25 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-#ifndef NDEBUG
-        // An unoptimized build with lock checks is several times slower than
-        // the product (p95 of ~6.5 ms against ~3.4 ms in release): the budget
-        // is a property of the optimized build, so here the time is printed
-        // and not checked.
-        qInfo(
-            "frame budget [gated]: unoptimized build, p95 %.3f ms against "
-            "the %.1f ms budget is not checked",
-            result.Gui.P95, P95_BUDGET_MS);
-#else
-        if (qEnvironmentVariable("ROOST_FRAME_BUDGET") == "report") {
-            // A shared CI runner is a slower, noisy virtual machine: the time
-            // is printed there, and the budget is checked on a developer's
-            // machine (see ci.yml).
-            qInfo(
-                "frame budget [gated]: ROOST_FRAME_BUDGET=report, p95 %.3f ms "
-                "and busy %.3f ms against the %.1f ms budget are not checked",
-                result.Gui.P95, result.Busy, P95_BUDGET_MS);
+        CheckBudget(scenario.Name, result);
+    }
+
+    // M6.10: a window of four "list + terminal" pairs shows four terminals,
+    // each on its own session, in the area of the one terminal of the gated
+    // scenario (four rows of 200x12 against one of 200x50). The same 4 ms.
+    // The four lists are not drawn here: only terminals are.
+    void FourPairsStayInBudget() {
+        const Scenario scenario{.Name = "four pairs",
+                                .Columns = GATED_COLUMNS,
+                                .Rows = GATED_ROWS / 4,
+                                .VisibleCount = 4,
+                                .GridColumns = 1};
+        Result result;
+        Measure(scenario, result);
+        if (QTest::currentTestFailed()) {
             return;
         }
-        QVERIFY2(result.Busy >= 0,
-                 "no GUI-thread CPU time on this platform: the whole-thread "
-                 "check cannot run");
-        QVERIFY2(result.Busy <= BUSY_BUDGET_MS,
-                 qPrintable(QString("mean GUI busy %1 ms per frame is over "
-                                    "the budget of %2 ms")
-                                .arg(result.Busy)
-                                .arg(BUSY_BUDGET_MS)));
-        QVERIFY2(result.Gui.P95 <= P95_BUDGET_MS,
-                 qPrintable(QString("p95 %1 ms is over the budget of %2 ms "
-                                    "(design.md section 9)")
-                                .arg(result.Gui.P95)
-                                .arg(P95_BUDGET_MS)));
-#endif
+        CheckBudget(scenario.Name, result);
     }
 
     // NOT GATED: ten visible items, 100x30 each, the same writer. The time is
@@ -594,6 +579,45 @@ private slots:
     }
 
 private:
+    // The budget check of a gated scenario: the p95 of the frame and the
+    // mean GUI busy time against 4 ms, in an optimized build off a CI runner.
+    void CheckBudget(const char* name, const Result& result) {
+#ifndef NDEBUG
+        // An unoptimized build with lock checks is several times slower than
+        // the product (p95 of ~6.5 ms against ~3.4 ms in release): the budget
+        // is a property of the optimized build, so here the time is printed
+        // and not checked.
+        qInfo(
+            "frame budget [%s]: unoptimized build, p95 %.3f ms against "
+            "the %.1f ms budget is not checked",
+            name, result.Gui.P95, P95_BUDGET_MS);
+#else
+        if (qEnvironmentVariable("ROOST_FRAME_BUDGET") == "report") {
+            // A shared CI runner is a slower, noisy virtual machine: the time
+            // is printed there, and the budget is checked on a developer's
+            // machine (see ci.yml).
+            qInfo(
+                "frame budget [%s]: ROOST_FRAME_BUDGET=report, p95 %.3f ms "
+                "and busy %.3f ms against the %.1f ms budget are not checked",
+                name, result.Gui.P95, result.Busy, P95_BUDGET_MS);
+            return;
+        }
+        QVERIFY2(result.Busy >= 0,
+                 "no GUI-thread CPU time on this platform: the whole-thread "
+                 "check cannot run");
+        QVERIFY2(result.Busy <= BUSY_BUDGET_MS,
+                 qPrintable(QString("mean GUI busy %1 ms per frame is over "
+                                    "the budget of %2 ms")
+                                .arg(result.Busy)
+                                .arg(BUSY_BUDGET_MS)));
+        QVERIFY2(result.Gui.P95 <= P95_BUDGET_MS,
+                 qPrintable(QString("p95 %1 ms is over the budget of %2 ms "
+                                    "(design.md section 9)")
+                                .arg(result.Gui.P95)
+                                .arg(P95_BUDGET_MS)));
+#endif
+    }
+
     // Runs one scenario and prints what it measured. It fails on a broken
     // setup or on a writer that falls behind, and leaves the time check to
     // the caller.

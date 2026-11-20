@@ -3,9 +3,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Roost.Api
 
-// The window of the shell (design.md §6): the fixed layout "list | terminal".
-// roost::Shell fills the slots and writes the properties below; the one link
-// of the layout is the Binding at the bottom.
+// The window of the shell (design.md §6): the layout view, which builds the
+// panel slots from the tree roost::Shell publishes in `layoutTree`. roost::Shell
+// fills the slots and writes the properties below.
 ApplicationWindow {
     id: root
 
@@ -31,11 +31,13 @@ ApplicationWindow {
     // The Restart roostd button of a version mismatch.
     signal restartRequested
 
-    // The width of the list slot in pixels: a step of `<` or `>` in the list
-    // panel, and its bounds. Not saved until the layout is (M6).
-    readonly property int listWidthStep: 20
-    readonly property int listWidthMin: 200
-    readonly property int listWidthMax: 560
+    // The layout tree (see LayoutView.qml), written by C++; null before it.
+    property var layoutTree: null
+
+    // A slot of the layout view is built; C++ hands it its panel.
+    signal slotCreated(var slot)
+    // The user finished resizing a split (path, sizes); C++ saves it.
+    signal splitResized(var path, var sizes)
 
     width: 960
     height: 600
@@ -83,6 +85,41 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // The menu bar only where Qt Quick Controls makes it native (macOS):
+        // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
+        // Bug…" is there instead of the toolbar button. It is the first row of
+        // the column, so that it takes room of its own and does not lie over
+        // the banner. The item "Settings…" has no role in Qt Quick Controls;
+        // the Cocoa menu takes it for the application's settings by its text
+        // ("Setting", "Preferences", ...) and moves it to the application menu.
+        Loader {
+            objectName: "menuBarLoader"
+            active: Qt.platform.os === "osx"
+            visible: active
+            Layout.fillWidth: true
+            sourceComponent: MenuBar {
+                Menu {
+                    title: "roost"
+
+                    MenuItem {
+                        objectName: "settingsMenuItem"
+                        text: "Settings…"
+                        onTriggered: root.openSettings()
+                    }
+                }
+
+                Menu {
+                    title: "Help"
+
+                    MenuItem {
+                        objectName: "reportBugMenuItem"
+                        text: "Report a Bug…"
+                        onTriggered: root.reportBug()
+                    }
+                }
+            }
+        }
 
         // Not on macOS: there the action is in the native menu bar.
         ToolBar {
@@ -165,29 +202,15 @@ ApplicationWindow {
             }
         }
 
-        RowLayout {
+        LayoutView {
+            id: layoutView
+
+            objectName: "layoutView"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 1
-
-            PanelSlot {
-                id: listSlot
-
-                objectName: "panelSlot"
-                focus: true
-                panelType: "sessions.list"
-                Layout.preferredWidth: 320
-                Layout.fillHeight: true
-            }
-
-            PanelSlot {
-                id: terminalSlot
-
-                objectName: "panelSlot"
-                panelType: "terminal.view"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-            }
+            tree: root.layoutTree
+            onSlotCreated: slot => root.slotCreated(slot)
+            onSplitResized: (path, sizes) => root.splitResized(path, sizes)
         }
 
         Rectangle {
@@ -216,47 +239,6 @@ ApplicationWindow {
         }
     }
 
-    // The one link of the layout: the output of the list panel to the input
-    // of the terminal panel. Off while a panel or a name is missing; an output
-    // that is undefined (an uninitialised `property var`) is written as null.
-    Binding {
-        target: terminalSlot.panel
-        property: terminalSlot.linkInput
-        value: listSlot.panel && listSlot.linkOutput !== "" ? (listSlot.panel[listSlot.linkOutput] ?? null) : null
-        when: terminalSlot.panel !== null && listSlot.panel !== null && terminalSlot.linkInput !== "" && listSlot.linkOutput !== ""
-    }
-
-    // The list panel's optional signals. `activated()`: the user chose a row, so
-    // the keyboard goes to the terminal. `widthStepRequested(step)`: `<` or `>`,
-    // a narrower (-1) or a wider (+1) list, within bounds. `respawned(session)`:
-    // the agent respawned a session of the list; if the terminal panel shows it
-    // and has the optional function `reopenWhenEnded(session)`, the session is
-    // opened again there once the old attach has ended. A list panel without
-    // them is fine.
-    Connections {
-        target: listSlot.panel
-        ignoreUnknownSignals: true
-
-        function onActivated() {
-            // Without a terminal panel the slot shows a placeholder: the
-            // keyboard stays in the list.
-            if (terminalSlot.panel !== null) {
-                terminalSlot.forceActiveFocus();
-            }
-        }
-
-        function onRespawned(session) {
-            const panel = terminalSlot.panel;
-            if (panel !== null && typeof panel.reopenWhenEnded === "function") {
-                panel.reopenWhenEnded(session);
-            }
-        }
-
-        function onWidthStepRequested(step) {
-            listSlot.Layout.preferredWidth = Math.max(root.listWidthMin, Math.min(root.listWidthMax, listSlot.Layout.preferredWidth + step * root.listWidthStep));
-        }
-    }
-
     // The commands of the window (the manifest of the built-in plugin `shell`
     // declares them and gives them keys; the matcher runs them, key and
     // palette alike). Not Shortcuts while the table is there: Qt tries a
@@ -265,13 +247,14 @@ ApplicationWindow {
     // are on only without a table).
     //
     // shell.focusList, Ctrl+\ (the physical Control key) by default: moves the
-    // keyboard to the list from anywhere, the terminal included. Not a toggle:
-    // in the list it does nothing. shell.reportBug, Cmd+Shift+B on macOS only:
+    // keyboard to the list from anywhere, the terminal included: the list that
+    // feeds the panel that has it, or the first list. Not a toggle: in the list
+    // it does nothing. shell.reportBug, Cmd+Shift+B on macOS only:
     // on Linux Ctrl+Shift+B must reach the program in the terminal.
     // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
         if (Roost.commands !== null) {
-            Roost.commands.registerCommand("shell.focusList", () => listSlot.forceActiveFocus());
+            Roost.commands.registerCommand("shell.focusList", () => layoutView.focusList());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
             Roost.commands.registerCommand("shell.settings", () => root.openSettings());
         }
@@ -289,7 +272,7 @@ ApplicationWindow {
         enabled: !Roost.keymapLoaded
         context: Qt.WindowShortcut
         sequence: Qt.platform.os === "osx" ? "Meta+\\" : "Ctrl+\\"
-        onActivated: listSlot.forceActiveFocus()
+        onActivated: layoutView.focusList()
     }
 
     Shortcut {
@@ -307,36 +290,5 @@ ApplicationWindow {
 
     SettingsWindow {
         id: settingsWindow
-    }
-
-    // The menu bar only where Qt Quick Controls makes it native (macOS):
-    // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
-    // Bug…" is there instead of the toolbar button. The item "Settings…" has
-    // no role in Qt Quick Controls; the Cocoa menu takes it for the
-    // application's settings by its text ("Setting", "Preferences", ...) and
-    // moves it to the application menu.
-    Loader {
-        active: Qt.platform.os === "osx"
-        sourceComponent: MenuBar {
-            Menu {
-                title: "roost"
-
-                MenuItem {
-                    objectName: "settingsMenuItem"
-                    text: "Settings…"
-                    onTriggered: root.openSettings()
-                }
-            }
-
-            Menu {
-                title: "Help"
-
-                MenuItem {
-                    objectName: "reportBugMenuItem"
-                    text: "Report a Bug…"
-                    onTriggered: root.reportBug()
-                }
-            }
-        }
     }
 }
