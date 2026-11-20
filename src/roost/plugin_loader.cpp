@@ -32,6 +32,9 @@ QString InsidePlugin(const QString& directory, const QString& path) {
     return resolved;
 }
 
+// The name of the settings page in a problem, where a panel has its id.
+constexpr const char* SETTINGS_PROBLEM_NAME = "(settings)";
+
 }  // namespace
 
 PluginLoader::PluginLoader(QQmlEngine& engine, api::PluginService& plugins,
@@ -63,6 +66,17 @@ QStringList PluginLoader::PanelTypes() const {
         }
     }
     return types;
+}
+
+QStringList PluginLoader::SettingsPlugins() const {
+    QStringList ids;
+    for (const auto& plugin : Loaded_) {
+        if (plugin->Settings && !plugin->SettingsDisabled &&
+            !plugin->Unloading) {
+            ids.append(plugin->Id);
+        }
+    }
+    return ids;
 }
 
 std::optional<PluginLoader::PanelInfo> PluginLoader::Info(
@@ -167,6 +181,7 @@ void PluginLoader::OnPluginsChanged() {
     }
     if (!doomed.empty() || !fresh.empty()) {
         emit PluginsChanged();
+        emit SettingsPagesChanged();
     }
 }
 
@@ -203,6 +218,7 @@ void PluginLoader::Reload(const QString& pluginId) {
         emit ProblemsChanged();
     }
     emit PanelTypesChanged();
+    emit SettingsPagesChanged();
 }
 
 QMap<QString, QString> PluginLoader::PluginDirectories() const {
@@ -265,7 +281,44 @@ std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(
     for (const QJsonValue& entry : panels.toArray()) {
         LoadPanel(ref, entry);
     }
+    LoadSettings(ref);
     return plugin;
+}
+
+void PluginLoader::LoadSettings(Plugin& plugin) {
+    const QString name = QLatin1String(SETTINGS_PROBLEM_NAME);
+    const QJsonValue qml = plugin.Contributes.value("settings");
+    if (qml.isUndefined()) {
+        return;
+    }
+    if (!qml.isString() || qml.toString().isEmpty()) {
+        AddProblem(plugin.Id, name,
+                   QStringLiteral("\"settings\" must be a non-empty string"));
+        return;
+    }
+    const QString path = InsidePlugin(plugin.Directory, qml.toString());
+    if (path.isEmpty()) {
+        AddProblem(plugin.Id, name,
+                   QStringLiteral("\"settings\" must be a path inside the "
+                                  "plugin directory"));
+        return;
+    }
+    if (!QFileInfo(path).isFile()) {
+        AddProblem(plugin.Id, name,
+                   QStringLiteral("file %1 does not exist").arg(path));
+        return;
+    }
+    auto component = std::make_unique<QQmlComponent>(
+        &Engine_, QUrl::fromLocalFile(path), QQmlComponent::PreferSynchronous);
+    if (component->status() != QQmlComponent::Ready) {
+        QString message = component->errorString().trimmed();
+        if (message.isEmpty()) {
+            message = QStringLiteral("the component is not ready");
+        }
+        AddProblem(plugin.Id, name, message);
+        return;
+    }
+    plugin.Settings = std::move(component);
 }
 
 void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
@@ -339,6 +392,47 @@ void PluginLoader::LoadPanel(Plugin& plugin, const QJsonValue& entry) {
     plugin.Panels.push_back(std::move(type));
 }
 
+QQuickItem* PluginLoader::Instantiate(Plugin& plugin, QQmlComponent& component,
+                                      const QString& instanceId,
+                                      const QString& what, QString& error) {
+    auto* context = new QQmlContext(plugin.Context.get());
+    QObject* owner = Roost_.registerCallOwner(context);
+    QObject* object = component.beginCreate(context);
+    if (object == nullptr) {
+        error = component.errorString().trimmed();
+        if (error.isEmpty()) {
+            error = QStringLiteral("the %1 could not be created").arg(what);
+        }
+        delete context;
+        return nullptr;
+    }
+    QJSEngine::setObjectOwnership(object, QJSEngine::CppOwnership);
+    // Before the item registers anything: a window command that several
+    // panels register runs in the one that has the focus.
+    Roost_.bindCallOwnerPanel(owner, object);
+    // Initial properties, so that `required` is satisfied.
+    QVariantMap initial;
+    if (object->metaObject()->indexOfProperty("pluginId") >= 0) {
+        initial.insert(QStringLiteral("pluginId"), plugin.Id);
+    }
+    if (object->metaObject()->indexOfProperty("instanceId") >= 0) {
+        initial.insert(QStringLiteral("instanceId"), instanceId);
+    }
+    if (!initial.isEmpty()) {
+        component.setInitialProperties(object, initial);
+    }
+    component.completeCreate();
+    auto* item = qobject_cast<QQuickItem*>(object);
+    if (item == nullptr) {
+        delete object;
+        delete context;
+        error = QStringLiteral("the root of the %1 must be an Item").arg(what);
+        return nullptr;
+    }
+    plugin.Instances.push_back({item, owner, context});
+    return item;
+}
+
 QQuickItem* PluginLoader::CreatePanel(const QString& panelId,
                                       const QString& instanceId) {
     for (const auto& plugin : Loaded_) {
@@ -357,45 +451,40 @@ QQuickItem* PluginLoader::CreatePanel(const QString& panelId,
                 emit PanelTypesChanged();
                 return nullptr;
             };
-            auto* context = new QQmlContext(plugin->Context.get());
-            QObject* owner = Roost_.registerCallOwner(context);
-            QObject* object = type.Component->beginCreate(context);
-            if (object == nullptr) {
-                const QString message = type.Component->errorString().trimmed();
-                delete context;
-                return fail(message.isEmpty()
-                                ? QStringLiteral("the panel could not be "
-                                                 "created")
-                                : message);
-            }
-            QJSEngine::setObjectOwnership(object, QJSEngine::CppOwnership);
-            // Before the panel registers anything: a window command that
-            // several panels register runs in the one that has the focus.
-            Roost_.bindCallOwnerPanel(owner, object);
-            // Initial properties, so that `required` is satisfied.
-            QVariantMap initial;
-            if (object->metaObject()->indexOfProperty("pluginId") >= 0) {
-                initial.insert(QStringLiteral("pluginId"), plugin->Id);
-            }
-            if (object->metaObject()->indexOfProperty("instanceId") >= 0) {
-                initial.insert(QStringLiteral("instanceId"), instanceId);
-            }
-            if (!initial.isEmpty()) {
-                type.Component->setInitialProperties(object, initial);
-            }
-            type.Component->completeCreate();
-            auto* item = qobject_cast<QQuickItem*>(object);
+            QString error;
+            QQuickItem* item = Instantiate(*plugin, *type.Component, instanceId,
+                                           QStringLiteral("panel"), error);
             if (item == nullptr) {
-                delete object;
-                delete context;
-                return fail(
-                    QStringLiteral("the root of the panel must be an "
-                                   "Item"));
+                return fail(error);
             }
-            plugin->Instances.push_back({item, owner, context});
             CheckDeclared(*plugin, type, *item);
             return item;
         }
+    }
+    return nullptr;
+}
+
+QQuickItem* PluginLoader::CreateSettingsPage(const QString& pluginId) {
+    for (const auto& plugin : Loaded_) {
+        if (plugin->Id != pluginId) {
+            continue;
+        }
+        if (plugin->Unloading || !plugin->Settings ||
+            plugin->SettingsDisabled) {
+            return nullptr;
+        }
+        QString error;
+        QQuickItem* item = Instantiate(*plugin, *plugin->Settings, QString(),
+                                       QStringLiteral("settings page"), error);
+        if (item != nullptr) {
+            return item;
+        }
+        plugin->SettingsDisabled = true;
+        AddProblem(plugin->Id, QLatin1String(SETTINGS_PROBLEM_NAME), error);
+        ProblemsDirty_ = false;
+        emit ProblemsChanged();
+        emit SettingsPagesChanged();
+        return nullptr;
     }
     return nullptr;
 }
@@ -440,6 +529,7 @@ void PluginLoader::Unload(Plugin& plugin) {
         }
     }
     plugin.Panels.clear();
+    plugin.Settings.reset();
     plugin.Context.reset();
     DropProblems(plugin.Id);
 }

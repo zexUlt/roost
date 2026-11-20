@@ -30,6 +30,12 @@ FocusScope {
     // The slot of an instance id, or null; given by the layout view.
     property var resolveSource: instance => null
 
+    // The user pressed the right button at (x, y) of the slot, and the panel
+    // did not take the press: a terminal whose program tracks the mouse owns
+    // it (Shift takes it back), any other panel lets it through. The layout
+    // view opens the panel menu.
+    signal menuRequested(real x, real y)
+
     onPanelChanged: {
         if (panel === null) {
             return;
@@ -55,6 +61,15 @@ FocusScope {
             value: source && source.panel ? (source.panel[modelData.output] ?? null) : null
             when: root.panel !== null && source !== null && source.panel !== null
         }
+    }
+
+    // Under the panel, which lies over it: the right button reaches this only
+    // where the panel gave it up.
+    MouseArea {
+        objectName: "menuArea"
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        onPressed: mouse => root.menuRequested(mouse.x, mouse.y)
     }
 
     Label {
