@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QRegularExpression>
 #include <QTest>
 
 #include <optional>
@@ -242,12 +243,16 @@ private:
                                       QString("open"), TIMEOUT_MS);
             QTRY_VERIFY2_WITH_TIMEOUT(
                 ScreenOf(terminal).contains(Greeting(id)),
-                qPrintable(QString("%1x%2 cells, %3x%4 px:\n%5")
-                               .arg(TerminalOf(terminal)->columns())
-                               .arg(TerminalOf(terminal)->rows())
-                               .arg(TerminalOf(terminal)->width())
-                               .arg(TerminalOf(terminal)->height())
-                               .arg(ScreenOf(terminal))),
+                qPrintable(
+                    QString("%1x%2 cells, %3x%4 px:\n%5")
+                        .arg(TerminalOf(terminal)->columns())
+                        .arg(TerminalOf(terminal)->rows())
+                        .arg(TerminalOf(terminal)->width())
+                        .arg(TerminalOf(terminal)->height())
+                        .arg(ScreenOf(terminal)
+                                 .remove(QRegularExpression(
+                                     "\x1b\\][^\x1b\x07]*(\x1b\\\\|\x07)"))
+                                 .right(3000))),
                 TIMEOUT_MS);
         }
         QVERIFY(Problems().isEmpty());
