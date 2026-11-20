@@ -136,7 +136,7 @@ int main(int argc, char* argv[]) {
     roost::StoreService store(roost::Store(*config), server,
                               plugins.Registry());
 
-    // Gone before the plugins.
+    // Gone before the plugins, whose registry it reads.
     roost::KeymapService keymap(*config, server, plugins.Registry());
 
     // Gone before the plugins.

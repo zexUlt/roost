@@ -293,6 +293,27 @@ private slots:
         QCOMPARE(mac.value("problems").toArray().size(), 0);
     }
 
+    // A removal binds nothing: a bare key is no problem for it, and it takes
+    // away the contribution that has the same pair.
+    void RemovalOfABareKeyIsNoProblem() {
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{{"key", "J"}, {"command", UNBIND}},
+            QJsonObject{
+                {"key", "J"}, {"when", "sessions.list"}, {"command", UNBIND}},
+        }));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        const QJsonObject table = Get("linux");
+        QCOMPARE(ProblemsWith(table, "keymap.json entry").size(), 0);
+        QCOMPARE(table.value("bindings").toArray(),
+                 (QJsonArray{
+                     Binding("Ctrl+Shift+N", "alpha.new", "alpha"),
+                     Binding("Ctrl+S", "alpha.save", "alpha"),
+                     Binding("J", "beta.next", "beta", "beta.transcript"),
+                 }));
+    }
+
     void BrokenEntriesAreSkippedWithAProblem() {
         QVERIFY(SaveFile(QJsonArray{
             "text",
@@ -386,10 +407,43 @@ private slots:
         QCOMPARE(Changes().size(), 4);
     }
 
-    // A writer that is slow, in place and not by rename: the half of the file
-    // is not read, there is one event, for the whole of it.
-    void ASlowWriteGivesOneEvent() {
+    // A writer that writes in place and not by rename, in chunks that come
+    // within the delay of the service: there is one event, for the whole file.
+    void ChunksWithinTheDelayGiveOneEvent() {
         QVERIFY(SaveFile(QJsonArray{}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        Get("linux");
+
+        QFile file(KeymapPath());
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        const QByteArray whole =
+            R"([{"key": "Ctrl+S", "command": "beta.new"}])";
+        const qsizetype third = whole.size() / 3;
+        for (const QByteArray& chunk :
+             {whole.left(third), whole.mid(third, third),
+              whole.mid(2 * third)}) {
+            QCOMPARE(file.write(chunk), qsizetype(chunk.size()));
+            QVERIFY(file.flush());
+        }
+        file.close();
+        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
+        QTest::qWait(SETTLE_MS);
+        QCOMPARE(Changes().size(), 1);
+        QVERIFY(Changes()[0]
+                    .value("bindings")
+                    .toArray()
+                    .contains(Binding("Ctrl+S", "beta.new", "user")));
+        QCOMPARE(ProblemsWith(Changes()[0], "keymap.json is ignored").size(),
+                 0);
+    }
+
+    // A writer that pauses between the chunks for longer than the delay may
+    // give an event for the half of the file; the half keeps the version
+    // before it, and the last event has the whole file.
+    void ASlowWriteEndsWithTheWholeFile() {
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{{"key", "Ctrl+L"}, {"command", "alpha.save"}}}));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
         Get("linux");
@@ -405,15 +459,28 @@ private slots:
             QTest::qWait(30);
         }
         file.close();
-        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
+        const auto hasWhole = [this] {
+            return !Changes().isEmpty() &&
+                   Changes()
+                       .last()
+                       .value("bindings")
+                       .toArray()
+                       .contains(Binding("Ctrl+S", "beta.new", "user"));
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(hasWhole(), TIMEOUT_MS);
         QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 1);
-        QVERIFY(Changes()[0]
-                    .value("bindings")
-                    .toArray()
-                    .contains(Binding("Ctrl+S", "beta.new", "user")));
-        QCOMPARE(ProblemsWith(Changes()[0], "keymap.json is ignored").size(),
-                 0);
+        QVERIFY(hasWhole());
+        QCOMPARE(
+            ProblemsWith(Changes().last(), "keymap.json is ignored").size(), 0);
+        // An event before it is the half of the file: the old table stays.
+        for (const QJsonObject& change :
+             Changes().first(Changes().size() - 1)) {
+            QVERIFY(change.value("bindings")
+                        .toArray()
+                        .contains(Binding("Ctrl+L", "alpha.save", "user")));
+            QCOMPARE(ProblemsWith(change, "the version before it stays").size(),
+                     1);
+        }
     }
 
     // The table of a platform that no window asked for is not published.
@@ -567,6 +634,61 @@ private slots:
         QVERIFY(SaveFile(QJsonArray{}));
         QTRY_VERIFY_WITH_TIMEOUT(Call("keymap.get", {{"platform", "linux"}}),
                                  TIMEOUT_MS);
+    }
+
+    // The platform is remembered from a good answer; then the file grows to a
+    // table that does not fit an event. It is not published, the daemon keeps
+    // answering, and the next good file is published.
+    void EventThatDoesNotFitAFrameIsNotPublished() {
+        QVERIFY(SaveFile(QJsonArray{}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        QVERIFY(!Get("linux").isEmpty());
+
+        QByteArray bytes("[");
+        while (bytes.size() < 1024 * 1024 - 8) {
+            bytes.append("{},");
+        }
+        bytes.append("{}]");
+        QVERIFY(bytes.size() <= 1024 * 1024);
+        QVERIFY(SaveFile(bytes));
+        QTest::qWait(SETTLE_MS);
+        QCOMPARE(Changes().size(), 0);
+        const rpc::Result answer = Call("keymap.get", {{"platform", "linux"}});
+        QVERIFY(!answer);
+        QCOMPARE(answer.error().Code,
+                 static_cast<int>(rpc::EErrorCode::InternalError));
+
+        QVERIFY(SaveFile(QJsonArray{}));
+        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
+        QCOMPARE(Changes()[0].value("platform"), QJsonValue("linux"));
+    }
+
+    // What a connection asked for is forgotten when it closes: the platform
+    // that nobody asks for any more is not published.
+    void ClosedConnectionIsForgotten() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        QVERIFY(!Get("linux").isEmpty());
+        Events_.reset();
+        Client_.reset();
+
+        // A second connection that never asked.
+        QVERIFY(Connect());
+        // The daemon has seen the first one go before the file changes.
+        QTest::qWait(SETTLE_MS);
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{{"key", "Ctrl+S"}, {"command", "beta.new"}}}));
+        QTest::qWait(SETTLE_MS);
+        QCOMPARE(Changes().size(), 0);
+
+        // The watch is alive: what this connection asks for is published.
+        QVERIFY(!Get("mac").isEmpty());
+        QVERIFY(SaveFile(QJsonArray{}));
+        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
+        QTest::qWait(SETTLE_MS);
+        QCOMPARE(Changes().size(), 1);
+        QCOMPARE(Changes()[0].value("platform"), QJsonValue("mac"));
     }
 };
 

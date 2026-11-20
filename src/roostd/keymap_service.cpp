@@ -139,8 +139,10 @@ std::expected<std::variant<Entry, OtherPlatform>, QString> ParseEntry(
     }
     entry.Chord = **chord;
     // A key that the terminal or a field of text needs (design.md §16).
-    if (!entry.Chord.Cmd && !entry.Chord.Ctrl && !entry.Chord.Alt &&
-        !IsFunctionKey(entry.Chord.Key) && entry.When.isEmpty()) {
+    // A removal binds nothing, so it is not held to it.
+    if (entry.Command && !entry.Chord.Cmd && !entry.Chord.Ctrl &&
+        !entry.Chord.Alt && !IsFunctionKey(entry.Chord.Key) &&
+        entry.When.isEmpty()) {
         return std::unexpected(
             QStringLiteral("%1 has no Cmd, Ctrl or Alt: without \"when\" it "
                            "would take the text typed into any panel")
@@ -430,12 +432,13 @@ void KeymapService::OnQuiet() {
     // A file that appeared since the last event, a directory that came back.
     Sync();
     const auto before = std::make_pair(Entries_, Problem_);
-    ReadFile();
-    // What was written since the last event of a path is taken as seen: the
-    // access time that the read changes must not look like an edit.
+    // The signatures come before the read: an edit that lands after them is
+    // not taken as seen, its event finds the difference. The signature has no
+    // access time, so the read does not change it.
     for (auto it = Seen_.begin(); it != Seen_.end(); ++it) {
         it.value() = SignatureOf(it.key());
     }
+    ReadFile();
     if (std::make_pair(Entries_, Problem_) != before) {
         PublishAll();
     }
