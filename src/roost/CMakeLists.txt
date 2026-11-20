@@ -13,6 +13,8 @@ add_library(roost_app STATIC
     shell.hpp
     single_session.cpp
     single_session.hpp
+    window_log.cpp
+    window_log.hpp
 )
 target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick)
 

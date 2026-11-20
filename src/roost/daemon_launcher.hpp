@@ -51,6 +51,10 @@ class DaemonLauncher : public QObject {
     Q_OBJECT
 
 public:
+    // The directory of the logs: the one of the socket. roostd.log and
+    // roost.log (the window's own, window_log.hpp) are in it.
+    static QString LogDirectory(const QString& socketPath);
+
     struct Command {
         QString Program;
         QStringList Arguments;

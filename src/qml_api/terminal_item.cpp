@@ -8,6 +8,7 @@
 #include <QGuiApplication>
 #include <QJSValue>
 #include <QKeyEvent>
+#include <QLoggingCategory>
 #include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickWindow>
@@ -23,6 +24,12 @@
 namespace roost {
 
 namespace {
+
+// What the window logs about its terminal, to debug a switch of sessions: ids
+// and agent names, statuses and the order of events. Never terminal output,
+// input or the environment. Debug lines are off unless asked for
+// (QT_LOGGING_RULES="roost.terminal.debug=true").
+Q_LOGGING_CATEGORY(TerminalCategory, "roost.terminal", QtInfoMsg)
 
 // Rows a notch of a wheel scrolls; Ghostty's default for a wheel that is not
 // a trackpad. Qt reports a notch as 120 units.
@@ -112,7 +119,27 @@ TerminalItem::TerminalItem(QQuickItem* parent) : QQuickItem(parent) {
             &TerminalItem::autoscrollTick);
 }
 
+QString TerminalItem::logLabel(bool hasSession) const {
+    if (!hasSession) {
+        return QStringLiteral("none");
+    }
+    if (Pane_ && Pane_->Key()) {
+        return Pane_->Key()->Agent + u'/' + Pane_->Key()->Id;
+    }
+    if (SessionRef_.isValid()) {
+        const QVariantMap ref = SessionRef_.toMap();
+        return ref.value(QStringLiteral("agent")).toString() + u'/' +
+               ref.value(QStringLiteral("id")).toString();
+    }
+    return QStringLiteral("unkeyed");
+}
+
 void TerminalItem::setSession(std::shared_ptr<TerminalSession> session) {
+    const QString label = logLabel(session != nullptr);
+    qCInfo(TerminalCategory, "setSession %s -> %s", qPrintable(LoggedSession_),
+           qPrintable(label));
+    LoggedSession_ = label;
+    PaintLogPending_ = session != nullptr;
     // The old gesture is not the new session's.
     endDrag();
     Session_ = std::move(session);
@@ -225,8 +252,14 @@ bool TerminalItem::ensurePane() {
         pane->SetGrid(static_cast<quint16>(Columns_),
                       static_cast<quint16>(Rows_));
     });
-    connect(pane, &SessionPane::SessionChanged, this,
-            [this, pane] { setSession(pane->Session()); });
+    connect(pane, &SessionPane::SessionChanged, this, [this, pane] {
+        qCInfo(
+            TerminalCategory, "SessionChanged: pane shows %s, session %s",
+            qPrintable(pane->Key() ? pane->Key()->Agent + u'/' + pane->Key()->Id
+                                   : QStringLiteral("nothing")),
+            pane->Session() ? "present" : "none");
+        setSession(pane->Session());
+    });
     connect(pane, &SessionPane::Updated, this, [this] { update(); });
     connect(pane, &SessionPane::StatusChanged, this, [this, pane] {
         // An invalid ref owns the status ("failed"): the pane's "none" from
@@ -244,6 +277,8 @@ void TerminalItem::setStatus(const QString& status, const QString& message) {
     if (status == Status_ && message == StatusMessage_) {
         return;
     }
+    qCInfo(TerminalCategory, "status %s -> %s, message \"%s\"",
+           qPrintable(Status_), qPrintable(status), qPrintable(message));
     Status_ = status;
     StatusMessage_ = message;
     emit statusChanged();
@@ -813,6 +848,11 @@ int TerminalItem::rowsRebuilt() const { return Renderer_.RowsRebuilt(); }
 QSGNode* TerminalItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
     if (!Session_ || window() == nullptr) {
         return nullptr;
+    }
+    if (PaintLogPending_) {
+        PaintLogPending_ = false;
+        qCDebug(TerminalCategory, "first paint of %s",
+                qPrintable(LoggedSession_));
     }
     auto* node = Renderer_.Update(*window(), *Session_, oldNode);
     // The terminal drops a selection when its text is erased; the GUI thread

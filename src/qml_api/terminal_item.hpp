@@ -193,6 +193,8 @@ private:
     // status "failed") if the window has no API.
     bool ensurePane();
     void setStatus(const QString& status, const QString& message);
+    // "agent/id" of the session shown, "none" without one: for roost.terminal.
+    QString logLabel(bool hasSession) const;
     // Recomputes the grid from the size and the cell; emits gridSizeChanged
     // if it differs.
     void updateGridSize();
@@ -201,6 +203,11 @@ private:
     // which runs while the GUI thread is blocked in the scene graph's sync;
     // elsewhere only the GUI thread touches them.
     std::shared_ptr<TerminalSession> Session_;
+    // The log label of Session_, and whether the first paint after a change
+    // of it is still to be logged. Like Session_, the render thread reads and
+    // writes them in updatePaintNode while the GUI thread waits.
+    QString LoggedSession_ = QStringLiteral("none");
+    bool PaintLogPending_ = false;
     Renderer Renderer_;
     // GUI thread only. Empty if the library could not make one: keys are then
     // ignored.

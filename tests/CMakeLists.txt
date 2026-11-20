@@ -527,6 +527,13 @@ target_compile_definitions(smoke_sessions_test PRIVATE
 add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml
     fixture_backend)
 
+# roost.log, the log of the window: the lines, rotation, an unopenable file,
+# writers at once; temporary directories only.
+roost_add_qt_test(window_log_test roost/window_log_test.cpp
+    roost_app roost_qml_api roost_terminal)
+# Two writer threads, std only.
+set_tests_properties(window_log_test PROPERTIES LABELS "threads;threads_std")
+
 # The window starts roostd when nobody listens on the socket: the launcher with
 # a real Api and the real roostd (detached; the test stops it by its lock).
 roost_add_qt_test(daemon_launcher_test roost/daemon_launcher_test.cpp

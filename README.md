@@ -64,7 +64,16 @@ that already runs keeps the `PATH` it was started with.
 
 Logs are in the directory of the socket: `roostd.log` (the previous run is
 `roostd.log.1`) and `roostd.start.log` (what `roostd` prints before it holds
-the socket). The directory is the first of these that applies:
+the socket). The window writes its own log next to them: `roost.log`, one line
+per message (`2026-11-20T14:05:01.123 pid=12345 W roost.terminal: text`: time,
+process, level D/I/W/C/F, category, text), starting with a line about the
+versions, the platform and the graphics API. Windows running at once append to
+the same file. A file over 1 MiB is moved to `roost.log.1` when the next window
+starts. Messages still go to stderr as before. The terminal's lines
+(`roost.terminal`: session and status changes, ids only, never what the
+terminal shows or receives) are info; for more,
+`QT_LOGGING_RULES="roost.terminal.debug=true"`. The directory is the first of
+these that applies:
 
 | Where | Directory |
 |---|---|
