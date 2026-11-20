@@ -78,7 +78,7 @@ class LayoutModelTest : public QObject {
     Q_OBJECT
 
 private slots:
-    void defaultIsTheDocumentedTree() {
+    void DefaultIsTheDocumentedTree() {
         QCOMPARE(LayoutToJson(DefaultLayout()),
                  Json(DEFAULT_DOCUMENT).toObject());
         const LayoutParseResult result =
@@ -89,7 +89,7 @@ private slots:
         QCOMPARE(result.Tree, DefaultLayout());
     }
 
-    void defaultHasProblemsOnlyWhenPanelsAreMissing() {
+    void DefaultHasProblemsOnlyWhenPanelsAreMissing() {
         const LayoutParseResult result =
             ParseLayout(LayoutToJson(DefaultLayout()), {});
         QVERIFY(AnyProblemHas(result, "no panel sessions.list"));
@@ -98,7 +98,7 @@ private slots:
         QCOMPARE(LayoutToJson(result.Tree), LayoutToJson(DefaultLayout()));
     }
 
-    void roundTrip_data() {
+    void RoundTrip_data() {
         QTest::addColumn<QByteArray>("document");
         QTest::newRow("default") << QByteArray(DEFAULT_DOCUMENT);
         QTest::newRow("nested") << QByteArray(R"json({
@@ -126,7 +126,7 @@ private slots:
           ] } })json");
     }
 
-    void roundTrip() {
+    void RoundTrip() {
         QFETCH(QByteArray, document);
         const QJsonValue input = Json(document.constData());
         const LayoutParseResult first = ParseLayout(input, Known());
@@ -139,19 +139,19 @@ private slots:
 
     // Every broken document gives a problem naming the place and a tree that
     // can be shown.
-    void brokenDocument_data() {
+    void BrokenDocument_data() {
         QTest::addColumn<QByteArray>("document");
         QTest::addColumn<QString>("problem");
         QTest::addColumn<int>("leaves");
         QTest::addColumn<QString>("check");
 
-        const char* const TWO = R"json({ "version": 1, "root": { "split": "h",
+        const char* const two = R"json({ "version": 1, "root": { "split": "h",
             "sizes": [100, "fill"], "children": [
               { "instance": "list", "panel": "sessions.list" },
               { "instance": "terminal", "panel": "terminal.view",
                 "links": { "session": { "from": "list", "output": "selected" } } } ] } })json";
         QTest::newRow("sane")
-            << QByteArray(TWO) << QString() << 2 << "link:terminal:ok";
+            << QByteArray(two) << QString() << 2 << "link:terminal:ok";
 
         QTest::newRow("unknown panel")
             << QByteArray(R"json({ "root": {
@@ -303,7 +303,7 @@ private slots:
             << "neither a split" << 2 << "default";
     }
 
-    void brokenDocument() {
+    void BrokenDocument() {
         QFETCH(QByteArray, document);
         QFETCH(QString, problem);
         QFETCH(int, leaves);
@@ -365,7 +365,9 @@ private slots:
                 leaf = candidate;
             }
         }
-        QVERIFY2(leaf != nullptr, qPrintable(check));
+        if (leaf == nullptr) {
+            QFAIL(qPrintable(check));
+        }
         if (parts[0] == "stub") {
             QCOMPARE(leaf->Error, parts[2]);
         } else if (parts[0] == "nolink") {
@@ -376,7 +378,7 @@ private slots:
         }
     }
 
-    void unknownVersion_data() {
+    void UnknownVersion_data() {
         QTest::addColumn<QByteArray>("version");
         QTest::newRow("2") << QByteArray("2");
         QTest::newRow("2.5") << QByteArray("2.5");
@@ -387,7 +389,7 @@ private slots:
         QTest::newRow("null") << QByteArray("null");
     }
 
-    void unknownVersion() {
+    void UnknownVersion() {
         QFETCH(QByteArray, version);
         const QByteArray text = "{\"version\": " + version +
                                 ", \"root\": {\"instance\": \"x\", \"panel\": "
@@ -399,7 +401,7 @@ private slots:
         QVERIFY(AnyProblemHas(result, "version this roost does not know"));
     }
 
-    void noVersionIsRead() {
+    void NoVersionIsRead() {
         const LayoutParseResult result = ParseLayout(
             Json(
                 R"json({ "root": { "instance": "x", "panel": "sessions.list" } })json"),
@@ -409,7 +411,7 @@ private slots:
         QCOMPARE(Leaves(result.Tree).front()->Instance, QString("x"));
     }
 
-    void notAnObjectGivesTheDefaultTree() {
+    void NotAnObjectGivesTheDefaultTree() {
         const LayoutParseResult result = ParseLayout(Json("[1]"), Known());
         QCOMPARE(result.Tree, DefaultLayout());
         QVERIFY(AnyProblemHas(result, "not an object"));
