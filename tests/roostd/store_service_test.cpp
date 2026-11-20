@@ -258,6 +258,219 @@ private slots:
         QVERIFY(Call("store.get", QJsonObject{{"plugin", "known"}}));
     }
 
+    void PatchMergesIntoTheDocumentAndAnnouncesItWhole() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        QVERIFY(Call(
+            "store.set",
+            QJsonObject{
+                {"plugin", "known"},
+                {"document",
+                 QJsonObject{{"a", 1},
+                             {"gone", 2},
+                             {"nested", QJsonObject{{"x", 1}, {"y", 2}}}}}}));
+        const auto listener = Connect();
+        QVERIFY(listener);
+        QSignalSpy heard(listener.get(), &RpcClient::NotificationReceived);
+        QVERIFY(WaitFor(listener->Request(
+            "bus.subscribe", QJsonObject{{"pattern", "store.*"}})));
+
+        const rpc::Result patched = Call(
+            "store.patch",
+            QJsonObject{
+                {"plugin", "known"},
+                {"patch", QJsonObject{{"b", 3},
+                                      {"gone", QJsonValue::Null},
+                                      {"nested", QJsonObject{{"y", 9}}}}}});
+        QVERIFY2(patched, qPrintable(MessageOf(patched)));
+        QCOMPARE(*patched, QJsonValue());
+        const QJsonObject expected{
+            {"a", 1}, {"b", 3}, {"nested", QJsonObject{{"x", 1}, {"y", 9}}}};
+        QCOMPARE(*Call("store.get", QJsonObject{{"plugin", "known"}}),
+                 QJsonValue(QJsonObject{{"document", expected}}));
+        // The event carries the whole document, not the patch.
+        QTRY_COMPARE_WITH_TIMEOUT(heard.count(), 1, TIMEOUT_MS);
+        const QJsonObject event =
+            heard.at(0).at(1).value<QJsonValue>().toObject();
+        QCOMPARE(event.value("name"), QJsonValue("store.changed"));
+        QCOMPARE(event.value("payload"),
+                 QJsonValue(
+                     QJsonObject{{"plugin", "known"}, {"document", expected}}));
+    }
+
+    void PatchOfAnEmptyDocumentCreatesIt() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        QVERIFY(
+            Call("store.patch", QJsonObject{{"plugin", "known"},
+                                            {"patch", QJsonObject{{"a", 1}}}}));
+        QCOMPARE(*Call("store.get", QJsonObject{{"plugin", "known"}}),
+                 QJsonValue(QJsonObject{{"document", QJsonObject{{"a", 1}}}}));
+        QVERIFY(QFile::exists(FileOf("known")));
+    }
+
+    void TwoClientsPatchDifferentKeysAndBothStay() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        const auto second = Connect();
+        QVERIFY(second);
+        constexpr int KEYS = 20;
+        // Both requests of each pair are on the wire before either is
+        // answered, so the daemon takes them one after the other, each on the
+        // document the earlier one left.
+        QList<QFuture<rpc::Result>> pending;
+        for (int i = 0; i < KEYS; ++i) {
+            pending.append(Client_->Request(
+                "store.patch",
+                QJsonObject{
+                    {"plugin", "known"},
+                    {"patch", QJsonObject{{QString("first%1").arg(i), i}}}}));
+            pending.append(second->Request(
+                "store.patch",
+                QJsonObject{
+                    {"plugin", "known"},
+                    {"patch", QJsonObject{{QString("second%1").arg(i), i}}}}));
+        }
+        for (const QFuture<rpc::Result>& future : pending) {
+            QVERIFY(WaitFor(future));
+            QVERIFY2(future.result(), qPrintable(MessageOf(future.result())));
+        }
+        QJsonObject expected;
+        for (int i = 0; i < KEYS; ++i) {
+            expected.insert(QString("first%1").arg(i), i);
+            expected.insert(QString("second%1").arg(i), i);
+        }
+        QCOMPARE(*Call("store.get", QJsonObject{{"plugin", "known"}}),
+                 QJsonValue(QJsonObject{{"document", expected}}));
+        // And the file has them, not only the daemon's answer.
+        QFile file(FileOf("known"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(file.readAll()).object(), expected);
+    }
+
+    void PatchOfAnUnknownIdOrABadPatchIsInvalid() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        // The same answer as store.set gives for the same plugin.
+        const rpc::Result set = Call(
+            "store.set",
+            QJsonObject{{"plugin", "nobody"}, {"document", QJsonObject{}}});
+        const rpc::Result patch =
+            Call("store.patch",
+                 QJsonObject{{"plugin", "nobody"}, {"patch", QJsonObject{}}});
+        QCOMPARE(CodeOf(patch), INVALID_PARAMS);
+        QCOMPARE(CodeOf(patch), CodeOf(set));
+        for (const QJsonValue& value :
+             {QJsonValue(QJsonArray{1}), QJsonValue("text"), QJsonValue(1),
+              QJsonValue(), QJsonValue(QJsonValue::Null)}) {
+            QJsonObject params{{"plugin", "known"}};
+            if (!value.isUndefined()) {
+                params.insert("patch", value);
+            }
+            QCOMPARE(CodeOf(Call("store.patch", params)), INVALID_PARAMS);
+        }
+        QCOMPARE(CodeOf(Call("store.patch", QJsonObject{{"patch", {}}})),
+                 INVALID_PARAMS);
+        QVERIFY(!QFile::exists(FileOf("known")));
+        QVERIFY(!QFile::exists(FileOf("nobody")));
+    }
+
+    void WindowDocumentsAreAcceptedAndKeymapIsNot() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        for (const char* id : {"layout", "settings"}) {
+            const QString name = QString::fromLatin1(id);
+            QCOMPARE(*Call("store.get", QJsonObject{{"plugin", name}}),
+                     QJsonValue(QJsonObject{{"document", QJsonObject{}}}));
+            QVERIFY(Call("store.set",
+                         QJsonObject{{"plugin", name},
+                                     {"document", QJsonObject{{"a", 1}}}}));
+            QVERIFY(Call("store.patch",
+                         QJsonObject{{"plugin", name},
+                                     {"patch", QJsonObject{{"b", 2}}}}));
+            QCOMPARE(*Call("store.get", QJsonObject{{"plugin", name}}),
+                     QJsonValue(QJsonObject{
+                         {"document", QJsonObject{{"a", 1}, {"b", 2}}}}));
+            QVERIFY(QFile::exists(FileOf(name)));
+        }
+        for (const char* method : {"store.get", "store.set", "store.patch"}) {
+            QCOMPARE(
+                CodeOf(Call(method, QJsonObject{{"plugin", "keymap"},
+                                                {"document", QJsonObject{}},
+                                                {"patch", QJsonObject{}}})),
+                INVALID_PARAMS);
+        }
+        QVERIFY(!QFile::exists(FileOf("keymap")));
+    }
+
+    void LayoutPatchIsAnnouncedWhole() {
+        QVERIFY(Start());
+        QVERIFY(Call("store.set",
+                     QJsonObject{{"plugin", "layout"},
+                                 {"document", QJsonObject{{"version", 1},
+                                                          {"root", "r"}}}}));
+        const auto listener = Connect();
+        QVERIFY(listener);
+        QSignalSpy heard(listener.get(), &RpcClient::NotificationReceived);
+        QVERIFY(WaitFor(listener->Request(
+            "bus.subscribe", QJsonObject{{"pattern", "store.*"}})));
+        QVERIFY(Call("store.patch",
+                     QJsonObject{{"plugin", "layout"},
+                                 {"patch", QJsonObject{{"root", "s"}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(heard.count(), 1, TIMEOUT_MS);
+        const QJsonObject event =
+            heard.at(0).at(1).value<QJsonValue>().toObject();
+        QCOMPARE(
+            event.value("payload"),
+            QJsonValue(QJsonObject{
+                {"plugin", "layout"},
+                {"document", QJsonObject{{"version", 1}, {"root", "s"}}}}));
+    }
+
+    void PatchResultTooBigForAnEventIsInvalidAndNotWritten() {
+        AddPlugin("known");
+        QVERIFY(Start());
+        const auto listener = Connect();
+        QVERIFY(listener);
+        QSignalSpy heard(listener.get(), &RpcClient::NotificationReceived);
+        QVERIFY(WaitFor(listener->Request(
+            "bus.subscribe", QJsonObject{{"pattern", "store.*"}})));
+        // Two patches that each fit a frame, whose sum does not: the limit is
+        // on the document that the patch makes, as for store.set.
+        const QString big(qsizetype{MAX_FRAME_LENGTH} / 2 + 1000, u'x');
+        QVERIFY(Call("store.patch",
+                     QJsonObject{{"plugin", "known"},
+                                 {"patch", QJsonObject{{"one", big}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(heard.count(), 1, TIMEOUT_MS);
+        const rpc::Result second = Call(
+            "store.patch", QJsonObject{{"plugin", "known"},
+                                       {"patch", QJsonObject{{"two", big}}}});
+        QCOMPARE(CodeOf(second), INVALID_PARAMS);
+        QTest::qWait(20);
+        QCOMPARE(heard.count(), 1);
+        QCOMPARE(
+            *Call("store.get", QJsonObject{{"plugin", "known"}}),
+            QJsonValue(QJsonObject{{"document", QJsonObject{{"one", big}}}}));
+    }
+
+    void PatchOfAnUnparseableFileFailsAndLeavesIt() {
+        QVERIFY(QDir().mkpath(ConfigPath()));
+        const QByteArray garbage = "{ not json";
+        {
+            QFile file(FileOf("layout"));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(garbage);
+        }
+        QVERIFY(Start());
+        QCOMPARE(CodeOf(Call("store.patch",
+                             QJsonObject{{"plugin", "layout"},
+                                         {"patch", QJsonObject{{"a", 1}}}})),
+                 STORE_FAILED);
+        QFile file(FileOf("layout"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), garbage);
+    }
+
     void UnparseableFileFailsGetAndStaysAsItIs() {
         AddPlugin("known");
         QVERIFY(QDir().mkpath(ConfigPath()));

@@ -32,9 +32,15 @@ public:
     static bool IsValidPluginId(const QString& id);
 
     // Ids that name a file of the state directory other than a plugin's
-    // document: "keymap" is the user's keymap.json (design.md §8). Store
-    // refuses them, and the manifest loader does not accept them as ids.
+    // document: "keymap" is the user's keymap.json, "layout" and "settings"
+    // are the documents of the window (design.md §8). The manifest loader does
+    // not accept them as plugin ids. Store refuses "keymap", but not the
+    // window documents (IsWindowDocumentId).
     static bool IsReservedPluginId(const QString& id);
+
+    // "layout" and "settings": documents that belong to no plugin, which
+    // Store reads and writes like any other.
+    static bool IsWindowDocumentId(const QString& id);
 
     const QString& Directory() const { return Directory_; }
 
@@ -51,5 +57,17 @@ private:
 
     QString Directory_;
 };
+
+// RFC 7386 JSON merge patch: for each member of the patch, null removes the
+// member of the target, an object is merged into the member of the target (a
+// member that is not an object counts as empty), anything else, arrays
+// included, replaces it. Nulls inside an object that is merged into nothing
+// are dropped, as the RFC has it.
+void ApplyMergePatch(QJsonObject& target, const QJsonObject& patch);
+
+// The patch that turns `before` into `after`: ApplyMergePatch(before, patch)
+// gives `after`. A merge patch cannot say "set to null", so this holds for
+// documents without null values; a null in `after` is left out of the patch.
+QJsonObject MergeDiff(const QJsonObject& before, const QJsonObject& after);
 
 }  // namespace roost

@@ -57,6 +57,18 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
             return store.Set(plugin.toString(),
                              params.value(QStringLiteral("document")));
         });
+    const bool patching = Register(
+        QStringLiteral("store.patch"), [&store](const rpc::Call& call) {
+            const QJsonObject params = call.Params.toObject();
+            const QJsonValue plugin = params.value(QStringLiteral("plugin"));
+            if (!plugin.isString()) {
+                return rpc::Ready(InvalidParams(
+                    QStringLiteral("store.patch takes {plugin, patch}: the "
+                                   "id of a loaded plugin and a JSON object")));
+            }
+            return store.Patch(plugin.toString(),
+                               params.value(QStringLiteral("patch")));
+        });
     const bool listing = Register(
         QStringLiteral("plugins.list"),
         [&plugins](const rpc::Call& /*call*/) { return plugins.List(); });
@@ -84,11 +96,12 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
             return Bus_.Publish(name.toString(),
                                 params.value(QStringLiteral("payload")));
         });
-    Q_ASSERT(listingSessions && getting && setting && listing && running &&
-             publishing);
+    Q_ASSERT(listingSessions && getting && setting && patching && listing &&
+             running && publishing);
     Q_UNUSED(listingSessions)
     Q_UNUSED(getting)
     Q_UNUSED(setting)
+    Q_UNUSED(patching)
     Q_UNUSED(listing)
     Q_UNUSED(running)
     Q_UNUSED(publishing)

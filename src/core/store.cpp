@@ -14,6 +14,8 @@ namespace {
 
 constexpr qsizetype MAX_PLUGIN_ID_LENGTH = 64;
 const QString RESERVED_PLUGIN_ID_KEYMAP = QStringLiteral("keymap");
+const QString WINDOW_DOCUMENT_ID_LAYOUT = QStringLiteral("layout");
+const QString WINDOW_DOCUMENT_ID_SETTINGS = QStringLiteral("settings");
 
 bool IsIdStart(QChar c) {
     return (c >= u'a' && c <= u'z') || (c >= u'0' && c <= u'9');
@@ -42,7 +44,11 @@ std::expected<QString, QString> ConfigDirectory() {
 }
 
 bool Store::IsReservedPluginId(const QString& id) {
-    return id == RESERVED_PLUGIN_ID_KEYMAP;
+    return id == RESERVED_PLUGIN_ID_KEYMAP || IsWindowDocumentId(id);
+}
+
+bool Store::IsWindowDocumentId(const QString& id) {
+    return id == WINDOW_DOCUMENT_ID_LAYOUT || id == WINDOW_DOCUMENT_ID_SETTINGS;
 }
 
 Store::Store(QString directory) : Directory_(std::move(directory)) {}
@@ -71,7 +77,7 @@ std::expected<void, QString> Store::CheckRequest(
         return std::unexpected(
             QStringLiteral("invalid plugin id \"%1\"").arg(pluginId));
     }
-    if (IsReservedPluginId(pluginId)) {
+    if (IsReservedPluginId(pluginId) && !IsWindowDocumentId(pluginId)) {
         return std::unexpected(
             QStringLiteral("plugin id \"%1\" is reserved").arg(pluginId));
     }
@@ -152,6 +158,47 @@ std::expected<void, QString> Store::Save(const QString& pluginId,
                                    .arg(path, file.errorString()));
     }
     return {};
+}
+
+void ApplyMergePatch(QJsonObject& target, const QJsonObject& patch) {
+    for (auto it = patch.begin(); it != patch.end(); ++it) {
+        const QString key = it.key();
+        const QJsonValue value = it.value();
+        if (value.isNull()) {
+            target.remove(key);
+        } else if (value.isObject()) {
+            QJsonObject merged = target.value(key).toObject();
+            ApplyMergePatch(merged, value.toObject());
+            target.insert(key, merged);
+        } else {
+            target.insert(key, value);
+        }
+    }
+}
+
+QJsonObject MergeDiff(const QJsonObject& before, const QJsonObject& after) {
+    QJsonObject patch;
+    for (auto it = before.begin(); it != before.end(); ++it) {
+        if (!after.contains(it.key())) {
+            patch.insert(it.key(), QJsonValue::Null);
+        }
+    }
+    for (auto it = after.begin(); it != after.end(); ++it) {
+        const QJsonValue old = before.value(it.key());
+        if (it.value().isNull() || old == it.value()) {
+            continue;
+        }
+        if (old.isObject() && it.value().isObject()) {
+            const QJsonObject inner =
+                MergeDiff(old.toObject(), it.value().toObject());
+            if (!inner.isEmpty()) {
+                patch.insert(it.key(), inner);
+            }
+        } else {
+            patch.insert(it.key(), it.value());
+        }
+    }
+    return patch;
 }
 
 }  // namespace roost

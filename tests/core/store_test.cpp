@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTest>
@@ -62,6 +63,11 @@ private slots:
     void InvalidPluginIds_data();
     void InvalidPluginIds();
     void ReservedPluginIdIsRefused();
+    void WindowDocumentsAreReadAndWritten();
+    void MergePatchTable_data();
+    void MergePatchTable();
+    void MergeDiffAppliesBack_data();
+    void MergeDiffAppliesBack();
     void ConfigDirectoryFromRoostConfig();
     void ConfigDirectoryFromXdg();
     void ConfigDirectoryIgnoresRelativeXdg();
@@ -223,6 +229,125 @@ void StoreTest::ReservedPluginIdIsRefused() {
     QVERIFY(!store.Save(id, {}));
     QVERIFY(!store.Load(id));
     QVERIFY(FilesIn(root.path()).isEmpty());
+}
+
+void StoreTest::WindowDocumentsAreReadAndWritten() {
+    QTemporaryDir root;
+    const Store store(root.filePath(QStringLiteral("roost")));
+    for (const char* name : {"layout", "settings"}) {
+        const QString id = QString::fromLatin1(name);
+        QVERIFY(Store::IsReservedPluginId(id));
+        QVERIFY(Store::IsWindowDocumentId(id));
+        QCOMPARE(store.Load(id).value(), QJsonObject());
+        const QJsonObject document{{QStringLiteral("version"), 1}};
+        QVERIFY(store.Save(id, document));
+        QCOMPARE(store.Load(id).value(), document);
+    }
+    QVERIFY(!Store::IsWindowDocumentId(QStringLiteral("keymap")));
+    QVERIFY(!Store::IsWindowDocumentId(QStringLiteral("layouts")));
+}
+
+namespace {
+
+QJsonObject ObjectOf(const char* json) {
+    return QJsonDocument::fromJson(QByteArray(json)).object();
+}
+
+}  // namespace
+
+void StoreTest::MergePatchTable_data() {
+    QTest::addColumn<QByteArray>("target");
+    QTest::addColumn<QByteArray>("patch");
+    QTest::addColumn<QByteArray>("result");
+    // The examples of RFC 7386, appendix A, and the rules they show.
+    const auto row = [](const char* name, const char* target, const char* patch,
+                        const char* result) {
+        QTest::newRow(name)
+            << QByteArray(target) << QByteArray(patch) << QByteArray(result);
+    };
+    row("replace a value", R"({"a":"b"})", R"({"a":"c"})", R"({"a":"c"})");
+    row("add a key", R"({"a":"b"})", R"({"b":"c"})", R"({"a":"b","b":"c"})");
+    row("null removes a key", R"({"a":"b"})", R"({"a":null})", R"({})");
+    row("null removes one of two", R"({"a":"b","b":"c"})", R"({"a":null})",
+        R"({"b":"c"})");
+    row("null for a missing key", R"({"a":"b"})", R"({"x":null})",
+        R"({"a":"b"})");
+    row("an array is replaced", R"({"a":["b"]})", R"({"a":"c"})",
+        R"({"a":"c"})");
+    row("a value is replaced by an array", R"({"a":"c"})", R"({"a":["b"]})",
+        R"({"a":["b"]})");
+    row("arrays are not merged", R"({"a":[1,2,3]})", R"({"a":[9]})",
+        R"({"a":[9]})");
+    row("nested objects merge", R"({"a":{"b":"c"}})",
+        R"({"a":{"b":"d","c":null}})", R"({"a":{"b":"d"}})");
+    row("nested objects keep the rest", R"({"a":{"b":1,"c":2},"d":3})",
+        R"({"a":{"c":9}})", R"({"a":{"b":1,"c":9},"d":3})");
+    row("nested null removes the key", R"({"a":{"b":1}})",
+        R"({"a":{"b":null}})", R"({"a":{}})");
+    row("an array of objects is replaced", R"({"a":[{"b":"c"}]})",
+        R"({"a":[1]})", R"({"a":[1]})");
+    row("an object replaces a scalar", R"({"a":1})", R"({"a":{"b":2}})",
+        R"({"a":{"b":2}})");
+    row("an object replaces an array", R"({"a":[1]})", R"({"a":{"b":2}})",
+        R"({"a":{"b":2}})");
+    row("nulls inside a new object are dropped", R"({})",
+        R"({"a":{"b":{"c":null,"d":1}}})", R"({"a":{"b":{"d":1}}})");
+    row("an empty patch changes nothing", R"({"a":1})", R"({})", R"({"a":1})");
+    row("a patch into an empty document", R"({})", R"({"a":1})", R"({"a":1})");
+    row("false and 0 are values, not removals", R"({"a":true,"b":1})",
+        R"({"a":false,"b":0})", R"({"a":false,"b":0})");
+}
+
+void StoreTest::MergePatchTable() {
+    QFETCH(QByteArray, target);
+    QFETCH(QByteArray, patch);
+    QFETCH(QByteArray, result);
+    QJsonObject document = ObjectOf(target);
+    roost::ApplyMergePatch(document, ObjectOf(patch));
+    QCOMPARE(document, ObjectOf(result));
+}
+
+void StoreTest::MergeDiffAppliesBack_data() {
+    QTest::addColumn<QByteArray>("before");
+    QTest::addColumn<QByteArray>("after");
+    const auto row = [](const char* name, const char* before,
+                        const char* after) {
+        QTest::newRow(name) << QByteArray(before) << QByteArray(after);
+    };
+    row("equal", R"({"a":1})", R"({"a":1})");
+    row("both empty", R"({})", R"({})");
+    row("from empty", R"({})", R"({"a":1,"b":{"c":[1,2]}})");
+    row("to empty", R"({"a":1,"b":{"c":2}})", R"({})");
+    row("a key added", R"({"a":1})", R"({"a":1,"b":2})");
+    row("a key removed", R"({"a":1,"b":2})", R"({"a":1})");
+    row("a value changed", R"({"a":1})", R"({"a":2})");
+    row("a type changed", R"({"a":1})", R"({"a":"x"})");
+    row("an array changed", R"({"a":[1,2,3]})", R"({"a":[1,2]})");
+    row("an array becomes an object", R"({"a":[1]})", R"({"a":{"b":1}})");
+    row("an object becomes an array", R"({"a":{"b":1}})", R"({"a":[1]})");
+    row("an object becomes a scalar", R"({"a":{"b":1}})", R"({"a":1})");
+    row("an object becomes empty", R"({"a":{"b":1}})", R"({"a":{}})");
+    row("a scalar becomes an empty object", R"({"a":1})", R"({"a":{}})");
+    row("a nested key changed", R"({"a":{"b":1,"c":2},"d":3})",
+        R"({"a":{"b":1,"c":5},"d":3})");
+    row("deep", R"({"a":{"b":{"c":{"d":1,"e":2}}},"f":0})",
+        R"({"a":{"b":{"c":{"d":1,"g":[{"h":true}]}}},"f":0})");
+    row("false and 0", R"({"a":true,"b":1})", R"({"a":false,"b":0})");
+}
+
+void StoreTest::MergeDiffAppliesBack() {
+    QFETCH(QByteArray, before);
+    QFETCH(QByteArray, after);
+    const QJsonObject a = ObjectOf(before);
+    const QJsonObject b = ObjectOf(after);
+    const QJsonObject diff = roost::MergeDiff(a, b);
+    QJsonObject applied = a;
+    roost::ApplyMergePatch(applied, diff);
+    QCOMPARE(applied, b);
+    // Nothing changed, nothing in the patch.
+    if (a == b) {
+        QVERIFY(diff.isEmpty());
+    }
 }
 
 void StoreTest::ConfigDirectoryFromRoostConfig() {

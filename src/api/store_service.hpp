@@ -15,7 +15,8 @@
 
 namespace roost::api {
 
-// The documents of the plugins (store.get and store.set, design.md §4, §8),
+// The documents of the plugins (store.get, store.set and store.patch,
+// design.md §4, §8),
 // cached for the plugins that have been read. Not the daemon's
 // roost::StoreService, which keeps the files: this one is the window's copy.
 // Use it from the GUI thread; the signal is emitted there.
@@ -57,6 +58,11 @@ public:
     // store.set: roostd's answer or error, unchanged. The document is a JSON
     // object, which roostd checks. Only the event updates the cache.
     QFuture<rpc::Result> Set(const QString& plugin, const QJsonValue& document);
+
+    // store.patch: roostd's answer or error, unchanged; `patch` is a JSON
+    // object (RFC 7386 merge patch), which roostd checks. Like Set, only the
+    // event updates the cache.
+    QFuture<rpc::Result> Patch(const QString& plugin, const QJsonValue& patch);
 
     bool IsWarm(const QString& plugin) const;
 
