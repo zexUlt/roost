@@ -778,7 +778,9 @@ FocusScope {
 
     // The stored document: read on creation if connected and at every
     // connection (the window forgets its copy when the connection goes),
-    // written as the model asks.
+    // written as the model asks. When the connection goes the list stops
+    // writing (storeLost) until the read at the next one: what it holds may
+    // be older than the store's document.
     function readStore() {
         Roost.store.get("sessions", (error, result) => {
             if (error) {
@@ -831,6 +833,8 @@ FocusScope {
         function onConnectedChanged() {
             if (Roost.connected) {
                 root.readStore();
+            } else {
+                sessionsList.storeLost();
             }
         }
     }
