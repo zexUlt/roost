@@ -473,6 +473,7 @@ private slots:
         QCOMPARE(result.Problems.size(), 1);
         QVERIFY(result.Problems.first().contains("z.list is used"));
         QVERIFY(result.Problems.first().contains("sessions.list, a.list"));
+        QVERIFY(result.Problems.first().contains("plugins.disabled"));
     }
 
     void DefaultListNeedsTheOutputSelectedOfTypeSessionRef() {
@@ -486,6 +487,50 @@ private slots:
             DefaultLayoutFor({"a.list", "b.list", "terminal.view"}, known);
         QCOMPARE(result.Tree, DefaultLayout());
         QVERIFY(result.Problems.isEmpty());
+    }
+
+    void DefaultTerminalHasExactlyOneSessionRefInput() {
+        // A panel with two inputs of the type is not told from the others by
+        // its type; it is passed over and the next panel is the terminal.
+        LayoutKnownPanels known = Known();
+        known.insert("two.view",
+                     {.Inputs = {{"a", "SessionRef"}, {"b", "SessionRef"}},
+                      .Outputs = {}});
+        const DefaultLayoutResult result = DefaultLayoutFor(
+            {"sessions.list", "two.view", "terminal.view"}, known);
+        QCOMPARE(result.Tree, DefaultLayout());
+        QVERIFY(result.Problems.isEmpty());
+    }
+
+    void DefaultListIsNotItsOwnTerminal() {
+        LayoutKnownPanels known = Known();
+        known.remove("sessions.list");
+        known.insert("alt.list", {.Inputs = {{"open", "SessionRef"}},
+                                  .Outputs = {{"selected", "SessionRef"}}});
+        const DefaultLayoutResult result =
+            DefaultLayoutFor({"alt.list", "terminal.view"}, known);
+        QVERIFY(result.Problems.isEmpty());
+        QCOMPARE(result.Tree.Root.Children[0].Panel, QString("alt.list"));
+        QCOMPARE(result.Tree.Root.Children[1].Panel, QString("terminal.view"));
+        QCOMPARE(result.Tree.Root.Children[1].Links["session"].From,
+                 QString("list"));
+    }
+
+    void DefaultWithSeveralTerminalsTakesTheFirstAndNamesTheOthers() {
+        LayoutKnownPanels known = Known();
+        known.insert("a.screen",
+                     {.Inputs = {{"open", "SessionRef"}}, .Outputs = {}});
+        const DefaultLayoutResult result = DefaultLayoutFor(
+            {"sessions.list", "a.screen", "terminal.view"}, known);
+        QCOMPARE(result.Tree.Root.Children[1].Panel, QString("a.screen"));
+        QCOMPARE(result.Tree.Root.Children[1].Links.keys(),
+                 QStringList{"open"});
+        QCOMPARE(result.Problems.size(), 1);
+        QVERIFY(
+            result.Problems.first().contains("several panels take a "
+                                             "SessionRef input"));
+        QVERIFY(result.Problems.first().contains("a.screen is used"));
+        QVERIFY(result.Problems.first().contains("terminal.view not placed"));
     }
 
     void UnusableDocumentGivesTheFallbackTree() {

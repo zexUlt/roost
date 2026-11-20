@@ -105,6 +105,12 @@ inline constexpr int LAYOUT_VERSION = 1;
 // terminal.
 Layout DefaultLayout();
 
+// The types of `order` that are a list of sessions: those with the output
+// `selected` of type SessionRef. The one rule for the default layout, the
+// readiness check and the keyboard command that goes to the list.
+QStringList ListPanelTypes(const QStringList& order,
+                           const LayoutKnownPanels& known);
+
 struct DefaultLayoutResult {
     Layout Tree;
     // One line each: what was not placed.

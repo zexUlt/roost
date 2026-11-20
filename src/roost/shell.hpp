@@ -47,7 +47,9 @@ namespace roost {
 // signals `retryRequested()`, `restartRequested()` (the launcher replaces the
 // roostd, nothing else of the window moves), `slotCreated(slot)` and
 // `splitResized(path, sizes)`. A slot takes `panel`, `error`, `links`,
-// `linkInput`, `linkOutput`.
+// `linkInput`, `linkOutput`. A root with `layoutTree` also takes
+// `listPanelTypes`, the panel types that are lists of sessions (the keyboard
+// command to the list looks for one).
 //
 // A link of a leaf names its input, the leaf it comes from and the output
 // there. It works when both panels exist, the types of the ports match and
@@ -130,6 +132,15 @@ private:
 
     // The slot of the leaf, or null.
     Slot* SlotOf(const QString& instance);
+    // The panel types that can be created, with their ports.
+    LayoutKnownPanels KnownPanels() const;
+    // Whether the panel is a list of sessions (output `selected` of type
+    // SessionRef) and whether it takes a session (a link into an input of
+    // type SessionRef), by port and not by id.
+    bool IsListSlot(const Slot& slot) const;
+    bool TakesSession(const Slot& slot) const;
+    // Tells the root which panel types are lists: `listPanelTypes`.
+    void UpdateListTypes();
     void OnPanelTypesChanged();
     void OnPanelAboutToBeDestroyed(QQuickItem* panel);
     void OnRefused(const rpc::Error& error);

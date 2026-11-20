@@ -49,8 +49,9 @@ private:
     QString PluginsPath() const { return Dir_->filePath("plugins"); }
     QString ConfigPath() const { return Dir_->filePath("config"); }
 
-    void AddPlugin(const QString& id) {
-        const QDir directory(PluginsPath() + u'/' + id);
+    void AddPlugin(const QString& id, const QString& root = {}) {
+        const QDir directory((root.isEmpty() ? PluginsPath() : root) + u'/' +
+                             id);
         QVERIFY(directory.mkpath("."));
         QFile file(directory.filePath("plugin.json"));
         QVERIFY(file.open(QIODevice::WriteOnly));
@@ -71,13 +72,14 @@ private:
 
     // The host of the plugins directory with what the store says is disabled,
     // as roostd's main does it.
-    bool Start() {
+    bool Start(const QStringList& moreDirectories = {}) {
         Server_ = std::make_unique<Server>();
         if (!Server_->Listen(Dir_->filePath("roostd.sock"))) {
             return false;
         }
         Host_ = std::make_unique<PluginHost>(*Server_);
-        Host_->Load({PluginsPath()}, ReadDisabledPlugins(Store(ConfigPath())));
+        Host_->Load(QStringList{PluginsPath()} + moreDirectories,
+                    ReadDisabledPlugins(Store(ConfigPath())));
         Client_ = std::make_unique<RpcClient>();
         const QFuture<rpc::Result> hello =
             Client_->Connect(Dir_->filePath("roostd.sock"));
@@ -150,6 +152,19 @@ private slots:
         QVERIFY(Start());
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"a", "b"}));
+        QVERIFY(ProblemsOf(answer).isEmpty());
+    }
+
+    void AnIdSkipsEveryPluginThatHasIt() {
+        // A built-in and a plugin of the user with the same id: the list is by
+        // id, so both are off. To replace a built-in, disable it and install
+        // the plugin under another id.
+        const QString userPlugins = Dir_->filePath("user-plugins");
+        AddPlugin("a", userPlugins);
+        WriteSettings(R"({"plugins": {"disabled": ["a"]}})");
+        QVERIFY(Start({userPlugins}));
+        const QJsonObject answer = List();
+        QCOMPARE(IdsOf(answer), (QStringList{"b", "c"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
     }
 

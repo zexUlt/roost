@@ -12,6 +12,8 @@ Item {
     // active, children} or {kind: "leaf", instance, panel}. A size is a
     // number of pixels, 0 for the rest. null: nothing is built.
     property var tree: null
+    // The panel types that are lists of sessions, as Shell works them out.
+    property var listTypes: []
     // Instance id -> its PanelSlot; replaced as a whole when a slot comes or
     // goes, so that a binding that reads it follows.
     property var slots: ({})
@@ -73,21 +75,21 @@ Item {
         }
     }
 
-    // The first leaf of the type (any type if empty) whose slot is shown: a
-    // leaf on a tab that is not shown cannot take the keyboard.
-    function firstLeaf(node, type) {
+    // The first leaf of one of the types whose slot is shown: a leaf on a tab
+    // that is not shown cannot take the keyboard.
+    function firstLeaf(node, types) {
         if (node === null) {
             return null;
         }
         if (node.kind === "leaf") {
-            if (type !== "" && node.panel !== type) {
+            if (!types.includes(node.panel)) {
                 return null;
             }
             const slot = view.slotOf(node.instance);
             return slot !== null && slot.visible ? node : null;
         }
         for (const child of node.children) {
-            const found = firstLeaf(child, type);
+            const found = firstLeaf(child, types);
             if (found !== null) {
                 return found;
             }
@@ -103,7 +105,7 @@ Item {
             if (!slot.activeFocus) {
                 continue;
             }
-            if (slot.panelType === "sessions.list") {
+            if (view.listTypes.includes(slot.panelType)) {
                 return;
             }
             for (const link of slot.links) {
@@ -114,7 +116,7 @@ Item {
                 }
             }
         }
-        const leaf = view.firstLeaf(view.tree, "sessions.list");
+        const leaf = view.firstLeaf(view.tree, view.listTypes);
         const slot = leaf === null ? null : view.slotOf(leaf.instance);
         if (slot !== null) {
             slot.forceActiveFocus();

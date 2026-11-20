@@ -331,15 +331,14 @@ Shell::Readiness Shell::CheckReadiness() const {
     // roostd refused the open: the attach will not start by waiting.
     QList<std::pair<const Slot*, TerminalOpening>> openings;
     for (const Slot& slot : Slots_) {
-        if (slot.Type != QLatin1String(TERMINAL_PANEL)) {
+        if (!TakesSession(slot)) {
             continue;
         }
         const TerminalOpening opening = OpeningOf(slot.Panel.data());
         openings.append({&slot, opening});
         if (opening.Wanted && opening.Status == QLatin1String("failed")) {
             failures.append(QStringLiteral("panel %1 could not open %2: %3")
-                                .arg(QLatin1String(TERMINAL_PANEL), opening.Key,
-                                     opening.Message));
+                                .arg(slot.Type, opening.Key, opening.Message));
         }
     }
     if (!failures.isEmpty()) {
@@ -371,21 +370,24 @@ Shell::Readiness Shell::CheckReadiness() const {
     // then the terminal has to be open (roostd answered session.open, so the
     // attach process is started, or was already for a warm session) or, if
     // the program already left, ended.
-    const bool restoring = std::ranges::any_of(Slots_, [](const Slot& slot) {
-        return slot.Type == QLatin1String(LIST_PANEL) &&
-               ListIsRestoring(slot.Panel.data());
-    });
-    if (restoring) {
+    const Slot* restoring = nullptr;
+    for (const Slot& slot : Slots_) {
+        if (restoring == nullptr && IsListSlot(slot) &&
+            ListIsRestoring(slot.Panel.data())) {
+            restoring = &slot;
+        }
+    }
+    if (restoring != nullptr) {
         waiting.append(
             QStringLiteral("panel %1 has not restored the opened session")
-                .arg(LIST_PANEL));
+                .arg(restoring->Type));
     } else {
         for (const auto& [slot, opening] : openings) {
             if (opening.Wanted && opening.Status != QLatin1String("open") &&
                 opening.Status != QLatin1String("ended")) {
-                waiting.append(QStringLiteral("panel %1 is opening %2 (%3)")
-                                   .arg(QLatin1String(TERMINAL_PANEL),
-                                        opening.Key, opening.Status));
+                waiting.append(
+                    QStringLiteral("panel %1 is opening %2 (%3)")
+                        .arg(slot->Type, opening.Key, opening.Status));
             }
         }
     }
@@ -404,7 +406,52 @@ Shell::Slot* Shell::SlotOf(const QString& instance) {
     return nullptr;
 }
 
+LayoutKnownPanels Shell::KnownPanels() const {
+    LayoutKnownPanels known;
+    for (const QString& type : Loader_.PanelTypes()) {
+        if (const auto info = Loader_.Info(type)) {
+            known.insert(type,
+                         {.Inputs = info->Inputs, .Outputs = info->Outputs});
+        }
+    }
+    return known;
+}
+
+bool Shell::IsListSlot(const Slot& slot) const {
+    return ListPanelTypes(Loader_.PanelTypes(), KnownPanels())
+        .contains(slot.Type);
+}
+
+bool Shell::TakesSession(const Slot& slot) const {
+    const auto info = Loader_.Info(slot.Type);
+    if (!info) {
+        return false;
+    }
+    const auto isSession = [&info](const QString& input) {
+        return info->Inputs.value(input).toString() ==
+               QLatin1String(SESSION_REF);
+    };
+    if (isSession(slot.LinkInput)) {
+        return true;
+    }
+    return std::ranges::any_of(slot.Links, [&isSession](const QVariant& link) {
+        return isSession(link.toMap().value("input").toString());
+    });
+}
+
+void Shell::UpdateListTypes() {
+    if (!LayoutMode_) {
+        return;
+    }
+    const QStringList types =
+        ListPanelTypes(Loader_.PanelTypes(), KnownPanels());
+    if (Root_.property("listPanelTypes").toStringList() != types) {
+        Root_.setProperty("listPanelTypes", types);
+    }
+}
+
 void Shell::OnPanelTypesChanged() {
+    UpdateListTypes();
     TrySettle();
     Refill();
     UpdateLinks();
@@ -687,13 +734,7 @@ void Shell::TrySettle() {
         !Api_.Plugins().IsLoaded()) {
         return;
     }
-    LayoutKnownPanels known;
-    for (const QString& type : Loader_.PanelTypes()) {
-        if (const auto info = Loader_.Info(type)) {
-            known.insert(type,
-                         {.Inputs = info->Inputs, .Outputs = info->Outputs});
-        }
-    }
+    const LayoutKnownPanels known = KnownPanels();
     // The default layout is made of the panels there are, by their ports.
     DefaultLayoutResult standard =
         DefaultLayoutFor(Loader_.PanelTypes(), known);

@@ -40,7 +40,7 @@ Item {
     id: root
 
     property var selected: null
-
+    // RESTORED
     ListView {
         objectName: "altList"
         anchors.fill: parent
@@ -95,7 +95,10 @@ private:
     // The template, with the id of the plugin rewritten as its README says and
     // one more panel: the list.
     // `directory` decides the load order: by name, as roostd finds them.
-    bool InstallFixture(const QString& directory = "fixture") {
+    // `restoring`: the list has the optional property `restored`, false until
+    // the test says otherwise (--smoke-sessions waits for it).
+    bool InstallFixture(const QString& directory = "fixture",
+                        bool restoring = false) {
         const QString target = Dir_->filePath("plugins/" + directory);
         if (!CopyTree(QStringLiteral(PLUGIN_TEMPLATE_DIR), target)) {
             return false;
@@ -121,7 +124,12 @@ private:
                         {"outputs", QJsonObject{{"selected", "SessionRef"}}}});
         contributes["panels"] = panels;
         manifest["contributes"] = contributes;
-        return WriteFile(target + "/qml/AltList.qml", ALT_LIST_QML) &&
+        return WriteFile(
+                   target + "/qml/AltList.qml",
+                   QByteArray(ALT_LIST_QML)
+                       .replace(
+                           "// RESTORED",
+                           restoring ? "property bool restored: false" : "")) &&
                WriteFile(target + "/plugin.json",
                          QJsonDocument(manifest).toJson());
     }
@@ -133,9 +141,9 @@ private:
 
     // The fixture is installed, `sessions` is disabled in the settings and
     // stays in the plugins directory with the other built-in plugins.
-    bool StartReplaced(const QJsonObject& layout = {}) {
+    bool StartReplaced(const QJsonObject& layout = {}, bool restoring = false) {
         ListType_ = ALT_LIST;
-        return InstallFixture() &&
+        return InstallFixture("fixture", restoring) &&
                WriteStore(
                    "settings",
                    {{"plugins",
@@ -221,14 +229,7 @@ private:
         // Nothing is selected, and the terminal has no session.
         QCOMPARE(SelectedOf(list), QString());
         QVERIFY(TerminalOf(terminal) != nullptr);
-        QVERIFY(TerminalOf(terminal)->property("session").isNull() ||
-                !TerminalOf(terminal)->property("session").isValid() ||
-                TerminalOf(terminal)
-                    ->property("session")
-                    .toMap()
-                    .value("id")
-                    .toString()
-                    .isEmpty());
+        QVERIFY(TerminalOf(terminal)->property("session").toMap().isEmpty());
 
         // A tap on a row connects the terminal to that session.
         for (const QString& id : {BETA, GAMMA}) {
@@ -306,6 +307,62 @@ private slots:
         }
         VerifyReplaced("side", "screen");
         QCOMPARE(SlotByInstance("side")->width(), 200.0);
+    }
+
+    void TheCommandToTheListReachesTheReplacingList() {
+        // The keyboard is in no panel, so there is no list that feeds the
+        // panel that has it; the command takes the list by its port.
+        FailOnWarnings();
+        QVERIFY(StartReplaced());
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list") != nullptr &&
+                                     PanelByInstance("terminal") != nullptr,
+                                 TIMEOUT_MS);
+        Window()->contentItem()->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !SlotByInstance("list")->hasActiveFocus() &&
+                !SlotByInstance("terminal")->hasActiveFocus(),
+            TIMEOUT_MS);
+        const QFuture<rpc::Result> done =
+            Api_->Commands().Run("shell.focusList");
+        QTRY_VERIFY_WITH_TIMEOUT(done.isFinished(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+
+        // From the terminal, the list that feeds it is the one.
+        SlotByInstance("terminal")->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        const QFuture<rpc::Result> again =
+            Api_->Commands().Run("shell.focusList");
+        QTRY_VERIFY_WITH_TIMEOUT(again.isFinished(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+    }
+
+    void ReadinessWaitsForTheReplacingListToRestore() {
+        FailOnWarnings();
+        QVERIFY(StartReplaced({}, true));
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list") != nullptr &&
+                                     PanelByInstance("terminal") != nullptr,
+                                 TIMEOUT_MS);
+        // Everything else is there; the list has not decided what to open.
+        QTRY_VERIFY_WITH_TIMEOUT(Shell_->CheckReadiness().Reason.contains(
+                                     "has not restored the opened session"),
+                                 TIMEOUT_MS);
+        QVERIFY(Shell_->CheckReadiness().Reason.contains(ALT_LIST));
+        QVERIFY(!Shell_->CheckReadiness().Ready);
+        PanelByInstance("list")->setProperty("restored", true);
+        QTRY_VERIFY2_WITH_TIMEOUT(Shell_->CheckReadiness().Ready,
+                                  qPrintable(Shell_->CheckReadiness().Reason),
+                                  TIMEOUT_MS);
     }
 
     void WithoutTheSettingBothListsAreThere() {

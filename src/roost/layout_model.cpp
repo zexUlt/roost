@@ -447,18 +447,24 @@ Layout DefaultLayout() {
                                 QStringLiteral("session"))};
 }
 
-DefaultLayoutResult DefaultLayoutFor(const QStringList& order,
-                                     const LayoutKnownPanels& known) {
-    const QString sessionRef = QStringLiteral("SessionRef");
-    const QString selected = QStringLiteral("selected");
+QStringList ListPanelTypes(const QStringList& order,
+                           const LayoutKnownPanels& known) {
     QStringList lists;
     for (const QString& type : order) {
         const auto found = known.constFind(type);
         if (found != known.cend() &&
-            found->Outputs.value(selected).toString() == sessionRef) {
+            found->Outputs.value(QStringLiteral("selected")).toString() ==
+                QStringLiteral("SessionRef")) {
             lists.append(type);
         }
     }
+    return lists;
+}
+
+DefaultLayoutResult DefaultLayoutFor(const QStringList& order,
+                                     const LayoutKnownPanels& known) {
+    const QString sessionRef = QStringLiteral("SessionRef");
+    const QStringList lists = ListPanelTypes(order, known);
     DefaultLayoutResult result{.Tree = DefaultLayout(), .Problems = {}};
     QString listPanel = QStringLiteral("sessions.list");
     if (!lists.isEmpty()) {
@@ -467,7 +473,9 @@ DefaultLayoutResult DefaultLayoutFor(const QStringList& order,
             result.Problems.append(
                 QStringLiteral(
                     "default layout: several panels declare the output "
-                    "selected of type SessionRef; %1 is used, %2 not placed")
+                    "selected of type SessionRef; %1 is used, %2 not placed "
+                    "(disable the one you do not want in settings, "
+                    "plugins.disabled)")
                     .arg(listPanel, lists.mid(1).join(QLatin1String(", "))));
         }
     }
