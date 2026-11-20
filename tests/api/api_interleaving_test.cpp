@@ -1,9 +1,9 @@
 // What the window's API does when calls and connections overlap: a Refresh of
 // the sessions in flight when the connection is lost, two Refreshes out at
-// once, two Gets of one document at once, and the reconnect wait that a
-// successful hello takes back to its first value. The sessions and the wait,
-// against a daemon of the test's own, which answers when the test says so; the
-// store, against the real roostd.
+// once, two Gets of one document at once, an event that overtakes the answer
+// naming its subscription, and the reconnect wait that a successful hello
+// takes back to its first value. All against a scripted daemon of the test's
+// own, which answers when the test says so.
 
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -404,6 +404,13 @@ private slots:
     void AnEventThatOvertakesTheAnswerIsNotLost() {
         QVERIFY(ConnectApi());
         Daemon_->Hold("x.a");
+        // y.b is asked first and answered at once; x.a is the one held, so
+        // its number follows.
+        QList<QJsonValue> marker;
+        const auto markerId = Api_->Bus().Subscribe(
+            "y.b", this, [&marker](const QString&, const QJsonValue& v) {
+                marker.append(v);
+            });
         QList<QPair<QString, QJsonValue>> heard;
         const auto id = Api_->Bus().Subscribe(
             "x.a", this, [&heard](const QString& name, const QJsonValue& v) {
@@ -412,9 +419,17 @@ private slots:
         QVERIFY(id);
         QTRY_VERIFY_WITH_TIMEOUT(Daemon_->IsHeld(), TIMEOUT_MS);
         const int subscription = Daemon_->HeldSubscription();
+        const int markerSubscription = subscription - 1;
 
         Daemon_->EventOn(subscription, "x.a", "early");
         Daemon_->EventOn(subscription + 100, "x.a", "stranger");
+        // The marker is on a subscription that is answered. Events of one
+        // connection keep their order, so when it is heard, "early" has been
+        // handled too, and has been held, not told.
+        QVERIFY(markerId);
+        Daemon_->EventOn(markerSubscription, "y.b", "marker");
+        QTRY_COMPARE_WITH_TIMEOUT(marker.size(), 1, TIMEOUT_MS);
+        QVERIFY(heard.isEmpty());
         Daemon_->AnswerHeld();
         // Frames come in order: "later" is told after the answer is handled.
         Daemon_->EventOn(subscription, "x.a", "later");
