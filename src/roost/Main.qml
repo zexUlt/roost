@@ -90,6 +90,21 @@ ApplicationWindow {
         bugReportDialog.open();
     }
 
+    // Opens the command palette; macOS calls it from the View menu, other
+    // platforms from the toolbar button, and both from the command
+    // shell.palette.
+    function openPalette() {
+        commandPalette.open();
+    }
+
+    // Shows the settings window, or raises it; macOS calls it from the
+    // "Settings…" item of the menu bar (the native menu puts it in the
+    // application menu) and Cmd+, (the command shell.settings), other
+    // platforms from the toolbar button.
+    function openSettings() {
+        settingsWindow.open();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -98,13 +113,35 @@ ApplicationWindow {
         // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
         // Bug…" is there instead of the toolbar button. It is the first row of
         // the column, so that it takes room of its own and does not lie over
-        // the banner.
+        // the banner. The item "Settings…" has no role in Qt Quick Controls;
+        // the Cocoa menu takes it for the application's settings by its text
+        // ("Setting", "Preferences", ...) and moves it to the application menu.
         Loader {
             objectName: "menuBarLoader"
             active: Qt.platform.os === "osx"
             visible: active
             Layout.fillWidth: true
             sourceComponent: MenuBar {
+                Menu {
+                    title: "roost"
+
+                    MenuItem {
+                        objectName: "settingsMenuItem"
+                        text: "Settings…"
+                        onTriggered: root.openSettings()
+                    }
+                }
+
+                Menu {
+                    title: "View"
+
+                    MenuItem {
+                        objectName: "paletteMenuItem"
+                        text: "Command Palette…"
+                        onTriggered: root.openPalette()
+                    }
+                }
+
                 Menu {
                     title: "Help"
 
@@ -128,6 +165,18 @@ ApplicationWindow {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                ToolButton {
+                    objectName: "paletteButton"
+                    text: "Command Palette…"
+                    onClicked: root.openPalette()
+                }
+
+                ToolButton {
+                    objectName: "settingsButton"
+                    text: "Settings…"
+                    onClicked: root.openSettings()
                 }
 
                 ToolButton {
@@ -244,11 +293,14 @@ ApplicationWindow {
     // feeds the panel that has it, or the first list. Not a toggle: in the list
     // it does nothing. shell.reportBug, Cmd+Shift+B on macOS only:
     // on Linux Ctrl+Shift+B must reach the program in the terminal.
+    // shell.palette, Ctrl+Shift+P (Cmd+Shift+P on macOS): the command palette.
     // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
         if (Roost.commands !== null) {
             Roost.commands.registerCommand("shell.focusList", () => layoutView.focusList());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
+            Roost.commands.registerCommand("shell.palette", () => root.openPalette());
+            Roost.commands.registerCommand("shell.settings", () => root.openSettings());
         }
     }
 
@@ -278,5 +330,13 @@ ApplicationWindow {
         id: bugReportDialog
 
         window: root
+    }
+
+    CommandPalette {
+        id: commandPalette
+    }
+
+    SettingsWindow {
+        id: settingsWindow
     }
 }
