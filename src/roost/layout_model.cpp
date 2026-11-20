@@ -41,9 +41,10 @@ LayoutNode DefaultRoot() {
     LayoutNode terminal;
     terminal.Instance = QStringLiteral("terminal");
     terminal.Panel = QStringLiteral("terminal.view");
-    terminal.Links.insert(
-        QStringLiteral("session"),
-        {.From = QStringLiteral("list"), .Output = QStringLiteral("selected")});
+    terminal.Links.insert(QStringLiteral("session"),
+                          {.From = QStringLiteral("list"),
+                           .Output = QStringLiteral("selected"),
+                           .Problem = {}});
 
     LayoutNode root;
     root.Kind = ELayoutNodeKind::Split;
@@ -209,8 +210,9 @@ std::optional<LayoutNode> ParseLeaf(const QJsonObject& object,
                                         "\"output\"; the link is dropped"));
             continue;
         }
-        node.Links.insert(
-            it.key(), {.From = from.toString(), .Output = output.toString()});
+        node.Links.insert(it.key(), {.From = from.toString(),
+                                     .Output = output.toString(),
+                                     .Problem = {}});
     }
     return node;
 }
