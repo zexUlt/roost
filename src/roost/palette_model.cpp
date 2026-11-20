@@ -62,6 +62,24 @@ bool CapturesInput(const TableKey& key, EPlatform platform) {
     return key.Chord.Ctrl || (platform == EPlatform::Mac && key.Chord.Alt);
 }
 
+// "pb", "pb and pc", "pb, pc and pd".
+QString JoinNames(const QStringList& names) {
+    if (names.size() == 1) {
+        return names.front();
+    }
+    return names.mid(0, names.size() - 1).join(QStringLiteral(", ")) +
+           QStringLiteral(" and ") + names.back();
+}
+
+// What a row says of a key that several plugins bind: the first one keeps it.
+QString ConflictSentence(const QString& key, const QString& winner,
+                         const QStringList& losers) {
+    return QStringLiteral("%1 is bound by %2: %3 keeps it, %4 %5 ignored")
+        .arg(key, JoinNames(QStringList{winner} + losers), winner,
+             JoinNames(losers),
+             losers.size() == 1 ? QStringLiteral("is") : QStringLiteral("are"));
+}
+
 void AddSentence(QString& all, const QString& sentence) {
     if (!all.isEmpty()) {
         all += QStringLiteral("; ");
@@ -127,25 +145,32 @@ std::vector<PaletteModel::Entry> PaletteModel::BuildEntries(
     // What the table says of each command's keys.
     for (Entry& entry : entries) {
         QStringList keys;
-        QStringList whens;
         for (const int index : byCommand.value(entry.CommandId)) {
             const TableKey& key = table[static_cast<std::size_t>(index)];
-            keys.append(key.Text);
-            if (!whens.contains(key.When)) {
-                whens.append(key.When);
-            }
+            keys.append(key.When.isEmpty() ? key.Text
+                                           : QStringLiteral("%1 (%2)").arg(
+                                                 key.Text, key.When));
             entry.Overridden = entry.Overridden || key.Source == USER;
             entry.CapturesInput =
                 entry.CapturesInput || CapturesInput(key, platform);
         }
         entry.Key = keys.join(QStringLiteral(", "));
-        whens.removeAll(QString());
-        entry.When = whens.join(QStringLiteral(", "));
     }
 
     // The keys that the manifests ask for, against the table: the loser of a
     // conflict and the key that keymap.json took are not in the table under
-    // their command, so they are found from the manifest.
+    // their command, so they are found from the manifest. The losers of one
+    // key are collected first: the key has one sentence, which the winner and
+    // every loser get.
+    struct Conflict {
+        QString Key;
+        QString Winner;
+        QString WinnerCommand;
+        QStringList Losers;
+        QList<int> Rows;
+    };
+    std::vector<Conflict> conflicts;
+    QHash<QString, int> conflictOf;
     for (const QJsonValue& value : pluginList) {
         const QJsonObject plugin = value.toObject();
         const QString pluginId = plugin.value(u"id"_s).toString();
@@ -187,17 +212,39 @@ std::vector<PaletteModel::Entry> PaletteModel::BuildEntries(
                 mine.Overridden = true;
                 continue;
             }
-            const QString sentence =
-                QStringLiteral(
-                    "%1 is bound by %2 and %3: %2 keeps it, %3 is "
-                    "ignored")
-                    .arg(Describe(**chord, when), holder.Source, pluginId);
-            AddSentence(mine.Conflict, sentence);
-            if (const auto winner = byId.constFind(holder.Command);
-                winner != byId.constEnd()) {
-                AddSentence(entries[static_cast<std::size_t>(*winner)].Conflict,
-                            sentence);
+            const QString pair = PairOf(**chord, when);
+            auto found = conflictOf.find(pair);
+            if (found == conflictOf.end()) {
+                found =
+                    conflictOf.insert(pair, static_cast<int>(conflicts.size()));
+                conflicts.push_back(Conflict{
+                    .Key = Describe(**chord, when),
+                    .Winner = holder.Source,
+                    .WinnerCommand = holder.Command,
+                    .Losers = {},
+                    .Rows = {},
+                });
             }
+            Conflict& conflict = conflicts[static_cast<std::size_t>(*found)];
+            if (!conflict.Losers.contains(pluginId)) {
+                conflict.Losers.append(pluginId);
+            }
+            if (!conflict.Rows.contains(*own)) {
+                conflict.Rows.append(*own);
+            }
+        }
+    }
+    for (const Conflict& conflict : conflicts) {
+        const QString sentence =
+            ConflictSentence(conflict.Key, conflict.Winner, conflict.Losers);
+        for (const int row : conflict.Rows) {
+            AddSentence(entries[static_cast<std::size_t>(row)].Conflict,
+                        sentence);
+        }
+        if (const auto winner = byId.constFind(conflict.WinnerCommand);
+            winner != byId.constEnd()) {
+            AddSentence(entries[static_cast<std::size_t>(*winner)].Conflict,
+                        sentence);
         }
     }
     return entries;
@@ -269,8 +316,6 @@ QVariant PaletteModel::data(const QModelIndex& index, int role) const {
             return entry.Plugin;
         case KeyRole:
             return entry.Key;
-        case WhenRole:
-            return entry.When;
         case ConflictRole:
             return entry.Conflict;
         case OverriddenRole:
@@ -288,7 +333,6 @@ QHash<int, QByteArray> PaletteModel::roleNames() const {
         {TitleRole, "title"},
         {PluginRole, "plugin"},
         {KeyRole, "key"},
-        {WhenRole, "when"},
         {ConflictRole, "conflict"},
         {OverriddenRole, "overridden"},
         {CapturesInputRole, "capturesInput"},
@@ -315,6 +359,16 @@ QString PaletteModel::commandAt(int row) const {
         .CommandId;
 }
 
+int PaletteModel::rowOf(const QString& commandId) const {
+    for (std::size_t row = 0; row < Shown_.size(); ++row) {
+        if (Entries_[static_cast<std::size_t>(Shown_[row])].CommandId ==
+            commandId) {
+            return static_cast<int>(row);
+        }
+    }
+    return -1;
+}
+
 void PaletteModel::Rebuild() {
     const int before = total();
     beginResetModel();
@@ -329,6 +383,7 @@ void PaletteModel::Rebuild() {
     if (total() != before) {
         emit totalChanged();
     }
+    emit rebuilt();
 }
 
 std::vector<int> PaletteModel::Shown() const {

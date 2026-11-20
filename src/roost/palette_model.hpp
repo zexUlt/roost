@@ -26,8 +26,9 @@ namespace roost {
 // copy of the keymap table says about its key (design.md §16, "Палитра").
 //
 // Roles: commandId, title, plugin (the id of the plugin that declares the
-// command), key (the keys of the table that run it, joined by ", "), when
-// (the panel types of those keys, "" for any panel), conflict (a sentence that
+// command), key (the keys of the table that run it, joined by ", "; a key
+// that is active in one panel type only has it in parentheses after it:
+// "Ctrl+Alt+L (sessions.list)"), conflict (a sentence that
 // names the plugins that bind one key, "" if none), overridden (keymap.json
 // took a key of the command or gave it another), capturesInput (a key of the
 // command is one that the terminal needs: Ctrl or, on macOS, Alt with a
@@ -55,7 +56,6 @@ public:
         TitleRole,
         PluginRole,
         KeyRole,
-        WhenRole,
         ConflictRole,
         OverriddenRole,
         CapturesInputRole,
@@ -67,7 +67,6 @@ public:
         QString Title;
         QString Plugin;
         QString Key;
-        QString When;
         QString Conflict;
         bool Overridden = false;
         bool CapturesInput = false;
@@ -102,8 +101,13 @@ public:
 
     // The id of the command of the shown row, "" if there is none.
     Q_INVOKABLE QString commandAt(int row) const;
+    // The shown row of a command, -1 if it is not shown.
+    Q_INVOKABLE int rowOf(const QString& commandId) const;
 
 signals:
+    // The rows were rebuilt from plugins.list or the keymap table, after the
+    // view has seen the reset: the chosen row may have moved or be gone.
+    void rebuilt();
     void filterChanged();
     void totalChanged();
 

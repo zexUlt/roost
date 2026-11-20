@@ -457,6 +457,11 @@ target_compile_definitions(palette_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(palette_test roostd fake_tui fixture_backend claude-adapter sessions_qml)
 
+# PaletteModel::BuildEntries on hand-written tables, for both platforms: the
+# mark of captured input and the text of conflicts; pure data.
+roost_add_qt_test(palette_entries_test roost/palette_entries_test.cpp
+    roost_shell roost_app Qt6::Qml Qt6::Quick)
+
 # The prompt of the sessions panel's footer: search, category and name.
 roost_add_qt_test(sessions_prompt_test roost/sessions_prompt_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin

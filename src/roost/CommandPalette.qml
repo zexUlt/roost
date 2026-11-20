@@ -18,6 +18,8 @@ Popup {
     readonly property alias currentRow: list.currentIndex
     // The command that runs when the popup has closed.
     property string pendingCommand: ""
+    // The command of the chosen row: a rebuild of the rows chooses it again.
+    property string chosenCommand: ""
 
     // Runs the command of the current row and closes the palette.
     function accept() {
@@ -57,6 +59,10 @@ Popup {
 
         objectName: "paletteModel"
         onFilterChanged: list.currentIndex = rowCount() > 0 ? 0 : -1
+        onRebuilt: {
+            const row = rowOf(root.chosenCommand);
+            list.currentIndex = row >= 0 ? row : (rowCount() > 0 ? 0 : -1);
+        }
     }
 
     contentItem: ColumnLayout {
@@ -85,6 +91,14 @@ Popup {
             model: paletteModel
             currentIndex: -1
             boundsBehavior: Flickable.StopAtBounds
+            // No delegates are made ahead of the view: one that is still being
+            // made when the filter shrinks the list is cancelled with a Qt warning.
+            cacheBuffer: 0
+            onCurrentIndexChanged: {
+                if (currentIndex >= 0) {
+                    root.chosenCommand = paletteModel.commandAt(currentIndex);
+                }
+            }
 
             delegate: ItemDelegate {
                 id: row

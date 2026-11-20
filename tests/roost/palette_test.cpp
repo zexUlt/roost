@@ -99,17 +99,22 @@ private:
     }
 
     // The plugins of the case: `pa` and `pb` bind Ctrl+Alt+K (`pa` is loaded
-    // first and keeps it), `pa.delta` has a key in the list panel only, and
+    // first and keeps it), `pa.delta` has a key in the list panel only,
+    // `pa.epsilon` has one key in the list panel and in any panel, and
     // `fixture` has the fixture backend, whose command fixture.crash kills it.
     bool WritePlugins() {
         if (!WritePlugin(
                 "pa",
-                {{"commands", QJsonArray{Command("pa.alpha", "Alpha command"),
-                                         Command("pa.beta", "Beta command"),
-                                         Command("pa.delta", "Delta command")}},
-                 {"keybindings", QJsonArray{Key("pa.alpha", "Ctrl+Alt+K"),
-                                            Key("pa.delta", "Ctrl+Alt+L",
-                                                "sessions.list")}}}) ||
+                {{"commands",
+                  QJsonArray{Command("pa.alpha", "Alpha command"),
+                             Command("pa.beta", "Beta command"),
+                             Command("pa.delta", "Delta command"),
+                             Command("pa.epsilon", "Epsilon command")}},
+                 {"keybindings",
+                  QJsonArray{Key("pa.alpha", "Ctrl+Alt+K"),
+                             Key("pa.delta", "Ctrl+Alt+L", "sessions.list"),
+                             Key("pa.epsilon", "Ctrl+Alt+M", "sessions.list"),
+                             Key("pa.epsilon", "Ctrl+Alt+M")}}}) ||
             !WritePlugin(
                 "pb",
                 {{"commands", QJsonArray{Command("pb.gamma", "Gamma command")}},
@@ -218,6 +223,41 @@ private:
             }
         }
         return ids;
+    }
+
+    // The item with the objectName among the visual descendants of `item`.
+    static QQuickItem* Descendant(QQuickItem* item, const QString& name) {
+        for (QQuickItem* child : item->childItems()) {
+            if (child->objectName() == name) {
+                return child;
+            }
+            if (QQuickItem* found = Descendant(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
+    // The key label of the delegate of a shown command, as it reads on the
+    // screen; "" if the command has no delegate.
+    QString ShownKeyLabel(const QString& command) {
+        auto* const content =
+            Palette()->property("contentItem").value<QQuickItem*>();
+        // The delegates are the children of the content item of the list.
+        auto* const list = Descendant(content, "paletteList");
+        if (list == nullptr) {
+            return {};
+        }
+        const auto* view = list->property("contentItem").value<QQuickItem*>();
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->property("commandId").toString() != command) {
+                continue;
+            }
+            const QQuickItem* label = Descendant(delegate, "paletteKey");
+            return label == nullptr ? QString()
+                                    : label->property("text").toString();
+        }
+        return {};
     }
 
     // The palette opened by its key, as the user does; the field has the
@@ -374,7 +414,7 @@ private slots:
                                   true, TIMEOUT_MS);
         // Its own key stays, the file's comes after it.
         QCOMPARE(CellOf("pa.delta", "key").toString(),
-                 "Ctrl+Alt+L, Ctrl+Alt+J");
+                 "Ctrl+Alt+L (sessions.list), Ctrl+Alt+J");
         QCOMPARE(CellOf("pa.beta", "overridden").toBool(), false);
         // The conflict is back, as the file no longer takes the key.
         QVERIFY(!CellOf("pa.alpha", "conflict").toString().isEmpty());
@@ -392,7 +432,8 @@ private slots:
         // Ctrl+Alt+K, any panel.
         QCOMPARE(CellOf("pa.alpha", "capturesInput").toBool(), true);
         // Ctrl+Alt+L, in the list only.
-        QCOMPARE(CellOf("pa.delta", "key").toString(), "Ctrl+Alt+L");
+        QCOMPARE(CellOf("pa.delta", "key").toString(),
+                 "Ctrl+Alt+L (sessions.list)");
         QCOMPARE(CellOf("pa.delta", "capturesInput").toBool(), false);
         // Ctrl+\ is a control character too, but not a letter.
         QCOMPARE(CellOf("shell.focusList", "capturesInput").toBool(), false);
@@ -401,9 +442,94 @@ private slots:
         // Cmd+Shift+P on macOS, Ctrl+Shift+P elsewhere; the same for copy.
         QCOMPARE(CellOf("shell.palette", "key").toString(), PALETTE_KEY);
         QCOMPARE(CellOf("shell.palette", "capturesInput").toBool(), !IS_MAC);
-        QCOMPARE(CellOf("terminal.copy", "key").toString(),
-                 IS_MAC ? "Cmd+C" : "Ctrl+Shift+C");
+        QCOMPARE(
+            CellOf("terminal.copy", "key").toString(),
+            IS_MAC ? "Cmd+C (terminal.view)" : "Ctrl+Shift+C (terminal.view)");
         QCOMPARE(CellOf("terminal.copy", "capturesInput").toBool(), !IS_MAC);
+    }
+
+    // The row shows each key with the panel it is active in: the same key in
+    // the list and in any panel are two items, as the label of the row reads.
+    void TheRowShowsEachKeyWithItsPanel() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("pa.eps");
+        QCOMPARE(Shown(), QStringList{"pa.epsilon"});
+        const QString expected = "Ctrl+Alt+M (sessions.list), Ctrl+Alt+M";
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKeyLabel("pa.epsilon"), expected,
+                                  TIMEOUT_MS);
+        Field()->setProperty("text", "pa.del");
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKeyLabel("pa.delta"),
+                                  QString("Ctrl+Alt+L (sessions.list)"),
+                                  TIMEOUT_MS);
+    }
+
+    // The rows are rebuilt under an open palette (keymap.json changes): the
+    // chosen command stays chosen, and Enter runs it.
+    void TheChosenRowSurvivesARebuild() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenRow(1);
+        QVERIFY(Terminal()->hasActiveFocus());
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const int target = RowOf("shell.focusList");
+        QVERIFY(target > 0);
+        for (int step = 0; step < target; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), target);
+
+        QVERIFY(
+            WriteKeymap(R"([{"key": "Ctrl+Alt+J", "command": "pa.delta"}])"));
+        QTRY_COMPARE_WITH_TIMEOUT(CellOf("pa.delta", "overridden").toBool(),
+                                  true, TIMEOUT_MS);
+        QCOMPARE(Palette()->property("currentRow").toInt(),
+                 RowOf("shell.focusList"));
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    // The plugins change under an open palette (roostd restarts without `pa`):
+    // the rows above the chosen one are gone, and the chosen command stays
+    // chosen, wherever its row is now.
+    void TheChosenCommandSurvivesTheLossOfRowsAboveIt() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const int before = RowOf("pb.gamma");
+        QVERIFY(before > 0);
+        for (int step = 0; step < before; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), before);
+
+        StopDaemon();
+        QVERIFY(QDir(Dir_->filePath("plugins/pa")).removeRecursively());
+        QVERIFY(StartDaemon());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            RowOf("pa.alpha") < 0 && RowOf("pb.gamma") >= 0, TIMEOUT_MS * 2);
+        QVERIFY(RowOf("pb.gamma") < before);
+        QCOMPARE(Palette()->property("currentRow").toInt(), RowOf("pb.gamma"));
     }
 
     // The palette opens by its key from the terminal, and Escape closes it
