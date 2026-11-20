@@ -53,6 +53,32 @@ bool CommandsAdapter::registerCommand(const QString& command,
             qobject_cast<const QQuickItem*>(owners->panelOf(owner));
         return panel != nullptr && panel->hasActiveFocus();
     };
+    // The panel is told to the service when it gets the focus, and now if it
+    // has it, so that a command run while the focus is outside of every panel
+    // goes to the panel that had it last. Once per panel, whatever number of
+    // commands it registers.
+    if (auto* const panel = qobject_cast<QQuickItem*>(Owners_.panelOf(owner));
+        panel != nullptr && !FocusWatched_.contains(owner)) {
+        FocusWatched_.insert(owner);
+        connect(owner, &QObject::destroyed, this,
+                [this, owner] { FocusWatched_.remove(owner); });
+        const auto note = [commands =
+                               QPointer<api::CommandService>(&Api_.Commands()),
+                           owner = QPointer<const QObject>(owner)] {
+            if (commands && owner) {
+                commands->NoteFocus(owner);
+            }
+        };
+        connect(panel, &QQuickItem::activeFocusChanged, owner,
+                [note](bool focused) {
+                    if (focused) {
+                        note();
+                    }
+                });
+        if (panel->hasActiveFocus()) {
+            note();
+        }
+    }
     const bool added = Api_.Commands().Register(
         command, owner,
         [engine = QPointer<QJSEngine>(&Engine_), handler,

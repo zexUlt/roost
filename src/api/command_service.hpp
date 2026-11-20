@@ -5,6 +5,7 @@
 #include <QJsonValue>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <functional>
@@ -40,13 +41,21 @@ public:
     // second of two panels keeps it when the first is closed. Run goes
     // from the most recent registration to the first that gave no `focused`
     // or whose `focused` says the registrant has the focus; when none, it
-    // takes the most recent one. With
+    // takes the registrant that NoteFocus named last (the panel that had the
+    // focus before it went out of the panels), and when there is none, the
+    // most recent one. With
     // an `owner`, the handler goes when the owner is destroyed; without one,
     // with the service. The id is declared by a plugin manifest
     // (`contributes.commands`): that is what gives it a key and a place in the
     // palette, this only runs it.
     [[nodiscard]] bool Register(const QString& command, const QObject* owner,
                                 LocalHandler handler, FocusProbe focused = {});
+
+    // Says that `owner` has the focus now, or had it last: the registrations
+    // it has are what Run takes for their commands when no registrant has the
+    // focus. Weak: an owner that is gone is forgotten. No-op for an owner
+    // with no registration.
+    void NoteFocus(const QObject* owner);
 
     // Whether `command` has a handler in the window.
     [[nodiscard]] bool HasLocal(const QString& command) const;
@@ -68,6 +77,8 @@ private:
     // By command: the registrations in the order they came, the last first to
     // run.
     QHash<QString, QList<Local>> Locals_;
+    // By command: the owner that had the focus last among its registrants.
+    QHash<QString, QPointer<const QObject>> LastFocused_;
 };
 
 }  // namespace roost::api

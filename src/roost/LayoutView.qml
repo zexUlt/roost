@@ -73,12 +73,18 @@ Item {
         }
     }
 
+    // The first leaf of the type (any type if empty) whose slot is shown: a
+    // leaf on a tab that is not shown cannot take the keyboard.
     function firstLeaf(node, type) {
         if (node === null) {
             return null;
         }
         if (node.kind === "leaf") {
-            return type === "" || node.panel === type ? node : null;
+            if (type !== "" && node.panel !== type) {
+                return null;
+            }
+            const slot = view.slotOf(node.instance);
+            return slot !== null && slot.visible ? node : null;
         }
         for (const child of node.children) {
             const found = firstLeaf(child, type);

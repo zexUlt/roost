@@ -262,6 +262,8 @@ bool TerminalItem::ensurePane() {
     }
     auto* const pane = new SessionPane(windowApi->Terminals(), this);
     Pane_ = pane;
+    // Before the first Show: a hidden item does not acquire.
+    pane->SetVisible(isVisible());
     connect(this, &TerminalItem::input, pane, &SessionPane::SendInput);
     connect(this, &TerminalItem::gridSizeChanged, pane, [this, pane] {
         pane->SetGrid(static_cast<quint16>(Columns_),
@@ -351,6 +353,14 @@ void TerminalItem::geometryChange(const QRectF& newGeometry,
                                   const QRectF& oldGeometry) {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     updateGridSize();
+}
+
+void TerminalItem::itemChange(ItemChange change, const ItemChangeData& value) {
+    QQuickItem::itemChange(change, value);
+    if (change == ItemVisibleHasChanged && Pane_) {
+        Pane_->SetVisible(value.boolValue);
+        syncSuperseded();
+    }
 }
 
 void TerminalItem::keyPressEvent(QKeyEvent* event) {

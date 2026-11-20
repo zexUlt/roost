@@ -1,8 +1,8 @@
 // terminal.copy with two terminal panels in the window: the command runs in
-// the panel that has the focus, not in the one registered last. Real roostd,
-// two pairs of a list and a terminal, each terminal showing another session;
-// the selection is made with the mouse, the command is run as a key would run
-// it (CommandService::Run).
+// the panel that has the focus, else in the one that had it last, not in the
+// one registered last. Real roostd, two pairs of a list and a terminal, each
+// terminal showing another session; the selection is made with the mouse, the
+// command is run as a key would run it (CommandService::Run).
 
 #include <QClipboard>
 #include <QDir>
@@ -85,8 +85,8 @@ private slots:
         const QString idFirst = IdIn("list", 0);
         const QString idSecond = IdIn("list2", 1);
         QVERIFY(idFirst != idSecond);
-        OpenIn("list", "terminal", 0);
-        OpenIn("list2", "terminal2", 1);
+        OpenIdIn("list", "terminal", idFirst);
+        OpenIdIn("list2", "terminal2", idSecond);
         // The greeting is on the screen of each.
         TerminalItem* const first = TerminalOf("terminal");
         TerminalItem* const second = TerminalOf("terminal2");
@@ -116,7 +116,8 @@ private slots:
         QVERIFY(!QGuiApplication::clipboard()->text().contains(idFirst));
     }
 
-    void WithoutTheFocusInAnyTerminalTheLastRegisteredRuns() {
+    // The focus is in no terminal: it went to a list.
+    void WithoutTheFocusInAnyTerminalTheOneThatHadItLastRuns() {
         FailOnWarnings();
         Boot();
         if (QTest::currentTestFailed()) {
@@ -128,8 +129,8 @@ private slots:
         const QString idFirst = IdIn("list", 0);
         const QString idSecond = IdIn("list2", 1);
         QVERIFY(idFirst != idSecond);
-        OpenIn("list", "terminal", 0);
-        OpenIn("list2", "terminal2", 1);
+        OpenIdIn("list", "terminal", idFirst);
+        OpenIdIn("list2", "terminal2", idSecond);
         TerminalItem* const first = TerminalOf("terminal");
         TerminalItem* const second = TerminalOf("terminal2");
         QTRY_VERIFY2_WITH_TIMEOUT(
@@ -140,14 +141,19 @@ private slots:
             qPrintable(ScreenOf("terminal2")), TIMEOUT_MS);
         SelectRowZero(first);
         SelectRowZero(second);
-        // The focus goes to a list: no terminal has it.
+
+        // The human worked in the first terminal, then went to a list: the
+        // second one is the last registered, but not the one to copy from.
+        first->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(first->hasActiveFocus(), TIMEOUT_MS);
         ListViewOf("list")->forceActiveFocus();
         QTRY_VERIFY_WITH_TIMEOUT(ListViewOf("list")->hasActiveFocus(),
                                  TIMEOUT_MS);
         QVERIFY(!first->hasActiveFocus());
         QVERIFY(!second->hasActiveFocus());
         Copy();
-        QVERIFY(QGuiApplication::clipboard()->text().contains(idSecond));
+        QVERIFY(QGuiApplication::clipboard()->text().contains(idFirst));
+        QVERIFY(!QGuiApplication::clipboard()->text().contains(idSecond));
     }
 };
 

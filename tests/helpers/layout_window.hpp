@@ -123,10 +123,19 @@ public:
                          .toString();
     }
 
-    // The list takes the keyboard, the cursor goes to the session's number
-    // and Return opens it; waits until the linked terminal has it open.
+    // The list takes the keyboard, the cursor goes to the session with the
+    // number in the list's order and Return opens it; waits until the linked
+    // terminal has it open. The order of a list may change as the sessions
+    // are used, so a test that needs the same session in two lists, or the
+    // one it has named before, uses OpenIdIn.
     void OpenIn(const QString& list, const QString& terminal, int session) {
-        const QString id = IdIn(list, session);
+        OpenIdIn(list, terminal, IdIn(list, session));
+    }
+
+    // As OpenIn, for the session with the id, wherever it is in the list now.
+    void OpenIdIn(const QString& list, const QString& terminal,
+                  const QString& id) {
+        QVERIFY(!id.isEmpty());
         QQuickItem* view = ListViewOf(list);
         QVERIFY(view != nullptr);
         view->forceActiveFocus();
@@ -134,7 +143,7 @@ public:
         const auto cursor = [view] {
             return view->property("currentIndex").toInt();
         };
-        const int row = SessionRowsOf(list).value(session, -1);
+        const int row = RowOfId(list, id);
         QVERIFY(row >= 0);
         // The cursor goes by the model, not by key presses that may overtake
         // the view's own update of its current index.
@@ -152,6 +161,21 @@ public:
         QTRY_COMPARE_WITH_TIMEOUT(TerminalOf(terminal)->status(),
                                   QString("open"), TIMEOUT_MS);
         QCOMPARE(SelectedOf(list), id);
+    }
+
+    // The row of the session with the id; -1 if the list has none.
+    int RowOfId(const QString& list, const QString& id) {
+        QAbstractItemModel* model = ModelOf(list);
+        if (model == nullptr) {
+            return -1;
+        }
+        const int idRole = model->roleNames().key("id");
+        for (const int row : SessionRowsOf(list)) {
+            if (model->data(model->index(row, 0), idRole).toString() == id) {
+                return row;
+            }
+        }
+        return -1;
     }
 
     QList<int> SessionRowsOf(const QString& list) {

@@ -43,21 +43,31 @@ Item {
         sourceComponent: root.node !== null && root.node.kind === "leaf" ? leafComponent : null
     }
 
-    // The width of the panel is stepped by the panel itself (`<`, `>`): within
-    // these bounds, in pixels.
+    // The width of the panel is stepped by the panel itself (`<`, `>`): by
+    // `widthStep` pixels, and not past these bounds.
     readonly property int widthStep: 20
     readonly property int widthMin: 200
     readonly property int widthMax: 560
+    // The width the user stepped to, 0 if none. SplitNode takes it before the
+    // size of the layout, and drops it when the layout gives a new size; it is
+    // a property of its own, so that the binding of SplitNode to the layout
+    // is not replaced by an assignment.
+    property int stepped: 0
 
     // The split that holds this node resizes it by `step` steps along the
-    // split, and the new size is reported once the split has laid out.
+    // split, and the new size is reported once the split has laid out. A step
+    // goes from the width the node has, and never against its direction: a
+    // width saved over the bound gets narrower by a step, not cut to the
+    // bound.
     function stepWidth(step) {
         const split = root.SplitView.view;
         if (split === null || split.orientation !== Qt.Horizontal) {
             return;
         }
-        const current = root.SplitView.preferredWidth > 0 ? root.SplitView.preferredWidth : root.width;
-        root.SplitView.preferredWidth = Math.max(root.widthMin, Math.min(root.widthMax, current + step * root.widthStep));
+        // The step before may not be laid out yet, a held key steps faster.
+        const current = root.stepped > 0 ? root.stepped : Math.round(root.width);
+        const target = current + step * root.widthStep;
+        root.stepped = step > 0 ? Math.min(target, Math.max(current, root.widthMax)) : Math.max(target, Math.min(current, root.widthMin));
         Qt.callLater(() => split.reportSizes());
     }
 

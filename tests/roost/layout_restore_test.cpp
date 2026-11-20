@@ -83,8 +83,8 @@ private slots:
         const QString first = IdIn("list", 1);
         const QString second = IdIn("list2", 2);
         QVERIFY(first != second);
-        OpenIn("list", "terminal", 1);
-        OpenIn("list2", "terminal2", 2);
+        OpenIdIn("list", "terminal", first);
+        OpenIdIn("list2", "terminal2", second);
 
         // The divider of the first pair: wider list.
         QCOMPARE(SlotByInstance("list")->width(), 320.0);

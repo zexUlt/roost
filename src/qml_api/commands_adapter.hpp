@@ -4,6 +4,7 @@
 #include <QJSEngine>
 #include <QJSValue>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include "api/api.hpp"
@@ -34,8 +35,9 @@ public:
     // call of `run` does (the calling panel's owner, 05-plugins.md): it is
     // removed when the panel is torn down; in the shell it lives as long as
     // the window. A command may have handlers of several panels: the one
-    // whose panel has the keyboard focus runs; if none of them has it, or a
-    // handler was set outside a panel, the most recent live one runs. Returns
+    // whose panel has the keyboard focus runs; if none of them has it, the
+    // panel that had it last; failing that, or for a handler set outside a
+    // panel, the most recent live one. Returns
     // false, and the handler is not set, if the id is empty or the caller is
     // being torn down. A handler that is not a function throws TypeError. The
     // name is not `register`: that is a C++ keyword, and moc names the method
@@ -47,6 +49,8 @@ private:
     api::Api& Api_;
     QJSEngine& Engine_;
     const CallOwners& Owners_;
+    // The owners whose panel is watched for the focus.
+    QSet<const QObject*> FocusWatched_;
 };
 
 }  // namespace roost

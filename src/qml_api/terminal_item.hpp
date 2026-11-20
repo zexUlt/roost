@@ -162,6 +162,9 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void geometryChange(const QRectF& newGeometry,
                         const QRectF& oldGeometry) override;
+    // A hidden item (a page of tabs that is not shown) does not hold its
+    // session: it takes it when it is shown.
+    void itemChange(ItemChange change, const ItemChangeData& value) override;
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
 
 private:

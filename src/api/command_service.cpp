@@ -38,6 +38,19 @@ bool CommandService::Register(const QString& command, const QObject* owner,
     return true;
 }
 
+void CommandService::NoteFocus(const QObject* owner) {
+    if (owner == nullptr) {
+        return;
+    }
+    for (auto it = Locals_.cbegin(); it != Locals_.cend(); ++it) {
+        if (std::ranges::any_of(*it, [owner](const Local& local) {
+                return local.Owner == owner;
+            })) {
+            LastFocused_.insert(it.key(), owner);
+        }
+    }
+}
+
 bool CommandService::HasLocal(const QString& command) const {
     return Locals_.contains(command);
 }
@@ -50,12 +63,20 @@ QFuture<rpc::Result> CommandService::Run(const QString& command,
     if (const auto it = Locals_.constFind(command); it != Locals_.cend()) {
         // From the most recent: the first that has no focus to tell of (a
         // registration without a probe is the stack's own) or has the focus;
-        // else the most recent. A copy: the handler may take its own
+        // else the one of the owner that had the focus last, if it is still
+        // here; else the most recent. A copy: the handler may take its own
         // registration away.
-        const auto chosen =
+        auto chosen =
             std::find_if(it->rbegin(), it->rend(), [](const Local& local) {
                 return !local.Focused || local.Focused();
             });
+        if (chosen == it->rend()) {
+            const QObject* const last = LastFocused_.value(command).data();
+            chosen = std::find_if(
+                it->rbegin(), it->rend(), [last](const Local& local) {
+                    return last != nullptr && local.Owner == last;
+                });
+        }
         const LocalHandler handler =
             chosen != it->rend() ? chosen->Handler : it->last().Handler;
         return rpc::Ready(handler(args));

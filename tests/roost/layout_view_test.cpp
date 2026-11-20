@@ -43,6 +43,63 @@ private:
         WaitForLayout({{"list", "terminal"}, {"list2", "terminal2"}});
     }
 
+    // A stack of tabs, a pair on each, the one `active` shown.
+    static Layout Tabbed(std::vector<LayoutNode> pairs, int active) {
+        Layout layout;
+        layout.Root.Kind = ELayoutNodeKind::Tabs;
+        layout.Root.Active = active;
+        layout.Root.Children = std::move(pairs);
+        return layout;
+    }
+
+    QQuickItem* TabBarOf() {
+        for (auto* item : Root()->findChildren<QQuickItem*>()) {
+            if (item->inherits("QQuickTabBar")) {
+                return item;
+            }
+        }
+        return nullptr;
+    }
+
+    // A session of the list other than `id`.
+    QString OtherThan(const QString& list, const QString& id) {
+        for (int session = 0; session < 4; ++session) {
+            if (IdIn(list, session) != id) {
+                return IdIn(list, session);
+            }
+        }
+        return {};
+    }
+
+    QString SessionIdOf(const QString& terminal) {
+        return TerminalOf(terminal)
+            ->property("session")
+            .toMap()
+            .value("id")
+            .toString();
+    }
+
+    // Two terminals of two pairs show `shared`; the second owns it, the first
+    // says it is elsewhere.
+    void ShareASession(const QString& shared) {
+        OpenIdIn("list", "terminal", shared);
+        OpenIdIn("list2", "terminal2", shared);
+        QTRY_COMPARE_WITH_TIMEOUT(TerminalText("terminal"), SHOWN_ELSEWHERE,
+                                  TIMEOUT_MS);
+        QVERIFY(TerminalOf("terminal")->superseded());
+    }
+
+    // The terminal shows `id` as its own, with no note.
+    void VerifyShows(const QString& terminal, const QString& id) {
+        QTRY_COMPARE_WITH_TIMEOUT(TerminalOf(terminal)->status(),
+                                  QString("open"), TIMEOUT_MS);
+        QVERIFY(!TerminalOf(terminal)->superseded());
+        QVERIFY(TerminalText(terminal).isEmpty());
+        QCOMPARE(SessionIdOf(terminal), id);
+        QTRY_VERIFY2_WITH_TIMEOUT(ScreenOf(terminal).contains(Greeting(id)),
+                                  qPrintable(ScreenOf(terminal)), TIMEOUT_MS);
+    }
+
     std::optional<ScopedEnv> Home_;
     std::optional<ScopedEnv> Socket_;
     std::optional<ScopedEnv> Config_;
@@ -92,13 +149,13 @@ private slots:
         const QString first = IdIn("list", 1);
         const QString second = IdIn("list2", 2);
         QVERIFY(first != second);
-        OpenIn("list", "terminal", 1);
+        OpenIdIn("list", "terminal", first);
         QCOMPARE(TerminalOf("terminal")->status(), QString("open"));
         QCOMPARE(TerminalOf("terminal2")->status(), QString("none"));
         QVERIFY(SelectedOf("list2").isEmpty());
         QCOMPARE(TerminalText("terminal2"), EMPTY_TEXT);
 
-        OpenIn("list2", "terminal2", 2);
+        OpenIdIn("list2", "terminal2", second);
         QCOMPARE(SelectedOf("list"), first);
         QCOMPARE(SelectedOf("list2"), second);
         QCOMPARE(
@@ -119,8 +176,8 @@ private slots:
         const QString first = IdIn("list", 1);
         const QString second = IdIn("list2", 3);
         QVERIFY(first != second);
-        OpenIn("list", "terminal", 1);
-        OpenIn("list2", "terminal2", 3);
+        OpenIdIn("list", "terminal", first);
+        OpenIdIn("list2", "terminal2", second);
         QTRY_VERIFY_WITH_TIMEOUT(OpenedStored("list").contains(first),
                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(OpenedStored("list2").contains(second),
@@ -137,8 +194,8 @@ private slots:
         }
         const QString kept = IdIn("list", 0);
         const QString next = IdIn("list", 2);
-        OpenIn("list", "terminal", 0);
-        OpenIn("list2", "terminal2", 1);
+        OpenIdIn("list", "terminal", kept);
+        OpenIdIn("list2", "terminal2", IdIn("list2", 1));
         QPointer<QQuickItem> gone = PanelByInstance("terminal2");
         QVERIFY(Api_->Commands().HasLocal("terminal.copy"));
 
@@ -152,7 +209,7 @@ private slots:
         QCOMPARE(TerminalOf("terminal")->status(), QString("open"));
         QCOMPARE(SelectedOf("list"), kept);
         // The pair that stays still follows its list.
-        OpenIn("list", "terminal", 2);
+        OpenIdIn("list", "terminal", next);
         QCOMPARE(
             TerminalOf("terminal")->property("session").toMap().value("id"),
             QVariant(next));
@@ -167,8 +224,9 @@ private slots:
         }
         // Both terminals show the same session: the list of the second pair
         // chooses what the first has.
-        OpenIn("list", "terminal", 1);
-        OpenIn("list2", "terminal2", 1);
+        const QString shared = IdIn("list", 1);
+        OpenIdIn("list", "terminal", shared);
+        OpenIdIn("list2", "terminal2", shared);
         QTRY_COMPARE_WITH_TIMEOUT(TerminalText("terminal"), SHOWN_ELSEWHERE,
                                   TIMEOUT_MS);
         QVERIFY(TerminalOf("terminal")->superseded());
@@ -197,6 +255,138 @@ private slots:
                                   QString("open"), TIMEOUT_MS);
         QVERIFY(!TerminalOf("terminal")->superseded());
         QTRY_COMPARE_WITH_TIMEOUT(TerminalText("terminal2"), SHOWN_ELSEWHERE,
+                                  TIMEOUT_MS);
+    }
+
+    void ATerminalGetsTheSessionBackWhenTheOwnerSwitchesToAnother() {
+        FailOnWarnings();
+        BootTwoPairs();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString shared = IdIn("list", 1);
+        ShareASession(shared);
+        const QString other = OtherThan("list2", shared);
+        OpenIdIn("list2", "terminal2", other);
+        // Nobody shows `shared` now: the terminal that wants it does.
+        VerifyShows("terminal", shared);
+        VerifyShows("terminal2", other);
+    }
+
+    void ATerminalGetsTheSessionBackWhenThePairOfTheOwnerGoesAway() {
+        FailOnWarnings();
+        BootTwoPairs();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString shared = IdIn("list", 1);
+        ShareASession(shared);
+        Shell_->SetLayout(Stacked({Pair("list", "terminal")}));
+        QTRY_COMPARE_WITH_TIMEOUT(SlotCount(), 2, TIMEOUT_MS);
+        VerifyShows("terminal", shared);
+    }
+
+    void AHiddenTerminalDoesNotTakeTheSessionOfAVisibleOne() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Shell_->SetLayout(
+            Tabbed({Pair("list", "terminal"), Pair("list2", "terminal2")}, 0));
+        WaitForLayout({{"list", "terminal"}, {"list2", "terminal2"}}, false);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(!SlotByInstance("list2")->isVisible());
+        const QString shared = IdIn("list", 1);
+        OpenIdIn("list", "terminal", shared);
+
+        // The list on the hidden tab chooses the same session.
+        QQuickItem* const hidden = PanelByInstance("list2");
+        bool moved = false;
+        QVERIFY(QMetaObject::invokeMethod(
+            ModelOf("list2"), "setCursorRow", Q_RETURN_ARG(bool, moved),
+            Q_ARG(int, RowOfId("list2", shared))));
+        QVERIFY(moved);
+        QVERIFY(QMetaObject::invokeMethod(hidden, "openCurrent"));
+        QTRY_COMPARE_WITH_TIMEOUT(SelectedOf("list2"), shared, TIMEOUT_MS);
+        // Its terminal has nothing to say until it is shown; a wait, as there
+        // is nothing to wait for.
+        QTest::qWait(300);
+        VerifyShows("terminal", shared);
+        QVERIFY(!TerminalOf("terminal2")->superseded());
+        QCOMPARE(TerminalOf("terminal2")->status(), QString("none"));
+
+        // The tab is shown: its terminal takes the session, and gives it back
+        // when the tab goes.
+        QQuickItem* const bar = TabBarOf();
+        QVERIFY(bar != nullptr);
+        bar->setProperty("currentIndex", 1);
+        VerifyShows("terminal2", shared);
+        QVERIFY(!TerminalOf("terminal")->superseded());
+        bar->setProperty("currentIndex", 0);
+        VerifyShows("terminal", shared);
+        QVERIFY(!TerminalOf("terminal2")->superseded());
+    }
+
+    void FocusListSkipsTheListsOfTheTabsThatAreHidden() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Shell_->SetLayout(
+            Tabbed({Pair("list", "terminal"), Pair("list2", "terminal2")}, 1));
+        WaitForLayout({{"list", "terminal"}, {"list2", "terminal2"}}, false);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list2")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(!SlotByInstance("list")->isVisible());
+        // The keyboard is in no panel: the command has no list to start from
+        // but the first one of the layout that is shown.
+        Window()->contentItem()->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(!SlotByInstance("list2")->hasActiveFocus() &&
+                                     !SlotByInstance("list")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        const QFuture<rpc::Result> done =
+            Api_->Commands().Run("shell.focusList");
+        QTRY_VERIFY_WITH_TIMEOUT(done.isFinished(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ListViewOf("list2")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+    }
+
+    void StepsOfTheWidthDoNotCutTheListOffTheLayout() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const auto step = [this](Qt::Key key) {
+            ListViewOf("list")->forceActiveFocus();
+            QTRY_VERIFY_WITH_TIMEOUT(ListViewOf("list")->hasActiveFocus(),
+                                     TIMEOUT_MS);
+            Press(key);
+        };
+        QCOMPARE(SlotByInstance("list")->width(), 320.0);
+        step(Qt::Key_Less);
+        QTRY_COMPARE_WITH_TIMEOUT(SlotByInstance("list")->width(), 300.0,
+                                  TIMEOUT_MS);
+
+        // A layout that is set after a step still sets the width.
+        Layout wider;
+        wider.Root = Pair("list", "terminal", 400);
+        Shell_->SetLayout(wider);
+        QTRY_COMPARE_WITH_TIMEOUT(SlotByInstance("list")->width(), 400.0,
+                                  TIMEOUT_MS);
+
+        // A saved width over the limit is not pulled to it by a step to the
+        // narrower side.
+        Layout wide;
+        wide.Root = Pair("list", "terminal", 600);
+        Shell_->SetLayout(wide);
+        QTRY_COMPARE_WITH_TIMEOUT(SlotByInstance("list")->width(), 600.0,
+                                  TIMEOUT_MS);
+        step(Qt::Key_Less);
+        QTRY_COMPARE_WITH_TIMEOUT(SlotByInstance("list")->width(), 580.0,
                                   TIMEOUT_MS);
     }
 };

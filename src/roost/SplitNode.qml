@@ -60,7 +60,12 @@ SplitView {
 
             SplitView.fillWidth: split.node.horizontal && fills
             SplitView.fillHeight: !split.node.horizontal && fills
-            SplitView.preferredWidth: split.node.horizontal && !fills ? size : -1
+            // A step of the panel is kept in `stepped`, and goes when the layout
+            // brings another node or another size.
+            onSizeChanged: stepped = 0
+            onNodeChanged: stepped = 0
+
+            SplitView.preferredWidth: split.node.horizontal && !fills ? (stepped > 0 ? stepped : size) : -1
             SplitView.preferredHeight: !split.node.horizontal && !fills ? size : -1
             SplitView.minimumWidth: 40
             SplitView.minimumHeight: 40
