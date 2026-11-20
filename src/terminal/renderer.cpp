@@ -221,6 +221,9 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
     const auto dirty = state.Dirty();
     const auto rowCount = static_cast<int>(state.RowCount());
     if (rowCount == 0) {
+        // Null makes the scene graph forget oldNode without removing it from
+        // the tree, so it stays on screen: delete it.
+        delete oldNode;
         return nullptr;
     }
 

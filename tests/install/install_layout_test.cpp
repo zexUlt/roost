@@ -43,6 +43,19 @@ constexpr int INSTALL_TIMEOUT_MS = 120000;
 // The mode gives up after 20 s (src/roost/main.cpp), and the window starts.
 constexpr int WINDOW_TIMEOUT_MS = 60000;
 
+// Whether this build links a dynamic sanitizer runtime (ASan or TSan).
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+constexpr bool HAS_SANITIZER_RUNTIME = true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr bool HAS_SANITIZER_RUNTIME = true;
+#else
+constexpr bool HAS_SANITIZER_RUNTIME = false;
+#endif
+#else
+constexpr bool HAS_SANITIZER_RUNTIME = false;
+#endif
+
 #ifdef Q_OS_MACOS
 constexpr bool IS_MACOS = true;
 #else
@@ -232,13 +245,31 @@ private:
         return files;
     }
 
+    // On macOS, clang links the dynamic sanitizer runtime with two run paths
+    // of its own: @executable_path and the clang runtime directory
+    // (.../lib/clang/<version>/lib/darwin). A release package is built without
+    // a sanitizer, so the expected list has neither; drop them only here.
+    static QStringList WithoutSanitizerRunPaths(QStringList paths) {
+        if (!IS_MACOS || !HAS_SANITIZER_RUNTIME) {
+            return paths;
+        }
+        static const QRegularExpression RUNTIME_DIR(
+            QStringLiteral(R"(/lib/clang/[^/]+/lib/darwin$)"));
+        paths.removeIf([](const QString& path) {
+            return path == QLatin1String("@executable_path") ||
+                   RUNTIME_DIR.match(path).hasMatch();
+        });
+        return paths;
+    }
+
     // The run path of the installed binary is exactly the expected list.
     static void CheckRunPath(const QString& tool, const QString& binary,
                              const QStringList& expected) {
         const auto dump = Output(tool, IS_MACOS ? QStringList{"-l", binary}
                                                 : QStringList{"-d", binary});
         QVERIFY2(dump, qPrintable(binary));
-        const QStringList actual = ParseRunPath(*dump);
+        const QStringList actual =
+            WithoutSanitizerRunPaths(ParseRunPath(*dump));
         QVERIFY2(actual == expected,
                  qPrintable(binary + ": run path [" + actual.join(u'|') +
                             "], expected [" + expected.join(u'|') + "]"));

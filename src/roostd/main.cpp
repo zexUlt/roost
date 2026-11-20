@@ -9,11 +9,11 @@
 #include <csignal>
 #include <cstring>
 
+#include "core/log_file.hpp"
 #include "core/protocol.hpp"
 #include "core/store.hpp"
 #include "core/version.hpp"
 #include "roostd/dump.hpp"
-#include "roostd/log_file.hpp"
 #include "roostd/manifest.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"

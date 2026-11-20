@@ -92,6 +92,14 @@ roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
     roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_paint_node_test qml_api/terminal_paint_node_test.cpp
+    roost_qml_api Qt6::Quick)
+set_tests_properties(terminal_paint_node_test PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic")
+add_test(NAME terminal_paint_node_test_threaded COMMAND terminal_paint_node_test)
+set_tests_properties(terminal_paint_node_test_threaded PROPERTIES
+    ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
+    LABELS threads)
 
 # The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
@@ -462,6 +470,7 @@ set_tests_properties(
     terminal_item_input_test
     terminal_item_mouse_test
     terminal_item_selection_test
+    terminal_paint_node_test
     PROPERTIES LABELS threads
 )
 
@@ -526,6 +535,13 @@ target_compile_definitions(smoke_sessions_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(smoke_sessions_test roostd roost claude-adapter sessions_qml
     fixture_backend)
+
+# roost.log, the log of the window: the lines, rotation, an unopenable file,
+# writers at once; temporary directories only.
+roost_add_qt_test(window_log_test roost/window_log_test.cpp
+    roost_app roost_qml_api roost_terminal)
+# Two writer threads, std only.
+set_tests_properties(window_log_test PROPERTIES LABELS "threads;threads_std")
 
 # The window starts roostd when nobody listens on the socket: the launcher with
 # a real Api and the real roostd (detached; the test stops it by its lock).

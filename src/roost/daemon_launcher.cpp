@@ -21,6 +21,10 @@ namespace {
 constexpr int STOP_POLL_MS = 50;
 }  // namespace
 
+QString DaemonLauncher::LogDirectory(const QString& socketPath) {
+    return QFileInfo(socketPath).absolutePath();
+}
+
 DaemonLauncher::Command DaemonLauncher::DefaultCommand(
     const QString& socketPath) {
     return CommandFor(socketPath, qEnvironmentVariable("APPIMAGE"),

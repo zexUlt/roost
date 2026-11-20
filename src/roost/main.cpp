@@ -21,6 +21,7 @@
 #include "roost/plugin_watcher.hpp"
 #include "roost/shell.hpp"
 #include "roost/single_session.hpp"
+#include "roost/window_log.hpp"
 
 namespace {
 
@@ -150,6 +151,10 @@ private:
 int main(int argc, char* argv[]) {
     SessionArguments arguments(argc, argv);
     QGuiApplication app(arguments.Count(), arguments.Values());
+    // First, so that everything the window says after this is in roost.log.
+    roost::InstallWindowLog(
+        roost::WindowLogPath(roost::protocol::SocketPath()));
+    roost::LogWindowStartup();
     QCoreApplication::setApplicationName(QStringLiteral("roost"));
     QCoreApplication::setApplicationVersion(
         QString::fromStdString(roost::VersionString()));
@@ -246,6 +251,9 @@ int main(int argc, char* argv[]) {
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
+
+    roost::LogGraphicsApiWhenReady(
+        qobject_cast<QQuickWindow*>(engine.rootObjects().first()));
 
     if (!sessionMode) {
         loader.emplace(engine, api->Plugins(), *roostSingleton);

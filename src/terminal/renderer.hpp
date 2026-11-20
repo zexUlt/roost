@@ -91,7 +91,9 @@ public:
     CellMetrics Metrics() const { return Metrics_; }
 
     // One frame: syncs with the terminal under its lock, then rebuilds what
-    // changed. Returns the root node; null when there is nothing to show.
+    // changed. Returns the root node; null when there is nothing to show,
+    // after deleting oldNode: the scene graph does not remove a node it is no
+    // longer given.
     QSGNode* Update(QQuickWindow& window, TerminalSession& session,
                     QSGNode* oldNode);
 

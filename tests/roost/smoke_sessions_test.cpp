@@ -316,6 +316,10 @@ private slots:
         QProcessEnvironment environment =
             QProcessEnvironment::systemEnvironment();
         environment.insert("QT_QPA_PLATFORM", "offscreen");
+        // The window's own log goes next to the socket: not to the real one.
+        const QTemporaryDir logDir;
+        QVERIFY(logDir.isValid());
+        environment.insert("ROOST_SOCKET", logDir.filePath("roostd.sock"));
         Window_.setProcessEnvironment(environment);
         QElapsedTimer elapsed;
         elapsed.start();
