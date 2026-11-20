@@ -92,6 +92,8 @@ roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
     roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_paint_node_test qml_api/terminal_paint_node_test.cpp
+    roost_qml_api Qt6::Quick Qt6::QuickPrivate)
 
 # The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
@@ -462,6 +464,7 @@ set_tests_properties(
     terminal_item_input_test
     terminal_item_mouse_test
     terminal_item_selection_test
+    terminal_paint_node_test
     PROPERTIES LABELS threads
 )
 
