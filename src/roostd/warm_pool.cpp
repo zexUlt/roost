@@ -1,5 +1,7 @@
 #include "roostd/warm_pool.hpp"
 
+#include <QtLogging>
+
 #include <algorithm>
 #include <functional>
 #include <utility>
@@ -40,6 +42,11 @@ void WarmSession::Write(QByteArrayView bytes) {
     if (!Closed_) {
         Pty_->Write(bytes);
     }
+}
+
+std::expected<void, QString> WarmSession::SetColors(
+    const TerminalColors& colors) {
+    return Terminal_.SetColors(colors);
 }
 
 std::expected<void, QString> WarmSession::Resize(PtySize size) {
@@ -95,6 +102,12 @@ std::expected<WarmSession*, QString> WarmPool::Open(const WarmSessionKey& key,
     if (!terminal) {
         return std::unexpected(terminal.error());
     }
+    if (Colors_) {
+        if (const auto set = terminal->SetColors(*Colors_); !set) {
+            qWarning("roostd: cannot set the colors of a terminal: %s",
+                     qPrintable(set.error()));
+        }
+    }
     auto* session =
         new WarmSession(key, std::move(*terminal), Options_.Pty, this);
     if (auto started = session->Pty_->Start(spec, size); !started) {
@@ -107,6 +120,18 @@ std::expected<WarmSession*, QString> WarmPool::Open(const WarmSessionKey& key,
     Touch(session);
     EvictExtra();
     return session;
+}
+
+void WarmPool::SetColors(const TerminalColors& colors) {
+    Colors_ = colors;
+    for (WarmSession* session : Sessions_) {
+        if (const auto set = session->SetColors(colors); !set) {
+            qWarning("roostd: cannot set the colors of %s %s: %s",
+                     qPrintable(session->Key().Agent),
+                     qPrintable(session->Key().Session),
+                     qPrintable(set.error()));
+        }
+    }
 }
 
 WarmSession* WarmPool::Find(const WarmSessionKey& key) const {

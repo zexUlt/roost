@@ -7,6 +7,8 @@
 #include <QString>
 #include <QVariantList>
 
+#include "core/terminal_theme.hpp"
+
 namespace roost {
 
 // Roost.theme: the colours of the window and of the panels, by role (design.md
@@ -16,8 +18,10 @@ namespace roost {
 // like any other (ADR 009).
 //
 // The tokens are read-only to QML. The default theme is the resource
-// themes/default.json; load() puts a theme over the current one (C++ only: a
-// test, and the choice of a theme by the settings).
+// themes/default.json of the core library; load() puts a theme over the
+// current one, and follow() takes the theme that a settings document names
+// (both C++ only). The terminal tokens (terminalForeground, ...) are not
+// properties: the terminals take them as terminalColors().
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -72,9 +76,20 @@ public:
     // Puts the tokens of the object over the current ones; a key the theme
     // does not know, and a value that is not a colour, are ignored with a
     // warning (`categories` takes an array of exactly eight colours). `changed`
-    // follows if any token took a new value. Returns whether every key was
-    // taken.
+    // follows if any token took a new value. The terminal tokens are checked
+    // together, as ParseTerminalColors reads them: a bad one gives all the
+    // terminal colours the default theme's (as roostd does);
+    // terminalColorsChanged follows if the terminal colours changed. Returns
+    // whether every key was taken.
     bool load(const QJsonObject& tokens);
+
+    // The theme that the settings document names (settings.theme), all of its
+    // tokens over the default ones; an unknown theme is the default one, with
+    // a warning. Returns the id of the theme taken.
+    QString follow(const QJsonObject& settings);
+
+    // The colours of the terminals, from the terminal tokens.
+    const TerminalColors& terminalColors() const { return TerminalColors_; }
 
     QColor windowBackground() const { return WindowBackground_; }
     QColor windowText() const { return WindowText_; }
@@ -106,6 +121,8 @@ public:
 
 signals:
     void changed();
+    // The terminal colours are others now (changed follows).
+    void terminalColorsChanged();
 
 private:
     QColor WindowBackground_;
@@ -135,6 +152,10 @@ private:
     QColor Warning_;
     QColor Error_;
     QColor WindowError_;
+    // The terminal tokens as the themes gave them, laid over one another, and
+    // what they parse to.
+    QJsonObject TerminalTokens_;
+    TerminalColors TerminalColors_;
 };
 
 }  // namespace roost

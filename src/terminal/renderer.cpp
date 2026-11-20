@@ -39,12 +39,22 @@ struct Resolved {
 };
 
 Resolved Resolve(const VtRenderState::Cell& cell, Rgb defaultForeground,
-                 Rgb defaultBackground) {
+                 Rgb defaultBackground, Rgb selection) {
+    if (cell.Selected) {
+        // The selection colour is the background, whatever the cell chose. The
+        // text takes the default colour that reads better on it: with the
+        // default theme (white selection) the default background, so a plain
+        // selected cell looks as it did when selection swapped the colours.
+        const auto text = Contrast(defaultForeground, selection) >=
+                                  Contrast(defaultBackground, selection)
+                              ? defaultForeground
+                              : defaultBackground;
+        return {.Foreground = ToColor(text, cell.Faint ? FAINT_ALPHA : 255),
+                .Background = ToColor(selection)};
+    }
     auto foreground = cell.Foreground.value_or(defaultForeground);
     auto background = cell.Background.value_or(defaultBackground);
-    // A selected cell swaps once more, as Ghostty does when no selection
-    // colors are set: a cell that is inverse and selected looks plain.
-    if (cell.Inverse != cell.Selected) {
+    if (cell.Inverse) {
         std::swap(foreground, background);
     }
     return {.Foreground = ToColor(foreground, cell.Faint ? FAINT_ALPHA : 255),
@@ -129,13 +139,14 @@ QFont DefaultTerminalFont() {
 }
 
 QList<Run> SplitRow(const VtRenderState::Row& row, Rgb defaultForeground,
-                    Rgb defaultBackground) {
+                    Rgb defaultBackground, Rgb selection) {
     const auto& cells = row.Cells;
     const auto count = static_cast<int>(cells.size());
     QList<Run> runs;
 
     const auto colorsOf = [&](int at) {
-        return Resolve(cells[at], defaultForeground, defaultBackground);
+        return Resolve(cells[at], defaultForeground, defaultBackground,
+                       selection);
     };
     int at = 0;
     while (at < count) {
@@ -219,6 +230,11 @@ QSGNode* Renderer::Update(QQuickWindow& window, TerminalSession& session,
 
     const auto& state = session.RenderState();
     const auto dirty = state.Dirty();
+    if (const auto selection = session.SelectionColor();
+        !(selection == Selection_)) {
+        Selection_ = selection;
+        Stale_ = true;
+    }
     const auto rowCount = static_cast<int>(state.RowCount());
     if (rowCount == 0) {
         // Null makes the scene graph forget oldNode without removing it from
@@ -279,8 +295,8 @@ void Renderer::BuildRow(QQuickWindow& window, QSGNode& row, int index,
         delete child;
     }
 
-    const auto runs =
-        SplitRow(source, state.DefaultForeground(), state.DefaultBackground());
+    const auto runs = SplitRow(source, state.DefaultForeground(),
+                               state.DefaultBackground(), Selection_);
     const qreal top = static_cast<qreal>(index) * Metrics_.Height;
 
     // Backgrounds first, so that text lies over them. Neighbours of one
@@ -356,7 +372,8 @@ void Renderer::UpdateCursor(QSGNode& cursor, const VtRenderState& state) const {
                         static_cast<qreal>(position.Y) * Metrics_.Height,
                         static_cast<qreal>(width) * Metrics_.Width,
                         Metrics_.Height));
-    rect.setColor(ToColor(state.DefaultForeground(), CURSOR_ALPHA));
+    rect.setColor(ToColor(
+        state.CursorColor().value_or(state.DefaultForeground()), CURSOR_ALPHA));
 }
 
 }  // namespace roost

@@ -10,6 +10,8 @@ add_library(roost_core STATIC
     rpc.cpp
     rpc_client.cpp
     store.cpp
+    terminal_theme.cpp
+    theme_source.cpp
     version.cpp
     vt_key_encoder.cpp
     vt_mouse_encoder.cpp
@@ -28,3 +30,9 @@ target_link_libraries(roost_core
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(roost_core PRIVATE util)
 endif()
+
+# The built-in themes, for the window and for roostd (src/core/theme_source.hpp).
+qt_add_resources(roost_core roost_themes
+    PREFIX /roost
+    FILES themes/default.json
+)

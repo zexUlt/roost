@@ -19,6 +19,8 @@ namespace {
 
 constexpr quint16 COLUMNS = 12;
 constexpr quint16 ROWS = 6;
+// The theme's selection colour.
+constexpr VtRenderState::Rgb SELECTION{.R = 255, .G = 255, .B = 255};
 
 // The row the stream puts at row index `row`, after a render update done the
 // way the render thread does it.
@@ -46,7 +48,7 @@ QList<Run> RunsOf(QByteArrayView stream, int row = 0,
         *defaultBackground = state.DefaultBackground();
     }
     return roost::SplitRow(state.Rows().at(row), state.DefaultForeground(),
-                           state.DefaultBackground());
+                           state.DefaultBackground(), SELECTION);
 }
 
 QColor Color(VtRenderState::Rgb rgb, int alpha = 255) {
@@ -175,6 +177,66 @@ private slots:
         const auto runs = RunsOf("\x1b[38;2;1;2;3;48;2;4;5;6;7mx");
         QCOMPARE(runs[0].Foreground, QColor(4, 5, 6));
         QCOMPARE(runs[0].Background, QColor(1, 2, 3));
+    }
+
+    // A row of "abc" with the given cells selected, the cells' own colours
+    // chosen and inverse set where asked.
+    static VtRenderState::Row SelectedRow(bool inverse) {
+        VtRenderState::Row row;
+        for (const auto* text : {"a", "b", "c"}) {
+            VtRenderState::Cell cell;
+            cell.Text = QString::fromLatin1(text);
+            cell.Foreground = VtRenderState::Rgb{.R = 200, .G = 10, .B = 10};
+            cell.Background = VtRenderState::Rgb{.R = 10, .G = 10, .B = 200};
+            cell.Inverse = inverse;
+            cell.Selected = text[0] != 'a';
+            row.Cells.append(cell);
+        }
+        return row;
+    }
+
+    void SelectedCellsAreDrawnOnTheSelectionColour() {
+        const VtRenderState::Rgb white{.R = 255, .G = 255, .B = 255};
+        const VtRenderState::Rgb black{.R = 0, .G = 0, .B = 0};
+        const auto runs =
+            roost::SplitRow(SelectedRow(false), white, black, white);
+        // "a" keeps its own colours; "b" and "c" share a run: the selection
+        // colour behind them, whatever they chose, and the default background
+        // (black) for the text, as the swap of the old selection gave on a
+        // plain cell.
+        QCOMPARE(runs.size(), 2);
+        QCOMPARE(runs[0].Foreground, QColor(200, 10, 10));
+        QCOMPARE(runs[0].Background, QColor(10, 10, 200));
+        QCOMPARE(runs[1].Text, QStringLiteral("bc"));
+        QCOMPARE(runs[1].Foreground, QColor(0, 0, 0));
+        QCOMPARE(runs[1].Background, QColor(255, 255, 255));
+    }
+
+    void SelectedTextTakesTheDefaultThatReadsBetter() {
+        const VtRenderState::Rgb white{.R = 255, .G = 255, .B = 255};
+        const VtRenderState::Rgb black{.R = 0, .G = 0, .B = 0};
+        const VtRenderState::Rgb dark{.R = 0x3d, .G = 0x5a, .B = 0x80};
+        // Dark selection: the white default foreground.
+        auto runs = roost::SplitRow(SelectedRow(false), white, black, dark);
+        QCOMPARE(runs[1].Foreground, QColor(255, 255, 255));
+        QCOMPARE(runs[1].Background, QColor(0x3d, 0x5a, 0x80));
+        // Light selection on a light terminal: the dark default foreground.
+        runs = roost::SplitRow(SelectedRow(false), black, white, white);
+        QCOMPARE(runs[1].Foreground, QColor(0, 0, 0));
+        QCOMPARE(runs[1].Background, QColor(255, 255, 255));
+    }
+
+    void SelectionIgnoresInverse() {
+        const VtRenderState::Rgb white{.R = 255, .G = 255, .B = 255};
+        const VtRenderState::Rgb black{.R = 0, .G = 0, .B = 0};
+        const auto runs =
+            roost::SplitRow(SelectedRow(true), white, black, white);
+        // "a" is inverse and not selected: swapped. The selected ones are not.
+        QCOMPARE(runs.size(), 2);
+        QCOMPARE(runs[0].Foreground, QColor(10, 10, 200));
+        QCOMPARE(runs[0].Background, QColor(200, 10, 10));
+        QCOMPARE(runs[1].Foreground, QColor(0, 0, 0));
+        QCOMPARE(runs[1].Background, QColor(255, 255, 255));
     }
 
     void FaintHalvesTheForegroundAlpha() {

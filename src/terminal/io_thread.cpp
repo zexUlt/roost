@@ -6,6 +6,7 @@
 #include <QtLogging>
 
 #include <limits>
+#include <optional>
 #include <utility>
 
 #include "core/protocol.hpp"
@@ -94,6 +95,21 @@ public:
     void SendInput(std::uint32_t channel, const QByteArray& bytes) {
         if (Rpc_) {
             Rpc_->SendInput(channel, bytes);
+        }
+    }
+
+    void SetColors(const TerminalColors& colors) {
+        Colors_ = colors;
+        for (const auto& [channel, entry] : Sessions_) {
+            {
+                const auto lock = entry.Session->Lock();
+                if (const auto set = entry.Session->SetColors(lock, colors);
+                    !set) {
+                    qWarning("channel %u: cannot set the colors: %s", channel,
+                             qPrintable(set.error()));
+                }
+            }
+            MarkUpdated(channel, entry);
         }
     }
 
@@ -233,6 +249,13 @@ private:
                                        static_cast<qint64>(channel)}});
             return;
         }
+        if (Colors_) {
+            const auto lock = (*session)->Lock();
+            if (const auto set = (*session)->SetColors(lock, *Colors_); !set) {
+                qWarning("channel %u: cannot set the colors: %s", channel,
+                         qPrintable(set.error()));
+            }
+        }
         Entry entry{
             .Session = std::shared_ptr<TerminalSession>(std::move(*session)),
             // Pending from the start: no Updated until the opener's first
@@ -335,6 +358,8 @@ private:
     // Channels that were answered and wait for their snapshot.
     std::unordered_map<std::uint32_t, SharedPromise<OpenResult>> Opening_;
     std::unordered_map<std::uint32_t, Entry> Sessions_;
+    // What SetColors was last given; kept over a reconnect.
+    std::optional<TerminalColors> Colors_;
 };
 
 IoThread::IoThread(QObject* parent)
@@ -397,6 +422,10 @@ QFuture<OpenResult> IoThread::OpenWith(const QString& agent,
 void IoThread::SendInput(std::uint32_t channel, const QByteArray& bytes) {
     Post(
         [channel, bytes](Worker& worker) { worker.SendInput(channel, bytes); });
+}
+
+void IoThread::SetColors(const TerminalColors& colors) {
+    Post([colors](Worker& worker) { worker.SetColors(colors); });
 }
 
 QFuture<rpc::Result> IoThread::Resize(std::uint32_t channel, quint16 columns,

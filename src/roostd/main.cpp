@@ -20,6 +20,7 @@
 #include "roostd/server.hpp"
 #include "roostd/session_channels.hpp"
 #include "roostd/store_service.hpp"
+#include "roostd/terminal_colors_service.hpp"
 
 namespace {
 
@@ -141,6 +142,10 @@ int main(int argc, char* argv[]) {
 
     // Gone before the plugins.
     roost::SessionChannels sessions(server, plugins);
+
+    // Gone before the channels, whose pool it sets the colors of.
+    roost::TerminalColorsService terminalColors(roost::Store(*config), server,
+                                                sessions.Pool());
 
     return QCoreApplication::exec();
 }

@@ -51,6 +51,27 @@ TerminalSession::FromSnapshot(QByteArrayView snapshot) {
 
 TerminalSession::Locked TerminalSession::Lock() { return Locked(*this); }
 
+std::expected<void, QString> TerminalSession::SetColors(
+    const Locked& lock, const TerminalColors& colors) {
+    if (!Check(lock, "SetColors")) {
+        return std::unexpected(QStringLiteral("wrong lock token"));
+    }
+    if (auto set = Terminal_.SetColors(colors); !set) {
+        return set;
+    }
+    SelectionColor_ = (static_cast<quint32>(colors.Selection.R) << 16) |
+                      (static_cast<quint32>(colors.Selection.G) << 8) |
+                      colors.Selection.B;
+    return {};
+}
+
+VtRenderState::Rgb TerminalSession::SelectionColor() const {
+    const quint32 color = SelectionColor_;
+    return {.R = static_cast<quint8>(color >> 16),
+            .G = static_cast<quint8>(color >> 8),
+            .B = static_cast<quint8>(color)};
+}
+
 bool TerminalSession::Check(const Locked& lock, const char* method) const {
 #ifndef NDEBUG
     if (lock.Session_ != this) {

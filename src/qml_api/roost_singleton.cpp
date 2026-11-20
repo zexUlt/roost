@@ -74,6 +74,29 @@ void RoostSingleton::setApi(api::Api& api) {
     Store_ = new StoreAdapter(api, Engine_, Owners_, this);
     Bus_ = new BusAdapter(api, Engine_, Owners_, this);
     Connected_ = api.IsConnected();
+    // The theme follows settings.theme, and the terminals follow the theme:
+    // the ones open now and the ones opened later (design.md §5).
+    connect(Theme_, &Theme::terminalColorsChanged, this,
+            [this] { Api_->Io().SetColors(Theme_->terminalColors()); });
+    Api_->Io().SetColors(Theme_->terminalColors());
+    connect(&api.Store(), &api::StoreService::Changed, this,
+            [this](const QString& plugin, const QJsonObject& document) {
+                if (plugin == QLatin1String("settings")) {
+                    Theme_->follow(document);
+                }
+            });
+    connect(&api, &api::Api::Connected, this, [this] {
+        // A settings that cannot be read leaves the theme as it is.
+        Api_->Store()
+            .Get(QStringLiteral("settings"))
+            .then(this, [this](const rpc::Result& result) {
+                if (result) {
+                    Theme_->follow(result->toObject()
+                                       .value(QStringLiteral("document"))
+                                       .toObject());
+                }
+            });
+    });
     connect(&api, &api::Api::Connected, this, [this] { setConnected(true); });
     connect(&api, &api::Api::Disconnected, this,
             [this] { setConnected(false); });
