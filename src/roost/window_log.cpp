@@ -115,8 +115,9 @@ std::expected<WindowLogFile, QString> WindowLogFile::Open(const QString& path,
         // Not fatal: the log then just keeps growing.
         (void)RotateLog(path);
     }
-    const int fd = ::open(encoded.constData(),
-                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, LOG_MODE);
+    const int fd = ::open(
+        encoded.constData(),
+        O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, LOG_MODE);
     if (fd < 0) {
         return std::unexpected(
             QStringLiteral("cannot open %1: %2")
@@ -150,6 +151,33 @@ void WindowLogFile::Write(const QByteArray& line) const {
     }
 }
 
+namespace {
+
+// One record is one line: a backslash, a newline and a carriage return in the
+// text are written as \\, \n and \r.
+QByteArray EscapeLine(const QByteArray& text) {
+    QByteArray escaped;
+    escaped.reserve(text.size());
+    for (const char c : text) {
+        switch (c) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            default:
+                escaped += c;
+        }
+    }
+    return escaped;
+}
+
+}  // namespace
+
 QByteArray FormatWindowLogLine(QtMsgType type,
                                const QMessageLogContext& context,
                                const QString& message, const QDateTime& time,
@@ -161,7 +189,7 @@ QByteArray FormatWindowLogLine(QtMsgType type,
         line += context.category;
         line += ": ";
     }
-    line += message.toUtf8();
+    line += EscapeLine(message.toUtf8());
     line += '\n';
     return line;
 }

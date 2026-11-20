@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 #include <QLoggingCategory>
 #include <QRegularExpression>
 #include <QTemporaryDir>
@@ -12,6 +13,7 @@
 #include <QVariantMap>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <memory>
 #include <thread>
@@ -110,6 +112,46 @@ private slots:
         QCOMPARE(PREVIOUS_MESSAGES,
                  (QStringList{"something 42", "plain info"}));
         QCOMPARE(Mode(path), mode_t(0600));
+    }
+
+    void NewlineInTheMessageStaysOneLineInTheFile() {
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath("roost.log");
+        QVERIFY(InstallWindowLog(path));
+
+        const QString message = QStringLiteral("a\nb\r\nc\\d");
+        qInfo("%s", qPrintable(message));
+
+        const QStringList lines = Lines(path);
+        QCOMPARE(lines.size(), 1);
+        QVERIFY2(lines[0].endsWith(QStringLiteral("I a\\nb\\r\\nc\\\\d")),
+                 qPrintable(lines[0]));
+        QCOMPARE(Read(path).count('\n'), 1);
+        QCOMPARE(PREVIOUS_MESSAGES, QStringList{message});
+    }
+
+    void SymlinkAtTheLogPathIsNotFollowed() {
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString target = dir.filePath("target");
+        QFile file(target);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write("untouched\n") > 0);
+        file.close();
+        const QString path = dir.filePath("roost.log");
+        QVERIFY(::symlink(QFile::encodeName(target).constData(),
+                          QFile::encodeName(path).constData()) == 0);
+
+        QVERIFY(!WindowLogFile::Open(path));
+        QVERIFY(!InstallWindowLog(path));
+        QCOMPARE(PREVIOUS_MESSAGES.size(), 1);
+        QVERIFY(PREVIOUS_MESSAGES[0].contains("no window log"));
+
+        qWarning("still forwarded");
+        QCOMPARE(PREVIOUS_MESSAGES.size(), 2);
+        QCOMPARE(PREVIOUS_MESSAGES[1], QStringLiteral("still forwarded"));
+        QCOMPARE(Read(target), QByteArray("untouched\n"));
     }
 
     void LevelLetters() {
@@ -288,5 +330,12 @@ private slots:
     }
 };
 
-QTEST_MAIN(WindowLogTest)
+int main(int argc, char** argv) {
+    // The startup line names the platform: do not depend on ctest's
+    // environment.
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+    WindowLogTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "window_log_test.moc"
