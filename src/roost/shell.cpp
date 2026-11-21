@@ -270,6 +270,10 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
                                      : QStringLiteral("connecting"),
                   {});
     if (LayoutMode_) {
+        // The loader may have loaded the plugins before this shell connected
+        // to it: nobody told the window the panel types then.
+        UpdateListTypes();
+        PublishPanelTypes();
         // The default layout until the stored one is known: the slots wait.
         ApplyLayout(DefaultLayout());
         ReadLayout();

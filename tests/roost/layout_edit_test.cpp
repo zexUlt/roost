@@ -1151,6 +1151,30 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!HasProblem("last panel"), TIMEOUT_MS);
     }
 
+    // The plugins are there before the window makes its shell, as in a window
+    // whose QML took long to load: the panel types still reach the menu.
+    void TheMenuOfAWindowThatWasSlowToStartHasThePanelTypes() {
+        FailOnWarnings();
+        PluginsFirst_ = true;
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        QQuickItem* slot = SlotByInstance("terminal");
+        const QPoint at =
+            slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
+                .toPoint();
+        QTest::mouseClick(Window(), Qt::RightButton, Qt::NoModifier, at);
+        QObject* popup = Root()->findChild<QObject*>("panelMenu");
+        QVERIFY(popup != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(popup->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        QVERIFY(Root()->findChild<QQuickItem*>("menuEditLinks")->isEnabled());
+        QVERIFY(Root()->findChild<QObject*>(
+                    "menuSplitWith_terminal.view_down") != nullptr);
+    }
+
     void ARightClickOnAPanelOpensItsMenu() {
         FailOnWarnings();
         Boot();
