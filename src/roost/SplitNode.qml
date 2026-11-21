@@ -45,6 +45,12 @@ SplitView {
 
         model: split.node !== null ? split.node.children : []
 
+        // A new layout replaces the nodes, and the old ones are deleted only
+        // when the event loop gets to them. Until then the split lays them out
+        // beside the new ones, which are squeezed to their minimum, and a
+        // terminal in one of them opens a session of a few columns.
+        onObjectRemoved: (index, object) => object.visible = false
+
         delegate: LayoutNode {
             required property int index
             required property var modelData

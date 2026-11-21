@@ -111,24 +111,6 @@ QString LastSizeLine(const std::shared_ptr<TerminalSession>& session) {
     return last;
 }
 
-// A layout in little: the child has the size of its minimum when it is added,
-// and the polish of the layout gives the size it takes. SplitView does that
-// for a child that fills the rest.
-class LateLayout : public QQuickItem {
-public:
-    explicit LateLayout(QQuickItem* parent) : QQuickItem(parent) {}
-
-    QQuickItem* Child = nullptr;
-    QSizeF Size;
-
-protected:
-    void updatePolish() override {
-        if (Child != nullptr) {
-            Child->setSize(Size);
-        }
-    }
-};
-
 }  // namespace
 
 class TerminalItemSessionTest : public QObject {
@@ -227,19 +209,10 @@ private:
         return ShowWindow();
     }
 
-    // Shown, and a frame has been drawn: the item has had the polish it waits
-    // for before it opens a session, and a ref set from now on opens at once.
     bool ShowWindow() {
-        QSignalSpy frames(Window_.get(), &QQuickWindow::frameSwapped);
         Window_->show();
-        if (!QTest::qWaitForWindowExposed(Window_.get()) ||
-            !QTest::qWaitForWindowActive(Window_.get()) ||
-            (frames.isEmpty() && !frames.wait(TIMEOUT_MS))) {
-            return false;
-        }
-        // The item opens from an event it posted in that polish.
-        QCoreApplication::processEvents();
-        return true;
+        return QTest::qWaitForWindowExposed(Window_.get()) &&
+               QTest::qWaitForWindowActive(Window_.get());
     }
 
     // The window goes first: its render thread reads the item in each frame.
@@ -343,41 +316,6 @@ private slots:
                                   TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(!firstSize.isEmpty(), TIMEOUT_MS);
         QCOMPARE(firstSize, SizeLine(COLUMNS, ROWS));
-    }
-
-    // A layout that has not polished yet gives a new child the size of its
-    // minimum: a few columns. The session opens at the size the layout gives
-    // in its polish, not at that, or the TUI draws in a PTY of a few columns
-    // before the resize.
-    void ASessionOpensAtTheSizeOfTheLayoutAfterItsPolish() {
-        QVERIFY(Prepare());
-        QVERIFY(ShowPage(QML_LITERAL, false));
-        const CellMetrics cell = MeasureCell(Item_->font());
-        auto* const layout = new LateLayout(Window_->contentItem());
-        layout->setSize(QSizeF(COLUMNS * cell.Width, ROWS * cell.Height));
-        layout->Child = Page_.get();
-        layout->Size = layout->size();
-        Page_->setParentItem(layout);
-        Window_->resize(layout->size().toSize());
-        QVERIFY(ShowWindow());
-        // The grid the item has when the session starts to open.
-        QSize openedAt;
-        connect(Item_, &TerminalItem::statusChanged, layout, [&] {
-            if (openedAt.isEmpty() && Item_->status() == "opening") {
-                openedAt = QSize(Item_->columns(), Item_->rows());
-            }
-        });
-
-        // The layout asks first, then the child gets the minimum.
-        layout->polish();
-        Page_->setSize(QSizeF(5 * cell.Width, ROWS * cell.Height));
-
-        QTRY_COMPARE_WITH_TIMEOUT(Item_->status(), QStringLiteral("open"),
-                                  TIMEOUT_MS);
-        QCOMPARE(openedAt, QSize(COLUMNS, ROWS));
-        // The layout and the page go before the window.
-        Page_->setParentItem(nullptr);
-        delete layout;
     }
 
     void SessionReadsNullInQmlUntilThereIsARef() {

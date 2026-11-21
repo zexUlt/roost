@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 
 namespace roost {
@@ -345,9 +344,6 @@ int TerminalItem::columns() const { return Columns_; }
 int TerminalItem::rows() const { return Rows_; }
 
 void TerminalItem::updateGridSize() {
-    fprintf(stderr, "DIAG size %p w=%g h=%g settling=%d known=%d\n",
-            static_cast<const void*>(this), width(), height(), int(Settling_),
-            int(GridKnown_));
     const auto cell = Renderer_.Metrics();
     // A cell cannot be empty; the guard keeps a broken font from dividing by
     // zero.
@@ -363,43 +359,10 @@ void TerminalItem::updateGridSize() {
         Rows_ = rows;
         emit gridSizeChanged();
     }
-    if (!GridKnown_ && !Settling_ && holdsACell()) {
-        if (window() == nullptr) {
-            GridKnown_ = true;
-            applySessionRef();
-            return;
-        }
-        // Not now: a layout that has not polished yet gives a new child the
-        // size of its minimum, and a session opened at that is a PTY of a few
-        // columns, which the program draws in and the terminals reflow
-        // afterwards. updatePolish opens it once the window has polished.
-        Settling_ = true;
-        polish();
+    if (!GridKnown_ && holdsACell()) {
+        GridKnown_ = true;
+        applySessionRef();
     }
-}
-
-void TerminalItem::updatePolish() {
-    QQuickItem::updatePolish();
-    fprintf(stderr, "DIAG polish %p w=%g h=%g settling=%d\n",
-            static_cast<const void*>(this), width(), height(), int(Settling_));
-    if (!Settling_) {
-        return;
-    }
-    // The window polishes the item that asked last first, so the layout may
-    // be still to come in this pass: the session is opened after it.
-    QMetaObject::invokeMethod(
-        this,
-        [this] {
-            Settling_ = false;
-            fprintf(stderr, "DIAG queued %p w=%g h=%g known=%d\n",
-                    static_cast<const void*>(this), width(), height(),
-                    int(GridKnown_));
-            if (!GridKnown_ && holdsACell()) {
-                GridKnown_ = true;
-                applySessionRef();
-            }
-        },
-        Qt::QueuedConnection);
 }
 
 void TerminalItem::geometryChange(const QRectF& newGeometry,

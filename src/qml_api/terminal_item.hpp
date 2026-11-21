@@ -162,9 +162,6 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void geometryChange(const QRectF& newGeometry,
                         const QRectF& oldGeometry) override;
-    // The layout has had its turn: the first session is opened at the size
-    // the item has now.
-    void updatePolish() override;
     // A hidden item (a page of tabs that is not shown) does not hold its
     // session: it takes it when it is shown.
     void itemChange(ItemChange change, const ItemChangeData& value) override;
@@ -256,10 +253,6 @@ private:
     // The item has had a real size; a session is not opened before, or the
     // PTY would start at 1x1.
     bool GridKnown_ = false;
-    // The item holds a cell and waits for the polish of the window to open
-    // its session: a layout gives a new child the size of its minimum until it
-    // polishes, which is later than the item sees it.
-    bool Settling_ = false;
     // The pane is a child of the item; made when the first session is shown.
     QPointer<SessionPane> Pane_;
     QString Status_ = QStringLiteral("none");
