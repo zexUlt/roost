@@ -378,6 +378,28 @@ void TerminalItem::updateGridSize() {
         Rows_ = rows;
         emit gridSizeChanged();
     }
+    if (!GridKnown_ && !Settling_ && holdsACell()) {
+        if (window() == nullptr) {
+            GridKnown_ = true;
+            applySessionRef();
+            return;
+        }
+        // Not now: a layout that has not polished yet gives a new child the
+        // size of its minimum, and a session opened at that is a PTY of a few
+        // columns, which the program draws in and the terminals reflow
+        // afterwards. The polish of the window runs the layout before the
+        // item.
+        Settling_ = true;
+        polish();
+    }
+}
+
+void TerminalItem::updatePolish() {
+    QQuickItem::updatePolish();
+    if (!Settling_) {
+        return;
+    }
+    Settling_ = false;
     if (!GridKnown_ && holdsACell()) {
         GridKnown_ = true;
         applySessionRef();

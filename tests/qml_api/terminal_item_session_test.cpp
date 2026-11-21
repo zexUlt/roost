@@ -111,6 +111,24 @@ QString LastSizeLine(const std::shared_ptr<TerminalSession>& session) {
     return last;
 }
 
+// A layout in little: the child has the size of its minimum when it is added,
+// and the polish of the layout gives the size it takes. SplitView does that
+// for a child that fills the rest.
+class LateLayout : public QQuickItem {
+public:
+    explicit LateLayout(QQuickItem* parent) : QQuickItem(parent) {}
+
+    QQuickItem* Child = nullptr;
+    QSizeF Size;
+
+protected:
+    void updatePolish() override {
+        if (Child != nullptr) {
+            Child->setSize(Size);
+        }
+    }
+};
+
 }  // namespace
 
 class TerminalItemSessionTest : public QObject {
@@ -316,6 +334,48 @@ private slots:
                                   TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(!firstSize.isEmpty(), TIMEOUT_MS);
         QCOMPARE(firstSize, SizeLine(COLUMNS, ROWS));
+    }
+
+    // A layout that has not polished yet gives a new child the size of its
+    // minimum: a few columns. The session opens at the size the layout gives
+    // in its polish, not at that, or the TUI draws in a PTY of a few columns
+    // before the resize.
+    void ASessionOpensAtTheSizeOfTheLayoutAfterItsPolish() {
+        QVERIFY(Prepare());
+        QVERIFY(ShowPage(QML_LITERAL, false));
+        auto* const pane = Item_->findChild<SessionPane*>();
+        QVERIFY(pane != nullptr);
+        QObject scope;
+        QString firstSize;
+        connect(pane, &SessionPane::Updated, &scope, [&] {
+            const auto match =
+                QRegularExpression(QStringLiteral(R"(size \d+x\d+)"))
+                    .match(Screen(pane->Session()));
+            if (firstSize.isEmpty() && match.hasMatch()) {
+                firstSize = match.captured();
+            }
+        });
+        const CellMetrics cell = MeasureCell(Item_->font());
+        auto* const layout = new LateLayout(Window_->contentItem());
+        layout->setSize(QSizeF(COLUMNS * cell.Width, ROWS * cell.Height));
+        layout->Child = Page_.get();
+        layout->Size = layout->size();
+        Page_->setParentItem(layout);
+        Window_->resize(layout->size().toSize());
+        QVERIFY(ShowWindow());
+
+        layout->polish();
+        Page_->setSize(QSizeF(5 * cell.Width, ROWS * cell.Height));
+        // Nothing is opened at the size the layout gives for the moment.
+        QCOMPARE(Item_->status(), QStringLiteral("none"));
+
+        QTRY_COMPARE_WITH_TIMEOUT(Item_->status(), QStringLiteral("open"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!firstSize.isEmpty(), TIMEOUT_MS);
+        QCOMPARE(firstSize, SizeLine(COLUMNS, ROWS));
+        // The layout and the page go before the window.
+        Page_->setParentItem(nullptr);
+        delete layout;
     }
 
     void SessionReadsNullInQmlUntilThereIsARef() {
