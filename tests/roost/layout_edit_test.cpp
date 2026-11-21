@@ -1161,6 +1161,10 @@ private slots:
             return;
         }
         WaitForLayout({{"list", "terminal"}});
+        QVERIFY(Root()
+                    ->property("listPanelTypes")
+                    .toStringList()
+                    .contains(QStringLiteral("sessions.list")));
         QQuickItem* slot = SlotByInstance("terminal");
         const QPoint at =
             slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
@@ -1170,9 +1174,11 @@ private slots:
         QVERIFY(popup != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(popup->property("visible").toBool(),
                                  TIMEOUT_MS);
+        auto* const splitDown =
+            Root()->findChild<QQuickItem*>("menuSplitWith_terminal.view_down");
+        QVERIFY(splitDown != nullptr);
+        QVERIFY(splitDown->isEnabled());
         QVERIFY(Root()->findChild<QQuickItem*>("menuEditLinks")->isEnabled());
-        QVERIFY(Root()->findChild<QObject*>(
-                    "menuSplitWith_terminal.view_down") != nullptr);
     }
 
     void ARightClickOnAPanelOpensItsMenu() {
