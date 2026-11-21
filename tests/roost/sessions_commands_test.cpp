@@ -542,8 +542,9 @@ private slots:
         QSignalSpy respawned(PanelOf(LIST), SIGNAL(respawned(QVariant)));
         OpenAndBack(1);
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
+        // The fake writes the pid file after the call, so wait for both.
+        QTRY_VERIFY_WITH_TIMEOUT(AttachPid(BETA) > 0, TIMEOUT_MS);
         const auto oldAttach = static_cast<pid_t>(AttachPid(BETA));
-        QVERIFY(oldAttach > 0);
 
         AskAndConfirm(Qt::Key_R);
 
