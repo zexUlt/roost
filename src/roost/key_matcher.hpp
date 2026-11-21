@@ -61,7 +61,12 @@ public:
     // (Ctrl is the Control key; Qt's Control is Command on macOS). Nothing for
     // a modifier alone, a key without a name in the table, or, on Linux, a key
     // with Super held: the desktop owns it.
+    // The layout is the one NonLatinLayout() judges: the press that is seen
+    // by the filter has been ObserveLayout-ed before.
     static std::optional<KeyChord> ChordOf(const QKeyEvent& event);
+
+    // Feeds the press to ObserveLayout with its physical key.
+    static void ObserveLayoutOf(const QKeyEvent& event);
 
     // The type of the panel that has the focus: the `panelType` of the nearest
     // PanelSlot above `focus`; empty with no slot above it or no focus.

@@ -289,6 +289,88 @@ private slots:
                  expected);
     }
 
+    // On a non-Latin layout a symbol key is the key of the US layout at its
+    // position, whatever the key types.
+    void BindingKeyOnANonLatinLayout_data() {
+        QTest::addColumn<int>("qtKey");
+        QTest::addColumn<int>("mods");
+        QTest::addColumn<EKey>("physical");
+        QTest::addColumn<int>("expected");
+        const auto row = [](const char* name, int qtKey, int mods,
+                            EKey physical, int expected) {
+            QTest::newRow(name) << qtKey << mods << physical << expected;
+        };
+        const int shift = Qt::ShiftModifier;
+        // The US slash key types "." on the Russian layout.
+        row("ru_slash", Qt::Key_Period, 0, EKey::Slash, Qt::Key_Slash);
+        // Shift+4 types ";" there.
+        row("ru_shift_4", Qt::Key_Semicolon, shift, EKey::Digit4,
+            Qt::Key_Dollar);
+        row("ru_shift_7", Qt::Key_Question, shift, EKey::Digit7,
+            Qt::Key_Ampersand);
+        row("ru_backslash", Qt::Key_Slash, 0, EKey::Backslash,
+            Qt::Key_Backslash);
+        row("ru_letter", 0x41E, 0, EKey::J, Qt::Key_J);
+        // Keys that are not of the US main block are kept.
+        row("escape_kept", Qt::Key_Escape, 0, EKey::Unidentified,
+            Qt::Key_Escape);
+        row("enter_kept", Qt::Key_Return, 0, EKey::Enter, Qt::Key_Return);
+        row("no_code_kept", Qt::Key_Period, 0, EKey::Unidentified,
+            Qt::Key_Period);
+    }
+
+    void BindingKeyOnANonLatinLayout() {
+        QFETCH(int, qtKey);
+        QFETCH(int, mods);
+        QFETCH(EKey, physical);
+        QFETCH(int, expected);
+        QCOMPARE(::BindingKey(qtKey, Qt::KeyboardModifiers(mods), physical,
+                              /*nonLatinLayout=*/true),
+                 expected);
+        // The same key on a Latin layout keeps its character.
+        if (physical != EKey::Unidentified && qtKey != 0x41E) {
+            QCOMPARE(::BindingKey(qtKey, Qt::KeyboardModifiers(mods), physical,
+                                  /*nonLatinLayout=*/false),
+                     qtKey);
+        }
+    }
+
+    // The layout is told by the letter keys alone.
+    void ObserveLayout() {
+        const auto none = Qt::NoModifier;
+        roost::SetNonLatinLayout(false);
+        // A symbol, a digit and a special key say nothing.
+        roost::ObserveLayout(Qt::Key_Period, none, EKey::Slash);
+        roost::ObserveLayout(0x41E, none, EKey::Digit4);
+        roost::ObserveLayout(Qt::Key_Escape, none, EKey::Unidentified);
+        QVERIFY(!roost::NonLatinLayout());
+        // A Cyrillic letter at a letter key makes it non-Latin, with or
+        // without Ctrl.
+        roost::ObserveLayout(0x41E, none, EKey::J);
+        QVERIFY(roost::NonLatinLayout());
+        // A Dvorak symbol at a letter key, a symbol key and a Latin letter
+        // with Ctrl, Alt or Meta say nothing.
+        roost::ObserveLayout(Qt::Key_Z, none, EKey::Digit1);
+        roost::ObserveLayout(Qt::Key_Comma, none, EKey::Q);
+        roost::ObserveLayout(Qt::Key_J, Qt::ControlModifier, EKey::J);
+        roost::ObserveLayout(Qt::Key_J, Qt::AltModifier, EKey::J);
+        roost::ObserveLayout(Qt::Key_J, Qt::MetaModifier, EKey::J);
+        QVERIFY(roost::NonLatinLayout());
+        // A Latin letter, with Shift too, makes it Latin; so does one that is
+        // not at its US position (Dvorak).
+        roost::ObserveLayout(Qt::Key_J, Qt::ShiftModifier, EKey::J);
+        QVERIFY(!roost::NonLatinLayout());
+        roost::ObserveLayout(0x41E, Qt::ControlModifier, EKey::J);
+        QVERIFY(roost::NonLatinLayout());
+        roost::ObserveLayout(Qt::Key_J, none, EKey::C);
+        QVERIFY(!roost::NonLatinLayout());
+        // The French é at a letter key is a Latin letter.
+        roost::ObserveLayout(0x41E, none, EKey::J);
+        roost::ObserveLayout(0xE9, none, EKey::J);
+        QVERIFY(!roost::NonLatinLayout());
+        roost::SetNonLatinLayout(false);
+    }
+
     void IsNonLatinLetter_data() {
         QTest::addColumn<int>("qtKey");
         QTest::addColumn<bool>("expected");

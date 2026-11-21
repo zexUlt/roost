@@ -30,6 +30,7 @@
 #include "api/api_test_support.hpp"
 #include "helpers/roostd_process.hpp"
 #include "roost/key_matcher.hpp"
+#include "terminal/physical_keys.hpp"
 
 using namespace roost;
 using namespace roost::api_test;
@@ -55,6 +56,11 @@ constexpr quint32 XKB_SLASH = 61;
 // The equal key.
 constexpr quint32 MAC_EQUAL = 0x18;
 constexpr quint32 XKB_EQUAL = 21;
+// The 4 key, and the minus key.
+constexpr quint32 MAC_4 = 0x15;
+constexpr quint32 XKB_4 = 13;
+constexpr quint32 MAC_MINUS = 0x1B;
+constexpr quint32 XKB_MINUS = 20;
 // F5 and K carry codes too: only Qt's key matters for them.
 constexpr quint32 MAC_K = 0x28;
 constexpr quint32 XKB_K = 45;
@@ -269,7 +275,12 @@ private:
     int Flushes_ = 0;
 
 private slots:
-    void init() { Daemon_ = std::make_unique<roost::testing::RoostdProcess>(); }
+    void init() {
+        // The layout is a state of the process: each test starts on a Latin
+        // one and tells its own.
+        SetNonLatinLayout(false);
+        Daemon_ = std::make_unique<roost::testing::RoostdProcess>();
+    }
 
     void cleanup() {
         Window_.hide();
@@ -317,6 +328,64 @@ private slots:
         QVERIFY(Flush());
         QVERIFY(!Ran("sc"));
         QCOMPARE(Counter_.Presses, 0);
+    }
+
+    // The Russian layout is told by a letter that was typed: "о" at the J key.
+    // After it a symbol key matches by its US position, as a letter does.
+    void CtrlSlashFiresOnTheRussianLayout() {
+        QVERIFY(Boot({Entry("Ctrl+/", "sslash")}));
+        QVERIFY(Focus("otherItem"));
+        Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("о"));
+        QCOMPARE(Counter_.Presses, 1);
+        // The US slash key types "." on the Russian layout.
+        Press(Qt::Key_Period, CONTROL_KEY, XKB_SLASH, MAC_SLASH,
+              QStringLiteral("."));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("sslash"), TIMEOUT_MS);
+        QCOMPARE(Counter_.Presses, 1);
+    }
+
+    // Shift+4 types ";" on the Russian layout: the press is Ctrl+Shift+4, not
+    // Ctrl+;.
+    void CtrlShiftFourOnTheRussianLayoutIsNotCtrlSemicolon() {
+        QVERIFY(Boot({Entry("Ctrl+Shift+4", "s4"), Entry("Ctrl+;", "ssemi")}));
+        QVERIFY(Focus("otherItem"));
+        Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("о"));
+        Press(Qt::Key_Semicolon, CONTROL_KEY | Qt::ShiftModifier, XKB_4, MAC_4,
+              QStringLiteral(";"));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("s4"), TIMEOUT_MS);
+        QVERIFY(Flush());
+        QVERIFY(!Ran("ssemi"));
+        QCOMPARE(Counter_.Presses, 1);
+    }
+
+    // On Dvorak the "[" is at the US minus key: a Latin layout keeps the
+    // character of a symbol key. The layout is Latin again after a Latin
+    // letter, whatever the one before it was.
+    void ASymbolKeyOnALatinLayoutMatchesByItsCharacter() {
+        QVERIFY(Boot({Entry("Ctrl+[", "sbracket"), Entry("Ctrl+-", "sminus")}));
+        QVERIFY(Focus("otherItem"));
+        Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("о"));
+        Press(Qt::Key_J, Qt::NoModifier, XKB_C, MAC_C, QStringLiteral("j"));
+        QCOMPARE(Counter_.Presses, 2);
+        Press(Qt::Key_BracketLeft, CONTROL_KEY, XKB_MINUS, MAC_MINUS,
+              QStringLiteral("["));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("sbracket"), TIMEOUT_MS);
+        QVERIFY(Flush());
+        QVERIFY(!Ran("sminus"));
+        QCOMPARE(Counter_.Presses, 2);
+    }
+
+    // The letter of the Russian layout still matches by its US position after
+    // symbol keys were pressed.
+    void ALetterOnTheRussianLayoutStillMatchesByPosition() {
+        QVERIFY(Boot({Entry("Ctrl+J", "k1"), Entry("Ctrl+/", "sslash")}));
+        QVERIFY(Focus("otherItem"));
+        Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("о"));
+        Press(Qt::Key_Period, CONTROL_KEY, XKB_SLASH, MAC_SLASH,
+              QStringLiteral("."));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("sslash"), TIMEOUT_MS);
+        Press(CYR_O, CONTROL_KEY, XKB_J, MAC_J, QStringLiteral("о"));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("k1"), TIMEOUT_MS);
     }
 
     // A letter with no Cmd, Ctrl or Alt is text where there is text: in the

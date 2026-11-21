@@ -59,10 +59,32 @@ struct SymbolKey {
 // MapQtKey read it.
 std::span<const SymbolKey> SymbolKeys();
 
+// What the key of a press says about the layout, and what the last one that
+// said anything was. A letter key of the US main block (A to Z) that types a
+// letter tells the layout: a letter of another script than Latin makes the
+// layout non-Latin, a Latin letter makes it Latin. Anything else (a symbol,
+// a digit, a key of Dvorak that types a symbol at a letter position, a special
+// key) says nothing. A Latin letter is believed only without Ctrl, Alt and
+// Meta: with them some platforms give the Latin key of another group of the
+// layout, which is no news about the layout. Call it for every key event
+// before BindingKey; it is a state of the process, as the layout is.
+void ObserveLayout(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical);
+
+// Whether the layout the last ObserveLayout judged is not Latin. Latin until a
+// letter key has been seen.
+bool NonLatinLayout();
+
+// Sets the judgement without a key: for a test that must not depend on what
+// an earlier one pressed.
+void SetNonLatinLayout(bool nonLatin);
+
 // The Qt key a binding matches: qtKey on a Latin layout, else the key the US
-// layout types at the physical position. A letter is the capital (Qt::Key_J
-// for both j and J); a digit or symbol key follows Shift, so Shift+Comma is
-// Qt::Key_Less. qtKey stays when the key is unknown.
-int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical);
+// layout types at the physical position. The layout is non-Latin when
+// `nonLatinLayout` is set (NonLatinLayout()) or qtKey is itself a non-Latin
+// letter. A letter is the capital (Qt::Key_J for both j and J); a digit or
+// symbol key follows Shift, so Shift+Comma is Qt::Key_Less. qtKey stays when
+// the key is unknown.
+int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical,
+               bool nonLatinLayout = false);
 
 }  // namespace roost

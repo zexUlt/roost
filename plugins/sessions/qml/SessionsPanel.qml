@@ -356,8 +356,9 @@ FocusScope {
 
     // The keys of the view. `key` is Roost.bindingKey(event). Letters match the
     // key and Shift (z, Z); symbols match the key and ignore Shift, which a
-    // layout may need for them (? is Shift+7 on the Russian one). Ctrl, Alt or
-    // Meta: not a list key. Whether the key was taken.
+    // layout may need for them (on the Russian one ? is Shift on the key that
+    // is the US slash). Ctrl, Alt or Meta: not a list key. Whether the key was
+    // taken.
     function viewKey(event, key) {
         if ((event.modifiers & ~(Qt.ShiftModifier | Qt.KeypadModifier)) !== 0) {
             return false;

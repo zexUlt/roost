@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "qml_api/roost_singleton.hpp"
+#include "terminal/physical_keys.hpp"
 
 using namespace roost;
 
@@ -86,6 +87,9 @@ private:
 
 private slots:
     void init() {
+        // The layout is a state of the process: each test starts on a Latin
+        // one.
+        SetNonLatinLayout(false);
         // QML creates a singleton at its first use, which would be this very
         // key handler, after the application filter was to see the event. The
         // window of roost uses Roost from its start.
@@ -132,6 +136,23 @@ private slots:
         QCOMPARE(Press(CYR_BE, Qt::NoModifier, XKB_COMMA, MAC_COMMA, 0x100,
                        QStringLiteral("б")),
                  static_cast<int>(Qt::Key_Comma));
+    }
+
+    void SymbolKeysFollowTheLayoutOfTheLastLetter() {
+        // The US slash key types "." on the Russian layout.
+        QCOMPARE(Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, 0x100,
+                       QStringLiteral("о")),
+                 static_cast<int>(Qt::Key_J));
+        QCOMPARE(Press(Qt::Key_Period, Qt::ControlModifier, XKB_SLASH,
+                       MAC_SLASH, 0x100, QStringLiteral(".")),
+                 static_cast<int>(Qt::Key_Slash));
+        // A Latin letter tells the layout is Latin: the character stays.
+        QCOMPARE(Press(Qt::Key_J, Qt::NoModifier, XKB_J, MAC_J, 0x100,
+                       QStringLiteral("j")),
+                 static_cast<int>(Qt::Key_J));
+        QCOMPARE(Press(Qt::Key_Period, Qt::ControlModifier, XKB_SLASH,
+                       MAC_SLASH, 0x100, QStringLiteral(".")),
+                 static_cast<int>(Qt::Key_Period));
     }
 
     void NoCodes() {
