@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace roost {
@@ -352,6 +353,9 @@ void TerminalItem::updateGridSize() {
         return static_cast<int>(
             std::clamp(cells, 1.0, double{VtTerminal::MAX_SIZE}));
     };
+    fprintf(stderr, "DIAG item %p w=%g h=%g cell=%dx%d known=%d\n",
+            static_cast<const void*>(this), width(), height(), cell.Width,
+            cell.Height, int(GridKnown_));
     const int columns = fit(width(), cell.Width);
     const int rows = fit(height(), cell.Height);
     if (columns != Columns_ || rows != Rows_) {
