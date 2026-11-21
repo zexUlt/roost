@@ -155,6 +155,37 @@ private:
 
     QString AttachPidFile() const { return Bin_.filePath("attach.pid"); }
 
+    // Whether roostd has a child that is the attach of the fake claude: the
+    // script (`claude attach <id>`) or the `sleep` it turns into. roostd's
+    // answer to session.open comes after the exec of the program, so from then
+    // on the child is there, whatever the script has done by now; unlike
+    // attach.pid, which the script writes some forks later, as slowly as the
+    // machine is loaded.
+    bool DaemonHasAttachChild() const {
+        QProcess ps;
+        ps.start("ps", {"-A", "-o", "ppid=,args="});
+        if (!ps.waitForFinished(TIMEOUT_MS) ||
+            ps.exitStatus() != QProcess::NormalExit) {
+            return false;
+        }
+        const QString parent =
+            QString::number(Daemon_->ProcessId()) + QLatin1Char(' ');
+        const QString attach = QStringLiteral("claude attach ");
+        const QString sleep = QStringLiteral("sleep 60");
+        for (const QString& raw :
+             QString::fromUtf8(ps.readAllStandardOutput()).split('\n')) {
+            const QString line = raw.trimmed();
+            if (!line.startsWith(parent)) {
+                continue;
+            }
+            const QString args = line.sliced(parent.size()).trimmed();
+            if (args.contains(attach) || args == sleep) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool StartDaemon() {
         // The daemon inherits the environment of this process.
         Path_ = std::make_unique<testing::ScopedEnv>(
@@ -219,10 +250,12 @@ private slots:
     }
 
     // The window opens the session the store marks as opened, and the mode
-    // does not end before roostd has started the attach to it: the attach is
-    // there as soon as the window has exited. The file is not waited for: a
-    // window that exits with the open sent but not answered still gets its
-    // attach started a moment later, and waiting would hide that.
+    // does not end before roostd has started the attach to it: the attach
+    // process of roostd is there as soon as the window has exited. It is looked
+    // for once, not waited for: a window that exits with the open sent but not
+    // answered still gets its attach started a moment later, and waiting would
+    // hide that. What the process does after it started (attach.pid) is not the
+    // promise of the mode, and not looked at before the process is seen.
     void WaitsForTheAttachOfTheOpenedSession() {
         QVERIFY(Prepare(
             EFault::None,
@@ -231,8 +264,10 @@ private slots:
         QElapsedTimer elapsed;
         RunWindow(TIMEOUT_MS * 3, elapsed);
         QVERIFY2(Window_.exitCode() == 0, qPrintable(Errors_));
-        QVERIFY2(QFile::exists(AttachPidFile()), "the attach had not started");
+        QVERIFY2(DaemonHasAttachChild(), "the attach had not started");
         qInfo("ready in %lld ms", static_cast<long long>(elapsed.elapsed()));
+        // For cleanup(): the script has written its pid by now, or soon.
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(AttachPidFile()), TIMEOUT_MS);
     }
 
     // No session is opened at start: nothing is waited for and nothing is

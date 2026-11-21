@@ -181,4 +181,8 @@ bool RoostdProcess::IsRunning() const {
     return Process_ && Process_->state() != QProcess::NotRunning;
 }
 
+qint64 RoostdProcess::ProcessId() const {
+    return IsRunning() ? Process_->processId() : 0;
+}
+
 }  // namespace roost::testing

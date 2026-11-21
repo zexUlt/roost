@@ -56,6 +56,8 @@ public:
     // by itself.
     bool Stop();
     bool IsRunning() const;
+    // The process id of roostd while it runs, 0 otherwise.
+    qint64 ProcessId() const;
 
 private:
     QTemporaryDir Dir_;
