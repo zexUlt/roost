@@ -356,6 +356,21 @@ void TerminalItem::updateGridSize() {
     fprintf(stderr, "DIAG item %p w=%g h=%g cell=%dx%d known=%d\n",
             static_cast<const void*>(this), width(), height(), cell.Width,
             cell.Height, int(GridKnown_));
+    if (!GridKnown_) {
+        for (QQuickItem* up = parentItem(); up != nullptr;
+             up = up->parentItem()) {
+            fprintf(stderr, "DIAG   up %s '%s' %gx%g\n",
+                    up->metaObject()->className(), qPrintable(up->objectName()),
+                    up->width(), up->height());
+        }
+        if (window() != nullptr) {
+            fprintf(stderr, "DIAG   window %dx%d exposed=%d content=%gx%g\n",
+                    window()->width(), window()->height(),
+                    int(window()->isExposed()),
+                    window()->contentItem()->width(),
+                    window()->contentItem()->height());
+        }
+    }
     const int columns = fit(width(), cell.Width);
     const int rows = fit(height(), cell.Height);
     if (columns != Columns_ || rows != Rows_) {
