@@ -100,7 +100,8 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`,
+Binaries land in `build/dev/bin/`; run `build/dev/bin/roost`, with `--dev` it
+reloads a plugin when its files change. Other presets: `asan-ubsan`, `tsan`, `release`,
 `tsan-qt`; see `docs/design/11-build.md`.
 
 ## License
