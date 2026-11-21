@@ -6,6 +6,9 @@
 #
 # Core, Gui, Qml, Quick, Quick Controls, Network and Test live in three
 # submodules, built in dependency order: qtdeclarative needs qtshadertools.
+# qtsvg adds the SVG image plugin: the agent icons are SVG, and without the
+# plugin an Image fails with "Error decoding". The packages carry the same
+# plugin (docs/design/11-build.md).
 #
 # Usage: tools/build_qt_tsan.sh <qt-version> <prefix>
 set -euo pipefail
@@ -15,7 +18,7 @@ prefix=${2:?usage: tools/build_qt_tsan.sh <qt-version> <prefix>}
 
 series=${version%.*}
 base_url=https://download.qt.io/official_releases/qt/$series/$version/submodules
-modules=(qtbase qtshadertools qtdeclarative)
+modules=(qtbase qtshadertools qtsvg qtdeclarative)
 jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc)
 
 # Qt refuses a build directory whose path goes through a symlink, and on
@@ -61,7 +64,7 @@ mkdir "$work/build-qtbase"
     cmake --install .
 )
 
-for module in qtshadertools qtdeclarative; do
+for module in qtshadertools qtsvg qtdeclarative; do
     mkdir "$work/build-$module"
     (
         cd "$work/build-$module"
@@ -87,3 +90,10 @@ for lib in QtCore QtQml QtQuick; do
         exit 1
     fi
 done
+
+# The SVG plugin is loaded at run time, so a missing one shows only as a
+# failed test; fail the build instead.
+if [ ! -e "$prefix/plugins/imageformats/libqsvg.dylib" ]; then
+    echo "FAIL: $prefix/plugins/imageformats/libqsvg.dylib is missing" >&2
+    exit 1
+fi
