@@ -79,6 +79,15 @@ bool StoreService::IsWarm(const QString& plugin) const {
            Cache_.contains(plugin);
 }
 
+std::optional<QJsonObject> StoreService::Cached(const QString& plugin) const {
+    if (!CheckThread(*this, "StoreService::Cached")) {
+        return std::nullopt;
+    }
+    const auto warm = Cache_.constFind(plugin);
+    return warm == Cache_.cend() ? std::nullopt
+                                 : std::optional<QJsonObject>(*warm);
+}
+
 void StoreService::Subscribe() {
     if (Subscription_ != 0) {
         return;

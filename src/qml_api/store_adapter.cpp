@@ -1,5 +1,7 @@
 #include "qml_api/store_adapter.hpp"
 
+#include <QPointer>
+
 #include "qml_api/js_callback.hpp"
 
 namespace roost {
@@ -17,8 +19,22 @@ void StoreAdapter::get(const QString& plugin, const QJSValue& callback) {
     if (context == nullptr) {
         return;
     }
+    // An event can overtake the answer on its way to the callback (the answer
+    // goes through the event loop once more): the callback gets the document
+    // as it is when it is called, so that it never takes a newer one back.
     callMethod(Api_, Engine_, context, QStringLiteral("store.get"),
-               QJsonObject{{QStringLiteral("plugin"), plugin}}, callback);
+               QJsonObject{{QStringLiteral("plugin"), plugin}}, callback,
+               [self = QPointer<StoreAdapter>(this),
+                plugin](const rpc::Result& result) -> rpc::Result {
+                   if (!result || self.isNull()) {
+                       return result;
+                   }
+                   const auto document = self->Api_.Store().Cached(plugin);
+                   return document
+                              ? rpc::Result(QJsonObject{
+                                    {QStringLiteral("document"), *document}})
+                              : result;
+               });
 }
 
 void StoreAdapter::set(const QString& plugin, const QJSValue& document,

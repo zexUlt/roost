@@ -8,6 +8,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <optional>
 
 #include "api/bus_service.hpp"
 #include "core/rpc.hpp"
@@ -65,6 +66,10 @@ public:
     QFuture<rpc::Result> Patch(const QString& plugin, const QJsonValue& patch);
 
     bool IsWarm(const QString& plugin) const;
+
+    // The document as the window knows it now, the answer of `Get` and the
+    // events after it; none when the plugin is not warm.
+    std::optional<QJsonObject> Cached(const QString& plugin) const;
 
 signals:
     // The event of roostd replaced the cached document of the plugin; the
