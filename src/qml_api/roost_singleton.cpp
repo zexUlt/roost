@@ -33,6 +33,12 @@ bool RoostSingleton::eventFilter(QObject* /*watched*/, QEvent* event) {
     if (event->type() == QEvent::KeyPress ||
         event->type() == QEvent::KeyRelease) {
         const auto& keyEvent = static_cast<const QKeyEvent&>(*event);
+        if (event->type() == QEvent::KeyPress) {
+            const ENativeKeyCodes codes =
+                QtKeyOptions::ForThisPlatform().NativeKeys;
+            ObserveLayout(keyEvent.key(), keyEvent.modifiers(),
+                          PhysicalKey(codes, NativeKeyCode(keyEvent, codes)));
+        }
         Recorded_ = {.Key = keyEvent.key(),
                      .Modifiers = keyEvent.modifiers(),
                      .NativeScanCode = keyEvent.nativeScanCode(),
@@ -60,7 +66,7 @@ int RoostSingleton::bindingKey(QObject* event) const {
             QtKeyOptions::ForThisPlatform().NativeKeys;
         physical = PhysicalKey(codes, NativeKeyCode(recorded, codes));
     }
-    return BindingKey(key, modifiers, physical);
+    return BindingKey(key, modifiers, physical, NonLatinLayout());
 }
 
 void RoostSingleton::setApi(api::Api& api) {

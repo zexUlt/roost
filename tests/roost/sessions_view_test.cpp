@@ -15,6 +15,7 @@
 #include <QTest>
 
 #include "helpers/sessions_window.hpp"
+#include "terminal/physical_keys.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -147,7 +148,12 @@ private:
     }
 
 private slots:
-    void init() { Prepare(); }
+    void init() {
+        // The layout is a state of the process: each test starts on a Latin
+        // one and tells its own.
+        roost::SetNonLatinLayout(false);
+        Prepare();
+    }
 
     void cleanup() { Teardown(); }
 
@@ -443,11 +449,13 @@ private slots:
         Press(Qt::Key_J);
         QCOMPARE(Cursor(), 1);
 
-        // Russian: Shift+7 is "?" (kVK_ANSI_7 0x1A, KEY_7 + 8); the same key
-        // closes it.
-        PressShifted(Qt::Key_Question, "?", 0x1A, 16);
+        // Russian: a symbol key is the key of the US layout at its position, so
+        // "?" is Shift on the US slash key, which types "," there. The layout
+        // is told by a letter (Ctrl+о, which the list does not take).
+        PressNative(0x041E, QStringLiteral("о"), 0x26, 44, Qt::ControlModifier);
+        PressShifted(Qt::Key_Comma, ",", 0x2C, 61);
         QVERIFY(HelpOpen());
-        PressShifted(Qt::Key_Question, "?", 0x1A, 16);
+        PressShifted(Qt::Key_Comma, ",", 0x2C, 61);
         QVERIFY(!HelpOpen());
         // Without Shift the key is a "7": no help.
         PressNative(Qt::Key_7, "7", 0x1A, 16);

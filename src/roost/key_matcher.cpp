@@ -100,11 +100,18 @@ KeyMatcher::~KeyMatcher() {
     }
 }
 
+void KeyMatcher::ObserveLayoutOf(const QKeyEvent& event) {
+    const ENativeKeyCodes codes = QtKeyOptions::ForThisPlatform().NativeKeys;
+    ObserveLayout(event.key(), event.modifiers(),
+                  PhysicalKey(codes, NativeKeyCode(event, codes)));
+}
+
 std::optional<KeyChord> KeyMatcher::ChordOf(const QKeyEvent& event) {
     const ENativeKeyCodes codes = QtKeyOptions::ForThisPlatform().NativeKeys;
     const EKey physical = PhysicalKey(codes, NativeKeyCode(event, codes));
     const Qt::KeyboardModifiers modifiers = event.modifiers();
-    const int qtKey = BindingKey(event.key(), modifiers, physical);
+    const int qtKey =
+        BindingKey(event.key(), modifiers, physical, NonLatinLayout());
     bool shiftFromBacktab = false;
     QString name = NameOf(qtKey, shiftFromBacktab);
     if (name.isEmpty()) {
@@ -162,6 +169,7 @@ bool KeyMatcher::eventFilter(QObject* watched, QEvent* event) {
                               .isEmpty();
             return false;
         case QEvent::KeyPress:
+            ObserveLayoutOf(static_cast<const QKeyEvent&>(*event));
             return OnPress(watched, static_cast<const QKeyEvent&>(*event));
         case QEvent::KeyRelease:
             // The release of a key that was caught goes nowhere. Only the

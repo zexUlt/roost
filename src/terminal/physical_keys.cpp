@@ -128,8 +128,36 @@ bool IsNonLatinLetter(int qtKey) {
     }
 }
 
-int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical) {
-    if (!IsNonLatinLetter(qtKey)) {
+namespace {
+
+bool NON_LATIN_LAYOUT = false;
+
+}  // namespace
+
+void ObserveLayout(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical) {
+    if (physical < EKey::A || physical > EKey::Z) {
+        return;
+    }
+    if (IsNonLatinLetter(qtKey)) {
+        NON_LATIN_LAYOUT = true;
+        return;
+    }
+    constexpr Qt::KeyboardModifiers chordModifiers =
+        Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+    const bool latinLetter = qtKey > 0 && qtKey <= QChar::LastValidCodePoint &&
+                             QChar::isLetter(static_cast<char32_t>(qtKey));
+    if (latinLetter && (modifiers & chordModifiers) == 0) {
+        NON_LATIN_LAYOUT = false;
+    }
+}
+
+bool NonLatinLayout() { return NON_LATIN_LAYOUT; }
+
+void SetNonLatinLayout(bool nonLatin) { NON_LATIN_LAYOUT = nonLatin; }
+
+int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical,
+               bool nonLatinLayout) {
+    if (!nonLatinLayout && !IsNonLatinLetter(qtKey)) {
         return qtKey;
     }
     if (physical >= EKey::A && physical <= EKey::Z) {
