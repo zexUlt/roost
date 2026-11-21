@@ -286,6 +286,33 @@ private slots:
         VerifyShows("terminal", shared);
     }
 
+    // A new layout replaces the nodes, and the old ones are deleted only when
+    // the event loop gets to them: the split must not lay them out beside the
+    // new ones, or the new ones are squeezed to the minimum and a terminal in
+    // one opens a session of a few columns.
+    void ANewLayoutIsLaidOutWithoutTheNodesItReplaced() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Shell_->SetLayout(
+            Stacked({Pair("list", "terminal"), Pair("list2", "terminal2")}));
+
+        // Before the old nodes are deleted: the nodes of the new tree are the
+        // ones shown, two pairs of two and the two that hold them.
+        int shown = 0;
+        for (auto* item : Root()->findChildren<QQuickItem*>("SplitNode")) {
+            if (item->inherits("QQuickContentItem")) {
+                for (auto* node : item->childItems()) {
+                    shown += node->isVisible();
+                }
+            }
+        }
+        QCOMPARE(shown, 6);
+        WaitForLayout({{"list", "terminal"}, {"list2", "terminal2"}});
+    }
+
     void AHiddenTerminalDoesNotTakeTheSessionOfAVisibleOne() {
         FailOnWarnings();
         Boot();

@@ -125,9 +125,12 @@ int main(int argc, char* argv[]) {
 
     // Gone before the server.
     roost::PluginHost plugins(server);
+    // Read once: a plugin that is switched off or on in the settings is
+    // loaded or left out at the next start.
     plugins.Load(roost::PluginSearchPath(
-        *config, roost::BundledPluginsDirectory(
-                     QCoreApplication::applicationDirPath())));
+                     *config, roost::BundledPluginsDirectory(
+                                  QCoreApplication::applicationDirPath())),
+                 roost::ReadDisabledPlugins(roost::Store(*config)));
     for (const QString& problem : plugins.Registry().Problems()) {
         qWarning("roostd: %s", qUtf8Printable(problem));
     }

@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/store.hpp"
 #include "roostd/adapter_bridge.hpp"
 #include "roostd/backend.hpp"
 #include "roostd/manifest.hpp"
@@ -16,6 +17,20 @@
 namespace roost {
 
 class Server;
+
+// The plugins the user switched off: `plugins.disabled` of the `settings`
+// document (design.md §8), a list of plugin ids.
+struct DisabledPlugins {
+    QStringList Ids;
+    // Why the setting could not be used, for the problems of plugins.list;
+    // empty when it could. Ids is empty then: nothing is disabled.
+    QString Problem;
+};
+
+// Reads the setting from the store. A document that cannot be read, or a
+// value that is not an array of strings, is a Problem and disables nothing; an
+// absent value is no problem.
+DisabledPlugins ReadDisabledPlugins(const Store& store);
 
 // The plugins roostd serves (design.md §5): it loads them, keeps their
 // backends running, routes commands to them and bridges to the agents they
@@ -69,8 +84,12 @@ public:
 
     // Loads the plugins found on the search path, in its order, and starts
     // their backends. A plugin that cannot load becomes a problem in
-    // Registry(). Once per host.
-    void Load(const QStringList& searchPath);
+    // Registry(). A plugin whose id is in `disabled` is skipped, wherever on
+    // the path it is, and is no problem; an id that is not installed does
+    // nothing. Once per host: the plugins are not read again, so a change of
+    // the setting takes effect at the next start of roostd.
+    void Load(const QStringList& searchPath,
+              const DisabledPlugins& disabled = {});
 
     const PluginRegistry& Registry() const { return Registry_; }
 

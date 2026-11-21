@@ -105,10 +105,34 @@ inline constexpr int LAYOUT_VERSION = 1;
 // terminal.
 Layout DefaultLayout();
 
+// The types of `order` that are a list of sessions: those with the output
+// `selected` of type SessionRef. The one rule for the default layout, the
+// readiness check and the keyboard command that goes to the list.
+QStringList ListPanelTypes(const QStringList& order,
+                           const LayoutKnownPanels& known);
+
+struct DefaultLayoutResult {
+    Layout Tree;
+    // One line each: what was not placed.
+    QStringList Problems;
+};
+
+// The default layout for the panels there are, `order` being the types in
+// load order of their plugins. The list is the first type with the output
+// `selected` of type SessionRef, the terminal the first other type with one
+// input of type SessionRef, and the link goes from the one to the other, by
+// their types and not by their ids. Where there is none, the type of
+// DefaultLayout() stays: its slot shows why it has no panel. Several of a
+// kind: the first is placed, a problem names the others.
+DefaultLayoutResult DefaultLayoutFor(const QStringList& order,
+                                     const LayoutKnownPanels& known);
+
 // Reads a stored document. Never fails as a whole: see LayoutParseResult.
-// `known` decides which leaves are stubs and which links work.
+// `known` decides which leaves are stubs and which links work. `fallback` is
+// the tree of a document that cannot be used.
 LayoutParseResult ParseLayout(const QJsonValue& document,
-                              const LayoutKnownPanels& known);
+                              const LayoutKnownPanels& known,
+                              const Layout& fallback = DefaultLayout());
 
 // The document `{version, root}` of a tree.
 QJsonObject LayoutToJson(const Layout& layout);

@@ -33,6 +33,9 @@ ApplicationWindow {
 
     // The layout tree (see LayoutView.qml), written by C++; null before it.
     property var layoutTree: null
+    // The panel types that are lists of sessions (an output `selected` of type
+    // SessionRef), written by C++.
+    property var listPanelTypes: []
 
     // A slot of the layout view is built; C++ hands it its panel.
     signal slotCreated(var slot)
@@ -248,6 +251,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             tree: root.layoutTree
+            listTypes: root.listPanelTypes
             onSlotCreated: slot => root.slotCreated(slot)
             onSplitResized: (path, sizes) => root.splitResized(path, sizes)
             panelTypes: root.panelTypes

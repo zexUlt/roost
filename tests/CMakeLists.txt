@@ -151,6 +151,7 @@ target_compile_definitions(plugins_test PRIVATE
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>")
 add_dependencies(plugins_test fixture_backend)
 roost_add_qt_test(plugins_list_test roostd/plugins_list_test.cpp roostd_lib)
+roost_add_qt_test(plugins_disabled_test roostd/plugins_disabled_test.cpp roostd_lib)
 roost_add_qt_test(store_service_test roostd/store_service_test.cpp roostd_lib)
 roost_add_qt_test(agents_test roostd/agents_test.cpp roostd_lib)
 target_compile_definitions(agents_test PRIVATE
@@ -560,6 +561,20 @@ target_compile_definitions(plugin_template_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>"
     PLUGIN_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates/plugin-qml")
 add_dependencies(plugin_template_test roostd)
+
+# The built-in list of sessions replaced by a plugin of the user: a copy of
+# templates/plugin-qml with a list panel, `plugins.disabled` in the settings.
+# The window is the unmodified build.
+roost_add_qt_test(plugin_replace_test roost/plugin_replace_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(plugin_replace_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
+    PLUGIN_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates/plugin-qml")
+add_dependencies(plugin_replace_test roostd fake_tui claude-adapter sessions_qml)
 
 # Roost.sessions, the list model over the session cache, as QML reads it.
 roost_add_qt_test(roost_sessions_test qml_api/roost_sessions_test.cpp
