@@ -673,19 +673,17 @@ private slots:
         Events_.reset();
         Client_.reset();
 
-        // A second connection that never asked.
+        // A second connection asks for the other platform, and its event
+        // shows the daemon has handled the change. roostd says nothing when it
+        // has seen the first connection go, so the change waits a while for
+        // that; one change, so a late one cannot be counted twice.
         QVERIFY(Connect());
-        // The daemon has seen the first one go before the file changes.
+        QVERIFY(!Get("mac").isEmpty());
         QTest::qWait(SETTLE_MS);
         QVERIFY(SaveFile(QJsonArray{
             QJsonObject{{"key", "Ctrl+S"}, {"command", "beta.new"}}}));
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 0);
-
-        // The watch is alive: what this connection asks for is published.
-        QVERIFY(!Get("mac").isEmpty());
-        QVERIFY(SaveFile(QJsonArray{}));
         QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
+        // What else the change published is in by then.
         QTest::qWait(SETTLE_MS);
         QCOMPARE(Changes().size(), 1);
         QCOMPARE(Changes()[0].value("platform"), QJsonValue("mac"));
