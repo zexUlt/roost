@@ -1174,13 +1174,11 @@ private slots:
         QVERIFY(popup != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(popup->property("visible").toBool(),
                                  TIMEOUT_MS);
-        auto* const splitDown =
-            Root()->findChild<QQuickItem*>("menuSplitWith_terminal.view_down");
-        QVERIFY(splitDown != nullptr);
-        QVERIFY(splitDown->isEnabled());
-        auto* const editLinks = Root()->findChild<QQuickItem*>("menuEditLinks");
-        QVERIFY(editLinks != nullptr);
-        QVERIFY(editLinks->isEnabled());
+        const auto item = [this](const char* name) {
+            return Root()->findChild<QQuickItem*>(name);
+        };
+        QVERIFY(item("menuSplitWith_terminal.view_down")->isEnabled());
+        QVERIFY(item("menuEditLinks")->isEnabled());
     }
 
     void ARightClickOnAPanelOpensItsMenu() {
