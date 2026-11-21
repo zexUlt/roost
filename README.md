@@ -5,204 +5,68 @@
 [![License: Apache-2.0](https://img.shields.io/github/license/zexUlt/roost)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/zexUlt/roost)](https://github.com/zexUlt/roost/releases)
 
-A desktop app for macOS and Linux that finds every background coding-agent
-session, groups them, and shows each agent's own TUI in a terminal panel, all
-driven from the keyboard. Claude Code and Codex use the same adapter
-interface. Built on Qt Quick and C++, with libghostty-vt as the terminal
-emulator. Every feature is a plugin, and panels can be linked to each other.
+A desktop app for macOS and Linux that finds your background coding-agent
+sessions (Claude Code, Codex), groups them and shows each agent's own TUI in a
+terminal panel, driven from the keyboard. Qt Quick and C++, libghostty-vt as the
+terminal emulator. Every feature is a plugin, and panels can be linked.
 
 Status: the window lists Claude Code background sessions and saved Codex
-threads, and opens them in a terminal panel. It ships as a macOS `.dmg` and a
-Linux AppImage. The panels can be split, put into tabs and linked, the keys
-come from a `keymap.json`, and there is a command palette and a settings
-window. Notifications are not there yet; see `docs/design.md` for the design
-and the plan.
+threads and opens them in a terminal panel; panels split, tab and link; keys
+come from `keymap.json`; there are a command palette and a settings window.
+Notifications are not there yet. Design and plan: [docs/design.md](docs/design.md).
 
 ## Install
 
-Download a package from the
-[releases page](https://github.com/zexUlt/roost/releases).
+Download a package from the [releases page](https://github.com/zexUlt/roost/releases).
 
-### macOS
-
-`roost-<version>-macos-arm64.dmg`, Apple silicon only. Open it and drag
-`roost.app` to Applications.
-
-The app is signed ad hoc, not with a Developer ID, so Gatekeeper refuses it
-on the first start: the dialog says Apple could not verify that the app is
-free of malware. Remove the quarantine attribute once, then start it from
-Finder:
+macOS: `roost-<version>-macos-arm64.dmg`, Apple silicon only. Drag `roost.app`
+to Applications. The app is signed ad hoc, so Gatekeeper refuses the first
+start; remove the quarantine attribute once:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/roost.app
 ```
 
-### Linux
-
-`roost-x86_64.AppImage` or `roost-aarch64.AppImage`, built on Ubuntu 24.04:
-it needs glibc 2.39 or newer and the libstdc++ of GCC 14. The window runs on
-X11 or XWayland.
+Linux: `roost-x86_64.AppImage` or `roost-aarch64.AppImage`. Needs glibc 2.39+
+and the libstdc++ of GCC 14, X11 or XWayland, and `fuse3` (`sudo apt install fuse3`).
 
 ```sh
-chmod +x roost-x86_64.AppImage
-./roost-x86_64.AppImage
+chmod +x roost-x86_64.AppImage && ./roost-x86_64.AppImage
 ```
 
-The AppImage mounts itself through FUSE 3: install the `fuse3` package
-(`sudo apt install fuse3`). It does not need `libfuse2`.
+## At run time
 
-### After the start
+- `claude` (and `codex`, or its full path in `ROOST_CODEX_EXECUTABLE`) must be on
+  the `PATH` that `roostd` starts with: a window started from Finder or a desktop
+  menu passes the environment of your login shell, a window started from a
+  terminal passes that terminal's. A running `roostd` keeps its `PATH`.
+- The window starts `roostd` when nobody listens on its socket. `roostd` outlives
+  the window: Cmd+Q leaves the daemon and the open sessions running. `pkill roostd`
+  stops it.
 
-The window starts `roostd` itself when nobody listens on the socket;
-`roost --no-spawn` (on Linux `./roost-x86_64.AppImage --no-spawn`) turns that
-off. `roostd` outlives the window: quitting the window (Cmd+Q on macOS) leaves
-the daemon and the open sessions running, and the next window finds them
-again. To stop the daemon, `pkill roostd`. Sessions come from `claude agents`,
-run by `roostd`, so `claude` must be on the `PATH` it starts with: a window
-started from Finder or a desktop menu gives it the `PATH` of your login shell,
-a window started from a terminal gives it that terminal's `PATH`. A `roostd`
-that already runs keeps the `PATH` it was started with.
+## First steps
 
-Each session row shows a pixel-art icon of its agent; a file
-`~/.config/roost/agent-icons/<agent>.svg` or `.png` replaces the icon of that
-agent (`$ROOST_CONFIG/agent-icons/` if `ROOST_CONFIG` is set), and
-`default.svg` or `default.png` there replaces the default icon of the agents
-that have none. A file that fails to load falls back to the bundled icon. The
-panel reads the folder when it is created.
+- Session list: `↑`/`↓` or `j`/`k` move, Enter opens the session in the terminal,
+  `Ctrl+\` (Control, also on macOS) goes back to the list.
+- Command palette: `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS).
+- Right-click a panel: split, tabs, close, "Edit links…". The layout is saved.
+- Settings: `Cmd+,` on macOS, the "Settings…" button on Linux.
+- Report a bug: Help menu on macOS, toolbar button on Linux. It writes a zip to
+  Downloads; nothing is sent.
 
-For Codex, put `codex` on that same `PATH` or set `ROOST_CODEX_EXECUTABLE` to
-the full path of the CLI. The adapter uses `codex app-server` to list local,
-unarchived interactive threads and opens them with `codex resume` in their
-original directories. Create new Codex sessions in Codex. Roost lists saved
-threads but does not track live status in other Codex processes.
+## Configuration
 
-Logs are in the directory of the socket: `roostd.log` (the previous run is
-`roostd.log.1`) and `roostd.start.log` (what `roostd` prints before it holds
-the socket). The window writes its own log next to them: `roost.log`, one line
-per message (`2026-11-20T14:05:01.123 pid=12345 W roost.terminal: text`: time,
-process, level D/I/W/C/F, category, text), starting with a line about the
-versions, the platform and the graphics API. A newline, carriage return or
-backslash in a message is written as `\n`, `\r` or `\\`, so a record is one
-line. Every Qt warning goes into the file as it is, including messages from
-plugin QML. A window that starts with the file over 1 MiB moves it to
-`roost.log.1`; a window that is already running keeps writing to the file it
-opened, which may by then be `roost.log.1`. Messages still go to stderr as
-before. The `roost.terminal` lines (session and status changes) carry session
-ids, agent names and statuses, never terminal output or input; they are info,
-for more, `QT_LOGGING_RULES="roost.terminal.debug=true"`. The directory is the first of
-these that applies:
+State and settings live in `~/.config/roost`; `ROOST_CONFIG` or `XDG_CONFIG_HOME` change it.
 
-| Where | Directory |
-|---|---|
-| `ROOST_SOCKET` is set | the directory of that path |
-| `XDG_RUNTIME_DIR` is an absolute path (Linux desktops: `/run/user/<uid>`) | `$XDG_RUNTIME_DIR/roost/` |
-| otherwise (macOS, or Linux without it) | `$TMPDIR/roost-<uid>/`; on macOS a `/var/folders/…/T/roost-<uid>/` path, `echo $TMPDIR` shows it. No `TMPDIR`: `/tmp/roost-<uid>/` |
+| File | What | Details |
+|---|---|---|
+| `settings.json` | theme, fonts, plugin settings (edited in the settings window) | `docs/design/05-plugins.md` |
+| `keymap.json` | your keys, win over the plugins' | `docs/design/16-keymap.md` |
+| `agent-icons/` | `<agent>.svg` or `.png` replaces an agent's icon, `default.*` the fallback | `docs/design/08-state.md` |
+| `plugins/` | your plugins; template: `templates/plugin-qml/` | `docs/design/05-plugins.md` |
 
-State and settings are in `~/.config/roost` (`ROOST_CONFIG` or
-`XDG_CONFIG_HOME` change it).
-
-## Build from source
-
-Needs Clang 17+ (Apple clang on macOS), CMake 3.25+, Ninja, Qt 6.8+ and
-Zig 0.17+. On macOS: `brew install cmake ninja qt zig`.
-
-```sh
-cmake --preset dev
-cmake --build --preset dev
-ctest --preset dev
-```
-
-Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`, `tsan-qt`.
-`tsan-qt` builds against a Qt built with TSan (`tools/build_qt_tsan.sh <version> <prefix>`) and needs
-`ROOST_TSAN_QT_PREFIX=<prefix>`; it runs nightly in `.github/workflows/nightly-tsan.yml`.
-
-### Install the build
-
-```sh
-cmake --install build/release --prefix <dir> --component roost
-```
-
-lays the build out as the OS expects it (the build tree is not changed). On
-macOS that is `<dir>/roost.app`; on Linux the `usr/` of an AppDir:
-`bin/{roost,roostd}`, `lib/roost/plugins/<id>/`, `share/applications/roost.desktop`,
-an icon and `share/licenses/roost/`. The licences (`LICENSE`, `NOTICE`,
-`THIRD_PARTY_LICENSES`, `LGPL-3.0.txt`, `GPL-3.0.txt`) go along. Qt is not
-copied: the installed binaries load it from where the build found it (run path; `-DROOST_INSTALL_RPATH_TO_QT=OFF` leaves that out, for packaging steps that deploy Qt into the bundle). roostd
-finds the installed plugins next to itself, with no `ROOST_PLUGINS_PATH`.
-
-## Run
-
-```sh
-build/dev/bin/roost [--dev]
-```
-
-When nobody listens on the socket (no socket file, or a stale one), the window
-starts `roostd` itself: the `roostd` next to its own binary, detached, so it
-outlives the window and keeps the warm sessions. The banner reads "Starting
-roostd…" meanwhile, and the daemon's output goes to `roostd.log` in the
-directory of the socket (what it prints before it holds the socket lock, to
-`roostd.start.log` there). If the start fails, the banner says why. A roostd
-that refuses the handshake (another version) is not started over: the window
-shows the refusal with a "Restart roostd" button next to Retry. The click sends
-SIGTERM to the process that refused the window, if `<socket>.lock` names it as
-a roostd, waits up to 5 s for it to leave and starts the new one; warm
-terminals close, Claude sessions keep running. Nothing is stopped without the
-click. A live roostd with a full accept backlog also refuses connections, so a
-second one may be started; it loses the socket lock and exits. `roost
---no-spawn` turns the start off. Inside an AppImage the window starts the
-daemon as `$APPIMAGE --roostd` (AppRun runs `usr/bin/roostd` for that
-argument), so the daemon keeps a mount of the image of its own while it lives.
-A window started from the desktop (no `TERM` in its environment, or stdin is not
-a tty) has the bare desktop `PATH`, so before the first start it reads the
-environment of your login shell once (`$SHELL -l -i -c 'env -0'` between two
-markers, 10 s timeout, in the background; the shell's process group is killed on the timeout and as soon as the environment is read, a shell that exited by itself is not chased) and starts roostd with it, `claude`
-on `PATH` included. If that fails, roostd gets the window's own environment and
-the window logs a warning. From a terminal the window's environment is used as
-it is. `APPDIR`, `APPIMAGE`, `ARGV0` and `OWD` are never passed on, and inside
-an AppImage or an extracted AppDir run through AppRun (`APPDIR` set, the window
-inside it) neither are `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH` and
-`QML2_IMPORT_PATH`: AppRun's values, with anything a user appended, are
-dropped. Outside an AppImage a user's own values stay.
-You can still run `build/dev/bin/roostd` by hand first.
-
-roostd finds the built-in plugins next to itself (`build/dev/roost-plugins` for
-a build tree) and then looks in `<ROOST_CONFIG or ~/.config/roost>/plugins`. A
-plugin there with the id of a built-in one is not loaded; `plugins.list` tells
-why. `ROOST_PLUGINS_PATH` (absolute paths, separated by `:`; unset, empty or
-without an absolute path it is ignored) overrides the
-built-in directory: roostd searches the listed directories instead, so list the
-built-in one too to keep its plugins. With `--dev` the
-window reloads a plugin when its files change. It watches the copy under
-`build/dev/roost-plugins`, so after editing `plugins/<id>/qml/*.qml` run
-`cmake --build --preset dev`. Editing a `plugin.json` needs a roostd restart:
-roostd reads manifests at start.
-
-`roostd --log <file>` writes the stdout and stderr of roostd and its backends
-to `<file>` (a new file, mode 0600) and keeps the previous file as `<file>.1`. It
-opens the file only once it holds the socket lock: a second roostd that loses
-the lock exits with code 1 and leaves the log alone.
-
-The window starts with the session list on the left and the terminal on the
-right. In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and
-moves the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS)
-moves it back to the list. The sections below change the layout, the keys, the
-look and the plugins; each links to the design section with the details.
-
-### Layout
-
-Right-click a panel for its menu: split right or down, put the panel into tabs
-or take it out, close it (the last panel stays), and "Edit links…". A link
-feeds an input of a panel from the output of another one, for example which
-session a terminal shows; a new panel has no links, so set them there. The
-layout is saved and comes back after a restart. Details: `docs/design/06-panels.md`,
-"Правка раскладки".
-
-### Keys and the command palette
-
-The keys come from the plugins and from `keymap.json` in the state directory
-(`~/.config/roost`; `ROOST_CONFIG` or `XDG_CONFIG_HOME` change it, see "After
-the start"). roost never writes that file. Its
-entries win over the plugins' keys, and `"command": null` removes a key:
+`keymap.json`: `mac` replaces `key` on macOS, `"command": null` removes a key.
+A saved file is picked up without a restart.
 
 ```json
 [
@@ -211,67 +75,34 @@ entries win over the plugins' keys, and `"command": null` removes a key:
 ]
 ```
 
-`mac` replaces `key` on macOS. A saved file is picked up without a restart;
-a broken file keeps the previous keys and the problem shows in the window.
-Format and rules: `docs/design/16-keymap.md`.
+To replace a built-in plugin, list its id in `{"plugins": {"disabled": ["sessions"]}}`
+of `settings.json`, put yours under another id in `plugins/` and restart `roostd`.
 
-`Ctrl+Shift+P` (`Cmd+Shift+P` on macOS) opens the command palette: every
-command of every plugin, a filter by letters, Enter runs it. Each row shows the
-key of the command, a conflict between two plugins, a key you overrode, and a
-key that takes input from a terminal program. It also opens from the toolbar
-button (Linux) and the View menu (macOS).
+## Logs
 
-### Settings, theme and fonts
+In the directory of the socket: `roostd.log` (previous run `roostd.log.1`),
+`roostd.start.log` and `roost.log` (`roost.log.1`). The directory is, first that applies:
 
-`Cmd+,` on macOS, or the "Settings…" button on Linux, opens the settings
-window: the theme, the terminal font family and size, the UI font size, a page
-for each plugin that has one, and the keys (read only, with a button that opens
-`keymap.json`). An edit is stored in `settings.json` and applies to every open
-window. The colors of the window and of the terminal come from the theme, so a
-program in a session that asks the terminal for its colors gets the ones you
-see. Details: `docs/design/05-plugins.md` (the settings window, `Roost.theme`)
-and `docs/design/03-terminal.md`, "Цвета".
+| Where | Directory |
+|---|---|
+| `ROOST_SOCKET` is set | the directory of that path |
+| `XDG_RUNTIME_DIR` is absolute | `$XDG_RUNTIME_DIR/roost/` |
+| otherwise | `$TMPDIR/roost-<uid>/` (`/tmp/roost-<uid>/` without `TMPDIR`) |
 
-### Replacing a built-in plugin
+## Build from source
 
-List the id of a built-in plugin in `plugins.disabled` of `settings.json`
-(`{"plugins": {"disabled": ["sessions"]}}`) and put your plugin, under another
-id, in `<state directory>/plugins`. The window finds the list by its output
-`selected: SessionRef`, so a list panel from your plugin takes the place of the
-built-in one. `roostd` reads the key at start: restart it after the edit. See
-`docs/design/05-plugins.md` and `templates/plugin-qml/`.
+Needs Clang 17+ (Apple clang on macOS), CMake 3.25+, Ninja, Qt 6.8+ and Zig 0.17+.
+On macOS: `brew install cmake ninja qt zig`.
 
-Two check modes exit by themselves, for CI and packages. `roost --smoke` exits
-0 after the first frame. `roost --smoke-sessions` needs a running roostd: it
-exits 0 once the window is connected, both panels (`sessions.list`,
-`terminal.view`) are created with no loader problem, the session list has at
-least one row and a frame was drawn after that. It exits 1 with the reason on
-stderr at once on a loader problem (for example a missing QML import such as
-`QtCore` or `RoostSessions`), or after 20 s if it is still not ready. It opens
-no session and changes nothing beyond what the window writes when it shows
-the list.
+```sh
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+```
 
-### Reporting a bug
-
-On macOS choose Help → "Report a Bug…" or press `Cmd+Shift+B`; on Linux click
-"Report a Bug…" in the toolbar (`Ctrl+Shift+B` goes to the terminal program
-there). Describe the problem and press Create. roost writes
-`roost-bug-<YYYYMMDD-HHMMSS>.zip` to your Downloads folder (your home directory
-if there is none) and never overwrites an earlier zip. Nothing is sent: "Show
-in Finder" (Linux: "Show in Folder") reveals the zip, and "Open GitHub Issue"
-opens a new issue in the browser with your text in it, so attach the zip
-there.
-
-The zip holds `about.txt` (versions of roost and Qt, OS, kernel, CPU, graphics
-API, the socket path), `description.txt` and, if they exist, the logs next to the
-socket: `roostd.log`, `roostd.log.1`, `roostd.start.log`, `roost.log`,
-`roost.log.1`. Of each log only the last 8 MiB go in, after the line
-`[roost: first <N> bytes cut]`. Logs may contain paths and session names: read them before you
-send. The settings (the files of `~/.config/roost` or `$XDG_CONFIG_HOME/roost`
-that roostd's store writes, `*.json`) go in only if you tick "Include settings";
-they are off by default.
+Binaries land in `build/dev/bin/`. Other presets: `asan-ubsan`, `tsan`, `release`,
+`tsan-qt`; see `docs/design/11-build.md`.
 
 ## License
 
-Apache-2.0, see `LICENSE`. Third-party components and their licences are listed
-in `THIRD_PARTY_LICENSES`.
+Apache-2.0, see `LICENSE`. Third-party components are listed in `THIRD_PARTY_LICENSES`.
