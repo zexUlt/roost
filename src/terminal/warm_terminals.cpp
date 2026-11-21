@@ -252,6 +252,8 @@ void WarmTerminals::StartOpen(const SessionKey& key, bool sized) {
     entry->SentSize = sized ? std::optional(entry->Grid) : std::nullopt;
     fprintf(stderr, "DIAG open %s sized=%d %dx%d\n", qPrintable(key.Id),
             int(sized), entry->Grid.first, entry->Grid.second);
+    fprintf(stderr, "DIAG open %s sized=%d %dx%d\n", qPrintable(key.Id),
+            int(sized), entry->Grid.first, entry->Grid.second);
     // The context is the IO thread, which outlives the pool, so the answer
     // always arrives; the pool may be gone by then.
     (sized ? Io_.Open(key.Agent, key.Id, entry->Grid.first, entry->Grid.second)
@@ -381,6 +383,8 @@ void WarmTerminals::PumpResize(Entry& entry) {
     const auto channel = entry.Channel;
     entry.SentSize = entry.Grid;
     entry.ResizeInFlight = true;
+    fprintf(stderr, "DIAG resize %s %dx%d\n", qPrintable(entry.Key.Id), columns,
+            rows);
     fprintf(stderr, "DIAG resize %s %dx%d\n", qPrintable(entry.Key.Id), columns,
             rows);
     Io_.Resize(channel, columns, rows)

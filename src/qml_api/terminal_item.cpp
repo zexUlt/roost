@@ -345,6 +345,9 @@ int TerminalItem::columns() const { return Columns_; }
 int TerminalItem::rows() const { return Rows_; }
 
 void TerminalItem::updateGridSize() {
+    fprintf(stderr, "DIAG size %p w=%g h=%g settling=%d known=%d\n",
+            static_cast<const void*>(this), width(), height(), int(Settling_),
+            int(GridKnown_));
     const auto cell = Renderer_.Metrics();
     // A cell cannot be empty; the guard keeps a broken font from dividing by
     // zero.
@@ -395,6 +398,9 @@ void TerminalItem::updateGridSize() {
 }
 
 void TerminalItem::updatePolish() {
+    fprintf(stderr, "DIAG polish %p w=%g h=%g settling=%d known=%d\n",
+            static_cast<const void*>(this), width(), height(), int(Settling_),
+            int(GridKnown_));
     QQuickItem::updatePolish();
     if (!Settling_) {
         return;
