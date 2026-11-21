@@ -262,6 +262,9 @@ public:
 protected:
     QStringList Changes_;
     bool WithoutTerminal_ = false;
+    // OpenWindow makes the loader and the shell only after roostd has told
+    // the plugins, as a window does whose QML took long to load.
+    bool PluginsFirst_ = false;
     // The type of the list panel OpenWindow waits for.
     QString ListType_ = LIST;
     bool SpySelected_ = false;

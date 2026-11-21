@@ -72,6 +72,7 @@ void SessionsWindow::Teardown() {
     CloseWindow();
     StopDaemon();
     WithoutTerminal_ = false;
+    PluginsFirst_ = false;
     SpySelected_ = false;
     ListType_ = LIST;
 }
@@ -246,6 +247,9 @@ void SessionsWindow::OpenWindow() {
     Api_->Connect(SocketPath());
     Engine_->loadFromModule("Roost.Shell", "Main");
     QVERIFY(!Engine_->rootObjects().isEmpty());
+    if (PluginsFirst_) {
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Plugins().IsLoaded(), TIMEOUT_MS);
+    }
     Loader_ =
         std::make_unique<PluginLoader>(*Engine_, Api_->Plugins(), *Singleton_);
     Shell_ = std::make_unique<Shell>(*Engine_->rootObjects().first(), *Loader_,
