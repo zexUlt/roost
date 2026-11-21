@@ -30,10 +30,12 @@ void StoreAdapter::get(const QString& plugin, const QJSValue& callback) {
                        return result;
                    }
                    const auto document = self->Api_.Store().Cached(plugin);
-                   return document
-                              ? rpc::Result(QJsonObject{
-                                    {QStringLiteral("document"), *document}})
-                              : result;
+                   if (!document) {
+                       return result;
+                   }
+                   QJsonObject answer = result->toObject();
+                   answer.insert(QStringLiteral("document"), *document);
+                   return rpc::Result(answer);
                });
 }
 
