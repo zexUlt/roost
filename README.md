@@ -200,7 +200,8 @@ layout is saved and comes back after a restart. Details: `docs/design/06-panels.
 ### Keys and the command palette
 
 The keys come from the plugins and from `keymap.json` in the state directory
-(`~/.config/roost`, or `$ROOST_CONFIG`). roost never writes that file. Its
+(`~/.config/roost`; `ROOST_CONFIG` or `XDG_CONFIG_HOME` change it, see "After
+the start"). roost never writes that file. Its
 entries win over the plugins' keys, and `"command": null` removes a key:
 
 ```json
