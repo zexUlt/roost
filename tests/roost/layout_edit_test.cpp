@@ -1178,7 +1178,9 @@ private slots:
             Root()->findChild<QQuickItem*>("menuSplitWith_terminal.view_down");
         QVERIFY(splitDown != nullptr);
         QVERIFY(splitDown->isEnabled());
-        QVERIFY(Root()->findChild<QQuickItem*>("menuEditLinks")->isEnabled());
+        auto* const editLinks = Root()->findChild<QQuickItem*>("menuEditLinks");
+        QVERIFY(editLinks != nullptr);
+        QVERIFY(editLinks->isEnabled());
     }
 
     void ARightClickOnAPanelOpensItsMenu() {
