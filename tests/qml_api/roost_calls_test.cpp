@@ -408,6 +408,26 @@ private slots:
                  QJsonValue(QJsonObject{{"document", Doc(2)}}));
     }
 
+    // The answer of a read goes through the event loop once more before the
+    // callback runs, and an event of a write that follows the read can be
+    // handled in between. The callback gets the document as it is then, not
+    // the older one of the answer.
+    void AReadIsNotOlderThanAnEventThatOvertookIt() {
+        QVERIFY(Setup());
+        Invoke("storeGet", {"fixture"});
+        const QFuture<rpc::Result> patched =
+            Api_->Store().Patch("fixture", Doc(1));
+        // The GUI thread does not run the event loop, so that the answer of
+        // the read, the answer of the patch and the event are all queued for
+        // it by the time it does: the event is handled before the callback.
+        QTest::qSleep(300);
+        QVERIFY(Wait(patched));
+        const QJsonObject got = WaitForTag("get");
+        QVERIFY2(!got.contains("timedOut"), "no answer");
+        QCOMPARE(got.value("res"),
+                 QJsonValue(QJsonObject{{"document", Doc(1)}}));
+    }
+
     void ALayoutPatchOfAnotherWindowIsHeardAsTheWholeDocument() {
         QVERIFY(Setup());
         // The window reads layout, so that it is kept fresh, and listens.

@@ -7,6 +7,8 @@
 #include <QPointer>
 #include <QtLogging>
 
+#include <utility>
+
 namespace roost {
 
 QJsonValue toJson(QJSEngine& engine, const QJSValue& value) {
@@ -73,14 +75,17 @@ void answer(QJSEngine& engine, const QJSValue& callback, const QString& what,
 }
 
 void answerLater(QJSEngine& engine, QObject* context, const QJSValue& callback,
-                 const QString& what, const rpc::Result& result) {
+                 const QString& what, const rpc::Result& result,
+                 LatestResult latest) {
     // Through the event loop, even when the result is already there: a
     // callback never runs inside the JS call that asked for it.
     QMetaObject::invokeMethod(
         context,
-        [engine = QPointer<QJSEngine>(&engine), callback, what, result] {
+        [engine = QPointer<QJSEngine>(&engine), callback, what, result,
+         latest = std::move(latest)] {
             if (engine) {
-                answer(*engine, callback, what, result);
+                answer(*engine, callback, what,
+                       latest ? latest(result) : result);
             }
         },
         Qt::QueuedConnection);
@@ -88,13 +93,14 @@ void answerLater(QJSEngine& engine, QObject* context, const QJSValue& callback,
 
 void callMethod(api::Api& api, QJSEngine& engine, QObject* context,
                 const QString& method, const QJsonValue& params,
-                const QJSValue& callback) {
+                const QJSValue& callback, LatestResult latest) {
     api.Dispatch()
         .Call(method, params, context)
         .then(context, [engine = QPointer<QJSEngine>(&engine), context,
-                        callback, method](const rpc::Result& result) {
+                        callback, method,
+                        latest = std::move(latest)](const rpc::Result& result) {
             if (engine) {
-                answerLater(*engine, context, callback, method, result);
+                answerLater(*engine, context, callback, method, result, latest);
             }
         });
 }

@@ -6,6 +6,8 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
+
 #include "api/api.hpp"
 #include "core/rpc.hpp"
 
@@ -32,16 +34,20 @@ void answer(QJSEngine& engine, const QJSValue& callback, const QString& what,
 
 // Like `answer`, but always from the event loop, never inside the caller:
 // `context` (a GUI-thread object) is where the event is posted, and when it is
-// destroyed the answer is dropped.
+// destroyed the answer is dropped. `latest`, if set, is asked at the moment
+// the answer is handed over and may replace the result: an event that arrived
+// on the way is newer than the answer.
+using LatestResult = std::function<rpc::Result(const rpc::Result&)>;
 void answerLater(QJSEngine& engine, QObject* context, const QJSValue& callback,
-                 const QString& what, const rpc::Result& result);
+                 const QString& what, const rpc::Result& result,
+                 LatestResult latest = {});
 
 // Calls `method` of the API by name and answers the callback with the result,
 // in the GUI thread, never before the caller has returned. `context` must live
 // in the GUI thread: when it is destroyed, or the engine is, the answer is
-// dropped and the callback is not called.
+// dropped and the callback is not called. `latest` as in `answerLater`.
 void callMethod(api::Api& api, QJSEngine& engine, QObject* context,
                 const QString& method, const QJsonValue& params,
-                const QJSValue& callback);
+                const QJSValue& callback, LatestResult latest = {});
 
 }  // namespace roost
