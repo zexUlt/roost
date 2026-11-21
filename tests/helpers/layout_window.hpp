@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickItem>
+#include <QRegularExpression>
 #include <QString>
 
 #include "helpers/sessions_window.hpp"
@@ -94,6 +95,26 @@ public:
         const auto* pane =
             item == nullptr ? nullptr : item->findChild<SessionPane*>();
         return pane == nullptr ? QString{} : Screen(pane->Session());
+    }
+
+    // For the message of a failed check on ScreenOf: the size of the grid and
+    // of the item, which says whether the program drew in a narrow terminal,
+    // and the end of the screen without the OSC sequences that open it (the
+    // palette is longer than the log keeps).
+    QString ScreenReport(const QString& terminal) {
+        const TerminalItem* item = TerminalOf(terminal);
+        if (item == nullptr) {
+            return QStringLiteral("no terminal item");
+        }
+        return QStringLiteral("%1x%2 cells, %3x%4 px:\n%5")
+            .arg(item->columns())
+            .arg(item->rows())
+            .arg(item->width())
+            .arg(item->height())
+            .arg(ScreenOf(terminal)
+                     .remove(QRegularExpression(
+                         "\x1b\\][^\x1b\x07]*(\x1b\\\\|\x07)"))
+                     .right(3000));
     }
 
     QString TerminalText(const QString& terminal) {

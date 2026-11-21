@@ -92,10 +92,10 @@ private slots:
         TerminalItem* const second = TerminalOf("terminal2");
         QTRY_VERIFY2_WITH_TIMEOUT(
             ScreenOf("terminal").contains(Greeting(idFirst)),
-            qPrintable(ScreenOf("terminal")), TIMEOUT_MS);
+            qPrintable(ScreenReport("terminal")), TIMEOUT_MS);
         QTRY_VERIFY2_WITH_TIMEOUT(
             ScreenOf("terminal2").contains(Greeting(idSecond)),
-            qPrintable(ScreenOf("terminal2")), TIMEOUT_MS);
+            qPrintable(ScreenReport("terminal2")), TIMEOUT_MS);
 
         SelectRowZero(first);
         SelectRowZero(second);
@@ -135,10 +135,10 @@ private slots:
         TerminalItem* const second = TerminalOf("terminal2");
         QTRY_VERIFY2_WITH_TIMEOUT(
             ScreenOf("terminal").contains(Greeting(idFirst)),
-            qPrintable(ScreenOf("terminal")), TIMEOUT_MS);
+            qPrintable(ScreenReport("terminal")), TIMEOUT_MS);
         QTRY_VERIFY2_WITH_TIMEOUT(
             ScreenOf("terminal2").contains(Greeting(idSecond)),
-            qPrintable(ScreenOf("terminal2")), TIMEOUT_MS);
+            qPrintable(ScreenReport("terminal2")), TIMEOUT_MS);
         SelectRowZero(first);
         SelectRowZero(second);
 
