@@ -227,10 +227,19 @@ private:
         return ShowWindow();
     }
 
+    // Shown, and a frame has been drawn: the item has had the polish it waits
+    // for before it opens a session, and a ref set from now on opens at once.
     bool ShowWindow() {
+        QSignalSpy frames(Window_.get(), &QQuickWindow::frameSwapped);
         Window_->show();
-        return QTest::qWaitForWindowExposed(Window_.get()) &&
-               QTest::qWaitForWindowActive(Window_.get());
+        if (!QTest::qWaitForWindowExposed(Window_.get()) ||
+            !QTest::qWaitForWindowActive(Window_.get()) ||
+            (frames.isEmpty() && !frames.wait(TIMEOUT_MS))) {
+            return false;
+        }
+        // The item opens from an event it posted in that polish.
+        QCoreApplication::processEvents();
+        return true;
     }
 
     // The window goes first: its render thread reads the item in each frame.
@@ -343,18 +352,6 @@ private slots:
     void ASessionOpensAtTheSizeOfTheLayoutAfterItsPolish() {
         QVERIFY(Prepare());
         QVERIFY(ShowPage(QML_LITERAL, false));
-        auto* const pane = Item_->findChild<SessionPane*>();
-        QVERIFY(pane != nullptr);
-        QObject scope;
-        QString firstSize;
-        connect(pane, &SessionPane::Updated, &scope, [&] {
-            const auto match =
-                QRegularExpression(QStringLiteral(R"(size \d+x\d+)"))
-                    .match(Screen(pane->Session()));
-            if (firstSize.isEmpty() && match.hasMatch()) {
-                firstSize = match.captured();
-            }
-        });
         const CellMetrics cell = MeasureCell(Item_->font());
         auto* const layout = new LateLayout(Window_->contentItem());
         layout->setSize(QSizeF(COLUMNS * cell.Width, ROWS * cell.Height));
@@ -363,16 +360,21 @@ private slots:
         Page_->setParentItem(layout);
         Window_->resize(layout->size().toSize());
         QVERIFY(ShowWindow());
+        // The grid the item has when the session starts to open.
+        QSize openedAt;
+        connect(Item_, &TerminalItem::statusChanged, layout, [&] {
+            if (openedAt.isEmpty() && Item_->status() == "opening") {
+                openedAt = QSize(Item_->columns(), Item_->rows());
+            }
+        });
 
+        // The layout asks first, then the child gets the minimum.
         layout->polish();
         Page_->setSize(QSizeF(5 * cell.Width, ROWS * cell.Height));
-        // Nothing is opened at the size the layout gives for the moment.
-        QCOMPARE(Item_->status(), QStringLiteral("none"));
 
         QTRY_COMPARE_WITH_TIMEOUT(Item_->status(), QStringLiteral("open"),
                                   TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(!firstSize.isEmpty(), TIMEOUT_MS);
-        QCOMPARE(firstSize, SizeLine(COLUMNS, ROWS));
+        QCOMPARE(openedAt, QSize(COLUMNS, ROWS));
         // The layout and the page go before the window.
         Page_->setParentItem(nullptr);
         delete layout;

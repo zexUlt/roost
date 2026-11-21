@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 
 namespace roost {
@@ -345,9 +344,6 @@ int TerminalItem::columns() const { return Columns_; }
 int TerminalItem::rows() const { return Rows_; }
 
 void TerminalItem::updateGridSize() {
-    fprintf(stderr, "DIAG size %p w=%g h=%g settling=%d known=%d\n",
-            static_cast<const void*>(this), width(), height(), int(Settling_),
-            int(GridKnown_));
     const auto cell = Renderer_.Metrics();
     // A cell cannot be empty; the guard keeps a broken font from dividing by
     // zero.
@@ -356,24 +352,6 @@ void TerminalItem::updateGridSize() {
         return static_cast<int>(
             std::clamp(cells, 1.0, double{VtTerminal::MAX_SIZE}));
     };
-    fprintf(stderr, "DIAG item %p w=%g h=%g cell=%dx%d known=%d\n",
-            static_cast<const void*>(this), width(), height(), cell.Width,
-            cell.Height, int(GridKnown_));
-    if (!GridKnown_) {
-        for (QQuickItem* up = parentItem(); up != nullptr;
-             up = up->parentItem()) {
-            fprintf(stderr, "DIAG   up %s '%s' %gx%g\n",
-                    up->metaObject()->className(), qPrintable(up->objectName()),
-                    up->width(), up->height());
-        }
-        if (window() != nullptr) {
-            fprintf(stderr, "DIAG   window %dx%d exposed=%d content=%gx%g\n",
-                    window()->width(), window()->height(),
-                    int(window()->isExposed()),
-                    window()->contentItem()->width(),
-                    window()->contentItem()->height());
-        }
-    }
     const int columns = fit(width(), cell.Width);
     const int rows = fit(height(), cell.Height);
     if (columns != Columns_ || rows != Rows_) {
@@ -390,26 +368,29 @@ void TerminalItem::updateGridSize() {
         // Not now: a layout that has not polished yet gives a new child the
         // size of its minimum, and a session opened at that is a PTY of a few
         // columns, which the program draws in and the terminals reflow
-        // afterwards. The polish of the window runs the layout before the
-        // item.
+        // afterwards. updatePolish opens it once the window has polished.
         Settling_ = true;
         polish();
     }
 }
 
 void TerminalItem::updatePolish() {
-    fprintf(stderr, "DIAG polish %p w=%g h=%g settling=%d known=%d\n",
-            static_cast<const void*>(this), width(), height(), int(Settling_),
-            int(GridKnown_));
     QQuickItem::updatePolish();
     if (!Settling_) {
         return;
     }
-    Settling_ = false;
-    if (!GridKnown_ && holdsACell()) {
-        GridKnown_ = true;
-        applySessionRef();
-    }
+    // The window polishes the item that asked last first, so the layout may
+    // be still to come in this pass: the session is opened after it.
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            Settling_ = false;
+            if (!GridKnown_ && holdsACell()) {
+                GridKnown_ = true;
+                applySessionRef();
+            }
+        },
+        Qt::QueuedConnection);
 }
 
 void TerminalItem::geometryChange(const QRectF& newGeometry,
