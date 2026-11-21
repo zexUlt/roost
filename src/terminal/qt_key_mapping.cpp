@@ -245,7 +245,7 @@ bool IsCopyShortcut(int key, Qt::KeyboardModifiers modifiers,
                     std::optional<quint32> nativeKey,
                     const QtKeyOptions& options) {
     const EKey physical = PhysicalKey(options.NativeKeys, nativeKey);
-    if (BindingKey(key, modifiers, physical) != Qt::Key_C) {
+    if (BindingKey(key, modifiers, physical, NonLatinLayout()) != Qt::Key_C) {
         return false;
     }
     // The keypad flag rides on some keys on macOS and means nothing here.

@@ -344,6 +344,21 @@ private slots:
         QCOMPARE(Counter_.Presses, 1);
     }
 
+    // Some platforms report the Latin letter of another layout group with
+    // Ctrl: such a press does not make the layout Latin, so a symbol key after
+    // it still matches by its US position.
+    void ACtrlLatinLetterOnTheRussianLayoutKeepsTheLayout() {
+        QVERIFY(Boot({Entry("Ctrl+/", "sslash")}));
+        QVERIFY(Focus("otherItem"));
+        Press(CYR_O, Qt::NoModifier, XKB_J, MAC_J, QStringLiteral("о"));
+        Press(Qt::Key_J, CONTROL_KEY, XKB_J, MAC_J, QStringLiteral("j"));
+        QCOMPARE(Counter_.Presses, 2);
+        Press(Qt::Key_Period, CONTROL_KEY, XKB_SLASH, MAC_SLASH,
+              QStringLiteral("."));
+        QTRY_VERIFY_WITH_TIMEOUT(Ran("sslash"), TIMEOUT_MS);
+        QCOMPARE(Counter_.Presses, 2);
+    }
+
     // Shift+4 types ";" on the Russian layout: the press is Ctrl+Shift+4, not
     // Ctrl+;.
     void CtrlShiftFourOnTheRussianLayoutIsNotCtrlSemicolon() {

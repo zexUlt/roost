@@ -85,6 +85,6 @@ void SetNonLatinLayout(bool nonLatin);
 // symbol key follows Shift, so Shift+Comma is Qt::Key_Less. qtKey stays when
 // the key is unknown.
 int BindingKey(int qtKey, Qt::KeyboardModifiers modifiers, EKey physical,
-               bool nonLatinLayout = false);
+               bool nonLatinLayout);
 
 }  // namespace roost

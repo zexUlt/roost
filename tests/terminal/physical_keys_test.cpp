@@ -182,7 +182,8 @@ private slots:
                      Qt::NoModifier,
                      PhysicalKey(ENativeKeyCodes::MacVirtualKey,
                                  roost::NativeKeyCode(
-                                     event, ENativeKeyCodes::MacVirtualKey))),
+                                     event, ENativeKeyCodes::MacVirtualKey)),
+                     false),
                  0x44E);
     }
 
@@ -225,19 +226,20 @@ private slots:
         QFETCH(int, unshifted);
         QFETCH(int, shifted);
         constexpr int cyrillicBe = 0x411;
-        QCOMPARE(::BindingKey(cyrillicBe, Qt::NoModifier, physical), unshifted);
-        QCOMPARE(::BindingKey(cyrillicBe, Qt::ShiftModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::NoModifier, physical, false),
+                 unshifted);
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::ShiftModifier, physical, false),
                  shifted);
         // Only Shift picks the shifted symbol.
-        QCOMPARE(::BindingKey(cyrillicBe, Qt::ControlModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::ControlModifier, physical, false),
                  unshifted);
-        QCOMPARE(::BindingKey(cyrillicBe, Qt::AltModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::AltModifier, physical, false),
                  unshifted);
-        QCOMPARE(::BindingKey(cyrillicBe, Qt::MetaModifier, physical),
+        QCOMPARE(::BindingKey(cyrillicBe, Qt::MetaModifier, physical, false),
                  unshifted);
         QCOMPARE(
             ::BindingKey(cyrillicBe, Qt::ControlModifier | Qt::ShiftModifier,
-                         physical),
+                         physical, false),
             shifted);
     }
 
@@ -285,8 +287,9 @@ private slots:
         QFETCH(int, mods);
         QFETCH(EKey, physical);
         QFETCH(int, expected);
-        QCOMPARE(::BindingKey(qtKey, Qt::KeyboardModifiers(mods), physical),
-                 expected);
+        QCOMPARE(
+            ::BindingKey(qtKey, Qt::KeyboardModifiers(mods), physical, false),
+            expected);
     }
 
     // On a non-Latin layout a symbol key is the key of the US layout at its
