@@ -674,10 +674,12 @@ private slots:
         Client_.reset();
 
         // A second connection asks for the other platform, and its event
-        // shows the daemon has handled the change: nothing here waits for the
-        // daemon to see the first connection go, a sleep would only guess.
+        // shows the daemon has handled the change. roostd says nothing when it
+        // has seen the first connection go, so the change waits a while for
+        // that; one change, so a late one cannot be counted twice.
         QVERIFY(Connect());
         QVERIFY(!Get("mac").isEmpty());
+        QTest::qWait(SETTLE_MS);
         QVERIFY(SaveFile(QJsonArray{
             QJsonObject{{"key", "Ctrl+S"}, {"command", "beta.new"}}}));
         QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
