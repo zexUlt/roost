@@ -542,6 +542,9 @@ private slots:
         QSignalSpy respawned(PanelOf(LIST), SIGNAL(respawned(QVariant)));
         OpenAndBack(1);
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
+        // The fake writes the pid file after the call, so wait for both.
+        QTRY_VERIFY_WITH_TIMEOUT(AttachPid(BETA) > 0, TIMEOUT_MS);
+        const auto oldAttach = static_cast<pid_t>(AttachPid(BETA));
 
         AskAndConfirm(Qt::Key_R);
 
@@ -551,8 +554,12 @@ private slots:
         Settle();
         QCOMPARE(respawned.count(), 1);
         QCOMPARE(Commands(), QStringList{"respawn " + BETA});
-        // The old attach ended, and the same session is shown again.
-        QVERIFY(Changes_.filter(QRegularExpression("^ended\\|")).size() >= 1);
+        // The old attach ended, and the same session is shown again. The
+        // status "ended" is not looked for: the panel reopens from inside
+        // that very change when the attach ends after the answer, so the
+        // observers of the item see "opening" and never "ended". The
+        // process says it without the order of the two.
+        QVERIFY(::kill(oldAttach, 0) != 0);
         QCOMPARE(SelectedId(), BETA);
         QVERIFY(ScreenNow().contains(Greeting(BETA)));
     }

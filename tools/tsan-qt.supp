@@ -30,3 +30,23 @@ race_top:QSGSoftwareThreadedRenderLoop::handleExposure
 # Write: https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L316-L325
 # Read:  https://github.com/qt/qtbase/blob/6.12/src/corelib/io/qfilesystemwatcher_fsevents.mm#L51-L58
 race:QFseventsFileSystemWatcherEngine
+
+# Qt 6.12, macOS: QThreadPrivate::start in two threads, an 8-byte write at the
+# same address (palette_test: a finished QThreadPool thread, then roost's
+# IoThread). The write is pthread_cleanup_push/pop, a macro of the SDK header
+# that stores into the thread's own pthread_t, inlined into Qt's instrumented
+# code: `__self->__cleanup_stack = &__handler` (usr/include/pthread/pthread.h
+# of macOS SDK 26.5, lines 116-129; libpthread-539.100.4 include/pthread/pthread.h
+# lines 116-123), the field at offset 8 of struct _opaque_pthread_t. libpthread
+# puts the pthread_t at the top of the thread's own stack allocation
+# (src/pthread.c lines 679-683 in _pthread_allocate) and hands the whole
+# allocation back to the kernel when the thread ends (__bsdthread_terminate,
+# src/pthread.c line 873); the next pthread_create can get the same address
+# from mach_vm_allocate. Neither the unmap nor the new mapping is visible to
+# TSan, so the new thread's push is reported against the old thread's pop. No
+# roost data is involved: the only frame is Qt's, the address is the stack of a
+# thread.
+# Push: https://github.com/qt/qtbase/blob/v6.12.0/src/corelib/thread/qthread_unix.cpp#L442
+# Pop:  https://github.com/qt/qtbase/blob/v6.12.0/src/corelib/thread/qthread_unix.cpp#L484
+# Alloc: https://github.com/apple-oss-distributions/libpthread/blob/libpthread-539.100.4/src/pthread.c#L679-L690
+race_top:QThreadPrivate::start
