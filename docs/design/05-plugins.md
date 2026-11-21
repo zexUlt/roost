@@ -76,7 +76,7 @@ Qt 6 совместим назад внутри major-версии: «Minor rele
 
 - собирать в release против Qt 6.8 — нижней границы, с которой собирается сам roost (`find_package(Qt6 6.8 ...)` в `CMakeLists.txt`); такой модуль грузится в roost на любом Qt 6.8 и новее внутри Qt 6;
 - пользоваться только публичным API Qt: приватные заголовки (`QQuickItemPrivate`, внутренности scene graph) гарантией совместимости не покрыты;
-- свою копию Qt не класть: модуль использует Qt из бандла roost. Что вторая копия при этом не появляется, проверяется в M8 (§14).
+- свою копию Qt не класть: модуль использует Qt из бандла roost. Что вторая копия при этом не появляется, проверяется в M9 (§14).
 
 Манифест:
 
@@ -95,7 +95,7 @@ Qt 6 совместим назад внутри major-версии: «Minor rele
 
 QML-модуль плагина, без библиотеки на C ABI:
 
-- Работают `qt` и `qmlImportPath`. `qt` — `"MAJOR.MINOR"` без патча, такой же major, как у Qt в roost, и minor не выше. Оба ключа необязательны. `library` и `sdk` пока отказывают весь плагин с причиной в проблемах (до SDK 0.1, M8).
+- Работают `qt` и `qmlImportPath`. `qt` — `"MAJOR.MINOR"` без патча, такой же major, как у Qt в roost, и minor не выше. Оба ключа необязательны. `library` и `sdk` пока отказывают весь плагин с причиной в проблемах (до SDK 0.1, M9).
 - `roostd` отдаёт `native` в `plugins.list`, только если плагин его объявил; окно не различает отсутствующий ключ и пустой объект: в обоих случаях добавлять нечего. Окно добавляет `<каталог плагина>/<qmlImportPath>` в import path движка после путей, которые там уже были: плагин не подменяет модуль roost, а модуль с одним URI у двух плагинов принадлежит тому, кто раньше в порядке загрузки. Пути стоят до загрузки панелей, поэтому панель делает `import <URI>`.
 - Изменение `native` перезагружает плагин, как изменение `contributes`; выгруженный плагин убирает свой каталог из import path. Модуль, который движок уже импортировал, остаётся в нём до выхода: библиотеку модуля Qt держит загруженной, изменённую подхватывает перезапуск окна.
 - Рецепт для модуля на чистом QML: `native: {"qmlImportPath": "qml"}`, в `qml/<URI, точки как каталоги>/` лежат `qmldir` (`module <URI>`, строка `Тип 1.0 Тип.qml` на тип) и файлы типов, панель начинается с `import <URI>`. URI не из пространства `Roost.*`: оно у roost.
@@ -113,7 +113,7 @@ QML-модуль плагина, без библиотеки на C ABI:
 
 - `roost_host {struct_size, sdk_minor, …}` и таблицы функций, которые плагин передаёт в roost, только дописываются в конец. Обёртка проверяет `struct_size` перед вызовом функции из более новой версии; таблицу плагина roost копирует в обнулённую структуру по меньшему из размеров, по образцу libobs (`obs_register_source_s`, https://github.com/obsproject/obs-studio/blob/7cad8fc22ad3ea68e44d056fde57be2fe0f5b719/libobs/obs-module.c).
 - Функции хоста — `call(method, payload, cb, user)`, `subscribe(pattern, cb, user)`, `unsubscribe`, `publish(name, payload)`, `post_to_gui(fn, user)`, `log`. Имена методов и схемы — каталог §4: новый метод API — новое имя, а не новый ABI. Отдельные типизированные функции появляются только для горячих путей и тоже дописываются в конец.
-- Кодировка данных объявлена в `roost_plugin_info.encoding`. В 0.x это JSON; бинарный формат (FlatBuffers, protobuf) выбирается в M8 по замеру вызовов в GUI-потоке.
+- Кодировка данных объявлена в `roost_plugin_info.encoding`. В 0.x это JSON; бинарный формат (FlatBuffers, protobuf) выбирается в M9 по замеру вызовов в GUI-потоке.
 - Несовместимое изменение — `roost_host_v2` рядом с v1; v1 обслуживается до следующего major.
 
 Потоки и память:
@@ -186,7 +186,7 @@ QML-модуль плагина, без библиотеки на C ABI:
 
   Значения по умолчанию воспроизводят вид до этого шага (белый на чёрном, палитра libghostty). Текст выделенной ячейки не токен: это тот из `terminalForeground` и `terminalBackground`, у кого выше контраст (WCAG) с `terminalSelection`. С дефолтом выделение — белый фон и чёрный текст, то есть прежняя смена местами цветов текста и фона.
 
-  `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: на фоне окна (белом) они читаются, на тёмном фоне панели (`panelBackground`) плагин задаёт свой `palette` из токенов, иначе текст Controls будет чёрным на тёмном. Диалог берёт палитру окна, пока открыт. Не покрыто темой: цвета терминала в рендерере (позже в M6).
+  `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: на фоне окна (белом) они читаются, на тёмном фоне панели (`panelBackground`) плагин задаёт свой `palette` из токенов, иначе текст Controls будет чёрным на тёмном. Диалог берёт палитру окна, пока открыт. Цвета терминала задаёт та же тема (токены ниже).
 
 Роли `Roost.sessions` — поля строки `sessions.list`, фиксированный список `api::SessionService::FIELDS`: `agent`, `id`, `title`, `cwd`, `state`, `startedAt`. Поле, которого в строке нет (`startedAt` бывает не у всех), читается как `undefined`. Новое поле строки `sessions.list` добавляют в `FIELDS`, иначе QML его не увидит. В делегате роль читают как `model.<имя>`. Для двух ролей это обязательно: `required property string id` не допускается, `id` в QML зарезервировано; голое `state` в делегате — свойство `Item.state`, а не роль, и даёт пустую строку. Строку по ключу `(agent, id)` плагин находит перебором: `Roost.sessions.data(Roost.sessions.index(i, 0), Qt.UserRole + n)`, где `n` — позиция поля в `FIELDS` (`agent` — 0, `id` — 1); поиска по ключу у модели нет.
 

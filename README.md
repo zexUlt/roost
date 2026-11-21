@@ -13,8 +13,10 @@ emulator. Every feature is a plugin, and panels can be linked to each other.
 
 Status: the window lists Claude Code background sessions and saved Codex
 threads, and opens them in a terminal panel. It ships as a macOS `.dmg` and a
-Linux AppImage. The panel layout, the keymap file and notifications are not
-there yet; see `docs/design.md` for the design and the plan.
+Linux AppImage. The panels can be split, put into tabs and linked, the keys
+come from a `keymap.json`, and there is a command palette and a settings
+window. Notifications are not there yet; see `docs/design.md` for the design
+and the plan.
 
 ## Install
 
@@ -180,10 +182,63 @@ to `<file>` (a new file, mode 0600) and keeps the previous file as `<file>.1`. I
 opens the file only once it holds the socket lock: a second roostd that loses
 the lock exits with code 1 and leaves the log alone.
 
-The window shows the session list on the left and the terminal on the right.
-In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and moves
-the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS) moves it
-back to the list.
+The window starts with the session list on the left and the terminal on the
+right. In the list, ↑/↓ or `j`/`k` move the cursor. Enter opens the session and
+moves the keyboard to the terminal; `Ctrl+\` (the Control key, also on macOS)
+moves it back to the list. The sections below change the layout, the keys, the
+look and the plugins; each links to the design section with the details.
+
+### Layout
+
+Right-click a panel for its menu: split right or down, put the panel into tabs
+or take it out, close it (the last panel stays), and "Edit links…". A link
+feeds an input of a panel from the output of another one, for example which
+session a terminal shows; a new panel has no links, so set them there. The
+layout is saved and comes back after a restart. Details: `docs/design/06-panels.md`,
+"Правка раскладки".
+
+### Keys and the command palette
+
+The keys come from the plugins and from `keymap.json` in the state directory
+(`~/.config/roost`, or `$ROOST_CONFIG`). roost never writes that file. Its
+entries win over the plugins' keys, and `"command": null` removes a key:
+
+```json
+[
+  { "key": "Ctrl+Shift+N", "mac": "Cmd+N", "command": "claude.newSession" },
+  { "mac": "Cmd+W", "command": null }
+]
+```
+
+`mac` replaces `key` on macOS. A saved file is picked up without a restart;
+a broken file keeps the previous keys and the problem shows in the window.
+Format and rules: `docs/design/16-keymap.md`.
+
+`Ctrl+Shift+P` (`Cmd+Shift+P` on macOS) opens the command palette: every
+command of every plugin, a filter by letters, Enter runs it. Each row shows the
+key of the command, a conflict between two plugins, a key you overrode, and a
+key that takes input from a terminal program. It also opens from the toolbar
+button (Linux) and the View menu (macOS).
+
+### Settings, theme and fonts
+
+`Cmd+,` on macOS, or the "Settings…" button on Linux, opens the settings
+window: the theme, the terminal font family and size, the UI font size, a page
+for each plugin that has one, and the keys (read only, with a button that opens
+`keymap.json`). An edit is stored in `settings.json` and applies to every open
+window. The colors of the window and of the terminal come from the theme, so a
+program in a session that asks the terminal for its colors gets the ones you
+see. Details: `docs/design/05-plugins.md` (the settings window, `Roost.theme`)
+and `docs/design/03-terminal.md`, "Цвета".
+
+### Replacing a built-in plugin
+
+List the id of a built-in plugin in `plugins.disabled` of `settings.json`
+(`{"plugins": {"disabled": ["sessions"]}}`) and put your plugin, under another
+id, in `<state directory>/plugins`. The window finds the list by its output
+`selected: SessionRef`, so a list panel from your plugin takes the place of the
+built-in one. `roostd` reads the key at start: restart it after the edit. See
+`docs/design/05-plugins.md` and `templates/plugin-qml/`.
 
 Two check modes exit by themselves, for CI and packages. `roost --smoke` exits
 0 after the first frame. `roost --smoke-sessions` needs a running roostd: it
