@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace roost {
@@ -344,6 +345,9 @@ int TerminalItem::columns() const { return Columns_; }
 int TerminalItem::rows() const { return Rows_; }
 
 void TerminalItem::updateGridSize() {
+    fprintf(stderr, "DIAG size %p w=%g h=%g settling=%d known=%d\n",
+            static_cast<const void*>(this), width(), height(), int(Settling_),
+            int(GridKnown_));
     const auto cell = Renderer_.Metrics();
     // A cell cannot be empty; the guard keeps a broken font from dividing by
     // zero.
@@ -376,6 +380,8 @@ void TerminalItem::updateGridSize() {
 
 void TerminalItem::updatePolish() {
     QQuickItem::updatePolish();
+    fprintf(stderr, "DIAG polish %p w=%g h=%g settling=%d\n",
+            static_cast<const void*>(this), width(), height(), int(Settling_));
     if (!Settling_) {
         return;
     }
@@ -385,6 +391,9 @@ void TerminalItem::updatePolish() {
         this,
         [this] {
             Settling_ = false;
+            fprintf(stderr, "DIAG queued %p w=%g h=%g known=%d\n",
+                    static_cast<const void*>(this), width(), height(),
+                    int(GridKnown_));
             if (!GridKnown_ && holdsACell()) {
                 GridKnown_ = true;
                 applySessionRef();
