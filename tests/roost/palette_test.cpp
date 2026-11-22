@@ -780,6 +780,9 @@ private slots:
             Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
                        "paletteList");
         QVERIFY(list != nullptr);
+        // The layout gives the list its height on a later frame than the
+        // popup shows.
+        QTRY_VERIFY_WITH_TIMEOUT(list->height() > 0, TIMEOUT_MS);
         const int rows = Model()->rowCount();
         const int target = RowOf("fixture.crash");
         QVERIFY(target >= 0);
