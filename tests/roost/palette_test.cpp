@@ -816,7 +816,9 @@ private slots:
                      qPrintable(CurrentRowProblem()));
         }
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
-        QCOMPARE(list->property("contentY").toReal(), qreal(0));
+        // Rows differ in height: the top of the content is originY, not 0.
+        QCOMPARE(list->property("contentY").toReal(),
+                 list->property("originY").toReal());
         // Down to the crash command, in view, and Enter runs it.
         for (int step = 0; step < target; ++step) {
             Press(Qt::Key_Down);
