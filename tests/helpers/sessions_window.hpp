@@ -122,6 +122,7 @@ public:
 
     // The plugins directory of the case: the built-in plugins, without
     // `terminal` (no panel terminal.view) when WithoutTerminal_ is set, and
+    // `claude` without its newSession command when WithoutNewSession_ is set,
     // `claude` polling every POLL_MS.
     bool LinkPlugins() const;
 
@@ -262,6 +263,7 @@ public:
 protected:
     QStringList Changes_;
     bool WithoutTerminal_ = false;
+    bool WithoutNewSession_ = false;
     bool SpySelected_ = false;
     std::unique_ptr<QSignalSpy> SelectedSpy_;
     std::unique_ptr<QTemporaryDir> Dir_;

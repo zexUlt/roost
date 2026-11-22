@@ -72,6 +72,7 @@ void SessionsWindow::Teardown() {
     CloseWindow();
     StopDaemon();
     WithoutTerminal_ = false;
+    WithoutNewSession_ = false;
     SpySelected_ = false;
 }
 
@@ -142,7 +143,7 @@ bool SessionsWindow::LinkPlugins() const {
     // The manifest is kept as built; the script stands in for the program
     // it runs, so a manifest that runs another one is not one this helper
     // can speed up.
-    const QByteArray manifest = built.readAll();
+    QByteArray manifest = built.readAll();
     const QJsonArray command = QJsonDocument::fromJson(manifest)
                                    .object()
                                    .value("backend")
@@ -152,6 +153,22 @@ bool SessionsWindow::LinkPlugins() const {
     if (command.isEmpty() || command.first().toString() !=
                                  QStringLiteral("backend/claude-adapter")) {
         return false;
+    }
+    if (WithoutNewSession_) {
+        // The adapter that offers every command but newSession.
+        QJsonObject document = QJsonDocument::fromJson(manifest).object();
+        QJsonObject contributes = document.value("contributes").toObject();
+        QJsonArray kept;
+        for (const QJsonValue& entry :
+             contributes.value("commands").toArray()) {
+            if (!entry.toObject().value("id").toString().endsWith(
+                    QStringLiteral(".newSession"))) {
+                kept.append(entry);
+            }
+        }
+        contributes.insert("commands", kept);
+        document.insert("contributes", contributes);
+        manifest = QJsonDocument(document).toJson();
     }
     const QByteArray shell =
         QStringLiteral("#!/bin/sh\nexec '%1' --poll-ms %2 \"$@\"\n")

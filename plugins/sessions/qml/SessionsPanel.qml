@@ -762,7 +762,10 @@ FocusScope {
     }
 
     // n opens the prompt immediately and keeps the cursor's directory and
-    // category. The agent is chosen when the completed prompt is submitted.
+    // category. The agent is chosen when the completed prompt is submitted. The
+    // agents that can start a session are asked for at the same time: if there
+    // is none, the prompt closes at once with the notice, before a task is
+    // typed (the prompt stays open for the answer, so that it is not delayed).
     function openNewSessionPrompt() {
         const ref = sessionsList.cursorSession;
         const data = ref === null ? null : sessionData(ref);
@@ -773,7 +776,14 @@ FocusScope {
             "category": category === null ? "" : category,
             "task": ""
         };
+        const mine = promptNew;
         openPrompt("task", null, "");
+        agentsWithCommand("newSession", agents => {
+            if (agents.size === 0 && promptNew === mine) {
+                closePrompt();
+                showNotice("No agent can start a session");
+            }
+        });
     }
 
     function homeDirectory() {

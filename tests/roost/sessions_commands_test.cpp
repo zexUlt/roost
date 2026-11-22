@@ -1023,6 +1023,25 @@ private slots:
         QCOMPARE(Cursor(), ON_HEADER);
     }
 
+    // No loaded agent has newSession: n shows the notice and leaves no prompt
+    // for a task to be typed into.
+    void NWithoutAnAgentThatCanStartShowsTheNotice() {
+        FailOnWarnings();
+        WithoutNewSession_ = true;
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_N);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Notice(), QString("No agent can start a session"), TIMEOUT_MS);
+        QVERIFY(!Prompting());
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(Confirm().isEmpty());
+        QCOMPARE(Count(), 4);
+        QVERIFY(!QFileInfo::exists(BinPath("bg.ran")));
+    }
+
     void ThePromptKeepsItsTargetAcrossAPoll() {
         FailOnWarnings();
         Start();
