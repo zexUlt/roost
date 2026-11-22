@@ -73,6 +73,39 @@ bool Subsequence(const QString& pattern, const QString& text) {
         .hasMatch();
 }
 
+// While it lives, counts the warnings that match the pattern and keeps them
+// out of the test log; every other message goes on to the test's handler, so
+// FailOnWarnings still holds for them. Unlike QTest::ignoreMessage, the test
+// can wait for the warning: one that comes after an event the test waits for
+// would otherwise come after the test.
+class ExpectedWarning {
+public:
+    explicit ExpectedWarning(const QRegularExpression& pattern) {
+        PATTERN = pattern;
+        SEEN = 0;
+        PREVIOUS = qInstallMessageHandler([](QtMsgType type,
+                                             const QMessageLogContext& context,
+                                             const QString& text) {
+            if (type == QtWarningMsg && PATTERN.match(text).hasMatch()) {
+                ++SEEN;
+                return;
+            }
+            PREVIOUS(type, context, text);
+        });
+    }
+    ~ExpectedWarning() { qInstallMessageHandler(PREVIOUS); }
+
+    ExpectedWarning(const ExpectedWarning&) = delete;
+    ExpectedWarning& operator=(const ExpectedWarning&) = delete;
+
+    int Seen() const { return SEEN; }
+
+private:
+    static inline QRegularExpression PATTERN;
+    static inline int SEEN = 0;
+    static inline QtMessageHandler PREVIOUS = nullptr;
+};
+
 }  // namespace
 
 class PaletteTest : public SessionsWindow {
@@ -792,12 +825,14 @@ private slots:
         QVERIFY2(CurrentRowProblem().isEmpty(),
                  qPrintable(CurrentRowProblem()));
         // The fixture backend exits at the command, and the shell says so.
-        QTest::ignoreMessage(
-            QtWarningMsg, QRegularExpression(
-                              "commands\\.run failed: the backend of fixture"));
+        // roostd publishes the crash before it fails the request, so the
+        // warning may come after the event.
+        const ExpectedWarning failed(QRegularExpression(
+            QStringLiteral("commands\\.run failed: the backend of fixture")));
         Press(Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(crashed, QStringList{"fixture"}, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(failed.Seen(), 1, TIMEOUT_MS);
     }
 
     // A filter that shrinks the list after Down went to the last row: the list
