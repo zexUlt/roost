@@ -260,6 +260,30 @@ private:
         return {};
     }
 
+    // Whether the delegate of the current row lies inside the viewport of the
+    // list; false if the row has no delegate.
+    bool CurrentRowIsInView() {
+        auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        if (list == nullptr) {
+            return false;
+        }
+        const int current = list->property("currentIndex").toInt();
+        const auto* view = list->property("contentItem").value<QQuickItem*>();
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->objectName() != "paletteRow" ||
+                delegate->property("index").toInt() != current) {
+                continue;
+            }
+            const qreal top = delegate->mapToItem(list, QPointF(0, 0)).y();
+            const qreal bottom =
+                delegate->mapToItem(list, QPointF(0, delegate->height())).y();
+            return top >= 0 && bottom <= list->height();
+        }
+        return false;
+    }
+
     // The palette opened by its key, as the user does; the field has the
     // keyboard.
     void OpenByKey() {
@@ -689,6 +713,81 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
         Press(Qt::Key_Escape);
         QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
+    }
+
+    // Down past the rows that fit keeps the chosen row in view, Up brings the
+    // first one back, and Enter runs the row that is shown as chosen.
+    void TheChosenRowStaysInView() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QStringList crashed;
+        const auto subscription = Api_->Bus().Subscribe(
+            "plugin.backendCrashed", Root(),
+            [&crashed](const QString&, const QJsonValue& payload) {
+                crashed.append(payload.toObject().value("plugin").toString());
+            });
+        QVERIFY(subscription.has_value());
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        QVERIFY(list != nullptr);
+        const int rows = Model()->rowCount();
+        const int target = RowOf("fixture.crash");
+        QVERIFY(target >= 0);
+        // The rows that fit, from the height of the list and of the first row.
+        const auto* view = list->property("contentItem").value<QQuickItem*>();
+        qreal rowHeight = 0;
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->objectName() == "paletteRow") {
+                rowHeight = delegate->height();
+                break;
+            }
+        }
+        QVERIFY(rowHeight > 0);
+        const int fit = static_cast<int>(list->height() / rowHeight);
+        if (rows <= fit + 1) {
+            QFAIL("The palette has too few commands to scroll the list");
+        }
+        QVERIFY(CurrentRowIsInView());
+        // To the last row; every step ends with the chosen row in view.
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+            QCOMPARE(Palette()->property("currentRow").toInt(), step);
+            QVERIFY2(CurrentRowIsInView(),
+                     qPrintable(QStringLiteral("row %1 is out of view, "
+                                               "contentY %2, height %3")
+                                    .arg(step)
+                                    .arg(list->property("contentY").toReal())
+                                    .arg(list->height())));
+        }
+        QVERIFY(list->property("contentY").toReal() > 0);
+        // Back to the top: the first row is shown again.
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Up);
+            QVERIFY(CurrentRowIsInView());
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        QCOMPARE(list->property("contentY").toReal(), qreal(0));
+        // Down to the crash command, in view, and Enter runs it.
+        for (int step = 0; step < target; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), target);
+        QVERIFY(CurrentRowIsInView());
+        // The fixture backend exits at the command, and the shell says so.
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression(
+                              "commands\\.run failed: the backend of fixture"));
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(crashed, QStringList{"fixture"}, TIMEOUT_MS);
     }
 
 #ifndef Q_OS_MACOS
