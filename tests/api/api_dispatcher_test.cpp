@@ -1,14 +1,18 @@
 // The method dispatcher of the window against the real roostd, with a plugin
 // whose backend is the fixture backend: every method answers, in the GUI
 // thread; what is not exposed is MethodNotFound; the errors of roostd pass
-// unchanged.
+// unchanged. The one case that needs an answer to wait for the test runs
+// against a scripted daemon, which answers when the test says so.
 
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
 
@@ -17,7 +21,9 @@
 
 #include "api/api.hpp"
 #include "api_test_support.hpp"
+#include "core/frame.hpp"
 #include "core/protocol.hpp"
+#include "core/version.hpp"
 #include "helpers/roostd_process.hpp"
 
 using namespace roost;
@@ -34,6 +40,59 @@ constexpr int CONNECTION_LOST =
 constexpr int METHOD_NOT_FOUND =
     static_cast<int>(rpc::EErrorCode::MethodNotFound);
 constexpr int INVALID_PARAMS = static_cast<int>(rpc::EErrorCode::InvalidParams);
+
+// A roostd that is not one: it answers hello and bus.subscribe, keeps the
+// plugins.list unanswered until the test answers it, and leaves every other
+// request unanswered.
+class ScriptedDaemon : public QObject {
+public:
+    bool Listen(const QString& path) {
+        connect(&Server_, &QLocalServer::newConnection, this, [this] {
+            Socket_ = Server_.nextPendingConnection();
+            connect(Socket_, &QLocalSocket::readyRead, this, [this] {
+                Decoder_.Feed(Socket_->readAll());
+                while (const auto frame = Decoder_.Next()) {
+                    OnRequest(QJsonDocument::fromJson(frame->Body).object());
+                }
+            });
+        });
+        return Server_.listen(path);
+    }
+
+    bool IsListHeld() const { return !ListId_.isUndefined(); }
+
+    void AnswerList(const QJsonObject& result) {
+        Reply(ListId_, result);
+        ListId_ = QJsonValue::Undefined;
+    }
+
+private:
+    void Reply(const QJsonValue& id, const QJsonObject& result) {
+        Socket_->write(*EncodeFrame(
+            EFrameKind::Rpc,
+            QJsonDocument(
+                QJsonObject{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}})
+                .toJson(QJsonDocument::Compact)));
+    }
+
+    void OnRequest(const QJsonObject& request) {
+        const QString method = request.value("method").toString();
+        const QJsonValue id = request.value("id");
+        if (method == "hello") {
+            Reply(id, {{"roostd", QString::fromStdString(VersionString())}});
+        } else if (method == "bus.subscribe") {
+            Reply(id, {{"subscription", ++Subscriptions_}});
+        } else if (method == "plugins.list") {
+            ListId_ = id;
+        }
+    }
+
+    QLocalServer Server_;
+    QLocalSocket* Socket_ = nullptr;
+    FrameDecoder Decoder_;
+    QJsonValue ListId_ = QJsonValue::Undefined;
+    int Subscriptions_ = 0;
+};
 
 }  // namespace
 
@@ -116,6 +175,9 @@ private slots:
         };
         const QStringList methods = Api_->Dispatch().Methods();
         QCOMPARE(QStringList(params.keyBegin(), params.keyEnd()), methods);
+        // The store.get warms the cache; the event of each write after it
+        // follows the answer of the write, and replaces the cached document.
+        QSignalSpy storeChanged(&Api_->Store(), &api::StoreService::Changed);
         for (const QString& method : methods) {
             QThread* finishedIn = nullptr;
             const rpc::Result answer =
@@ -123,6 +185,12 @@ private slots:
             QVERIFY2(answer, qPrintable(method + ": " + Why(answer)));
             QCOMPARE(finishedIn, QThread::currentThread());
         }
+        // The last write, store.set, is in the cache once its event is told:
+        // until then a Get is served from the cache as it was.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !storeChanged.isEmpty() &&
+                storeChanged.last().at(1).toJsonObject() == document,
+            TIMEOUT_MS);
         // And what they answered.
         QCOMPARE(*Call("commands.run", params["commands.run"]),
                  QJsonValue(QJsonArray{1, "two"}));
@@ -275,8 +343,13 @@ private slots:
         QCOMPARE(answer.error().Code, STORE_FAILED);
     }
 
+    // The daemon holds the answer of the first fetch until the call is made,
+    // so that the call comes first however fast the IO thread is.
     void PluginsListWaitsForTheFirstFetch() {
-        QVERIFY(StartDaemon());
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        ScriptedDaemon daemon;
+        QVERIFY(daemon.Listen(dir.filePath("fake.sock")));
         Api_ = std::make_unique<api::Api>();
         QSignalSpy changed(&Api_->Plugins(), &api::PluginService::Changed);
         bool loadedAtConnect = true;
@@ -285,15 +358,21 @@ private slots:
             loadedAtConnect = Api_->Plugins().IsLoaded();
             early = Api_->Dispatch().Call("plugins.list", {}, this);
         });
-        Api_->Connect(Daemon_->SocketPath());
+        Api_->Connect(dir.filePath("fake.sock"));
         QTRY_VERIFY_WITH_TIMEOUT(early.isValid(), TIMEOUT_MS);
-        QVERIFY(WaitFor(early));
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.IsListHeld(), TIMEOUT_MS);
         QVERIFY(!loadedAtConnect);
+        QVERIFY(!early.isFinished());
+        const QJsonObject plugins{
+            {"plugins", QJsonArray{QJsonObject{{"id", "fixture"}}}},
+            {"problems", QJsonArray{}}};
+        daemon.AnswerList(plugins);
+        QVERIFY(WaitFor(early));
         QVERIFY2(early.result(), qPrintable(Why(early.result())));
         QCOMPARE(changed.size(), 1);
         QVERIFY(Api_->Plugins().IsLoaded());
-        QCOMPARE(QJsonValue(Api_->Plugins().Plugins()), *early.result());
-        QVERIFY(early.result()->toObject().contains("problems"));
+        QCOMPARE(Api_->Plugins().Plugins(), plugins);
+        QCOMPARE(*early.result(), QJsonValue(plugins));
     }
 
     void PluginsListIsServedFromTheCache() {
