@@ -37,6 +37,8 @@ Item {
     property string lastFocused: ""
     // The panel that takes the keyboard when its slot is there, "" if none.
     property string pendingFocus: ""
+    // The first leaf that waits to take the keyboard at start, "" if none.
+    property string startFocus: ""
 
     function slotOf(instance) {
         return view.slots[instance] ?? null;
@@ -128,6 +130,34 @@ Item {
         const slot = view.slotOf(view.pendingFocus);
         if (slot !== null) {
             view.pendingFocus = "";
+            slot.forceActiveFocus();
+        }
+    }
+
+    // The first leaf of the layout takes the keyboard at start, once the window
+    // has none in it. (Not by `focus`: a Loader is a focus scope, and the leaf
+    // and the nodes above it are made one after another.) It runs late, and
+    // here: the layout may be replaced before, and the slot that asked, still
+    // waiting to be deleted, must not take it.
+    function takeKeyboardAtStart(instance) {
+        view.startFocus = instance;
+        Qt.callLater(view.applyStartFocus);
+    }
+
+    function applyStartFocus() {
+        const instance = view.startFocus;
+        view.startFocus = "";
+        // The first leaf by position, shown or not.
+        let leaf = view.tree;
+        while (leaf !== null && leaf.kind !== "leaf") {
+            leaf = leaf.children[0] ?? null;
+        }
+        const slot = view.slotOf(instance);
+        if (slot === null || leaf === null || leaf.instance !== instance) {
+            return;
+        }
+        const focused = view.Window.activeFocusItem;
+        if (focused === null || focused === view.Window.contentItem) {
             slot.forceActiveFocus();
         }
     }

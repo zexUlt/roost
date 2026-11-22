@@ -95,20 +95,14 @@ Item {
                 root.view.openMenu(slot, x, y);
             }
 
-            // The first leaf takes the keyboard at start, once the window has
-            // none in it. (Not by `focus`: a Loader is a focus scope, and the
-            // leaf and the nodes above it are made one after another.)
-            function takeKeyboardAtStart() {
-                const focused = slot.Window.activeFocusItem;
-                if (root.first && (focused === null || focused === slot.Window.contentItem)) {
-                    slot.forceActiveFocus();
-                }
-            }
-
             Component.onCompleted: {
                 root.view.slotCreated(slot);
                 root.view.registerSlot(slot);
-                Qt.callLater(slot.takeKeyboardAtStart);
+                // Late, and by the view: the layout may be replaced before it
+                // runs, and the slot and `root` with it.
+                if (root.first) {
+                    root.view.takeKeyboardAtStart(slot.instanceId);
+                }
             }
             Component.onDestruction: root.view.unregisterSlot(slot)
 
