@@ -511,6 +511,32 @@ target_compile_definitions(layout_edit_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_edit_test roostd fake_tui claude-adapter sessions_qml)
 
+# Into tabs and out of tabs from the panel menu, by mouse in the real window:
+# the list and the terminal keep their places.
+roost_add_qt_test(layout_tabs_menu_test roost/layout_tabs_menu_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_tabs_menu_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_tabs_menu_test roostd fake_tui claude-adapter
+    sessions_qml)
+
+# Children of a split of size "fill" share the room equally; a drag of their
+# divider is kept, and the divider is grabbed beside its line.
+roost_add_qt_test(layout_fill_shares_test roost/layout_fill_shares_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_fill_shares_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_fill_shares_test roostd fake_tui claude-adapter
+    sessions_qml)
+
 # terminal.copy with two terminal panels runs in the one that has the focus.
 roost_add_qt_test(terminal_copy_focus_test roost/terminal_copy_focus_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
