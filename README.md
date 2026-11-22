@@ -52,7 +52,7 @@ chmod +x roost-x86_64.AppImage && ./roost-x86_64.AppImage
 - Right-click a panel: split, tabs, close, "Edit links…". The layout is saved.
 - Settings: `Cmd+,` on macOS, the "Settings…" button on Linux.
 - Report a bug: Help menu on macOS, toolbar button on Linux. It writes a zip to
-  Downloads; nothing is sent.
+  `~/.roost/bugreports`; nothing is sent.
 
 ## Configuration
 

@@ -55,8 +55,8 @@ LayoutEdit SplitPanel(const Layout& layout, const QString& instance,
 // the leaf is the shown tab.
 LayoutEdit MoveIntoTabs(const Layout& layout, const QString& instance);
 
-// Takes the leaf out of its stack of tabs and puts it after the stack, as a
-// sibling in a split.
+// Takes the leaf out of its stack of tabs and puts it next to the stack, as a
+// sibling in a split: before the stack if it was the first tab, else after.
 LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance);
 
 // Removes the leaf. The last leaf of the tree cannot be closed. The links that

@@ -475,15 +475,25 @@ private slots:
         QCOMPARE(edit.Focus, QString("b"));
         VerifyReadsBack(edit.Tree);
 
-        // A stack of two is no stack once one is out.
-        const LayoutEdit two = MoveOutOfTabs(
-            Tree(Tabs({Leaf("a", "sessions.list"), Leaf("b", "terminal.view")},
-                      0)),
-            "a");
+        // A stack of two is no stack once one is out; the first tab goes
+        // before the stack, the second after it.
+        const Layout stack = Tree(
+            Tabs({Leaf("a", "sessions.list"), Leaf("b", "terminal.view")}, 0));
+        const LayoutEdit two = MoveOutOfTabs(stack, "a");
         QCOMPARE(two.Tree.Root.Kind, ELayoutNodeKind::Split);
-        QCOMPARE(Instances(two.Tree.Root), (QStringList{"b", "a"}));
+        QCOMPARE(Instances(two.Tree.Root), (QStringList{"a", "b"}));
         QCOMPARE(two.Tree.Root.Children[0].Kind, ELayoutNodeKind::Leaf);
+        QCOMPARE(two.Tree.Root.Children[1].Kind, ELayoutNodeKind::Leaf);
         VerifyReadsBack(two.Tree);
+        QCOMPARE(Instances(MoveOutOfTabs(stack, "b").Tree.Root),
+                 (QStringList{"a", "b"}));
+
+        // The first tab of a stack in a split goes before the stack.
+        const LayoutEdit first = MoveOutOfTabs(layout, "a");
+        QCOMPARE(first.Tree.Root.Children[0].Instance, QString("list"));
+        QCOMPARE(first.Tree.Root.Children[1].Instance, QString("a"));
+        QCOMPARE(Instances(first.Tree.Root.Children[2]),
+                 (QStringList{"b", "c"}));
     }
 
     void OutOfTabsIsRefusedOutsideTabs() {
@@ -505,11 +515,22 @@ private slots:
         const LayoutEdit in = MoveIntoTabs(layout, "b");
         const LayoutEdit out = MoveOutOfTabs(in.Tree, "b");
         QVERIFY(out.Refused.isEmpty());
-        // `b` went into tabs with `c`; out, it is after the stack, which is
-        // `c` alone and so no stack.
-        QCOMPARE(Instances(out.Tree.Root), (QStringList{"a", "c", "b"}));
+        // `b` went into tabs with `c` as the first tab; out, it is before the
+        // stack, which is `c` alone and so no stack.
+        QCOMPARE(Instances(out.Tree.Root), (QStringList{"a", "b", "c"}));
         QCOMPARE(out.Tree.Root.Kind, ELayoutNodeKind::Split);
         QCOMPARE(out.Tree.Root.Children.size(), size_t{3});
+
+        // The default layout: the list and the terminal keep their places
+        // whichever of them goes into tabs and out again.
+        for (const QString& instance : QStringList{"list", "terminal"}) {
+            const LayoutEdit into = MoveIntoTabs(ListAndTerminal(), instance);
+            const LayoutEdit back = MoveOutOfTabs(into.Tree, instance);
+            QVERIFY2(back.Refused.isEmpty(), qPrintable(back.Refused));
+            QCOMPARE(back.Tree.Root.Kind, ELayoutNodeKind::Split);
+            QCOMPARE(Instances(back.Tree.Root),
+                     (QStringList{"list", "terminal"}));
+        }
     }
 
     void CloseRemovesThePanelItsLinksAndTheSingleChildSplit() {
@@ -641,7 +662,9 @@ private slots:
         };
         const LayoutEdit out = MoveOutOfTabs(stack(), "a");
         QVERIFY2(out.Refused.isEmpty(), qPrintable(out.Refused));
-        const LayoutNode& left = out.Tree.Root.Children[1];
+        // `a` was the first tab: it is before the stack.
+        QCOMPARE(out.Tree.Root.Children[1].Instance, QString("a"));
+        const LayoutNode& left = out.Tree.Root.Children[2];
         QCOMPARE(Instances(left), (QStringList{"b", "c", "d"}));
         QCOMPARE(left.Active, 1);
         QCOMPARE(left.Children[static_cast<size_t>(left.Active)].Instance,

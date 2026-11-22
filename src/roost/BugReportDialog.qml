@@ -11,7 +11,7 @@ Dialog {
 
     // The window whose graphics API goes into about.txt; optional.
     property alias window: bugReport.window
-    // Where the zip goes; empty: Downloads. A test sets it.
+    // Where the zip goes; empty: ~/.roost/bugreports. A test sets it.
     property alias outputDirectory: bugReport.outputDirectory
     // The C++ side; a test reads zipPath and error.
     readonly property alias report: bugReport

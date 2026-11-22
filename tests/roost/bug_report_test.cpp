@@ -302,6 +302,15 @@ private slots:
         QVERIFY(IssueUrl(text, {}).size() > 5000);
     }
 
+    // The zip goes under the home directory, not to Downloads.
+    void TheDefaultDirectoryIsRoostBugreportsInHome() {
+        const QByteArray home = qgetenv("HOME");
+        qputenv("HOME", Dir_.path().toUtf8());
+        const QString directory = DefaultOutputDirectory();
+        qputenv("HOME", home);
+        QCOMPARE(directory, Dir_.filePath(".roost/bugreports"));
+    }
+
     void TheAboutTextNamesTheVersions() {
         const QString about = AboutText("/tmp/x/roostd.sock", "Metal");
         for (const char* key :
