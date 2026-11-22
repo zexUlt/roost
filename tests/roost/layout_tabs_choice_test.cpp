@@ -61,14 +61,22 @@ private:
                                  TIMEOUT_MS);
     }
 
-    static void CollectButtons(QQuickItem* item, QList<QQuickItem*>& out) {
+    static void CollectByClass(QQuickItem* item, const char* name,
+                               QList<QQuickItem*>& out) {
         for (QQuickItem* child : item->childItems()) {
-            if (QString(child->metaObject()->className())
-                    .contains("TabButton")) {
+            const QString cls = child->metaObject()->className();
+            // "TabBar" must not match "TabButton" and the other way round.
+            const auto len = static_cast<qsizetype>(qstrlen(name));
+            if (cls.startsWith(name) &&
+                (cls.size() == len || cls.at(len) == '_')) {
                 out.append(child);
             }
-            CollectButtons(child, out);
+            CollectByClass(child, name, out);
         }
+    }
+
+    static void CollectButtons(QQuickItem* item, QList<QQuickItem*>& out) {
+        CollectByClass(item, "TabButton", out);
     }
 
     // The tab buttons of the window, left to right.
@@ -216,10 +224,15 @@ private slots:
         QCOMPARE(Writes(spy), 1);
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
 
-        // The tab that is shown already is not written again.
+        // The tab that is shown already is not written again: the next write
+        // is that of the other tab, and a late write of this click would be a
+        // third one.
         ClickTab(0);
-        QTest::qWait(200);
-        QCOMPARE(Writes(spy), 1);
+        ClickTab(1);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredActive(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 2, TIMEOUT_MS);
+        ClickTab(0);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredActive(), 0, TIMEOUT_MS);
 
         CloseWindow();
         StopDaemon();
@@ -234,6 +247,42 @@ private slots:
                                      !SlotByInstance("terminal")->isVisible(),
                                  TIMEOUT_MS);
         QCOMPARE(Shell_->CurrentLayout().Root.Active, 0);
+    }
+
+    void TheTabBarNeverHoldsTheKeyboard() {
+        TerminalIntoTabs();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ClickTab(0);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QList<QQuickItem*> bars;
+        CollectByClass(Window()->contentItem(), "TabBar", bars);
+        QCOMPARE(bars.size(), 1);
+        // Neither the bar nor a button can take the keyboard, by a click (on
+        // Linux; macOS gives a button the keyboard only by Tab) or by Tab.
+        QCOMPARE(bars.first()->property("focusPolicy").toInt(),
+                 int(Qt::NoFocus));
+        for (QQuickItem* tab : TabButtons()) {
+            QCOMPARE(tab->property("focusPolicy").toInt(), int(Qt::NoFocus));
+        }
+        for (int i = 0; i < 4; ++i) {
+            Press(Qt::Key_Tab);
+            QVERIFY(!bars.first()->hasActiveFocus());
+            for (QQuickItem* tab : TabButtons()) {
+                QVERIFY(!tab->hasActiveFocus());
+            }
+        }
+        // The arrows do not switch the tab, shown or stored.
+        Press(Qt::Key_Right);
+        Press(Qt::Key_Left);
+        Press(Qt::Key_Right);
+        QTest::qWait(100);
+        QVERIFY(SlotByInstance("list")->isVisible());
+        QVERIFY(!SlotByInstance("terminal")->isVisible());
+        QCOMPARE(Shell_->CurrentLayout().Root.Active, 0);
+        QCOMPARE(StoredActive(), 0);
     }
 
     void ClickingTheThirdTabOfThreeFocusesItAndStoresIt() {
