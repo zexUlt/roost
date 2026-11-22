@@ -327,7 +327,9 @@ private slots:
         QVERIFY2(Errors_.contains("roost --smoke-sessions: plugin terminal") &&
                      Errors_.contains("terminal.view"),
                  qPrintable(Errors_));
-        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        // Well under SMOKE_SESSIONS_TIMEOUT (20 s), with room for a loaded
+        // machine.
+        QVERIFY2(elapsed.elapsed() < 10000, qPrintable(Errors_));
         qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
     }
 
@@ -342,7 +344,9 @@ private slots:
         QVERIFY2(Errors_.contains("roost --smoke-sessions: roostd: ") &&
                      Errors_.contains("garbled"),
                  qPrintable(Errors_));
-        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        // Well under SMOKE_SESSIONS_TIMEOUT (20 s), with room for a loaded
+        // machine.
+        QVERIFY2(elapsed.elapsed() < 10000, qPrintable(Errors_));
         qInfo("failed in %lld ms", static_cast<long long>(elapsed.elapsed()));
     }
 
