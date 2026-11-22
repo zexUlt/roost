@@ -333,6 +333,13 @@ private:
         Press(Qt::Key_P, PALETTE_MODIFIERS);
         QTRY_VERIFY_WITH_TIMEOUT(IsOpen(), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Field()->hasActiveFocus(), TIMEOUT_MS);
+        // The layout gives the list its height on a later frame than the
+        // popup shows; the tests read the rows in view.
+        const auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        QVERIFY(list != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(list->height() > 0, TIMEOUT_MS);
     }
 
     void Type(const QString& text) {
