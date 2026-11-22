@@ -582,14 +582,16 @@ private slots:
         QVERIFY(!Role(ViewRowOf(ALPHA), "unread").toBool());
         QVERIFY(!InRow(ViewRowOf(ALPHA), "unreadDot")->isVisible());
         // The title takes the colour of the state; a session that is done keeps
-        // the text colour.
+        // the text colour. The row under the cursor (BETA) is in the strong
+        // text colour.
         const auto titleColor = [this](const QString& id) {
             return InRow(ViewRowOf(id), "sessionTitle")
                 ->property("color")
                 .value<QColor>();
         };
+        QCOMPARE(CursorId(), BETA);
         QCOMPARE(titleColor(ALPHA), QColor("#d78700"));
-        QCOMPARE(titleColor(BETA), QColor("#005fd7"));
+        QCOMPARE(titleColor(BETA), QColor("#ffffff"));
         QCOMPARE(titleColor(GAMMA), QColor("#e0e0e0"));
         // A blocked session says it waits.
         QCOMPARE(InRow(ViewRowOf(BETA), "sessionDetail")

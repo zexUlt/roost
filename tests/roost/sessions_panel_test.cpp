@@ -20,6 +20,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <cmath>
 
 #include "helpers/scoped_env.hpp"
 #include "helpers/sessions_window.hpp"
@@ -33,6 +34,35 @@ using namespace roost::testing;
 // executable.
 Q_IMPORT_QML_PLUGIN(Roost_ApiPlugin)
 Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
+
+namespace {
+
+// The relative luminance and the contrast ratio of WCAG 2.x.
+double Luminance(const QColor& color) {
+    const auto channel = [](float value) {
+        const auto v = static_cast<double>(value);
+        return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) +
+           0.0722 * channel(color.blueF());
+}
+
+double Contrast(const QColor& a, const QColor& b) {
+    const double la = Luminance(a);
+    const double lb = Luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+// `top` over `bottom`, as the scene graph composes two rectangles.
+QColor Over(const QColor& top, const QColor& bottom) {
+    const float alpha = top.alphaF();
+    return QColor::fromRgbF(
+        top.redF() * alpha + bottom.redF() * (1 - alpha),
+        top.greenF() * alpha + bottom.greenF() * (1 - alpha),
+        top.blueF() * alpha + bottom.blueF() * (1 - alpha));
+}
+
+}  // namespace
 
 class SessionsPanelTest : public SessionsWindow {
     Q_OBJECT
@@ -113,6 +143,148 @@ private slots:
             QVERIFY(label != nullptr);
             QCOMPARE(label->property("textFormat").toInt(),
                      static_cast<int>(Qt::PlainText));
+        }
+    }
+
+    // The list is one line a row, as the elide of a long title says: a newline
+    // or a tab of a title (or of a working directory) is a space.
+    void ATitleWithANewlineOrATabIsOneLineLikeTheOthers() {
+        FailOnWarnings();
+        QVERIFY(WriteFakeClaude(FAKE_CLAUDE));
+        const QString title = "line1\nline2\ttabbed\rcr\u2028ls\u007fdel";
+        const QString cwd = "/work/al\npha";
+        QJsonArray rows;
+        for (const auto& [id, name] :
+             {std::pair{ALPHA, QString("plain")}, std::pair{BETA, title}}) {
+            rows.append(QJsonObject{{"id", id},
+                                    {"name", name},
+                                    {"cwd", id == BETA ? cwd : "/work/alpha"},
+                                    {"kind", "background"},
+                                    {"state", "working"},
+                                    {"status", "busy"}});
+        }
+        QSaveFile agents(AgentsPath());
+        QVERIFY(agents.open(QIODevice::WriteOnly));
+        QVERIFY(agents.write(QJsonDocument(rows).toJson()) > 0);
+        QVERIFY(agents.commit());
+        QVERIFY(StartDaemon());
+        OpenWindow();
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 2, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(RowItem(0) != nullptr && RowItem(1) != nullptr,
+                                 TIMEOUT_MS);
+
+        QCOMPARE(RowText(1, "sessionTitle"),
+                 QString("line1 line2 tabbed cr ls del"));
+        QCOMPARE(RowText(1, "sessionDetail"),
+                 QString("working · /work/al pha"));
+        for (const char* name : {"sessionTitle", "sessionDetail"}) {
+            const QObject* plain = RowItem(0)->findChild<QObject*>(name);
+            const QObject* odd = RowItem(1)->findChild<QObject*>(name);
+            QVERIFY(plain != nullptr && odd != nullptr);
+            QCOMPARE(odd->property("lineCount").toInt(), 1);
+            QCOMPARE(odd->property("height").toDouble(),
+                     plain->property("height").toDouble());
+        }
+        QCOMPARE(RowItem(1)->height(), RowItem(0)->height());
+    }
+
+    // The title of a row that is open or under the cursor reads (WCAG AA,
+    // 4.5:1) on what is really behind it: the panel, the highlight of the
+    // list's cursor (focused or not), and for the open row the tint over that.
+    // The other rows keep the colour of their state.
+    void TheTitleOfTheOpenOrCursorRowReadsOnTheRealBackground() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QQuickItem* background =
+            PanelOf(LIST)->findChild<QQuickItem*>("sessionsBackground");
+        QVERIFY(background != nullptr);
+        const QColor panel = background->property("color").value<QColor>();
+
+        // The colour of the title of the session and what it lies on, with the
+        // cursor on `cursor`.
+        const auto check = [&](int session, int cursor, bool open,
+                               bool focused) {
+            QCOMPARE(ListView()->hasActiveFocus(), focused);
+            QCOMPARE(Cursor(), cursor);
+            QQuickItem* item = RowItem(session);
+            QVERIFY(item != nullptr);
+            const QQuickItem* tint = item->findChild<QQuickItem*>("openTint");
+            QVERIFY(tint != nullptr);
+            QCOMPARE(tint->isVisible(), open);
+            QColor ground = panel;
+            if (session == cursor) {
+                const auto* highlight =
+                    ListView()->property("highlightItem").value<QQuickItem*>();
+                QVERIFY(highlight != nullptr);
+                ground =
+                    Over(highlight->property("color").value<QColor>(), ground);
+            }
+            if (open) {
+                ground = Over(tint->property("color").value<QColor>(), ground);
+            }
+            const QColor titleColor =
+                item->findChild<QQuickItem*>("sessionTitle")
+                    ->property("color")
+                    .value<QColor>();
+            const double ratio = Contrast(titleColor, ground);
+            QVERIFY2(ratio >= 4.5,
+                     qPrintable(QStringLiteral("%1 open=%2 focused=%3 %4 on "
+                                               "%5: %6")
+                                    .arg(ORDER[session])
+                                    .arg(open)
+                                    .arg(focused)
+                                    .arg(titleColor.name(), ground.name())
+                                    .arg(ratio)));
+        };
+
+        // ALPHA works, BETA is blocked (blue), GAMMA and DELTA are done.
+        for (const int session : {2, 0, 1}) {
+            // Open: the keyboard goes to the terminal, the list is unfocused.
+            OpenRow(session);
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            check(session, session, true, false);
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            BackToList();
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            check(session, session, true, true);
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            // The cursor leaves the open row: it is read on its tint alone,
+            // and the row under the cursor, not open, on the focused cursor.
+            const int other = session + 1;
+            Press(Qt::Key_Down);
+            QTRY_COMPARE_WITH_TIMEOUT(Cursor(), session + 1, TIMEOUT_MS);
+            check(other, other, false, true);
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            check(session, other, true, true);
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            // The state is still to be seen: the title of a row with neither
+            // the tint nor the cursor keeps the colour of its state, and the
+            // state is a word in the second line.
+            const int plain = session == 0 ? 2 : 0;
+            const QColor titleColor =
+                RowItem(plain)
+                    ->findChild<QQuickItem*>("sessionTitle")
+                    ->property("color")
+                    .value<QColor>();
+            QVERIFY2(titleColor != QColor("#ffffff"),
+                     qPrintable(titleColor.name()));
+            Press(Qt::Key_Up);
+            QTRY_COMPARE_WITH_TIMEOUT(Cursor(), session, TIMEOUT_MS);
         }
     }
 
@@ -839,6 +1011,40 @@ private slots:
         QVERIFY(title != nullptr);
         QCOMPARE(title->property("text").toString(),
                  QString("▾ Uncategorized · 4"));
+    }
+
+    // The header is one line like a row: a newline of a category is a space.
+    void ACategoryWithANewlineIsOneLineHeader() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForThePanelToStopWriting();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        StoreSet(QStringLiteral(
+                     R"({version: 1, categories: {"claude/%1": "wo\nrk"}})")
+                     .arg(BETA));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Kinds(),
+            (QStringList{"header", "session", "header", "session", "session",
+                         "session"}),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ViewItem(0) != nullptr && ViewItem(2) != nullptr, TIMEOUT_MS);
+
+        const auto* odd = ViewItem(0)->findChild<QQuickItem*>("headerTitle");
+        const auto* plain = ViewItem(2)->findChild<QQuickItem*>("headerTitle");
+        QVERIFY(odd != nullptr && plain != nullptr);
+        QCOMPARE(odd->property("text").toString(), QString("▾ wo rk · 1"));
+        QCOMPARE(odd->property("lineCount").toInt(), 1);
+        QCOMPARE(odd->property("height").toDouble(),
+                 plain->property("height").toDouble());
+        QCOMPARE(ViewItem(0)->height(), ViewItem(2)->height());
+        QCOMPARE(odd->property("textFormat").toInt(),
+                 static_cast<int>(Qt::PlainText));
     }
 
     void ADocumentWrittenToTheStoreRegroupsTheList() {

@@ -284,7 +284,8 @@ private slots:
         };
         // The header of the sessions with no category.
         const int none = ViewRow(0) - 1;
-        QCOMPARE(titleColor(ALPHA), QColor("#d78700"));
+        // The row under the cursor (ALPHA) is in the strong text colour.
+        QCOMPARE(titleColor(ALPHA), QColor("#ffffff"));
         QCOMPARE(titleColor(BETA), QColor("#005fd7"));
         QCOMPARE(titleColor(GAMMA), QColor("#e0e0e0"));
         QCOMPARE(stateColor("failed"), QColor("#d70000"));
@@ -292,7 +293,7 @@ private slots:
 
         QVERIFY(Singleton_->theme()->load(TestTheme()));
 
-        QCOMPARE(titleColor(ALPHA), Given("stateWorking"));
+        QCOMPARE(titleColor(ALPHA), Given("textStrong"));
         QCOMPARE(titleColor(BETA), Given("stateBlocked"));
         QCOMPARE(titleColor(GAMMA), Given("text"));
         QCOMPARE(stateColor("failed"), Given("stateFailed"));
