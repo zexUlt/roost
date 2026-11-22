@@ -292,7 +292,7 @@ Item {
     LinkEditor {
         id: linkEditor
 
-        onClosed: view.applyPendingFocus()
+        onClosed: Qt.callLater(view.applyPendingFocus)
         onLinkChosen: (instance, input, from, output) => view.layoutEdit("setLink", {
                 instance: instance,
                 input: input,

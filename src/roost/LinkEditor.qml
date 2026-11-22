@@ -23,6 +23,8 @@ Dialog {
     // The input whose box had the keyboard last.
     property string focusedInput: ""
 
+    onClosed: root.focusedInput = ""
+
     // Shows the state of the panel; opens the dialog if it is not open. A new
     // state of an open dialog makes the boxes anew, and the one that had the
     // keyboard is deleted with it: the keyboard goes to the new box of the
