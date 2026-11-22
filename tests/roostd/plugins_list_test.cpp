@@ -108,7 +108,8 @@ private slots:
         const rpc::Result result = List();
         QVERIFY(result);
         QCOMPARE(*result, QJsonValue(QJsonObject{{"plugins", QJsonArray()},
-                                                 {"problems", QJsonArray()}}));
+                                                 {"problems", QJsonArray()},
+                                                 {"disabled", QJsonArray()}}));
     }
 
     void ListsPluginsInLoadOrder() {
