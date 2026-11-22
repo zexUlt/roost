@@ -263,7 +263,7 @@ private:
     // Empty if the delegate of the current row lies inside the viewport of the
     // list (to half a pixel); else what is wrong with it.
     QString CurrentRowProblem() {
-        constexpr qreal TOLERANCE = 0.5;
+        constexpr qreal tolerance = 0.5;
         auto* const list =
             Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
                        "paletteList");
@@ -280,7 +280,7 @@ private:
             const qreal top = delegate->mapToItem(list, QPointF(0, 0)).y();
             const qreal bottom =
                 delegate->mapToItem(list, QPointF(0, delegate->height())).y();
-            if (top >= -TOLERANCE && bottom <= list->height() + TOLERANCE) {
+            if (top >= -tolerance && bottom <= list->height() + tolerance) {
                 return {};
             }
             return QStringLiteral(
