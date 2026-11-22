@@ -76,7 +76,8 @@ A saved file is picked up without a restart.
 ```
 
 To replace a built-in plugin, list its id in `{"plugins": {"disabled": ["sessions"]}}`
-of `settings.json`, put yours under another id in `plugins/` and restart `roostd`. To undo it, remove the id from that list and restart `roostd`.
+of `settings.json`, put yours under another id in `plugins/` and restart `roostd`.
+To undo it, remove the id from that list and restart `roostd`.
 
 ## Logs
 
