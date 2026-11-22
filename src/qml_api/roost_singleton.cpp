@@ -147,10 +147,11 @@ void RoostSingleton::UpdateKeymapProblems() {
     if (problems == KeymapProblems_) {
         return;
     }
-    // Only those of keymap.json: roostd writes the problems of the plugins'
-    // keys to its own log.
+    // Only the new ones of keymap.json: roostd writes the problems of the
+    // plugins' keys to its own log.
     for (const QString& problem : problems) {
-        if (problem.startsWith(QStringLiteral("keymap.json "))) {
+        if (problem.startsWith(QStringLiteral("keymap.json ")) &&
+            !KeymapProblems_.contains(problem)) {
             qWarning("roost: %s", qUtf8Printable(problem));
         }
     }

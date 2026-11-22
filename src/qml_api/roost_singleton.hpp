@@ -114,8 +114,9 @@ protected:
 private:
     explicit RoostSingleton(QJSEngine& engine);
     void setConnected(bool connected);
-    // Copies the problems of the keymap table; writes those of keymap.json of
-    // each new list to the log, as Theme does for the fonts.
+    // Copies the problems of the keymap table; writes to the log each problem
+    // of keymap.json that the previous list did not have (the list is empty
+    // after a lost connection, so a reconnect writes them again).
     void UpdateKeymapProblems();
 
     // The last key event the application filter saw.

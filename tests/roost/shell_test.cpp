@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QJSValue>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QPointer>
@@ -18,6 +19,7 @@
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -220,9 +222,34 @@ private:
         if (!QDir().mkpath(Daemon_->ConfigPath())) {
             return false;
         }
-        QFile file(Daemon_->ConfigPath() + "/keymap.json");
-        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-               file.write(text) == text.size();
+        // Replaced at once: roostd may read the file between a truncation and
+        // the write and publish "it is not JSON" for a moment.
+        QSaveFile file(Daemon_->ConfigPath() + "/keymap.json");
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(text) == text.size() && file.commit();
+    }
+
+    // A plugin with one command bound to `key`, no panels, no backend.
+    bool AddKeyPlugin(const QString& id, const QString& key) {
+        const QDir directory(Daemon_->PluginsPath() + '/' + id);
+        if (!directory.mkpath(".")) {
+            return false;
+        }
+        const QString command = id + ".run";
+        const QJsonObject manifest{
+            {"id", id},
+            {"version", "1"},
+            {"api", "0"},
+            {"contributes",
+             QJsonObject{
+                 {"commands",
+                  QJsonArray{QJsonObject{{"id", command}, {"title", "Run"}}}},
+                 {"keybindings", QJsonArray{QJsonObject{{"command", command},
+                                                        {"key", key}}}}}}};
+        QSaveFile file(directory.filePath("plugin.json"));
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(QJsonDocument(manifest).toJson()) > 0 &&
+               file.commit();
     }
 
     // A window over the plugins of the other tests whose daemon starts with
@@ -421,6 +448,59 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!StripHas("keymap.json"), TIMEOUT_MS);
         QVERIFY(
             Singleton_->property("keymapProblems").toStringList().isEmpty());
+    }
+
+    // roostd's plugin problems hold the conflict, and so does the keymap
+    // table: the strip shows it once.
+    void AKeyConflictOfPluginsIsInTheStripOnce() {
+        QTest::failOnWarning();
+        QVERIFY(AddKeyPlugin("pa", "Ctrl+Alt+K"));
+        QVERIFY(AddKeyPlugin("pb", "Ctrl+Alt+K"));
+        QVERIFY(BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
+                            TERMINAL_PANEL));
+        const QString conflict = "of plugin pb is ignored: plugin pa binds it";
+        QTRY_VERIFY_WITH_TIMEOUT(StripHas(conflict), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Singleton_->property("keymapProblems")
+                                         .toStringList()
+                                         .filter(conflict)
+                                         .size() == 1,
+                                 TIMEOUT_MS);
+        // Both lists have it; the strip has it once.
+        QVERIFY(std::ranges::any_of(Problems(), [&](const QString& p) {
+            return p.contains(conflict);
+        }));
+        QCOMPARE(ShownProblems().filter(conflict).size(), 1);
+    }
+
+    // A problem of keymap.json that stays when another one goes or comes is
+    // not written to the log again.
+    void AProblemOfKeymapJsonIsLoggedOnceWhileItStays() {
+        QTest::failOnWarning();
+        for (const char* entry : {"0", "1"}) {
+            QTest::ignoreMessage(
+                QtWarningMsg,
+                QRegularExpression(
+                    QStringLiteral("roost: keymap.json entry %1 is ignored: "
+                                   "no plugin has the command nope.nothing")
+                        .arg(entry)));
+        }
+        QVERIFY(
+            BootWithKeymap(R"([{"key": "Ctrl+Shift+7", "mac": "Cmd+Shift+7",)"
+                           R"( "command": "nope.nothing"},)"
+                           R"( {"key": "Ctrl+Shift+8", "mac": "Cmd+Shift+8",)"
+                           R"( "command": "nope.nothing"}])"));
+        QTRY_VERIFY_WITH_TIMEOUT(StripHas("keymap.json entry 1 is ignored"),
+                                 TIMEOUT_MS);
+        QVERIFY(StripHas("keymap.json entry 0 is ignored"));
+        // Entry 0 is fixed; entry 1 stays and is not logged again.
+        QVERIFY(WriteKeymap(
+            R"([{"key": "Ctrl+Shift+7", "mac": "Cmd+Shift+7", "command": null},)"
+            R"( {"key": "Ctrl+Shift+8", "mac": "Cmd+Shift+8",)"
+            R"( "command": "nope.nothing"}])"));
+        QTRY_VERIFY_WITH_TIMEOUT(!StripHas("keymap.json entry 0"), TIMEOUT_MS);
+        QVERIFY(StripHas("keymap.json entry 1 is ignored"));
+        // Let a late duplicate come through before the case ends.
+        QTest::qWait(300);
     }
 
     void ATypeNobodyOffersIsNamedInThePlaceholder() {
