@@ -221,7 +221,8 @@ private slots:
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         ClickTab(0);
         QTRY_COMPARE_WITH_TIMEOUT(StoredActive(), 0, TIMEOUT_MS);
-        QCOMPARE(Writes(spy), 1);
+        // The store tells of the write after roostd keeps it.
+        QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 1, TIMEOUT_MS);
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
 
         // The tab that is shown already is not written again: the next write
