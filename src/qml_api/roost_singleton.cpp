@@ -98,7 +98,8 @@ void RoostSingleton::setApi(api::Api& api) {
                 }
             });
     connect(&api, &api::Api::Connected, this, [this] {
-        // A settings that cannot be read leaves the theme as it is.
+        // A settings that cannot be read leaves the theme as it is, and the
+        // check for updates on, as by default.
         Api_->Store()
             .Get(QStringLiteral("settings"))
             .then(this, [this](const rpc::Result& result) {
@@ -107,6 +108,8 @@ void RoostSingleton::setApi(api::Api& api) {
                         result->toObject().value("document").toObject();
                     Theme_->follow(document);
                     Updates_->follow(document);
+                } else {
+                    Updates_->follow(QJsonObject());
                 }
             });
         // The dismissed version. A document that cannot be read is an empty

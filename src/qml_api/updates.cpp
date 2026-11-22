@@ -18,6 +18,10 @@ namespace {
 
 constexpr auto RELEASES_URL =
     "https://api.github.com/repos/zexUlt/roost/releases/latest";
+// The release page is offered only from here: the answer is data from the
+// network, and the link is opened by the system.
+constexpr auto RELEASE_PAGE_PREFIX =
+    "https://github.com/zexUlt/roost/releases/";
 // For tests only: the URL of the check (design/17-updates.md).
 constexpr auto TEST_URL_VARIABLE = "ROOST_TEST_UPDATES_URL";
 constexpr std::chrono::hours CHECK_INTERVAL{24};
@@ -229,6 +233,11 @@ void Updates::readAnswer(QNetworkReply& reply) {
     const QJsonValue page = release.value(QStringLiteral("html_url"));
     if (!tag.isString() || !page.isString()) {
         failed(QStringLiteral("the answer has no tag_name and html_url"));
+        return;
+    }
+    if (!page.toString().startsWith(QLatin1StringView(RELEASE_PAGE_PREFIX))) {
+        failed(QStringLiteral(
+            "the answer has a release page outside the repository"));
         return;
     }
     // A draft or a prerelease is not offered; neither is a tag that is not a

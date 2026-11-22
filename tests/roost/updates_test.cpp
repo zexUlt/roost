@@ -56,9 +56,10 @@ QString Text(const ReleaseVersion& version) {
 
 // A body as the GitHub API answers `releases/latest`.
 QByteArray Release(const QString& tag, bool draft = false,
-                   bool prerelease = false) {
+                   bool prerelease = false,
+                   const QString& page = RELEASE_PAGE) {
     return QJsonDocument(QJsonObject{{"tag_name", tag},
-                                     {"html_url", RELEASE_PAGE},
+                                     {"html_url", page},
                                      {"draft", draft},
                                      {"prerelease", prerelease}})
         .toJson(QJsonDocument::Compact);
@@ -227,6 +228,13 @@ private:
 
     void ClickItem(QQuickItem* item) {
         QVERIFY(item != nullptr);
+        // The layout gives the button its place after it is shown.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            item->width() > 0 && item->height() > 0 &&
+                QRectF(QPointF(0, 0), QSizeF(Window()->size()))
+                    .contains(item->mapToScene(
+                        QPointF(item->width() / 2, item->height() / 2))),
+            TIMEOUT_MS);
         QTest::mouseClick(
             Window(), Qt::LeftButton, Qt::NoModifier,
             item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
@@ -304,7 +312,8 @@ private slots:
         const auto* layout = Root()->findChild<QQuickItem*>("layoutView");
         QVERIFY(layout != nullptr);
         QCOMPARE(Strip()->parentItem(), layout->parentItem());
-        QVERIFY(Strip()->y() >= layout->y() + layout->height());
+        QTRY_VERIFY_WITH_TIMEOUT(Strip()->y() >= layout->y() + layout->height(),
+                                 TIMEOUT_MS);
         // The way the check asks.
         const QByteArray head = Server_->FirstRequest();
         QVERIFY(head.startsWith("GET /releases/latest "));
@@ -373,6 +382,22 @@ private slots:
         QTest::newRow("tag is a number")
             << 200 << QByteArray("{\"tag_name\": 5, \"html_url\": \"x\"}")
             << "the answer has no tag_name and html_url";
+        // The page is opened by the system: only the repository's releases.
+        const QString next = "v" + Text({Running().Major + 1, 0, 0});
+        const char* outside =
+            "the answer has a release page outside the "
+            "repository";
+        QTest::newRow("a file page")
+            << 200 << Release(next, false, false, "file:///etc/passwd")
+            << outside;
+        QTest::newRow("another host")
+            << 200 << Release(next, false, false, "https://example.com/x")
+            << outside;
+        QTest::newRow("a look-alike host")
+            << 200
+            << Release(next, false, false,
+                       "https://github.com.example.com/zexUlt/roost/releases/")
+            << outside;
     }
 
     void AFailureShowsNothingAndIsWarnedOnce() {
@@ -453,6 +478,43 @@ private slots:
 
         PatchSettings({{"updates", QJsonObject{{"check", true}}}});
         QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        QCOMPARE(Server_->Requests(), 1);
+    }
+
+    // With an offer shown, `false` hides it and `true` shows it again.
+    void TurningTheCheckOffHidesTheOffer() {
+        Serve(200, Release("v" + Text({Running().Major + 1, 0, 0})));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        PatchSettings({{"updates", QJsonObject{{"check", false}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(!StripShown(), TIMEOUT_MS);
+        QCOMPARE(Available(), QString());
+
+        QSignalSpy checked(Singleton_->updates(), &Updates::checked);
+        PatchSettings({{"updates", QJsonObject{{"check", true}}}});
+        QVERIFY(checked.wait(TIMEOUT_MS) || !checked.isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        QCOMPARE(Server_->Requests(), 2);
+    }
+
+    // A settings document that cannot be read leaves the check on.
+    void ASettingsThatCannotBeReadLeavesTheCheckOn() {
+        const QString path = Dir_->filePath("config/settings.json");
+        QVERIFY(QDir().mkpath(QFileInfo(path).absolutePath()));
+        QSaveFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{not json");
+        QVERIFY(file.commit());
+        Serve(200, Release("v" + Text({Running().Major + 1, 0, 0})));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        QVERIFY(Singleton_->updates()->property("enabled").toBool());
         QCOMPARE(Server_->Requests(), 1);
     }
 

@@ -263,6 +263,11 @@ private:
 
     // What a user does to a switch: a click at its middle.
     static void Click(const SettingsWindow& window, QQuickItem* item) {
+        // The layout gives the switch its place after the window is shown.
+        QTRY_VERIFY(item->width() > 0 && item->height() > 0 &&
+                    QRectF(QPointF(0, 0), QSizeF(window.Window()->size()))
+                        .contains(item->mapToScene(
+                            QPointF(item->width() / 2, item->height() / 2))));
         QTest::mouseClick(
             window.Window(), Qt::LeftButton, Qt::NoModifier,
             item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
