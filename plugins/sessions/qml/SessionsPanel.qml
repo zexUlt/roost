@@ -112,15 +112,6 @@ FocusScope {
         }
     }
 
-    // The colour of the title of a row. The title of the open session is bold
-    // on the tint of the open row, where the state colours (the blue of a
-    // waiting session above all) are too dark to read: it takes 60% of the
-    // text colour, which keeps the hue of the state.
-    function titleColor(state, isOpen) {
-        const color = stateColor(state);
-        return isOpen ? Qt.tint(color, Qt.alpha(textColor, 0.6)) : color;
-    }
-
     // The text with its control characters (a newline, a tab, the line and
     // paragraph separators) as spaces: a label shows each of them as a break
     // or a gap, and the row of a list is one line.
@@ -1127,10 +1118,11 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 10
                 anchors.rightMargin: 8
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: row.isHeader && row.model.colorIndex >= 0 ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : Roost.theme.textSecondary
                 font.bold: true
-                text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : row.model.category) + " · " + row.model.count : ""
+                text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : root.oneLine(row.model.category)) + " · " + row.model.count : ""
             }
 
             Row {
@@ -1207,7 +1199,7 @@ FocusScope {
                     textFormat: Text.PlainText
                     width: parent.width
                     elide: Text.ElideRight
-                    color: row.isHeader ? root.textColor : root.titleColor(row.model.state, row.isOpen)
+                    color: row.isHeader ? root.textColor : (row.isOpen || row.index === list.currentIndex ? Roost.theme.textStrong : root.stateColor(row.model.state))
                     font.bold: row.isOpen
                     text: row.isHeader ? "" : root.oneLine(row.model.title)
                 }
