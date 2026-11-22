@@ -73,6 +73,39 @@ bool Subsequence(const QString& pattern, const QString& text) {
         .hasMatch();
 }
 
+// While it lives, counts the warnings that match the pattern and keeps them
+// out of the test log; every other message goes on to the test's handler, so
+// FailOnWarnings still holds for them. Unlike QTest::ignoreMessage, the test
+// can wait for the warning: one that comes after an event the test waits for
+// would otherwise come after the test.
+class ExpectedWarning {
+public:
+    explicit ExpectedWarning(const QRegularExpression& pattern) {
+        PATTERN = pattern;
+        SEEN = 0;
+        PREVIOUS = qInstallMessageHandler([](QtMsgType type,
+                                             const QMessageLogContext& context,
+                                             const QString& text) {
+            if (type == QtWarningMsg && PATTERN.match(text).hasMatch()) {
+                ++SEEN;
+                return;
+            }
+            PREVIOUS(type, context, text);
+        });
+    }
+    ~ExpectedWarning() { qInstallMessageHandler(PREVIOUS); }
+
+    ExpectedWarning(const ExpectedWarning&) = delete;
+    ExpectedWarning& operator=(const ExpectedWarning&) = delete;
+
+    int Seen() const { return SEEN; }
+
+private:
+    static inline QRegularExpression PATTERN;
+    static inline int SEEN = 0;
+    static inline QtMessageHandler PREVIOUS = nullptr;
+};
+
 }  // namespace
 
 class PaletteTest : public SessionsWindow {
@@ -258,6 +291,39 @@ private:
                                     : label->property("text").toString();
         }
         return {};
+    }
+
+    // Empty if the delegate of the current row lies inside the viewport of the
+    // list (to half a pixel); else what is wrong with it.
+    QString CurrentRowProblem() {
+        constexpr qreal tolerance = 0.5;
+        auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        if (list == nullptr) {
+            return QStringLiteral("no list");
+        }
+        const int current = list->property("currentIndex").toInt();
+        const auto* view = list->property("contentItem").value<QQuickItem*>();
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->objectName() != "paletteRow" ||
+                delegate->property("index").toInt() != current) {
+                continue;
+            }
+            const qreal top = delegate->mapToItem(list, QPointF(0, 0)).y();
+            const qreal bottom =
+                delegate->mapToItem(list, QPointF(0, delegate->height())).y();
+            if (top >= -tolerance && bottom <= list->height() + tolerance) {
+                return {};
+            }
+            return QStringLiteral(
+                       "row %1 out of view: top %2, bottom %3, list height %4")
+                .arg(current)
+                .arg(top)
+                .arg(bottom)
+                .arg(list->height());
+        }
+        return QStringLiteral("no delegate for row %1").arg(current);
     }
 
     // The palette opened by its key, as the user does; the field has the
@@ -689,6 +755,160 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
         Press(Qt::Key_Escape);
         QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
+    }
+
+    // Down past the rows that fit keeps the chosen row in view, Up brings the
+    // first one back, and Enter runs the row that is shown as chosen.
+    void TheChosenRowStaysInView() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QStringList crashed;
+        const auto subscription = Api_->Bus().Subscribe(
+            "plugin.backendCrashed", Root(),
+            [&crashed](const QString&, const QJsonValue& payload) {
+                crashed.append(payload.toObject().value("plugin").toString());
+            });
+        QVERIFY(subscription.has_value());
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        QVERIFY(list != nullptr);
+        const int rows = Model()->rowCount();
+        const int target = RowOf("fixture.crash");
+        QVERIFY(target >= 0);
+        // The rows that fit, from the height of the list and of the first row.
+        const auto* view = list->property("contentItem").value<QQuickItem*>();
+        qreal rowHeight = 0;
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->objectName() == "paletteRow") {
+                rowHeight = delegate->height();
+                break;
+            }
+        }
+        QVERIFY(rowHeight > 0);
+        const int fit = static_cast<int>(list->height() / rowHeight);
+        if (rows <= fit + 1) {
+            QFAIL("The palette has too few commands to scroll the list");
+        }
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+        // To the last row; every step ends with the chosen row in view.
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+            QCOMPARE(Palette()->property("currentRow").toInt(), step);
+            QVERIFY2(CurrentRowProblem().isEmpty(),
+                     qPrintable(
+                         CurrentRowProblem() + ", contentY " +
+                         QString::number(list->property("contentY").toReal())));
+        }
+        QVERIFY(list->property("contentY").toReal() > 0);
+        // Back to the top: the first row is shown again.
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Up);
+            QVERIFY2(CurrentRowProblem().isEmpty(),
+                     qPrintable(CurrentRowProblem()));
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        QCOMPARE(list->property("contentY").toReal(), qreal(0));
+        // Down to the crash command, in view, and Enter runs it.
+        for (int step = 0; step < target; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), target);
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+        // The fixture backend exits at the command, and the shell says so.
+        // roostd publishes the crash before it fails the request, so the
+        // warning may come after the event.
+        const ExpectedWarning failed(QRegularExpression(
+            QStringLiteral("commands\\.run failed: the backend of fixture")));
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(crashed, QStringList{"fixture"}, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(failed.Seen(), 1, TIMEOUT_MS);
+    }
+
+    // A filter that shrinks the list after Down went to the last row: the list
+    // is back at the top with the first row chosen and no warning, and clearing
+    // the filter brings the whole list back with the chosen row in view.
+    void AFilterThatShrinksTheListScrollsToTheTop() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* const list =
+            Descendant(Palette()->property("contentItem").value<QQuickItem*>(),
+                       "paletteList");
+        QVERIFY(list != nullptr);
+        const int rows = Model()->rowCount();
+        QVERIFY(rows > 3);
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), rows - 1);
+        QVERIFY(list->property("contentY").toReal() > 0);
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+
+        Type("gamma");
+        const int shown = Model()->rowCount();
+        QVERIFY(shown >= 1 && shown < rows);
+        QVERIFY(RowOf("pb.gamma") >= 0);
+        QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        const qreal top = list->property("originY").toReal();
+        QCOMPARE(list->property("contentY").toReal(), top);
+        QTRY_VERIFY_WITH_TIMEOUT(CurrentRowProblem().isEmpty(), TIMEOUT_MS);
+
+        // Clear the filter.
+        for (int step = 0; step < 5; ++step) {
+            Press(Qt::Key_Backspace);
+        }
+        QCOMPARE(Field()->property("text").toString(), QString());
+        QCOMPARE(Model()->rowCount(), rows);
+        QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(CurrentRowProblem().isEmpty(), TIMEOUT_MS);
+    }
+
+    // A rebuild of the rows (the keymap changes) while the chosen command is
+    // the last row: the restored row is in view.
+    void TheRestoredRowAfterARebuildIsInView() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const int rows = Model()->rowCount();
+        QVERIFY(rows > 3);
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        const QString chosen = Shown().last();
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+
+        QVERIFY(
+            WriteKeymap(R"([{"key": "Ctrl+Alt+J", "command": "pa.delta"}])"));
+        QTRY_COMPARE_WITH_TIMEOUT(CellOf("pa.delta", "overridden").toBool(),
+                                  true, TIMEOUT_MS);
+        QCOMPARE(Palette()->property("currentRow").toInt(), RowOf(chosen));
+        QVERIFY(Palette()->property("currentRow").toInt() > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(CurrentRowProblem().isEmpty(), TIMEOUT_MS);
     }
 
 #ifndef Q_OS_MACOS

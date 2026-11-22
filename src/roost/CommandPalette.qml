@@ -96,6 +96,8 @@ Popup {
             cacheBuffer: 0
             onCurrentIndexChanged: {
                 if (currentIndex >= 0) {
+                    // Keep the row that Enter would run on the screen.
+                    positionViewAtIndex(currentIndex, ListView.Contain);
                     root.chosenCommand = paletteModel.commandAt(currentIndex);
                 }
             }
