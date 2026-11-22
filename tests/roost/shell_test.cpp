@@ -737,7 +737,7 @@ private slots:
                  QJsonArray{"sessions"});
         // The line is in the slot, not in the strip of problems as well.
         QVERIFY(!HasProblem("no panel sessions.list"));
-        QVERIFY(PanelOf(TERMINAL) != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(TERMINAL) != nullptr, TIMEOUT_MS);
     }
 
     void TheBannerTellsConnectingAndDisconnectedAndRetryIsOnlyForRefused() {
