@@ -9,11 +9,13 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QQmlExtensionPlugin>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 
+#include <functional>
 #include <optional>
 
 #include "helpers/layout_window.hpp"
@@ -228,6 +230,87 @@ private:
         QVERIFY2(index >= 0, qPrintable(offered.join(", ")));
         QVERIFY(box->setProperty("currentIndex", index));
         QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, index)));
+    }
+
+    // The user opens the combo box with the mouse and clicks its entry.
+    void ChooseWithTheMouse(const QString& input, int index) {
+        QQuickItem* box = Named("linkInput_" + input);
+        QVERIFY(box != nullptr);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(box));
+        // The choice rebuilds the box: the popup may go away with it.
+        QPointer<QObject> popup = box->property("popup").value<QObject*>();
+        QVERIFY(!popup.isNull());
+        QTRY_VERIFY_WITH_TIMEOUT(popup->property("opened").toBool(),
+                                 TIMEOUT_MS);
+        QQuickItem* entry = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            [&] {
+                auto* list =
+                    popup->property("contentItem").value<QQuickItem*>();
+                if (list == nullptr) {
+                    return false;
+                }
+                QMetaObject::invokeMethod(list, "itemAtIndex",
+                                          Q_RETURN_ARG(QQuickItem*, entry),
+                                          Q_ARG(int, index));
+                return entry != nullptr;
+            }(),
+            TIMEOUT_MS);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(entry));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            popup.isNull() || !popup->property("visible").toBool(), TIMEOUT_MS);
+    }
+
+    static QPoint CenterOf(QQuickItem* item) {
+        return item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
+            .toPoint();
+    }
+
+    // The button of the footer of the link editor with the text.
+    QQuickItem* FooterButton(const QString& text) {
+        auto* footer =
+            Popup("linkEditor")->property("footer").value<QQuickItem*>();
+        std::function<QQuickItem*(QQuickItem*)> find =
+            [&](QQuickItem* item) -> QQuickItem* {
+            if (item == nullptr) {
+                return nullptr;
+            }
+            if (item->property("text").toString() == text &&
+                item->metaObject()->indexOfProperty("down") >= 0) {
+                return item;
+            }
+            for (QQuickItem* child : item->childItems()) {
+                if (QQuickItem* found = find(child)) {
+                    return found;
+                }
+            }
+            return nullptr;
+        };
+        return find(footer);
+    }
+
+    // The link editor with the box of the session input in the keyboard.
+    void OpenEditorOnTheBox() {
+        Focus("terminal");
+        Api_->Commands().Run("layout.editLinks");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Popup("linkEditor") != nullptr &&
+                Popup("linkEditor")->property("visible").toBool(),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Offered("session").size(), 2, TIMEOUT_MS);
+        QQuickItem* box = Named("linkInput_session");
+        QVERIFY(box != nullptr);
+        box->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(box->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    // The key that moves the box of the session input to the other entry.
+    Qt::Key KeyToTheOtherEntry() {
+        return Named("linkInput_session")->property("currentIndex").toInt() == 0
+                   ? Qt::Key_Down
+                   : Qt::Key_Up;
     }
 
     // A plugin of the case with two more panel types: `gauge` gives a Level
@@ -986,6 +1069,138 @@ private slots:
         QVERIFY(Leaf(Shell_->CurrentLayout(), "meter").Links.isEmpty());
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
         QVERIFY(Problems().isEmpty());
+    }
+
+    void TheLinkEditorKeepsTheKeyboardAfterAChoice() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        const auto openEditor = [this] {
+            Focus("terminal");
+            Api_->Commands().Run("layout.editLinks");
+            QTRY_VERIFY_WITH_TIMEOUT(
+                Popup("linkEditor") != nullptr &&
+                    Popup("linkEditor")->property("visible").toBool(),
+                TIMEOUT_MS);
+            QTRY_COMPARE_WITH_TIMEOUT(Offered("session").size(), 2, TIMEOUT_MS);
+        };
+        const auto editorIsOpen = [this] {
+            return Popup("linkEditor")->property("visible").toBool();
+        };
+
+        // Escape, after the link was changed with the mouse: the layout is
+        // rebuilt, and the keyboard stays in the dialog.
+        openEditor();
+        ChooseWithTheMouse("session", 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Leaf(Shell_->CurrentLayout(), "terminal").Links.isEmpty(),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Named("linkInput_session") != nullptr &&
+                Named("linkInput_session")->hasActiveFocus(),
+            TIMEOUT_MS);
+        QTest::keyClick(Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!editorIsOpen(), TIMEOUT_MS);
+        // The keyboard is back where it was.
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+
+        // The Close button, after the link was changed again.
+        openEditor();
+        ChooseWithTheMouse("session", 1);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Leaf(Shell_->CurrentLayout(), "terminal").Links.isEmpty(),
+            TIMEOUT_MS);
+        QQuickItem* button = FooterButton("Close");
+        QVERIFY(button != nullptr);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(button));
+        QTRY_VERIFY_WITH_TIMEOUT(!editorIsOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QVERIFY(Problems().isEmpty());
+    }
+
+    void TheLinkEditorKeepsTheKeyboardAfterAChoiceByKeyboard() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        const auto editorIsOpen = [this] {
+            return Popup("linkEditor")->property("visible").toBool();
+        };
+        const auto linked = [this] {
+            return !Leaf(Shell_->CurrentLayout(), "terminal").Links.isEmpty();
+        };
+
+        // The closed box: an arrow key changes the entry. The model change
+        // deletes the box inside its own `activated`.
+        OpenEditorOnTheBox();
+        QVERIFY(!QTest::currentTestFailed());
+        const bool wasLinked = linked();
+        QTest::keyClick(Window(), KeyToTheOtherEntry());
+        QTRY_VERIFY_WITH_TIMEOUT(linked() != wasLinked, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Named("linkInput_session") != nullptr &&
+                Named("linkInput_session")->hasActiveFocus(),
+            TIMEOUT_MS);
+        QTest::keyClick(Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!editorIsOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+
+        // The open popup: Space opens it, Down and Return choose.
+        OpenEditorOnTheBox();
+        QVERIFY(!QTest::currentTestFailed());
+        const bool linkedBefore = linked();
+        const Qt::Key key = KeyToTheOtherEntry();
+        QTest::keyClick(Window(), Qt::Key_Space);
+        QObject* popup =
+            Named("linkInput_session")->property("popup").value<QObject*>();
+        QTRY_VERIFY_WITH_TIMEOUT(popup->property("opened").toBool(),
+                                 TIMEOUT_MS);
+        QTest::keyClick(Window(), key);
+        QTest::keyClick(Window(), Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(linked() != linkedBefore, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Named("linkInput_session") != nullptr &&
+                Named("linkInput_session")->hasActiveFocus(),
+            TIMEOUT_MS);
+        QTest::keyClick(Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!editorIsOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QVERIFY(Problems().isEmpty());
+    }
+
+    void TabMovesTheKeyboardOnInsideTheLinkEditor() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        OpenEditorOnTheBox();
+        QVERIFY(!QTest::currentTestFailed());
+        auto* dialog = Popup("linkEditor");
+        auto* content = dialog->property("contentItem").value<QQuickItem*>();
+        auto* footer = dialog->property("footer").value<QQuickItem*>();
+        const auto inside = [&](QQuickItem* item) {
+            return item != nullptr &&
+                   (item == content || content->isAncestorOf(item) ||
+                    item == footer || footer->isAncestorOf(item));
+        };
+        QQuickItem* box = Named("linkInput_session");
+        QTest::keyClick(Window(), Qt::Key_Tab);
+        QTRY_VERIFY_WITH_TIMEOUT(!box->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(inside(Window()->activeFocusItem()));
+        QVERIFY(Window()->activeFocusItem() != box);
+        QVERIFY(Popup("linkEditor")->property("visible").toBool());
     }
 
     void ClosingAPanelRemovesTheLinksThatCameFromIt() {

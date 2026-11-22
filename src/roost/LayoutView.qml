@@ -130,6 +130,11 @@ Item {
     }
 
     function applyPendingFocus() {
+        // The link editor is modal and keeps the keyboard while it is open:
+        // the panel it edits takes it when the dialog closes.
+        if (linkEditor.visible) {
+            return;
+        }
         const slot = view.slotOf(view.pendingFocus);
         if (slot !== null) {
             view.pendingFocus = "";
@@ -287,6 +292,7 @@ Item {
     LinkEditor {
         id: linkEditor
 
+        onClosed: Qt.callLater(view.applyPendingFocus)
         onLinkChosen: (instance, input, from, output) => view.layoutEdit("setLink", {
                 instance: instance,
                 input: input,
