@@ -212,6 +212,8 @@ Shell::Shell(QObject& root, PluginLoader& loader, api::Api& api,
                 SLOT(OnSlotCreated(QVariant)));
         connect(&Root_, SIGNAL(splitResized(QVariant, QVariant)), this,
                 SLOT(OnSplitResized(QVariant, QVariant)));
+        connect(&Root_, SIGNAL(tabChosen(QVariant, int)), this,
+                SLOT(OnTabChosen(QVariant, int)));
         connect(&Root_, SIGNAL(layoutEdit(QString, QVariant)), this,
                 SLOT(OnLayoutEdit(QString, QVariant)));
     } else {
@@ -692,6 +694,25 @@ void Shell::OnSplitResized(const QVariant& path, const QVariant& sizes) {
         return;
     }
     node->Sizes = std::move(changed);
+    SaveLayout();
+}
+
+void Shell::OnTabChosen(const QVariant& path, int index) {
+    LayoutNode* node = &Layout_.Root;
+    for (const QVariant& step : AsList(path)) {
+        const int at = step.toInt();
+        if (node->Kind == ELayoutNodeKind::Leaf || at < 0 ||
+            static_cast<size_t>(at) >= node->Children.size()) {
+            return;
+        }
+        node = &node->Children[static_cast<size_t>(at)];
+    }
+    if (node->Kind != ELayoutNodeKind::Tabs || index < 0 ||
+        static_cast<size_t>(index) >= node->Children.size() ||
+        node->Active == index) {
+        return;
+    }
+    node->Active = index;
     SaveLayout();
 }
 

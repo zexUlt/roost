@@ -41,6 +41,8 @@ ApplicationWindow {
     signal slotCreated(var slot)
     // The user finished resizing a split (path, sizes); C++ saves it.
     signal splitResized(var path, var sizes)
+    // The user chose a tab of a stack (path, index); C++ saves it.
+    signal tabChosen(var path, int index)
     // An edit of the layout (action, args), see LayoutView; C++ applies it.
     signal layoutEdit(string action, var args)
     // The panel types the layout can be split with; written by C++.
@@ -254,6 +256,7 @@ ApplicationWindow {
             listTypes: root.listPanelTypes
             onSlotCreated: slot => root.slotCreated(slot)
             onSplitResized: (path, sizes) => root.splitResized(path, sizes)
+            onTabChosen: (path, index) => root.tabChosen(path, index)
             panelTypes: root.panelTypes
             panelsWithInputs: root.panelsWithInputs
             onLayoutEdit: (action, args) => root.layoutEdit(action, args)
