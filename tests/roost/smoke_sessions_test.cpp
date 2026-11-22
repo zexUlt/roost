@@ -369,7 +369,8 @@ private slots:
         QCOMPARE(Window_.exitCode(), 1);
         QVERIFY2(Errors_.contains("--smoke does not go with --smoke-sessions"),
                  qPrintable(Errors_));
-        QVERIFY2(elapsed.elapsed() < 3000, qPrintable(Errors_));
+        // The start of a sanitizer build alone can take seconds.
+        QVERIFY2(elapsed.elapsed() < 10000, qPrintable(Errors_));
     }
 
     void FailsAfterTheTimeoutWhenThereAreNoSessions() {
