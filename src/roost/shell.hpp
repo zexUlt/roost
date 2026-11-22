@@ -28,7 +28,8 @@ namespace roost {
 // the connection is up and the plugins are listed, and shows the default
 // layout until then (its slots wait with a placeholder; no panel is created
 // before the layout is known). It writes by patch: when the user finishes
-// resizing a split (`splitResized`), after each edit of the layout
+// resizing a split (`splitResized`), when the user chooses a tab
+// (`tabChosen`), after each edit of the layout
 // (`layoutEdit`: split, tabs, close, links; src/roost/layout_commands.hpp),
 // and in SetLayout. A failed write is a problem of the window. A change of the
 // document by another writer is not followed while the window runs.
@@ -115,6 +116,8 @@ private slots:
     void OnSlotCreated(const QVariant& slot);
     // The root's splitResized(path, sizes).
     void OnSplitResized(const QVariant& path, const QVariant& sizes);
+    // The root's tabChosen(path, index): the user clicked a tab of a stack.
+    void OnTabChosen(const QVariant& path, int index);
     // The root's layoutEdit(action, args): an edit of the layout from a
     // command or the panel menu (layout_commands.hpp), or the request to show
     // the link editor.

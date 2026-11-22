@@ -24,6 +24,9 @@ Item {
     // The user finished resizing a split: `path` is the child indices from the
     // root to the split, `sizes` one number per child, 0 for the rest.
     signal splitResized(var path, var sizes)
+    // The user chose a tab of a stack: `path` is the child indices from the
+    // root to the stack, `index` the tab.
+    signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
     // splitDown, intoTabs, outOfTabs, close, editLinks, setLink) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.

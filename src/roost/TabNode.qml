@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import Roost.Api
 
-// A stack of tabs of the layout: every child is built, one is shown. The
-// layout has no way to make a stack yet; a stack in a saved layout is shown
-// and can be switched here.
+// A stack of tabs of the layout: every child is built, one is shown. A stack
+// comes from "Move into tabs" or from a saved layout. A tab the user clicks is
+// reported to the shell (`tabChosen`) and takes the keyboard.
 Item {
     id: stack
 
@@ -38,8 +38,23 @@ Item {
                 required property int index
 
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
+                onClicked: stack.choose(index)
             }
         }
+    }
+
+    // The user chose a tab: the shell stores it, and the keyboard goes to the
+    // first panel shown on it, as the layout commands act on the panel that
+    // has the keyboard. Late: the shown panel is known when the page has
+    // become visible.
+    function choose(index) {
+        stack.view.tabChosen(stack.path, index);
+        Qt.callLater(() => {
+            const leaf = stack.view.firstLeaf(stack.node.children[index] ?? null, null);
+            if (leaf !== null) {
+                stack.view.focusInstance(leaf.instance);
+            }
+        });
     }
 
     // The pages lie one over the other; the tab that is chosen is visible.
