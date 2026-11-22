@@ -41,12 +41,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -69,11 +71,39 @@ void Fail(const QJsonValue& id, int code, const QString& message) {
           {"error", QJsonObject{{"code", code}, {"message", message}}}});
 }
 
+// The next line of stdin, without its newline; false at the end of input. Read
+// in blocks: std::getline takes seconds over a line of 16 MiB.
+bool ReadLine(QByteArray& line) {
+    static QByteArray buffer;
+    static bool ended = false;
+    qsizetype scanned = 0;
+    for (;;) {
+        const qsizetype end = buffer.indexOf('\n', scanned);
+        if (end >= 0) {
+            line = buffer.first(end);
+            buffer.remove(0, end + 1);
+            return true;
+        }
+        scanned = buffer.size();
+        char block[1 << 16];
+        const ssize_t count =
+            ended ? 0 : ::read(STDIN_FILENO, block, sizeof block);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            ended = true;
+            line = std::exchange(buffer, QByteArray());
+            return !line.isEmpty();
+        }
+        buffer.append(block, count);
+    }
+}
+
 QJsonObject ReadMessage() {
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        const QJsonDocument document =
-            QJsonDocument::fromJson(QByteArray::fromStdString(line));
+    QByteArray line;
+    while (ReadLine(line)) {
+        const QJsonDocument document = QJsonDocument::fromJson(line);
         if (document.isObject()) {
             return document.object();
         }
