@@ -5,6 +5,7 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 set(ROOST_TEST_ENVIRONMENT
     QT_QPA_PLATFORM=offscreen
     QML_DISABLE_DISK_CACHE=1
+    ROOST_TEST_UPDATES_URL=
 )
 
 # ctest runs the tests in parallel (execution.jobs in CMakePresets.json). Each
@@ -68,7 +69,7 @@ roost_add_qt_test(bus_test core/bus_test.cpp)
 roost_add_qt_test(test_environment_test core/test_environment_test.cpp Qt6::Gui)
 # The same binary with the variables removed: the guard alone must set them.
 add_test(NAME test_environment_unset
-    COMMAND ${CMAKE_COMMAND} -E env --unset=QT_QPA_PLATFORM --unset=QML_DISABLE_DISK_CACHE
+    COMMAND ${CMAKE_COMMAND} -E env --unset=QT_QPA_PLATFORM --unset=QML_DISABLE_DISK_CACHE --unset=ROOST_TEST_UPDATES_URL
         $<TARGET_FILE:test_environment_test>)
 roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
@@ -845,3 +846,15 @@ roost_add_qt_test(controls_style_test roost/controls_style_test.cpp
 # The layout model: the default tree, round trip, repair of broken documents;
 # pure data, no plugins or window.
 roost_add_qt_test(layout_model_test roost/layout_model_test.cpp roost_app)
+
+# The check for a newer release: the real window and roostd against a canned
+# server of the loopback (design/17-updates.md).
+roost_add_qt_test(updates_test roost/updates_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(updates_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(updates_test roostd fake_tui claude-adapter sessions_qml)

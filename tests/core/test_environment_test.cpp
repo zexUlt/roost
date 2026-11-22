@@ -16,6 +16,11 @@ private slots:
     void DiskCacheIsDisabled() {
         QCOMPARE(qgetenv("QML_DISABLE_DISK_CACHE"), QByteArray("1"));
     }
+    // Empty, not unset: the window makes no request for a newer release.
+    void UpdateCheckIsOff() {
+        QVERIFY(qEnvironmentVariableIsSet("ROOST_TEST_UPDATES_URL"));
+        QVERIFY(qEnvironmentVariableIsEmpty("ROOST_TEST_UPDATES_URL"));
+    }
 };
 
 // Not QTEST_MAIN: when the guard is broken, QGuiApplication would load the

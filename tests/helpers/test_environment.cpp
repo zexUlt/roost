@@ -18,6 +18,11 @@ struct TestEnvironment {
         if (!qEnvironmentVariableIsSet("ROOST_CODEX_EXECUTABLE")) {
             qputenv("ROOST_CODEX_EXECUTABLE", "roost-no-codex-in-tests");
         }
+        // Empty: the window makes no request for a newer release. A test of
+        // the check sets a URL of its own.
+        if (!qEnvironmentVariableIsSet("ROOST_TEST_UPDATES_URL")) {
+            qputenv("ROOST_TEST_UPDATES_URL", "");
+        }
     }
 };
 

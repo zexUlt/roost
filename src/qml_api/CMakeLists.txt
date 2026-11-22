@@ -26,6 +26,8 @@ qt_add_qml_module(roost_qml_api
         terminal_item.hpp
         theme.cpp
         theme.hpp
+        updates.cpp
+        updates.hpp
     NO_CACHEGEN
 )
 

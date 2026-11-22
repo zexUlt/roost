@@ -14,7 +14,7 @@
 namespace roost {
 
 RoostSingleton::RoostSingleton(QJSEngine& engine)
-    : Engine_(engine), Theme_(new Theme(this)) {}
+    : Engine_(engine), Theme_(new Theme(this)), Updates_(new Updates(this)) {}
 
 RoostSingleton* RoostSingleton::create(QQmlEngine* /*qmlEngine*/,
                                        QJSEngine* jsEngine) {
@@ -81,6 +81,7 @@ void RoostSingleton::setApi(api::Api& api) {
     Sessions_ = new SessionsModel(api, Engine_, Owners_, this);
     Store_ = new StoreAdapter(api, Engine_, Owners_, this);
     Bus_ = new BusAdapter(api, Engine_, Owners_, this);
+    Updates_->attach(api);
     Connected_ = api.IsConnected();
     // The theme follows settings.theme, and the terminals follow the theme:
     // the ones open now and the ones opened later (design.md §5).
@@ -91,6 +92,9 @@ void RoostSingleton::setApi(api::Api& api) {
             [this](const QString& plugin, const QJsonObject& document) {
                 if (plugin == QLatin1String("settings")) {
                     Theme_->follow(document);
+                    Updates_->follow(document);
+                } else if (plugin == QLatin1String("updates")) {
+                    Updates_->followState(document);
                 }
             });
     connect(&api, &api::Api::Connected, this, [this] {
@@ -99,10 +103,22 @@ void RoostSingleton::setApi(api::Api& api) {
             .Get(QStringLiteral("settings"))
             .then(this, [this](const rpc::Result& result) {
                 if (result) {
-                    Theme_->follow(result->toObject()
-                                       .value(QStringLiteral("document"))
-                                       .toObject());
+                    const QJsonObject document =
+                        result->toObject().value("document").toObject();
+                    Theme_->follow(document);
+                    Updates_->follow(document);
                 }
+            });
+        // The dismissed version. A document that cannot be read is an empty
+        // one: the offer is shown, and the dismissal is written anew.
+        Api_->Store()
+            .Get(QStringLiteral("updates"))
+            .then(this, [this](const rpc::Result& result) {
+                Updates_->followState(
+                    result ? result->toObject()
+                                 .value(QStringLiteral("document"))
+                                 .toObject()
+                           : QJsonObject());
             });
     });
     connect(&api, &api::Api::Connected, this, [this] { setConnected(true); });

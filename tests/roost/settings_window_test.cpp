@@ -261,6 +261,14 @@ private:
         return Daemon_->ConfigPath() + "/keymap.json";
     }
 
+    // What a user does to a switch: a click at its middle.
+    static void Click(const SettingsWindow& window, QQuickItem* item) {
+        QTest::mouseClick(
+            window.Window(), Qt::LeftButton, Qt::NoModifier,
+            item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
+                .toPoint());
+    }
+
     std::unique_ptr<testing::RoostdProcess> Daemon_;
     // The window finds keymap.json by ROOST_CONFIG, as roostd does.
     std::unique_ptr<testing::ScopedEnv> Config_;
@@ -536,6 +544,67 @@ private slots:
         QVERIFY(label->isVisible());
         QVERIFY(label->property("text").toString().contains(
             window->Object->property("error").toString()));
+    }
+
+    // The switch of the update check is one key of one patch, as the fields
+    // are; the other keys stay.
+    void TheUpdateSwitchWritesItsKey() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QVERIFY(check != nullptr);
+        // No key is the default: on.
+        QVERIFY(check->property("checked").toBool());
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QTRY_COMPARE(window->Document().value("uiFontSize"), QJsonValue(14));
+
+        Click(*window, check);
+        QTRY_COMPARE(Document("settings"),
+                     (QJsonObject{{"uiFontSize", 14},
+                                  {"updates", QJsonObject{{"check", false}}}}));
+        QTRY_VERIFY(!check->property("checked").toBool());
+        // Another window hears it, and shows it.
+        auto other = OpenWindow();
+        QVERIFY(other);
+        QTRY_VERIFY(
+            !other->Find("updatesCheckSwitch")->property("checked").toBool());
+
+        Click(*window, check);
+        QTRY_COMPARE(Document("settings").value("updates"),
+                     QJsonValue(QJsonObject{{"check", true}}));
+        QTRY_VERIFY(check->property("checked").toBool());
+        QTRY_VERIFY(
+            other->Find("updatesCheckSwitch")->property("checked").toBool());
+        QCOMPARE(Document("settings").value("uiFontSize"), QJsonValue(14));
+    }
+
+    void TheUpdateSwitchShowsTheStoredKey() {
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(WriteFile(Daemon_->ConfigPath() + "/settings.json",
+                          R"({"updates": {"check": false}})"));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY(
+            !window->Find("updatesCheckSwitch")->property("checked").toBool());
+    }
+
+    // A write that fails returns the switch to the stored value and shows the
+    // reason, as for the fields.
+    void AFailedWriteReturnsTheUpdateSwitch() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QVERIFY(check != nullptr);
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QTRY_COMPARE(window->Document().value("uiFontSize"), QJsonValue(14));
+        QVERIFY(Daemon_->Stop());
+        QTRY_VERIFY(!window->Singleton->connected());
+
+        Click(*window, check);
+        QTRY_VERIFY(!window->Object->property("error").toString().isEmpty());
+        QTRY_VERIFY(check->property("checked").toBool());
+        QVERIFY(window->Find("settingsError")->isVisible());
     }
 
     // Opened while roostd is down: the window says why it is empty, and shows

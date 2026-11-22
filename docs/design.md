@@ -20,5 +20,6 @@
 | 14 | Открытые вопросы | [design/14-open-questions.md](design/14-open-questions.md) |
 | 15 | ADR | [design/15-adr.md](design/15-adr.md) |
 | 16 | Хоткеи | [design/16-keymap.md](design/16-keymap.md) |
+| 17 | Обновления | [design/17-updates.md](design/17-updates.md) |
 
 ADR с развёрнутым разбором — в [design/adr/](design/adr/), список всех — §15.

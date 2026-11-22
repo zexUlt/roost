@@ -29,12 +29,17 @@ ApplicationWindow {
     // What the strip shows: `problems`, then keymapOnlyProblems, then the
     // problems of the font settings (the window's own: other windows have
     // theirs).
-    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.fontProblems)
+    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.fontProblems, Roost.updates.problems)
+    // Whether the link of the update line opens the browser. A test turns it
+    // off; releaseOpened follows either way.
+    property bool opensUrls: true
 
     // The Retry button of a refused connection.
     signal retryRequested
     // The Restart roostd button of a version mismatch.
     signal restartRequested
+    // The user pressed the link of the update line (design/17-updates.md).
+    signal releaseOpened(url page)
 
     // The layout tree (see LayoutView.qml), written by C++; null before it.
     property var layoutTree: null
@@ -265,6 +270,51 @@ ApplicationWindow {
             panelTypes: root.panelTypes
             panelsWithInputs: root.panelsWithInputs
             onLayoutEdit: (action, args) => root.layoutEdit(action, args)
+        }
+
+        // A newer release is out: an offer, not a problem (design/17-updates.md).
+        Rectangle {
+            objectName: "updateStrip"
+            Layout.fillWidth: true
+            visible: Roost.updates.available !== ""
+            implicitHeight: updateRow.implicitHeight + 8
+            color: Roost.theme.controlBackground
+
+            RowLayout {
+                id: updateRow
+
+                anchors.fill: parent
+                anchors.margins: 4
+                spacing: 8
+
+                Label {
+                    objectName: "updateText"
+                    Layout.fillWidth: true
+                    text: "roost v" + Roost.updates.available + " is out"
+                    color: Roost.theme.windowText
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    objectName: "updateLinkButton"
+                    flat: true
+                    text: "Release page"
+                    onClicked: {
+                        const page = Roost.updates.url;
+                        root.releaseOpened(page);
+                        if (root.opensUrls) {
+                            Qt.openUrlExternally(page);
+                        }
+                    }
+                }
+
+                Button {
+                    objectName: "updateDismissButton"
+                    flat: true
+                    text: "Dismiss"
+                    onClicked: Roost.updates.dismiss()
+                }
+            }
         }
 
         Rectangle {

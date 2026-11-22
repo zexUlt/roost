@@ -234,7 +234,7 @@ void StoreTest::ReservedPluginIdIsRefused() {
 void StoreTest::WindowDocumentsAreReadAndWritten() {
     QTemporaryDir root;
     const Store store(root.filePath(QStringLiteral("roost")));
-    for (const char* name : {"layout", "settings"}) {
+    for (const char* name : {"layout", "settings", "updates"}) {
         const QString id = QString::fromLatin1(name);
         QVERIFY(Store::IsReservedPluginId(id));
         QVERIFY(Store::IsWindowDocumentId(id));

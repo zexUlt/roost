@@ -16,6 +16,7 @@ constexpr qsizetype MAX_PLUGIN_ID_LENGTH = 64;
 const QString RESERVED_PLUGIN_ID_KEYMAP = QStringLiteral("keymap");
 const QString WINDOW_DOCUMENT_ID_LAYOUT = QStringLiteral("layout");
 const QString WINDOW_DOCUMENT_ID_SETTINGS = QStringLiteral("settings");
+const QString WINDOW_DOCUMENT_ID_UPDATES = QStringLiteral("updates");
 
 bool IsIdStart(QChar c) {
     return (c >= u'a' && c <= u'z') || (c >= u'0' && c <= u'9');
@@ -48,7 +49,9 @@ bool Store::IsReservedPluginId(const QString& id) {
 }
 
 bool Store::IsWindowDocumentId(const QString& id) {
-    return id == WINDOW_DOCUMENT_ID_LAYOUT || id == WINDOW_DOCUMENT_ID_SETTINGS;
+    return id == WINDOW_DOCUMENT_ID_LAYOUT ||
+           id == WINDOW_DOCUMENT_ID_SETTINGS ||
+           id == WINDOW_DOCUMENT_ID_UPDATES;
 }
 
 Store::Store(QString directory) : Directory_(std::move(directory)) {}

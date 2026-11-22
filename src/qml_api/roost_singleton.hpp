@@ -17,6 +17,7 @@
 #include "qml_api/sessions_model.hpp"
 #include "qml_api/store_adapter.hpp"
 #include "qml_api/theme.hpp"
+#include "qml_api/updates.hpp"
 
 namespace roost {
 
@@ -38,6 +39,9 @@ class RoostSingleton : public QObject {
     // The colours of the window by role (ADR 009: the built-in plugins read
     // them here too). Present before setApi.
     Q_PROPERTY(roost::Theme* theme READ theme CONSTANT)
+    // Whether a newer release is out (design/17-updates.md). Present before
+    // setApi, and idle without an API.
+    Q_PROPERTY(roost::Updates* updates READ updates CONSTANT)
     // Whether the window is connected to roostd now.
     Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
     // Whether the window has the keymap table (design.md §16). False before
@@ -62,6 +66,7 @@ public:
     StoreAdapter* store() const { return Store_; }
     BusAdapter* bus() const { return Bus_; }
     Theme* theme() const { return Theme_; }
+    Updates* updates() const { return Updates_; }
     bool connected() const { return Connected_; }
     bool keymapLoaded() const { return KeymapLoaded_; }
     const QStringList& keymapProblems() const { return KeymapProblems_; }
@@ -138,6 +143,7 @@ private:
     StoreAdapter* Store_ = nullptr;
     BusAdapter* Bus_ = nullptr;
     Theme* Theme_ = nullptr;
+    Updates* Updates_ = nullptr;
     bool Connected_ = false;
     bool KeymapLoaded_ = false;
     QStringList KeymapProblems_;
