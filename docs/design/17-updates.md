@@ -8,6 +8,7 @@
 
 - Из ответа берутся `tag_name` (`vX.Y.Z`) и `html_url`. Версии сравниваются числами по частям (`0.10.0` новее `0.9.0`), а не текстом; версия окна — начало `VersionString()` (`src/core/version.hpp`). Тег не вида `vX.Y.Z` (суффикс, две части, нет `v`) не предлагается и не ошибка. Предлагается только версия новее версии окна; `draft: true` и `prerelease: true` не предлагаются.
 - Сбой (ошибка сети, HTTP не 200, ответ не объект JSON, нет строк `tag_name` и `html_url`) ничего не показывает и пишется в лог одной строкой `qWarning` на причину: пока та же причина повторяется, строка не повторяется; хороший ответ сбрасывает счёт. Причина — `HTTP <код>`, `network error: <текст Qt>`, `the answer is not a JSON object`, `the answer has no tag_name and html_url`.
+- HTTPS идёт через TLS-бэкенд Qt: в AppImage `usr/plugins/tls/libqopensslbackend.so` (libssl3 он берёт из системы во время работы), в `.app` `Contents/PlugIns/tls/libqsecuretransportbackend.dylib` (TLS системы). Оба файла проверяют `tools/check_appimage.sh` и `tools/check_bundle.sh` (11-build.md). Без бэкенда проверка — сбой `network error`.
 - Адрес запроса для тестов подменяет переменная окружения `ROOST_TEST_UPDATES_URL`; в работе её не задают. Пустая, но заданная — запросов нет вообще: так её ставят бинарники тестов (`tests/helpers/test_environment.cpp`), чтобы ни один тест не ходил в GitHub.
 
 ## Настройка

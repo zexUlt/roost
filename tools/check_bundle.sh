@@ -197,7 +197,8 @@ for path in Contents/Resources/qml/QtCore/qmldir \
     Contents/Resources/qml/QtQuick/Controls/Fusion/impl/libqtquickcontrols2fusionstyleimplplugin.dylib \
     Contents/Resources/qml/QtQuick/Controls/Basic/qmldir \
     Contents/Resources/qml/QtQuick/Layouts \
-    Contents/PlugIns/imageformats/libqsvg.dylib; do
+    Contents/PlugIns/imageformats/libqsvg.dylib \
+    Contents/PlugIns/tls/libqsecuretransportbackend.dylib; do
     if [ -e "$app/$path" ]; then
         echo "ok:   $path"
     else
