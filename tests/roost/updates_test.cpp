@@ -228,9 +228,15 @@ private:
 
     void ClickItem(QQuickItem* item) {
         QVERIFY(item != nullptr);
-        // The layout gives the button its place after it is shown.
+        // The layout gives the strip and the button their places after the
+        // strip is shown, over more than one polish: until the strip is below
+        // the layout, the point may be another item's.
+        const auto* layout = Root()->findChild<QQuickItem*>("layoutView");
+        QVERIFY(layout != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(
-            item->width() > 0 && item->height() > 0 &&
+            layout->height() > 0 &&
+                Strip()->y() >= layout->y() + layout->height() &&
+                item->width() > 0 && item->height() > 0 &&
                 QRectF(QPointF(0, 0), QSizeF(Window()->size()))
                     .contains(item->mapToScene(
                         QPointF(item->width() / 2, item->height() / 2))),
