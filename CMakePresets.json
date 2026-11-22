@@ -87,9 +87,10 @@
       "name": "asan-ubsan",
       "inherits": "base",
       "configurePreset": "asan-ubsan",
-      "description": "Leak checking is off: macOS ASan has no LeakSanitizer (turning it on for Linux is a separate change)",
+      "description": "Leak checking is off: macOS ASan has no LeakSanitizer (turning it on for Linux is a separate change). MallocNanoZone=0: under ASan macOS malloc otherwise prints 'nano zone abandoned' to the stderr of every process, into the screen of a terminal under test",
       "environment": {
-        "ASAN_OPTIONS": "detect_leaks=0"
+        "ASAN_OPTIONS": "detect_leaks=0",
+        "MallocNanoZone": "0"
       }
     },
     {
