@@ -535,6 +535,17 @@ QString Shell::ErrorFor(const QString& type) const {
             return problem.Message;
         }
     }
+    // The plugin of a panel type is the id without its last part: a plugin id
+    // may have dots, a panel id may not (PluginLoader).
+    const qsizetype dot = type.lastIndexOf(u'.');
+    const QString plugin = dot > 0 ? type.left(dot) : QString();
+    const auto disabled = Api_.Plugins().Plugins().value("disabled").toArray();
+    if (!plugin.isEmpty() && disabled.contains(plugin)) {
+        return QStringLiteral(
+                   "no panel %1: plugin %2 is disabled (settings "
+                   "plugins.disabled; see README \"Configuration\")")
+            .arg(type, plugin);
+    }
     return QStringLiteral("no panel %1").arg(type);
 }
 

@@ -159,6 +159,8 @@ PluginHost::PluginHost(Server& server, BackendOptions options, QObject* parent)
                 {QStringLiteral("plugins"), loaded},
                 {QStringLiteral("problems"),
                  QJsonArray::fromStringList(self->Registry_.Problems())},
+                {QStringLiteral("disabled"),
+                 QJsonArray::fromStringList(self->Registry_.Disabled())},
             };
             // Refused rather than closing the connection.
             if (!Server::AnswerFitsAFrame(list)) {
@@ -229,6 +231,7 @@ void PluginHost::Load(const QStringList& searchPath,
         if (disabled.Ids.contains(manifest->Id)) {
             qInfo("roostd: plugin %s is disabled by the settings",
                   qUtf8Printable(manifest->Id));
+            Registry_.AddDisabled(manifest->Id);
             continue;
         }
         Registry_.Add(*std::move(manifest));
