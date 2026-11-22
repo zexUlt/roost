@@ -10,9 +10,10 @@ import Roost.Api
 // Children of size "fill" share what the fixed ones leave, equally. A
 // SplitView lets only one item fill, the last "fill" child: the others are
 // given their share as a preferred size, which follows the size of the split.
-// On a report, the filling child and a child still at its share are "fill"
-// again, so that a drag of another divider does not turn the shares into
-// pixels; a child the user resized is reported in pixels.
+// On a report, if no "fill" child but the filling one is off its share, all
+// of them are "fill" again, so that a drag of a fixed divider does not turn
+// the shares into pixels; if one is, every "fill" child but the filling one is
+// reported in pixels, so that the ones the user did not touch stay as they are.
 SplitView {
     id: split
 
@@ -79,19 +80,35 @@ SplitView {
     function recount() {
         let total = 0;
         for (let i = 0; i < children.count; ++i) {
-            total += children.objectAt(i).fixedPx;
+            const child = children.objectAt(i);
+            // Not created yet (the Instantiator builds several delegates), or
+            // removed and waiting to be deleted.
+            if (child === null || child.gone) {
+                continue;
+            }
+            total += child.fixedPx;
         }
         split.fixedTotal = total;
     }
 
     // The sizes as they are now: pixels, 0 for a child that takes the rest.
     function reportSizes() {
+        const pixelsOf = i => {
+            const child = children.objectAt(i);
+            return Math.round(split.horizontal ? child.width : child.height);
+        };
+        // A "fill" child other than the filling one is off its share: the
+        // user dragged a divider between "fill" children.
+        let moved = false;
+        for (let i = 0; i < children.count; ++i) {
+            if (children.objectAt(i).fills && i !== split.lastFill && Math.abs(pixelsOf(i) - split.fillShare) > 1) {
+                moved = true;
+            }
+        }
         const sizes = [];
         for (let i = 0; i < children.count; ++i) {
-            const child = children.objectAt(i);
-            const pixels = Math.round(split.horizontal ? child.width : child.height);
-            const atShare = child.fills && (i === split.lastFill || Math.abs(pixels - split.fillShare) <= 1);
-            sizes.push(atShare ? 0 : pixels);
+            const fillsAsBefore = children.objectAt(i).fills && (i === split.lastFill || !moved);
+            sizes.push(fillsAsBefore ? 0 : pixelsOf(i));
         }
         split.view.splitResized(split.path, sizes);
     }
@@ -116,6 +133,7 @@ SplitView {
         // beside the new ones, which are squeezed to their minimum, and a
         // terminal in one of them opens a session of a few columns.
         onObjectRemoved: (index, object) => {
+            object.gone = true;
             object.visible = false;
             split.recount();
         }
@@ -126,6 +144,9 @@ SplitView {
             required property var modelData
 
             parent: split.contentItem
+
+            // Set when the Instantiator drops this node.
+            property bool gone: false
 
             readonly property int size: split.node.sizes[index] ?? 0
             readonly property bool fills: size <= 0

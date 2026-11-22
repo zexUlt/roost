@@ -193,18 +193,14 @@ private slots:
         }
         WaitForSlot("list");
         WaitForSlot("terminal");
-        // Out of tabs the panel has the rest, so has the list when it is the
-        // one that has no size: the two of them are "fill" and are equal.
+        // Out of tabs the two panels are side by side, both "fill": equal.
         const Layout layout = Shell_->CurrentLayout();
         QCOMPARE(layout.Root.Kind, ELayoutNodeKind::Split);
         QCOMPARE(layout.Root.Children.size(), size_t{2});
-        if (layout.Root.Sizes[0] == LayoutSize::Rest() &&
-            layout.Root.Sizes[1] == LayoutSize::Rest()) {
-            VerifyEqual("list", "terminal", true);
-        } else {
-            QVERIFY(Wide("terminal") > 100);
-            QVERIFY(Wide("list") > 100);
-        }
+        QCOMPARE(layout.Root.Sizes.size(), size_t{2});
+        QCOMPARE(layout.Root.Sizes[0], LayoutSize::Rest());
+        QCOMPARE(layout.Root.Sizes[1], LayoutSize::Rest());
+        VerifyEqual("list", "terminal", true);
     }
 
     void ADragBetweenTwoFillPanelsIsKeptAndComesBackAfterARestart() {
@@ -215,18 +211,21 @@ private slots:
         const double before = Wide("terminal");
         Drag(DividerRightOf("terminal", 0), 100);
         QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") > before + 80, TIMEOUT_MS);
-        const int dragged = static_cast<int>(Wide("terminal"));
+        const int dragged = qRound(Wide("terminal"));
         QVERIFY(Wide("terminal-2") >= 40);
 
         // The document says the pixels of the dragged panel, and the filling
         // one is the last.
-        const Layout kept = Shell_->CurrentLayout();
-        QCOMPARE(kept.Root.Sizes.size(), size_t{3});
-        QCOMPARE(kept.Root.Sizes[1], LayoutSize::Px(dragged));
-        QCOMPARE(kept.Root.Sizes[2], LayoutSize::Rest());
-        QTRY_COMPARE_WITH_TIMEOUT(StoredLayout(), LayoutToJson(kept),
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Shell_->CurrentLayout().Root.Sizes.size() == 3 &&
+                Shell_->CurrentLayout().Root.Sizes[1] ==
+                    LayoutSize::Px(dragged) &&
+                Shell_->CurrentLayout().Root.Sizes[2] == LayoutSize::Rest(),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredLayout(), LayoutToJson(Shell_->CurrentLayout()), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(RootSizes().at(1).toInt(), dragged,
                                   TIMEOUT_MS);
-        QCOMPARE(RootSizes().at(1).toInt(), dragged);
         QCOMPARE(RootSizes().at(2).toString(), QString("fill"));
 
         CloseWindow();
@@ -238,9 +237,66 @@ private slots:
         }
         WaitForSlot("terminal");
         WaitForSlot("terminal-2");
-        QTRY_COMPARE_WITH_TIMEOUT(static_cast<int>(Wide("terminal")), dragged,
-                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal") - dragged) <= 1,
+                                 TIMEOUT_MS);
         QVERIFY(Wide("terminal-2") > 100);
+    }
+
+    void ADragBetweenTheSecondAndThirdFillPanelsLeavesTheFirstAlone() {
+        SplitTerminalRight();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ClickInMenu("terminal-2", "menuSplitRight");
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForSlot("terminal-3");
+        // Three "fill" children of the one split: the list, then three panels.
+        const Layout before = Shell_->CurrentLayout();
+        QCOMPARE(before.Root.Kind, ELayoutNodeKind::Split);
+        QCOMPARE(before.Root.Children.size(), size_t{4});
+        QCOMPARE(before.Root.Sizes[1], LayoutSize::Rest());
+        QCOMPARE(before.Root.Sizes[2], LayoutSize::Rest());
+        QCOMPARE(before.Root.Sizes[3], LayoutSize::Rest());
+        VerifyEqual("terminal", "terminal-2", true);
+        VerifyEqual("terminal-2", "terminal-3", true);
+
+        const double first = Wide("terminal");
+        const double second = Wide("terminal-2");
+        Drag(DividerRightOf("terminal-2", 0), 60);
+        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal-2") > second + 40, TIMEOUT_MS);
+        const int dragged = qRound(Wide("terminal-2"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Shell_->CurrentLayout().Root.Sizes.size() == 4 &&
+                Shell_->CurrentLayout().Root.Sizes[3] == LayoutSize::Rest(),
+            TIMEOUT_MS);
+        QVERIFY(qAbs(Wide("terminal") - first) <= 1);
+
+        // The first panel is a pixel size too: untouched, but not a share any
+        // more, and its pixels are what it had.
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredLayout(), LayoutToJson(Shell_->CurrentLayout()), TIMEOUT_MS);
+        QCOMPARE(RootSizes().at(0).toInt(), 320);
+        QVERIFY(qAbs(RootSizes().at(1).toInt() - first) <= 1);
+        QCOMPARE(RootSizes().at(2).toInt(), dragged);
+        QCOMPARE(RootSizes().at(3).toString(), QString("fill"));
+
+        CloseWindow();
+        StopDaemon();
+        QVERIFY(StartDaemon());
+        OpenWindow();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForSlot("terminal");
+        WaitForSlot("terminal-2");
+        WaitForSlot("terminal-3");
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal") - first) <= 1,
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal-2") - dragged) <= 1,
+                                 TIMEOUT_MS);
+        QVERIFY(Wide("terminal-3") > 100);
     }
 
     void APressBesideTheLineStillTakesTheDivider() {
@@ -273,13 +329,16 @@ private slots:
             return;
         }
         const int width = Window()->width();
+        const double start = Wide("terminal");
         Window()->resize(width + 240, Window()->height());
-        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") > 300, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") > start + 80, TIMEOUT_MS);
         VerifyEqual("terminal", "terminal-2", true);
-        QCOMPARE(Wide("list"), 320.0);
+        QVERIFY(qAbs(Wide("list") - 320.0) < 1);
+        const double wider = Wide("terminal");
         Window()->resize(width - 160, Window()->height());
-        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") < 300, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") < wider - 80, TIMEOUT_MS);
         VerifyEqual("terminal", "terminal-2", true);
+        QVERIFY(qAbs(Wide("list") - 320.0) < 1);
     }
 };
 
