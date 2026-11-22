@@ -20,12 +20,27 @@ Dialog {
     // for "none".
     signal linkChosen(string instance, string input, string from, string output)
 
-    // Shows the state of the panel; opens the dialog if it is not open.
+    // The input whose box had the keyboard last.
+    property string focusedInput: ""
+
+    // Shows the state of the panel; opens the dialog if it is not open. A new
+    // state of an open dialog makes the boxes anew, and the one that had the
+    // keyboard is deleted with it: the keyboard goes to the new box of the
+    // input, else to the dialog, or Escape would not reach it.
     function show(state) {
         root.model = state;
         if (!root.visible) {
             root.open();
+            return;
         }
+        let target = root.contentItem;
+        for (let i = 0; i < inputs.count; ++i) {
+            const row = inputs.itemAt(i);
+            if (row !== null && row.modelData.input === root.focusedInput) {
+                target = row.box;
+            }
+        }
+        target.forceActiveFocus();
     }
 
     // The entries of the box of an input: none, the link of the document if it
@@ -73,12 +88,15 @@ Dialog {
         }
 
         Repeater {
+            id: inputs
+
             model: root.model !== null ? root.model.inputs : []
 
             delegate: RowLayout {
                 id: row
 
                 required property var modelData
+                property alias box: box
 
                 readonly property var options: root.optionsOf(modelData)
 
@@ -93,11 +111,18 @@ Dialog {
                 }
 
                 ComboBox {
+                    id: box
+
                     objectName: "linkInput_" + row.modelData.input
                     Layout.fillWidth: true
                     model: row.options
                     textRole: "label"
                     currentIndex: root.indexOfCurrent(row.options, row.modelData)
+                    onActiveFocusChanged: {
+                        if (activeFocus) {
+                            root.focusedInput = row.modelData.input;
+                        }
+                    }
                     onActivated: index => root.linkChosen(root.model.instance, row.modelData.input, row.options[index].from, row.options[index].output)
                 }
             }
