@@ -313,6 +313,10 @@ LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance) {
     const Path stackPath(path.begin(), path.end() - 1);
     LayoutNode& stack = At(tree.Root, stackPath, stackPath.size());
     const auto index = static_cast<std::ptrdiff_t>(path.back());
+    // The first tab goes before the stack, the others after it: out of tabs
+    // undoes into tabs, which merged the panel with its next sibling (the
+    // previous one if it was the last).
+    const bool before = index == 0;
     LayoutNode leaf = std::move(stack.Children[path.back()]);
     stack.Children.erase(stack.Children.begin() + index);
     if (stack.Active > index) {
@@ -330,7 +334,8 @@ LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance) {
     if (!stackPath.empty()) {
         LayoutNode& parent = At(tree.Root, stackPath, stackPath.size() - 1);
         if (parent.Kind == ELayoutNodeKind::Split) {
-            const auto at = static_cast<std::ptrdiff_t>(stackPath.back()) + 1;
+            const auto at = static_cast<std::ptrdiff_t>(stackPath.back()) +
+                            (before ? 0 : 1);
             parent.Children.insert(parent.Children.begin() + at,
                                    std::move(leaf));
             parent.Sizes.insert(parent.Sizes.begin() + at, LayoutSize::Rest());
@@ -340,8 +345,8 @@ LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance) {
     LayoutNode split;
     split.Kind = ELayoutNodeKind::Split;
     split.Horizontal = true;
-    split.Children.push_back(std::move(left));
-    split.Children.push_back(std::move(leaf));
+    split.Children.push_back(std::move(before ? leaf : left));
+    split.Children.push_back(std::move(before ? left : leaf));
     split.Sizes = {LayoutSize::Rest(), LayoutSize::Rest()};
     left = std::move(split);
     return Done(std::move(tree), layout, instance);

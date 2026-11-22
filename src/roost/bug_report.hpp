@@ -61,7 +61,7 @@ QList<BugReportFile> SettingsFiles(const QString& configDirectory);
 // graphics API of the window, or empty if there is none.
 QString AboutText(const QString& socketPath, const QString& graphicsApi);
 
-// The Downloads directory of the user, else the home directory.
+// ~/.roost/bugreports.
 QString DefaultOutputDirectory();
 
 // "roost-bug-<YYYYMMDD-HHMMSS>", the folder of the report in the zip and the

@@ -20,8 +20,7 @@ namespace roost {
 class BugReport : public QObject {
     Q_OBJECT
     QML_ELEMENT
-    // Where the zip goes; empty: the Downloads directory, else the home
-    // directory. A test sets it.
+    // Where the zip goes; empty: ~/.roost/bugreports. A test sets it.
     Q_PROPERTY(QString outputDirectory MEMBER OutputDirectory_ NOTIFY
                    outputDirectoryChanged)
     // The window whose graphics API goes into about.txt; optional.

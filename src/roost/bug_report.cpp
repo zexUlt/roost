@@ -6,7 +6,6 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIODevice>
-#include <QStandardPaths>
 #include <QSysInfo>
 #include <QUrl>
 #include <QtGlobal>
@@ -356,9 +355,7 @@ QString AboutText(const QString& socketPath, const QString& graphicsApi) {
 }
 
 QString DefaultOutputDirectory() {
-    const QString downloads =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    return downloads.isEmpty() ? QDir::homePath() : downloads;
+    return QDir::homePath() + QStringLiteral("/.roost/bugreports");
 }
 
 QString ReportName(const QDateTime& time) {
