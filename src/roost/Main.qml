@@ -22,9 +22,14 @@ ApplicationWindow {
     property bool restartOffered: false
     // Strings: the problems of roostd's plugins, of the panels and of links.
     property var problems: []
-    // What the strip shows: those, then the problems of the font settings
-    // (the window's own: other windows have theirs).
-    readonly property var shownProblems: problems.concat(Roost.theme.fontProblems)
+    // What the strip shows: those, then the problems of keymap.json and of the
+    // keys of the plugins (the keymap table; roostd's plugin problems already
+    // hold the keys of its own platform, so a text found there is not added
+    // twice), then the problems of the font settings (the window's own: other
+    // windows have theirs).
+    readonly property var shownProblems: problems
+        .concat(Roost.keymapProblems.filter(p => problems.indexOf(p) < 0))
+        .concat(Roost.theme.fontProblems)
 
     // The Retry button of a refused connection.
     signal retryRequested

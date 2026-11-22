@@ -2,6 +2,8 @@
 
 #include <QCoreApplication>
 #include <QEvent>
+#include <QJsonArray>
+#include <QJsonValue>
 #include <QKeyEvent>
 #include <QtLogging>
 
@@ -114,7 +116,9 @@ void RoostSingleton::setApi(api::Api& api) {
             KeymapLoaded_ = loaded;
             emit keymapLoadedChanged();
         }
+        UpdateKeymapProblems();
     });
+    UpdateKeymapProblems();
 }
 
 void RoostSingleton::call(const QString& method, const QJSValue& params,
@@ -132,6 +136,22 @@ void RoostSingleton::call(const QString& method, const QJSValue& params,
     }
     callMethod(*Api_, Engine_, context, method, toJson(Engine_, params),
                callback);
+}
+
+void RoostSingleton::UpdateKeymapProblems() {
+    QStringList problems;
+    for (const QJsonValue& problem :
+         Api_->Keymap().Table().value(QStringLiteral("problems")).toArray()) {
+        problems.append(problem.toString());
+    }
+    if (problems == KeymapProblems_) {
+        return;
+    }
+    for (const QString& problem : problems) {
+        qWarning("roost: %s", qUtf8Printable(problem));
+    }
+    KeymapProblems_ = problems;
+    emit keymapProblemsChanged();
 }
 
 void RoostSingleton::setConnected(bool connected) {

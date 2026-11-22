@@ -203,6 +203,36 @@ private:
             Problems(), [&](const QString& p) { return p.contains(part); });
     }
 
+    // What the strip lists: the problems of roostd, of the keymap and of the
+    // fonts.
+    QStringList ShownProblems() {
+        return Root()->property("shownProblems").toStringList();
+    }
+
+    bool StripHas(const QString& part) {
+        return std::ranges::any_of(ShownProblems(), [&](const QString& p) {
+            return p.contains(part);
+        });
+    }
+
+    // keymap.json of the daemon's own config directory (a temporary one).
+    bool WriteKeymap(const QByteArray& text) {
+        if (!QDir().mkpath(Daemon_->ConfigPath())) {
+            return false;
+        }
+        QFile file(Daemon_->ConfigPath() + "/keymap.json");
+        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               file.write(text) == text.size();
+    }
+
+    // A window over the plugins of the other tests whose daemon starts with
+    // `keymap` as keymap.json.
+    bool BootWithKeymap(const QByteArray& keymap) {
+        return WriteKeymap(keymap) &&
+               BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
+                           TERMINAL_PANEL);
+    }
+
     bool BothPanelsShown() {
         return PanelOf(LIST) != nullptr && PanelOf(TERMINAL) != nullptr;
     }
@@ -347,6 +377,50 @@ private slots:
         QVERIFY(PanelOf(TERMINAL) == nullptr);
         QVERIFY(Slot(TERMINAL)->property("panel").value<QQuickItem*>() ==
                 nullptr);
+    }
+
+    void AKeymapThatIsNotJsonIsInTheStrip() {
+        QTest::failOnWarning();
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: keymap.json is ignored: it is not "
+                               "JSON: "));
+        QVERIFY(BootWithKeymap("not json at all"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            StripHas("keymap.json is ignored: it is not JSON: "), TIMEOUT_MS);
+        QVERIFY(Root()->findChild<QQuickItem*>("problemsStrip")->isVisible());
+    }
+
+    void AKeymapEntryWithAnUnknownCommandIsInTheStrip() {
+        QTest::failOnWarning();
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: keymap.json entry 0 is ignored: no "
+                               "plugin has the command nope.nothing"));
+        QVERIFY(
+            BootWithKeymap(R"([{"key": "Ctrl+Shift+7", "mac": "Cmd+Shift+7",)"
+                           R"( "command": "nope.nothing"}])"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            StripHas("keymap.json entry 0 is ignored: no plugin has the "
+                     "command nope.nothing"),
+            TIMEOUT_MS);
+    }
+
+    void FixingKeymapJsonTakesItsProblemsOutOfTheStrip() {
+        QTest::failOnWarning();
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: keymap.json is ignored: it is not "
+                               "JSON: "));
+        QVERIFY(BootWithKeymap("not json at all"));
+        QTRY_VERIFY_WITH_TIMEOUT(StripHas("keymap.json is ignored"),
+                                 TIMEOUT_MS);
+        // The file changes while the window runs: roostd rereads it and
+        // publishes keymap.changed.
+        QVERIFY(WriteKeymap("[]"));
+        QTRY_VERIFY_WITH_TIMEOUT(!StripHas("keymap.json"), TIMEOUT_MS);
+        QVERIFY(
+            Singleton_->property("keymapProblems").toStringList().isEmpty());
     }
 
     void ATypeNobodyOffersIsNamedInThePlaceholder() {
