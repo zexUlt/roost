@@ -112,6 +112,22 @@ FocusScope {
         }
     }
 
+    // The colour of the title of a row. The title of the open session is bold
+    // on the tint of the open row, where the state colours (the blue of a
+    // waiting session above all) are too dark to read: it takes 60% of the
+    // text colour, which keeps the hue of the state.
+    function titleColor(state, isOpen) {
+        const color = stateColor(state);
+        return isOpen ? Qt.tint(color, Qt.alpha(textColor, 0.6)) : color;
+    }
+
+    // The text with its control characters (a newline, a tab, the line and
+    // paragraph separators) as spaces: a label shows each of them as a break
+    // or a gap, and the row of a list is one line.
+    function oneLine(text) {
+        return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+    }
+
     // The words of the second line: a session that waits for the user says so.
     function stateWord(state) {
         return state === "blocked" || state === "needs_input" ? "waiting" : state;
@@ -896,6 +912,7 @@ FocusScope {
     }
 
     Rectangle {
+        objectName: "sessionsBackground"
         anchors.fill: parent
         color: Roost.theme.panelBackground
     }
@@ -1083,6 +1100,7 @@ FocusScope {
 
             // The open session: a tint over the row and a bar at its edge.
             Rectangle {
+                objectName: "openTint"
                 visible: row.isOpen
                 anchors.fill: parent
                 color: Roost.theme.accentTint
@@ -1189,9 +1207,9 @@ FocusScope {
                     textFormat: Text.PlainText
                     width: parent.width
                     elide: Text.ElideRight
-                    color: row.isHeader ? root.textColor : root.stateColor(row.model.state)
+                    color: row.isHeader ? root.textColor : root.titleColor(row.model.state, row.isOpen)
                     font.bold: row.isOpen
-                    text: row.isHeader ? "" : row.model.title
+                    text: row.isHeader ? "" : root.oneLine(row.model.title)
                 }
 
                 Label {
@@ -1204,7 +1222,7 @@ FocusScope {
                     elide: Text.ElideMiddle
                     color: Roost.theme.textMuted
                     font.pixelSize: titleText.font.pixelSize * 0.85
-                    text: row.isHeader ? "" : root.stateWord(row.model.state) + " · " + row.model.cwd
+                    text: row.isHeader ? "" : root.oneLine(root.stateWord(row.model.state) + " · " + row.model.cwd)
                 }
             }
 
