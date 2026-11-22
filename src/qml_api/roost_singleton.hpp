@@ -7,6 +7,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QString>
+#include <QStringList>
 #include <Qt>
 
 #include "api/api.hpp"
@@ -43,6 +44,11 @@ class RoostSingleton : public QObject {
     // the first answer of roostd, after a lost connection, and in a window
     // without an API: the keys of the table do not work then.
     Q_PROPERTY(bool keymapLoaded READ keymapLoaded NOTIFY keymapLoadedChanged)
+    // The problems of the keymap table as roostd answered them (the texts of
+    // design.md §16: keymap.json and the keys of the plugins). Empty while the
+    // table is not loaded.
+    Q_PROPERTY(QStringList keymapProblems READ keymapProblems NOTIFY
+                   keymapProblemsChanged)
 
 public:
     static RoostSingleton* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
@@ -58,6 +64,7 @@ public:
     Theme* theme() const { return Theme_; }
     bool connected() const { return Connected_; }
     bool keymapLoaded() const { return KeymapLoaded_; }
+    const QStringList& keymapProblems() const { return KeymapProblems_; }
 
     // From C++ only. The window's API, or null until setApi (and in a window
     // that has none, such as the one of `roost --session`). The terminal item
@@ -99,6 +106,7 @@ public:
 signals:
     void connectedChanged();
     void keymapLoadedChanged();
+    void keymapProblemsChanged();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -106,6 +114,10 @@ protected:
 private:
     explicit RoostSingleton(QJSEngine& engine);
     void setConnected(bool connected);
+    // Copies the problems of the keymap table; writes to the log each problem
+    // of keymap.json that the previous list did not have (the list is empty
+    // after a lost connection, so a reconnect writes them again).
+    void UpdateKeymapProblems();
 
     // The last key event the application filter saw.
     struct RecordedKey {
@@ -128,6 +140,7 @@ private:
     Theme* Theme_ = nullptr;
     bool Connected_ = false;
     bool KeymapLoaded_ = false;
+    QStringList KeymapProblems_;
 };
 
 }  // namespace roost
