@@ -419,7 +419,8 @@ private slots:
     void CountsCrashesInARow() {
         BackendOptions options = Fast();
         options.MaxRestarts = 1;
-        options.StableRun = 300ms;
+        // Fast() keeps StableRun at 60s: the second run must be shorter than
+        // it however slow the machine is, or the crash is forgotten.
         const auto backend = Make({}, options);
         QSignalSpy crashed(backend.get(), &Backend::Crashed);
         QSignalSpy gaveUp(backend.get(), &Backend::GaveUp);
