@@ -556,6 +556,12 @@ void PluginRegistry::AddProblem(QString problem) {
     Problems_.append(std::move(problem));
 }
 
+void PluginRegistry::AddDisabled(const QString& pluginId) {
+    if (!Disabled_.contains(pluginId)) {
+        Disabled_.append(pluginId);
+    }
+}
+
 const PluginManifest* PluginRegistry::Find(const QString& pluginId) const {
     const auto it = ById_.constFind(pluginId);
     return it == ById_.cend() ? nullptr : &Plugins_[*it];

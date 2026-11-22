@@ -112,6 +112,14 @@ private:
         return problems;
     }
 
+    static QStringList DisabledOf(const QJsonObject& answer) {
+        QStringList ids;
+        for (const QJsonValue& id : answer.value("disabled").toArray()) {
+            ids.append(id.toString());
+        }
+        return ids;
+    }
+
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<Server> Server_;
     std::unique_ptr<PluginHost> Host_;
@@ -137,6 +145,9 @@ private slots:
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"a", "b", "c"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
+        // Always there, empty when nothing is disabled.
+        QVERIFY(answer.value("disabled").isArray());
+        QVERIFY(DisabledOf(answer).isEmpty());
     }
 
     void ListedIdsAreSkippedAndTheRestKeepsItsOrder() {
@@ -145,6 +156,8 @@ private slots:
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"c"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
+        // In load order, not in the order of the setting.
+        QCOMPARE(DisabledOf(answer), (QStringList{"a", "b"}));
     }
 
     void AnIdThatIsNotInstalledIsNoProblem() {
@@ -153,6 +166,8 @@ private slots:
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"a", "b"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
+        // An id nobody has is not listed.
+        QCOMPARE(DisabledOf(answer), (QStringList{"c"}));
     }
 
     void AnIdSkipsEveryPluginThatHasIt() {
@@ -166,6 +181,8 @@ private slots:
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"b", "c"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
+        // Once for the id, not once for each plugin that has it.
+        QCOMPARE(DisabledOf(answer), (QStringList{"a"}));
     }
 
     void AnEmptyListAndOtherSettingsDisableNothing() {
@@ -175,6 +192,7 @@ private slots:
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"a", "b", "c"}));
         QVERIFY(ProblemsOf(answer).isEmpty());
+        QVERIFY(DisabledOf(answer).isEmpty());
     }
 
     void AMalformedValueIsAProblemAndDisablesNothing_data() {
@@ -199,6 +217,7 @@ private slots:
         QVERIFY(Start());
         const QJsonObject answer = List();
         QCOMPARE(IdsOf(answer), (QStringList{"a", "b", "c"}));
+        QVERIFY(DisabledOf(answer).isEmpty());
         const QStringList problems = ProblemsOf(answer);
         QCOMPARE(problems.size(), 1);
         QVERIFY2(problems.first().startsWith("settings: "),

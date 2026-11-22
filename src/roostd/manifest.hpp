@@ -139,6 +139,10 @@ public:
     // Notes a plugin that did not load at all, such as a broken manifest.
     void AddProblem(QString problem);
 
+    // Notes an installed plugin that was left out because the settings disable
+    // it (plugins.disabled). Once per id, in the order of the calls.
+    void AddDisabled(const QString& pluginId);
+
     // Null if there is no such plugin.
     const PluginManifest* Find(const QString& pluginId) const;
 
@@ -161,6 +165,10 @@ public:
 
     const QStringList& Problems() const { return Problems_; }
 
+    // The ids of the installed plugins left out by the settings, in load
+    // order. Not a problem: the user asked for it.
+    const QStringList& Disabled() const { return Disabled_; }
+
     // The keybindings that count, in load order, and the part of Problems()
     // that is about keybindings: the user sees these two as the contributions
     // of the keymap (design.md §16).
@@ -179,6 +187,7 @@ private:
     QHash<QString, std::size_t> Keys_;
     QHash<QString, std::size_t> Agents_;
     QStringList Problems_;
+    QStringList Disabled_;
     std::vector<KeyContribution> KeyContributions_;
     QStringList KeyProblems_;
     EPlatform Platform_;

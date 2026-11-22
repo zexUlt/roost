@@ -715,6 +715,31 @@ private slots:
         QVERIFY(PanelOf(TERMINAL) != nullptr);
     }
 
+    void ADisabledPluginsSlotSaysSoInThePlaceholder() {
+        // `sessions` is installed and the settings disable it, with no
+        // replacement: roostd leaves it out and names it, and the window
+        // tells the user why the slot is empty.
+        QVERIFY(QDir().mkpath(Daemon_->ConfigPath()));
+        QSaveFile settings(Daemon_->ConfigPath() + "/settings.json");
+        QVERIFY(settings.open(QIODevice::WriteOnly));
+        settings.write(R"({"plugins": {"disabled": ["sessions"]}})");
+        QVERIFY(settings.commit());
+        QVERIFY(BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
+                            TERMINAL_PANEL));
+        const QString why = QString(
+            "no panel sessions.list: plugin sessions is disabled (settings "
+            "plugins.disabled; see README \"Configuration\")");
+        QTRY_COMPARE_WITH_TIMEOUT(ErrorOf(LIST), why, TIMEOUT_MS * 2);
+        QVERIFY(PanelOf(LIST) == nullptr);
+        QVERIFY(Placeholder(LIST)->isVisible());
+        QCOMPARE(Placeholder(LIST)->property("text").toString(), why);
+        QCOMPARE(Api_->Plugins().Plugins().value("disabled").toArray(),
+                 QJsonArray{"sessions"});
+        // The line is in the slot, not in the strip of problems as well.
+        QVERIFY(!HasProblem("no panel sessions.list"));
+        QVERIFY(PanelOf(TERMINAL) != nullptr);
+    }
+
     void TheBannerTellsConnectingAndDisconnectedAndRetryIsOnlyForRefused() {
         QVERIFY(Boot(Daemon_->SocketPath()));
         auto* banner = Root()->findChild<QQuickItem*>("connectionBanner");

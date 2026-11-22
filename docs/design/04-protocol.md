@@ -30,7 +30,7 @@
 | `session.resize` | `{channel, columns, rows}` | `null` |
 | `session.close` | `{channel}` | `null` |
 | `session.view` | `{channel}` | `null` |
-| `plugins.list` | — | `{plugins, problems}`: `{id, version, directory, native?, contributes}` каждого загруженного плагина (`native` — `{qt?, qmlImportPath?}` как в манифесте, только если плагин его объявил), проблемы загрузки для пользователя |
+| `plugins.list` | — | `{plugins, problems, disabled}`: `{id, version, directory, native?, contributes}` каждого загруженного плагина (`native` — `{qt?, qmlImportPath?}` как в манифесте, только если плагин его объявил), проблемы загрузки для пользователя, id установленных плагинов, которые `roostd` пропустил из-за `plugins.disabled` (по одному, в порядке загрузки; id, которого нет среди установленных, не входит; ключ есть всегда, пустой массив без выключенных) |
 | `store.get` | `{plugin}` | `{document}`: документ плагина в хранилище (§8), `{}`, если его ещё нет |
 | `store.set` | `{plugin, document}` | `null`: документ заменяется целиком |
 | `store.patch` | `{plugin, patch}` | `null`: `patch` вливается в текущий документ по RFC 7386 (`null` удаляет ключ, объект сливается, остальное, массивы тоже, заменяет) |
