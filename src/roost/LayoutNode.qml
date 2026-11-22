@@ -98,9 +98,15 @@ Item {
             // The first leaf takes the keyboard at start, once the window has
             // none in it. (Not by `focus`: a Loader is a focus scope, and the
             // leaf and the nodes above it are made one after another.)
+            //
+            // It runs late (Qt.callLater), maybe after the layout was replaced
+            // and `root` is gone while the slot waits to be deleted: it reads
+            // `root` only through `leading`, which keeps the value.
+            readonly property bool leading: root.first
+
             function takeKeyboardAtStart() {
                 const focused = slot.Window.activeFocusItem;
-                if (root.first && (focused === null || focused === slot.Window.contentItem)) {
+                if (slot.leading && (focused === null || focused === slot.Window.contentItem)) {
                     slot.forceActiveFocus();
                 }
             }
