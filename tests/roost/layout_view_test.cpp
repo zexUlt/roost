@@ -96,8 +96,9 @@ private:
         QVERIFY(!TerminalOf(terminal)->superseded());
         QVERIFY(TerminalText(terminal).isEmpty());
         QCOMPARE(SessionIdOf(terminal), id);
-        QTRY_VERIFY2_WITH_TIMEOUT(ScreenOf(terminal).contains(Greeting(id)),
-                                  qPrintable(ScreenOf(terminal)), TIMEOUT_MS);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            ScreenOf(terminal).contains(Greeting(id)),
+            qPrintable(terminal + ": " + ScreenReport(terminal)), TIMEOUT_MS);
     }
 
     std::optional<ScopedEnv> Home_;
