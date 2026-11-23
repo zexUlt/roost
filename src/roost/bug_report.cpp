@@ -40,10 +40,13 @@ constexpr qsizetype ZLIB_HEADER_LENGTH = 2;
 constexpr qsizetype ZLIB_TRAILER_LENGTH = 4;  // adler32
 constexpr int MAX_NUMBERED_NAMES = 1000;
 
-const std::array<QLatin1StringView, 5> LOG_NAMES = {
-    QLatin1StringView("roostd.log"), QLatin1StringView("roostd.log.1"),
-    QLatin1StringView("roostd.start.log"), QLatin1StringView("roost.log"),
-    QLatin1StringView("roost.log.1")};
+const std::array<QLatin1StringView, 6> LOG_NAMES = {
+    QLatin1StringView("roostd.log"),
+    QLatin1StringView("roostd.log.1"),
+    QLatin1StringView("roostd.start.log"),
+    QLatin1StringView("roost.log"),
+    QLatin1StringView("roost.log.1"),
+    QLatin1StringView("roost.relaunch.log")};
 
 const QString KEYMAP_FILE = QStringLiteral("keymap.json");
 
