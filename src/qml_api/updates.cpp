@@ -450,9 +450,15 @@ void Updates::onInstalled(const std::expected<InstallDone, QString>& result) {
         endInstall(result.error());
         return;
     }
-    qInfo("roost: installed roost %s in %s; the old one is at %s",
-          qUtf8Printable(InstallVersion_), qUtf8Printable(InstallTarget_),
-          qUtf8Printable(result->Old));
+    if (result->Old.isEmpty()) {
+        // The AppImage: replaced in place, no old copy is kept.
+        qInfo("roost: installed roost %s in %s; the old one is replaced",
+              qUtf8Printable(InstallVersion_), qUtf8Printable(InstallTarget_));
+    } else {
+        qInfo("roost: installed roost %s in %s; the old one is at %s",
+              qUtf8Printable(InstallVersion_), qUtf8Printable(InstallTarget_),
+              qUtf8Printable(result->Old));
+    }
     emit installed(result->Old);
     // The new version is in place. The window that runs is the old one: it
     // starts the new and quits (the old roostd goes through the version

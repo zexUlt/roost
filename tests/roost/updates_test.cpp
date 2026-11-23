@@ -467,12 +467,32 @@ private:
     // version and the quit recorded instead of done.
     void BootToInstall() {
         MakeBundle(Installed(), "0.0.1", "old");
+        BootToInstallAt(Installed());
+    }
+
+    // The same for an AppImage: a file that says whose it is, not yet
+    // executable (the install gives it the mode).
+    QString InstalledAppImage() const {
+        return Dir_->filePath("Applications/roost.AppImage");
+    }
+    void BootToInstallAppImage() {
+        QVERIFY(QDir().mkpath(Dir_->filePath("Applications")));
+        QSaveFile file(InstalledAppImage());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("old appimage\n");
+        QVERIFY(file.commit());
+        QVERIFY(QFile::setPermissions(InstalledAppImage(),
+                                      QFile::ReadOwner | QFile::WriteOwner));
+        BootToInstallAt(InstalledAppImage());
+    }
+
+    void BootToInstallAt(const QString& target) {
         Boot();
         if (QTest::currentTestFailed()) {
             return;
         }
         Updates& updates = *Singleton_->updates();
-        updates.setInstallTarget(Installed());
+        updates.setInstallTarget(target);
         updates.setRelaunch([this](const QString& target) {
             Relaunched_.append(target);
             return RelaunchResult_;
@@ -1349,6 +1369,71 @@ private slots:
         QCOMPARE(InstallState(), QString());
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 0);
     }
+
+#ifdef Q_OS_LINUX
+    // The click on Linux: the AppImage is replaced by the package (the bytes
+    // the signed SHA256SUMS lists), it is executable, nothing is left beside
+    // it, the new one is started at its path and this window quits once.
+    void TheClickReplacesTheAppImageAndRestarts() {
+        ServeRelease();
+        BootToInstallAppImage();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QCOMPARE(ReadFile(InstalledAppImage()), QByteArray("old appimage\n"));
+        QVERIFY(Relaunched_.isEmpty());
+
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QCOMPARE(ReadFile(InstalledAppImage()), PackageFixture(PackageName()));
+        QVERIFY(QFileInfo(InstalledAppImage()).isExecutable());
+        QCOMPARE(Relaunched_, QStringList{InstalledAppImage()});
+        // No old copy is kept: the signal says there is none.
+        QCOMPARE(Trashed_, QStringList{QString()});
+        QCOMPARE(QDir(Dir_->filePath("Applications")).entryList(QDir::Files),
+                 QStringList{"roost.AppImage"});
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
+    }
+
+    // A directory that is not writable: the strip says where and what to do
+    // by hand, the AppImage is as it was, and the click tries again.
+    void AnAppImageInAReadOnlyDirectoryIsNotReplaced() {
+        if (::geteuid() == 0) {
+            QSKIP("root writes through directory permissions");
+        }
+        ServeRelease();
+        BootToInstallAppImage();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString directory = Dir_->filePath("Applications");
+        QVERIFY(QFile::setPermissions(directory,
+                                      QFile::ReadOwner | QFile::ExeOwner));
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: the install of the update failed: "
+                               "cannot create a file in .*Permission denied"));
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(StripText().contains(directory));
+        QVERIFY(StripText().contains("replace the file by hand"));
+        QCOMPARE(ReadFile(InstalledAppImage()), QByteArray("old appimage\n"));
+        QVERIFY(Relaunched_.isEmpty());
+        QCOMPARE(Quits_, 0);
+        QVERIFY(InstallButton()->isEnabled());
+        // The package stays: the second try installs it without fetching.
+        QVERIFY(QFile::setPermissions(
+            directory, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QCOMPARE(ReadFile(InstalledAppImage()), PackageFixture(PackageName()));
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+    }
+#endif
 
 #ifdef Q_OS_MACOS
     // The click is download, install, start the new version, quit; nothing

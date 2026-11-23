@@ -65,7 +65,7 @@ State and settings live in `~/.config/roost`; `ROOST_CONFIG` or `XDG_CONFIG_HOME
 | `agent-icons/` | `<agent>.svg` or `.png` replaces an agent's icon, `default.*` the fallback | `docs/design/08-state.md` |
 | `plugins/` | your plugins; template: `templates/plugin-qml/` | `docs/design/05-plugins.md` |
 
-The window checks GitHub for a newer release at start and then every 24 hours, and shows a line with a link; it installs nothing. `"updates": {"check": false}` in `settings.json` (or the "Check for updates" switch in the settings window) turns the check off.
+The window checks GitHub for a newer release at start and then every 24 hours, and shows a line with a link. On macOS (an installed `roost.app`) and Linux (the AppImage, in a directory you can write to) the line has "Install and restart": it downloads the release, verifies its signature, replaces the app and starts the new version, only when you click. `"updates": {"check": false}` in `settings.json` (or the "Check for updates" switch in the settings window) turns the check off.
 
 `keymap.json`: `mac` replaces `key` on macOS, `"command": null` removes a key.
 A saved file is picked up without a restart.

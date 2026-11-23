@@ -187,7 +187,8 @@ signals:
     // The package has been downloaded and verified; C++ only.
     void packageReady(const QString& path);
     // The new version is in place; `oldBundle` is where the old one went
-    // (the Trash). Before the new version is started. C++ only.
+    // (the Trash), empty where none is kept (the AppImage). Before the new
+    // version is started. C++ only.
     void installed(const QString& oldBundle);
 
 private:

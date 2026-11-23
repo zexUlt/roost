@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/appimage_environment.hpp"
+
 namespace roost {
 
 namespace {
@@ -23,40 +25,21 @@ constexpr qsizetype MAX_OUTPUT = 8 * 1024 * 1024;
 }  // namespace
 
 const QStringList& LoginEnvironment::BundleVariables() {
-    static const QStringList VARIABLES{
-        QStringLiteral("APPDIR"), QStringLiteral("APPIMAGE"),
-        QStringLiteral("ARGV0"), QStringLiteral("OWD")};
-    return VARIABLES;
+    return AppImageBundleVariables();
 }
 
 const QStringList& LoginEnvironment::AppImageLibraryVariables() {
-    static const QStringList VARIABLES{QStringLiteral("LD_LIBRARY_PATH"),
-                                       QStringLiteral("QT_PLUGIN_PATH"),
-                                       QStringLiteral("QML2_IMPORT_PATH")};
-    return VARIABLES;
+    return roost::AppImageLibraryVariables();
 }
 
 bool LoginEnvironment::InAppImage(const QString& appDir,
                                   const QString& executableDir) {
-    if (appDir.isEmpty()) {
-        return false;
-    }
-    const QString root = QDir::cleanPath(appDir);
-    const QString executable = QDir::cleanPath(executableDir);
-    return executable == root || executable.startsWith(root + QLatin1Char('/'));
+    return InsideAppImage(appDir, executableDir);
 }
 
 QProcessEnvironment LoginEnvironment::Strip(QProcessEnvironment environment,
                                             bool inAppImage) {
-    for (const QString& name : BundleVariables()) {
-        environment.remove(name);
-    }
-    if (inAppImage) {
-        for (const QString& name : AppImageLibraryVariables()) {
-            environment.remove(name);
-        }
-    }
-    return environment;
+    return StripAppImageEnvironment(std::move(environment), inAppImage);
 }
 
 std::optional<QProcessEnvironment> LoginEnvironment::Parse(
