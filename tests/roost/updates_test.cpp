@@ -4,8 +4,12 @@
 // check at it. The cases: a newer release is offered, what is not newer or not
 // a release is not, a failed request shows nothing and is warned of once,
 // settings.updates.check turns the check off, and Dismiss lasts until a newer
-// version comes.
+// version comes. Then the download of the package of an offered release and its
+// check: the same server serves the assets of release v9.9.9 (SHA256SUMS signed
+// by the real minisign, tests/fixtures/updates) and a case changes one thing
+// in what it serves.
 
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +19,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSignalSpy>
+#include <QSysInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
@@ -97,6 +102,39 @@ public:
         Status_ = status;
         Body_ = body;
     }
+
+    // What a path answers instead of the canned answer: a body, or a redirect
+    // to another path, and whether the request waits for ReleaseHeld().
+    struct Route {
+        int Status = 200;
+        QByteArray Body;
+        QByteArray Location;
+        bool Hold = false;
+
+        static Route Serving(const QByteArray& body) {
+            return Route{200, body, {}, false};
+        }
+        static Route Failing(int status, const QByteArray& body) {
+            return Route{status, body, {}, false};
+        }
+        static Route Redirecting(const QByteArray& location) {
+            return Route{302, {}, location, false};
+        }
+        static Route Waiting(const QByteArray& body) {
+            return Route{200, body, {}, true};
+        }
+    };
+    void Serve(const QByteArray& path, const Route& route) {
+        Routes_.insert(path, route);
+    }
+    QString Origin() const {
+        return QStringLiteral("http://127.0.0.1:%1").arg(Server_.serverPort());
+    }
+    // The paths asked for, in the order of the heads.
+    const QList<QByteArray>& Asked() const { return Asked_; }
+    int AskedFor(const QByteArray& path) const {
+        return static_cast<int>(Asked_.count(path));
+    }
     void Hold(bool on) { Hold_ = on; }
     int Requests() const { return Requests_; }
     // The requests that wait for release().
@@ -126,8 +164,12 @@ private:
             if (Requests_++ == 0) {
                 First_ = Heads_[socket];
             }
+            const QByteArray path = Heads_[socket].split(' ').value(1);
+            Asked_.append(path);
+            Paths_.insert(socket, path);
             Heads_.remove(socket);
-            if (Hold_) {
+            const auto route = Routes_.constFind(path);
+            if (route != Routes_.cend() ? route->Hold : Hold_) {
                 Held_.append(socket);
             } else {
                 Respond(*socket);
@@ -142,11 +184,19 @@ private:
     }
 
     void Respond(QTcpSocket& socket) {
-        socket.write("HTTP/1.1 " + QByteArray::number(Status_) +
-                     " Canned\r\nContent-Type: application/json\r\n"
-                     "Content-Length: " +
-                     QByteArray::number(Body_.size()) +
-                     "\r\nConnection: close\r\n\r\n" + Body_);
+        const auto route = Routes_.constFind(Paths_.take(&socket));
+        const bool routed = route != Routes_.cend();
+        const int status = routed ? route->Status : Status_;
+        const QByteArray& body = routed ? route->Body : Body_;
+        const QByteArray location =
+            routed && !route->Location.isEmpty()
+                ? "Location: " + route->Location + "\r\n"
+                : QByteArray();
+        socket.write("HTTP/1.1 " + QByteArray::number(status) +
+                     " Canned\r\nContent-Type: application/json\r\n" +
+                     location +
+                     "Content-Length: " + QByteArray::number(body.size()) +
+                     "\r\nConnection: close\r\n\r\n" + body);
         socket.disconnectFromHost();
     }
 
@@ -159,6 +209,9 @@ private:
     int Abandoned_ = 0;
     QByteArray First_;
     QHash<QTcpSocket*, QByteArray> Heads_;
+    QHash<QTcpSocket*, QByteArray> Paths_;
+    QHash<QByteArray, Route> Routes_;
+    QList<QByteArray> Asked_;
     QList<QPointer<QTcpSocket>> Held_;
 };
 
@@ -247,6 +300,112 @@ private:
                 .toPoint());
     }
 
+    // ---- the download of a package ------------------------------------
+
+    static QByteArray Fixture(const QString& name) {
+        return ReadFile(QStringLiteral(FIXTURES_DIR "/updates/") + name);
+    }
+
+    // The assets a release v9.9.9 has: the packages of both platforms and both
+    // archs, and the signed sums.
+    static QStringList AssetNames() {
+        return {"roost-9.9.9-macos-arm64.dmg",
+                "roost-9.9.9-macos-x86_64.dmg",
+                "roost-x86_64.AppImage",
+                "roost-aarch64.AppImage",
+                "SHA256SUMS",
+                "SHA256SUMS.minisig"};
+    }
+
+    // The answer of the releases API: the assets at `base`, which is where the
+    // repository's are, unless a case says another.
+    QByteArray ReleaseOf(const QString& tag, const QString& base = {},
+                         const QStringList& names = AssetNames()) {
+        const QString at =
+            (base.isEmpty()
+                 ? Server_->Origin() + "/releases/download/" + tag + "/"
+                 : base);
+        QJsonArray assets;
+        for (const QString& name : names) {
+            assets.append(QJsonObject{{"name", name},
+                                      {"browser_download_url", at + name}});
+        }
+        return QJsonDocument(QJsonObject{{"tag_name", tag},
+                                         {"html_url", RELEASE_PAGE},
+                                         {"draft", false},
+                                         {"prerelease", false},
+                                         {"assets", assets}})
+            .toJson(QJsonDocument::Compact);
+    }
+
+    // What the server serves as the asset `name`: the signed sums and their
+    // signature (`signature` is the file of the fixtures), or the package.
+    static QByteArray FileOf(const QString& name,
+                             const QString& signature = "SHA256SUMS.minisig") {
+        if (name == "SHA256SUMS") {
+            return Fixture("SHA256SUMS");
+        }
+        return name == "SHA256SUMS.minisig" ? Fixture(signature)
+                                            : Fixture("asset.bin");
+    }
+
+    // The path of an asset of the release `tag` on the server.
+    static QByteArray AssetPath(const QString& tag, const QString& name) {
+        return ("/releases/download/" + tag + "/" + name).toUtf8();
+    }
+
+    QString PackageName() { return packageAssetName("9.9.9"); }
+
+    // The server with the release v9.9.9 and its files as the release workflow
+    // makes them, the key that checks them, and the directory of the download
+    // inside the directory of the case. `signature` is the file served as
+    // SHA256SUMS.minisig.
+    void ServeRelease(const QString& tag = "v9.9.9",
+                      const QString& signature = "SHA256SUMS.minisig") {
+        Serve(200, {});
+        Server_->Answer(200, ReleaseOf(tag));
+        Key_.emplace("ROOST_TEST_UPDATES_PUBLIC_KEY", Fixture("test.pub"));
+        Cache_.emplace("ROOST_CACHE", Dir_->filePath("cache").toUtf8());
+        for (const QString& name : AssetNames()) {
+            Server_->Serve(AssetPath(tag, name), ReleaseServer::Route::Serving(
+                                                     FileOf(name, signature)));
+        }
+    }
+
+    // The directories of the attempts of downloads.
+    QStringList Attempts() {
+        return QDir(Dir_->filePath("cache/updates"))
+            .entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    }
+
+    // The window is up and the offer of the release is there.
+    void BootWithOffer() {
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Singleton_->updates()->canDownload(),
+                                 TIMEOUT_MS);
+    }
+
+    QString DownloadState() const {
+        return Singleton_->updates()->property("downloadState").toString();
+    }
+    QString DownloadError() const {
+        return Singleton_->updates()->property("downloadError").toString();
+    }
+
+    // A download that fails says so in the log, once.
+    static void ExpectFailure(const QString& reason) {
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: the download of the update failed: " +
+                               QRegularExpression::escape(reason)));
+    }
+
+    std::optional<ScopedEnv> Key_;
+    std::optional<ScopedEnv> Cache_;
+
     std::unique_ptr<ReleaseServer> Server_;
     std::optional<ScopedEnv> Url_;
 
@@ -259,6 +418,8 @@ private slots:
     void cleanup() {
         Teardown();
         Url_.reset();
+        Key_.reset();
+        Cache_.reset();
         Server_.reset();
     }
 
@@ -640,6 +801,381 @@ private slots:
             QJsonObject{{"dismissed", Text({Running().Major + 1, 0, 0})}});
         QTRY_VERIFY_WITH_TIMEOUT(writing.isFinished(), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(!StripShown(), TIMEOUT_MS);
+    }
+
+    // ---- the download of a package --------------------------------------
+
+    // The name of the package of this platform and arch, as the package scripts
+    // name it; and where the files of the repository are.
+    void ThePackageAndTheRepositoryAreNamed() {
+#if defined(Q_OS_MACOS)
+        const QString arch = QSysInfo::buildCpuArchitecture();
+        QVERIFY(arch == "arm64" || arch == "x86_64");
+        QCOMPARE(packageAssetName("1.2.3"),
+                 QString("roost-1.2.3-macos-%1.dmg").arg(arch));
+#elif defined(Q_OS_LINUX)
+        QCOMPARE(packageAssetName("1.2.3"),
+                 QSysInfo::buildCpuArchitecture() == "x86_64"
+                     ? QString("roost-x86_64.AppImage")
+                     : QString("roost-aarch64.AppImage"));
+#endif
+        const ScopedEnv noServer("ROOST_TEST_UPDATES_URL", QByteArray());
+        QCOMPARE(assetUrlPrefix("v1.2.3"),
+                 QString("https://github.com/zexUlt/roost/releases/download/"
+                         "v1.2.3/"));
+        const ScopedEnv server(
+            "ROOST_TEST_UPDATES_URL",
+            QByteArray("http://127.0.0.1:8/releases/latest"));
+        QCOMPARE(assetUrlPrefix("v1.2.3"),
+                 QString("http://127.0.0.1:8/releases/download/v1.2.3/"));
+    }
+
+    // The package, SHA256SUMS and its signature are downloaded, checked, and
+    // left in a directory of their own; the window is told.
+    void AGoodPackageIsReady() {
+        ServeRelease();
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Updates& updates = *Singleton_->updates();
+        QCOMPARE(DownloadState(), QString());
+        QSignalSpy ready(&updates, &Updates::packageReady);
+        updates.download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("ready"),
+                                  TIMEOUT_MS);
+        QCOMPARE(ready.size(), 1);
+        const QString path = ready.first().at(0).toString();
+        QCOMPARE(updates.downloadedPackage(), path);
+        QCOMPARE(ReadFile(path), Fixture("asset.bin"));
+        QCOMPARE(QFileInfo(path).fileName(), PackageName());
+        // Under the cache directory, in a directory made for this attempt.
+        QCOMPARE(Attempts().size(), 1);
+        QCOMPARE(QFileInfo(path).absolutePath(),
+                 Dir_->filePath("cache/updates/" + Attempts().first()));
+        QCOMPARE(ReadFile(Dir_->filePath("cache/updates/" + Attempts().first() +
+                                         "/SHA256SUMS")),
+                 Fixture("SHA256SUMS"));
+        QCOMPARE(updates.property("downloadProgress").toDouble(), 1.0);
+        QVERIFY(DownloadError().isEmpty());
+        // The three files, once each.
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", "SHA256SUMS")), 1);
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", "SHA256SUMS.minisig")),
+                 1);
+        // A ready package is not fetched again: another call keeps it.
+        updates.download();
+        QCOMPARE(DownloadState(), QString("ready"));
+        QCOMPARE(updates.downloadedPackage(), path);
+        QVERIFY(QFileInfo::exists(path));
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        QCOMPARE(ready.size(), 1);
+        // With the window the directory goes.
+        CloseWindow();
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    // The storage of GitHub is another address: the download follows the
+    // redirect, the check is the same.
+    void ARedirectToTheStorageIsFollowed() {
+        ServeRelease();
+        const QByteArray storage = "/storage/package?token=abc";
+        Server_->Serve(storage,
+                       ReleaseServer::Route::Serving(Fixture("asset.bin")));
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Redirecting(storage));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QSignalSpy ready(Singleton_->updates(), &Updates::packageReady);
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("ready"),
+                                  TIMEOUT_MS);
+        QCOMPARE(ReadFile(ready.first().at(0).toString()),
+                 Fixture("asset.bin"));
+        QCOMPARE(Server_->AskedFor(storage), 1);
+    }
+
+    // A package that is not the one signed in SHA256SUMS: failed, the reason
+    // is there, and nothing is kept.
+    void ATamperedPackageFails() {
+        ServeRelease();
+        QByteArray tampered = Fixture("asset.bin");
+        tampered[tampered.size() / 2] =
+            static_cast<char>(tampered[tampered.size() / 2] ^ 0x01);
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Serving(tampered));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QSignalSpy ready(Singleton_->updates(), &Updates::packageReady);
+        ExpectFailure("the package does not match its line in SHA256SUMS");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QCOMPARE(DownloadError(),
+                 QString("the package does not match its line in SHA256SUMS"));
+        QVERIFY(Singleton_->updates()->downloadedPackage().isEmpty());
+        QVERIFY(ready.isEmpty());
+        QVERIFY(Attempts().isEmpty());
+        // The package was fetched: the check of the sums did not stop it.
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        // A new attempt starts clean.
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Serving(Fixture("asset.bin")));
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("ready"),
+                                  TIMEOUT_MS);
+        QVERIFY(DownloadError().isEmpty());
+    }
+
+    // What is wrong with the signed sums stops the download before the package
+    // is fetched.
+    void ASumsThatAreNotSignedRightFail_data() {
+        QTest::addColumn<QString>("signature");
+        QTest::addColumn<QString>("reason");
+        QTest::newRow("another key") << "SHA256SUMS.other.minisig"
+                                     << "the signature is by another key";
+    }
+
+    void ASumsThatAreNotSignedRightFail() {
+        QFETCH(QString, signature);
+        QFETCH(QString, reason);
+        ServeRelease("v9.9.9", signature);
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure(reason);
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(DownloadError().startsWith(reason));
+        QVERIFY(Attempts().isEmpty());
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 0);
+    }
+
+    // The same files signed for another release do not pass for this one.
+    void TheSignedFilesOfAnotherReleaseFail() {
+        ServeRelease("v9.9.9");
+        // The release offered is v9.9.10, whose files are those of v9.9.9.
+        QStringList names = AssetNames();
+        names.append(packageAssetName("9.9.10"));
+        for (const QString& name : names) {
+            Server_->Serve(AssetPath("v9.9.10", name),
+                           ReleaseServer::Route::Serving(FileOf(name)));
+        }
+        Server_->Answer(200, ReleaseOf("v9.9.10", {}, names));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("the signed comment is");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(DownloadError().contains("roost v9.9.9 SHA256SUMS"));
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    // The key built into the app is the one the files are checked with, unless
+    // a test names another: the files of the fixtures are signed by a key of
+    // the tests, not by the key of the releases.
+    void TheBuiltInKeyIsTheOneThatChecks() {
+        ServeRelease();
+        Key_.reset();
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("the signature is by another key");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    // An address of a file that is not in the repository's releases: nothing
+    // is fetched.
+    void AnAssetOutsideTheRepositoryIsNotFetched_data() {
+        QTest::addColumn<QString>("package");
+        QTest::addColumn<QString>("sums");
+        const QString any = "OTHER";
+        QTest::newRow("another path")
+            << "/other/package" << "/releases/download/v9.9.9/SHA256SUMS";
+        QTest::newRow("another release")
+            << "/releases/download/v9.9.8/package"
+            << "/releases/download/v9.9.9/SHA256SUMS";
+        QTest::newRow("a path up") << "/releases/download/v9.9.9/../../x"
+                                   << "/releases/download/v9.9.9/SHA256SUMS";
+        QTest::newRow("a query") << "/releases/download/v9.9.9/package?x=1"
+                                 << "/releases/download/v9.9.9/SHA256SUMS";
+        QTest::newRow("an escaped path")
+            << "/releases/download/v9.9.9/%2e%2e/x"
+            << "/releases/download/v9.9.9/SHA256SUMS";
+        QTest::newRow("a sums file elsewhere")
+            << "/releases/download/v9.9.9/package" << "/elsewhere/SHA256SUMS";
+        QTest::newRow("a file URL") << "file:///etc/passwd"
+                                    << "/releases/download/v9.9.9/SHA256SUMS";
+    }
+
+    void AnAssetOutsideTheRepositoryIsNotFetched() {
+        QFETCH(QString, package);
+        QFETCH(QString, sums);
+        ServeRelease();
+        const auto address = [&](const QString& path) {
+            return path.startsWith("file:") ? path : Server_->Origin() + path;
+        };
+        QJsonArray assets;
+        const auto add = [&](const QString& name, const QString& url) {
+            assets.append(
+                QJsonObject{{"name", name}, {"browser_download_url", url}});
+        };
+        const QString prefix = Server_->Origin() + "/releases/download/v9.9.9/";
+        add(PackageName(), address(package.replace("package", PackageName())));
+        add("SHA256SUMS", address(sums));
+        add("SHA256SUMS.minisig", prefix + "SHA256SUMS.minisig");
+        Server_->Answer(200,
+                        QJsonDocument(QJsonObject{{"tag_name", "v9.9.9"},
+                                                  {"html_url", RELEASE_PAGE},
+                                                  {"assets", assets}})
+                            .toJson(QJsonDocument::Compact));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("the release has");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY2(DownloadError().contains("outside the repository"),
+                 qPrintable(DownloadError()));
+        QVERIFY(Attempts().isEmpty());
+        // Nothing but the check was asked.
+        QCOMPARE(Server_->Asked(), QList<QByteArray>{"/releases/latest"});
+    }
+
+    // A release without a file the download needs fails with the name of it.
+    void AReleaseWithoutAFileFails_data() {
+        QTest::addColumn<QString>("missing");
+        QTest::newRow("the package") << PackageName();
+        QTest::newRow("the sums") << "SHA256SUMS";
+        QTest::newRow("the signature") << "SHA256SUMS.minisig";
+    }
+
+    void AReleaseWithoutAFileFails() {
+        QFETCH(QString, missing);
+        ServeRelease();
+        QStringList names = AssetNames();
+        names.removeAll(missing);
+        Server_->Answer(200, ReleaseOf("v9.9.9", {}, names));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("the release has no file " + missing);
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(Attempts().isEmpty());
+        QCOMPARE(Server_->Asked(), QList<QByteArray>{"/releases/latest"});
+    }
+
+    // A server that says no, and one that sends more than the limit.
+    void AServerThatSaysNoFails() {
+        ServeRelease();
+        Server_->Serve(AssetPath("v9.9.9", "SHA256SUMS"),
+                       ReleaseServer::Route::Failing(404, "Not Found"));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("cannot download SHA256SUMS: HTTP 404");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    void ASumsFileThatIsTooBigFails() {
+        ServeRelease();
+        Server_->Serve(
+            AssetPath("v9.9.9", "SHA256SUMS"),
+            ReleaseServer::Route::Serving(QByteArray((1 << 20) + 1, 'x')));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ExpectFailure("SHA256SUMS is larger than");
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    // The check turned off ends a download in flight, and its directory goes.
+    void TurningTheCheckOffCancelsTheDownload() {
+        ServeRelease();
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Waiting(Fixture("asset.bin")));
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QSignalSpy ready(Singleton_->updates(), &Updates::packageReady);
+        Singleton_->updates()->download();
+        QTRY_COMPARE_WITH_TIMEOUT(Server_->Held(), 1, TIMEOUT_MS);
+        QCOMPARE(DownloadState(), QString("downloading"));
+        QCOMPARE(Attempts().size(), 1);
+        PatchSettings({{"updates", QJsonObject{{"check", false}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(Server_->Abandoned(), 1, TIMEOUT_MS);
+        QCOMPARE(DownloadState(), QString());
+        QVERIFY(Attempts().isEmpty());
+        QVERIFY(ready.isEmpty());
+        QVERIFY(Singleton_->updates()->downloadedPackage().isEmpty());
+        QVERIFY(!Singleton_->updates()->canDownload());
+    }
+
+    // A newer release than the one being downloaded ends the download too.
+    void ANewerOfferCancelsTheDownload() {
+        ServeRelease();
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Waiting(Fixture("asset.bin")));
+        Updates updates;
+        updates.setInterval(std::chrono::milliseconds(50));
+        updates.followState({});
+        updates.follow({});
+        QTRY_VERIFY_WITH_TIMEOUT(updates.canDownload(), TIMEOUT_MS);
+        updates.download();
+        QTRY_COMPARE_WITH_TIMEOUT(Server_->Held(), 1, TIMEOUT_MS);
+        QCOMPARE(updates.downloadState(), QString("downloading"));
+        // The same release, asked again by the timer, does not end it.
+        const int asked = Server_->AskedFor("/releases/latest");
+        QTRY_VERIFY_WITH_TIMEOUT(Server_->AskedFor("/releases/latest") > asked,
+                                 TIMEOUT_MS);
+        QCOMPARE(updates.downloadState(), QString("downloading"));
+        // A newer one is out.
+        Server_->Answer(200, ReleaseOf("v9.9.10"));
+        QTRY_COMPARE_WITH_TIMEOUT(Server_->Abandoned(), 1, TIMEOUT_MS);
+        QCOMPARE(updates.downloadState(), QString());
+        QVERIFY(Attempts().isEmpty());
+        QCOMPARE(updates.available(), QString("9.9.10"));
+    }
+
+    // Without an offer there is nothing to download.
+    void WithoutAnOfferThereIsNothingToDownload() {
+        ServeRelease("v0.0.1");
+        Server_->Answer(200, ReleaseOf("v0.0.1"));
+        BootAndAnswer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(!Singleton_->updates()->canDownload());
+        Singleton_->updates()->download();
+        QCOMPARE(DownloadState(), QString());
+        QCOMPARE(Server_->Asked(), QList<QByteArray>{"/releases/latest"});
     }
 };
 
