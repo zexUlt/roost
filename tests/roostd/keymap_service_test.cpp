@@ -654,14 +654,18 @@ private slots:
         bytes.append("{}]");
         QVERIFY(bytes.size() <= 1024 * 1024);
         QVERIFY(SaveFile(bytes));
-        // The daemon has read the file once keymap.get fails; the event for
-        // the change goes out in the same step, so it would be in by then.
+        // The daemon has read the file once keymap.get says the table is too
+        // big; any other failure (a timeout, a lost connection) is not that.
+        // An event of the change would go out in the same step, on the same
+        // connection, before this answer.
         rpc::Result answer;
         QTRY_VERIFY_WITH_TIMEOUT(
             !(answer = Call("keymap.get", {{"platform", "linux"}})),
             TIMEOUT_MS);
         QCOMPARE(answer.error().Code,
                  static_cast<int>(rpc::EErrorCode::InternalError));
+        QCOMPARE(answer.error().Message,
+                 QString("the keymap is too big for a frame"));
         QCOMPARE(Changes().size(), 0);
 
         QVERIFY(SaveFile(QJsonArray{}));
