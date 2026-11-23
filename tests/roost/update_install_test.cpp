@@ -540,15 +540,18 @@ private slots:
     }
 
     void OnlyAnInstalledCopyThatCanBeReplacedIsATarget() {
+#ifdef Q_OS_MACOS
         QFETCH(QString, directory);
         QFETCH(bool, readOnly);
         QFETCH(QString, target);
         QCOMPARE(installTargetOf(directory, readOnly), target);
+#endif
     }
 
     // The flag the target is judged by comes from the volume itself: the
     // mounted .dmg is read-only, a directory of the case is not.
     void AMountedImageIsAReadOnlyVolume() {
+#ifdef Q_OS_MACOS
         QVERIFY(!onReadOnlyVolume(Applications()));
         QTemporaryDir mountPoint;
         QVERIFY(mountPoint.isValid());
@@ -566,6 +569,7 @@ private slots:
         QVERIFY(readOnly);
         QCOMPARE(target, QString());
         QVERIFY2(detached.isEmpty(), qUtf8Printable(detached));
+#endif
     }
 
     void ABundleThatCannotBeStartedIsReported() {
