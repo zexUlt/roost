@@ -226,6 +226,10 @@ void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
                                  ->property("ready")
                                  .toBool(),
                              TIMEOUT_MS);
+    // `loaded` is set after the model's reset, and the panel settles only
+    // later; until then it drops Enter.
+    QTRY_VERIFY_WITH_TIMEOUT(!PanelOf(LIST)->property("resetting").toBool(),
+                             TIMEOUT_MS);
 }
 
 // A window of the shell, connected to the running daemon, with the panels
