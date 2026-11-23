@@ -234,8 +234,9 @@ jobs:
   # see the Q_OS_MACOS and __APPLE__ branches (src/core/pty.cpp,
   # src/roostd/server.cpp, src/terminal/qt_key_mapping.cpp,
   # tests/qml_api/terminal_item_input_test.cpp,
-  # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp,
-  # which is built on macOS only: the pre-commit tidy on the Mac covers them.
+  # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp
+  # and src/qml_api/update_install_macos.cpp, which are built on macOS only:
+  # the pre-commit tidy on the Mac covers them.
   tidy:
     name: tidy
     needs: changes
@@ -358,8 +359,9 @@ jobs:
           cmake --build --preset dev --target $targets
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
-      # tests/bench/terminal_memory.cpp is built on macOS only (mach), so it
-      # is not in the compilation database here.
+      # tests/bench/terminal_memory.cpp (mach) and
+      # src/qml_api/update_install_macos.cpp (statfs, hdiutil) are built on
+      # macOS only, so they are not in the compilation database here.
       - name: Naming and the static analyser
         env:
           CTCACHE_DIR: ${{ runner.temp }}/ctcache
@@ -367,7 +369,8 @@ jobs:
         run: |
           clang-tidy-cache --zero-stats
           find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
-            -not -path tests/bench/terminal_memory.cpp | sort |
+            -not -path tests/bench/terminal_memory.cpp \
+            -not -path src/qml_api/update_install_macos.cpp | sort |
             xargs -P "$(nproc)" -n 1 clang-tidy-cache "$(command -v clang-tidy)" \
               -p build/dev --quiet --warnings-as-errors='*'
 
