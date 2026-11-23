@@ -1,5 +1,6 @@
 # What roost and roostd share. No GUI: QtCore, and QtNetwork for the socket.
 add_library(roost_core STATIC
+    appimage_install.cpp
     bus.cpp
     frame.cpp
     ghostty_result.cpp
