@@ -449,7 +449,9 @@ jobs:
           cat SHA256SUMS
 
       - name: Install minisign
-        run: sudo apt-get install -y minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
 
       # SHA256SUMS gets a minisign signature whose trusted comment names the
       # tag. On a tag the secret key signs and packaging/minisign.pub verifies.
