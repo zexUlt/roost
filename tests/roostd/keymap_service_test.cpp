@@ -18,8 +18,10 @@ using namespace roost;
 namespace {
 
 constexpr int TIMEOUT_MS = 10000;
-// Longer than the delay of the service (100 ms) by a good margin: what would
-// come after the first event of a change is in by then.
+// For the checks that nothing more comes, after an event that shows the daemon
+// has handled the change: longer than the delay of the service (100 ms) by a
+// good margin, so what would come after the first event is in by then. A state
+// that is expected is awaited with QTRY, not with this.
 constexpr int SETTLE_MS = 600;
 const QJsonValue UNBIND{QJsonValue::Null};
 
@@ -652,12 +654,15 @@ private slots:
         bytes.append("{}]");
         QVERIFY(bytes.size() <= 1024 * 1024);
         QVERIFY(SaveFile(bytes));
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 0);
-        const rpc::Result answer = Call("keymap.get", {{"platform", "linux"}});
-        QVERIFY(!answer);
+        // The daemon has read the file once keymap.get fails; the event for
+        // the change goes out in the same step, so it would be in by then.
+        rpc::Result answer;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !(answer = Call("keymap.get", {{"platform", "linux"}})),
+            TIMEOUT_MS);
         QCOMPARE(answer.error().Code,
                  static_cast<int>(rpc::EErrorCode::InternalError));
+        QCOMPARE(Changes().size(), 0);
 
         QVERIFY(SaveFile(QJsonArray{}));
         QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
