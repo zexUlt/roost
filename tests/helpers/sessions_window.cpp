@@ -226,6 +226,10 @@ void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
                                  ->property("ready")
                                  .toBool(),
                              TIMEOUT_MS);
+    // `loaded` is set after the model's reset, and the panel settles only
+    // later; until then it drops Enter.
+    QTRY_VERIFY_WITH_TIMEOUT(!PanelOf(LIST)->property("resetting").toBool(),
+                             TIMEOUT_MS);
 }
 
 // A window of the shell, connected to the running daemon, with the panels
@@ -491,6 +495,14 @@ void SessionsWindow::OpenRow(int row) {
         Press(Qt::Key_Up);
     }
     QTRY_COMPARE_WITH_TIMEOUT(Cursor(), row, TIMEOUT_MS);
+    // The panel drops Enter while its list is being replaced; the checks and
+    // the press come in one turn of the event loop, so no reset starts
+    // between them.
+    const QQuickItem* panel = PanelOf(LIST);
+    QVERIFY(panel != nullptr && panel->property("resetting").isValid());
+    QTRY_VERIFY_WITH_TIMEOUT(!panel->property("resetting").toBool(),
+                             TIMEOUT_MS);
+    QCOMPARE(Cursor(), row);
     Press(Qt::Key_Return);
     QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
     QCOMPARE(SelectedId(), IdAt(row));

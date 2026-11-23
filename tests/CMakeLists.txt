@@ -76,6 +76,8 @@ roost_add_qt_test(frame_test core/frame_test.cpp)
 roost_add_qt_test(update_verify_test core/update_verify_test.cpp)
 target_compile_definitions(update_verify_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+# Replacing the running AppImage: POSIX file operations in temp directories.
+roost_add_qt_test(appimage_install_test core/appimage_install_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(rpc_client_peer_pid_test core/rpc_client_peer_pid_test.cpp
     roost_test_helpers)

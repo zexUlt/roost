@@ -18,8 +18,10 @@ using namespace roost;
 namespace {
 
 constexpr int TIMEOUT_MS = 10000;
-// Longer than the delay of the service (100 ms) by a good margin: what would
-// come after the first event of a change is in by then.
+// For the checks that nothing more comes, after an event that shows the daemon
+// has handled the change: longer than the delay of the service (100 ms) by a
+// good margin, so what would come after the first event is in by then. A state
+// that is expected is awaited with QTRY, not with this.
 constexpr int SETTLE_MS = 600;
 const QJsonValue UNBIND{QJsonValue::Null};
 
@@ -652,12 +654,19 @@ private slots:
         bytes.append("{}]");
         QVERIFY(bytes.size() <= 1024 * 1024);
         QVERIFY(SaveFile(bytes));
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 0);
-        const rpc::Result answer = Call("keymap.get", {{"platform", "linux"}});
-        QVERIFY(!answer);
+        // The daemon has read the file once keymap.get says the table is too
+        // big; any other failure (a timeout, a lost connection) is not that.
+        // An event of the change would go out in the same step, on the same
+        // connection, before this answer.
+        rpc::Result answer;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !(answer = Call("keymap.get", {{"platform", "linux"}})),
+            TIMEOUT_MS);
         QCOMPARE(answer.error().Code,
                  static_cast<int>(rpc::EErrorCode::InternalError));
+        QCOMPARE(answer.error().Message,
+                 QString("the keymap is too big for a frame"));
+        QCOMPARE(Changes().size(), 0);
 
         QVERIFY(SaveFile(QJsonArray{}));
         QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
