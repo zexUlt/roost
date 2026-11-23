@@ -100,6 +100,8 @@ QString packageAssetName(const QString& version) {
     // tools/package_macos.sh: roost-<version>-macos-$(uname -m).dmg.
     return QStringLiteral("roost-%1-macos-%2.dmg").arg(version, arch);
 #elif defined(Q_OS_LINUX)
+    // tools/package_linux.sh: the AppImage names carry no version.
+    Q_UNUSED(version);
     if (arch == u"x86_64") {
         return QStringLiteral("roost-x86_64.AppImage");
     }
