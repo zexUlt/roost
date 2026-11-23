@@ -863,13 +863,13 @@ private slots:
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", "SHA256SUMS")), 1);
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", "SHA256SUMS.minisig")),
                  1);
-        // One download at a time: another call while it is ready is a new
-        // attempt, the old directory goes.
+        // A ready package is not fetched again: another call keeps it.
         updates.download();
-        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, TIMEOUT_MS);
-        QCOMPARE(Attempts().size(), 1);
-        QVERIFY(!QFileInfo::exists(path));
-        QVERIFY(QFileInfo::exists(updates.downloadedPackage()));
+        QCOMPARE(DownloadState(), QString("ready"));
+        QCOMPARE(updates.downloadedPackage(), path);
+        QVERIFY(QFileInfo::exists(path));
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        QCOMPARE(ready.size(), 1);
         // With the window the directory goes.
         CloseWindow();
         QVERIFY(Attempts().isEmpty());

@@ -307,8 +307,10 @@ std::optional<UpdateDownload::Request> Updates::downloadRequest() {
 }
 
 void Updates::download() {
+    // A package that is downloading or ready is not fetched again.
     if (!canDownload() ||
-        Download_.state() == UpdateDownload::EState::Downloading) {
+        Download_.state() == UpdateDownload::EState::Downloading ||
+        Download_.state() == UpdateDownload::EState::Ready) {
         return;
     }
     if (const auto request = downloadRequest()) {
