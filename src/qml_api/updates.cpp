@@ -377,9 +377,12 @@ void Updates::install() {
         return;
     }
     // A download that runs is waited for; else one starts, and may fail at
-    // once (onDownloadChanged).
+    // once. Such a failure may be the very one of the last click (the same
+    // state and text: UpdateDownload does not say it again), so the state is
+    // read here, not waited for as a signal.
     if (Download_.state() != UpdateDownload::EState::Downloading) {
         download();
+        onDownloadChanged();
     }
     emit changed();
 }
@@ -427,13 +430,24 @@ void Updates::startInstall() {
     });
 }
 
+// The end of an install that did not end the window: shown as its failure.
+void Updates::endInstall(const QString& error) {
+    Phase_ = EInstall::Failed;
+    InstallError_ = error;
+    // While it ran, the offer may have changed or the check been turned off,
+    // and the package was kept from under it (cancelDownload). It is of the
+    // old offer: dropped, so that the next click fetches the current one.
+    if (InstallVersion_ != Latest_ || !Enabled_) {
+        Download_.cancel();
+    }
+    emit changed();
+}
+
 void Updates::onInstalled(const std::expected<InstallDone, QString>& result) {
     if (!result) {
         qWarning("roost: the install of the update failed: %s",
                  qUtf8Printable(result.error()));
-        Phase_ = EInstall::Failed;
-        InstallError_ = result.error();
-        emit changed();
+        endInstall(result.error());
         return;
     }
     qInfo("roost: installed roost %s in %s; the old one is at %s",
@@ -450,9 +464,7 @@ void Updates::onInstalled(const std::expected<InstallDone, QString>& result) {
                 "start it: %2")
                 .arg(InstallVersion_, started.error());
         qWarning("roost: %s", qUtf8Printable(reason));
-        Phase_ = EInstall::Failed;
-        InstallError_ = reason;
-        emit changed();
+        endInstall(reason);
         return;
     }
     Quit_();

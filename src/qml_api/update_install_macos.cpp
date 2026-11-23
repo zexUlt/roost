@@ -13,6 +13,9 @@
 #include <QUuid>
 #include <QtLogging>
 
+#include <sys/mount.h>
+#include <sys/param.h>
+
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +30,7 @@ namespace {
 constexpr auto HDIUTIL = "/usr/bin/hdiutil";
 constexpr auto DITTO = "/usr/bin/ditto";
 constexpr auto OPEN = "/usr/bin/open";
+constexpr auto CODESIGN = "/usr/bin/codesign";
 // The tool tools/package_macos.sh reads Info.plist with.
 constexpr auto PLIST_BUDDY = "/usr/libexec/PlistBuddy";
 constexpr auto APP_IN_IMAGE = "roost.app";
@@ -192,17 +196,39 @@ QString manualSteps(const QString& directory) {
 
 }  // namespace
 
-QString installTarget() {
+QString installTargetOf(const QString& executableDirectory, bool readOnly) {
     // <name>.app/Contents/MacOS/<executable>: the window of an installed copy.
     // A build tree's roost/bin/roost is not one.
-    QDir directory(QCoreApplication::applicationDirPath());
-    if (directory.dirName() != QStringLiteral("MacOS") || !directory.cdUp() ||
-        directory.dirName() != QStringLiteral("Contents") ||
-        !directory.cdUp() ||
-        !directory.dirName().endsWith(QStringLiteral(".app"))) {
+    // Text only: the directory need not exist.
+    const QString clean = QDir::cleanPath(executableDirectory);
+    const QStringList parts = clean.split(QLatin1Char('/'));
+    if (parts.size() < 3 || parts.last() != QStringLiteral("MacOS") ||
+        parts.at(parts.size() - 2) != QStringLiteral("Contents") ||
+        !parts.at(parts.size() - 3).endsWith(QStringLiteral(".app"))) {
         return {};
     }
-    return directory.absolutePath();
+    const QString bundle =
+        QStringList(parts.first(parts.size() - 2)).join(QLatin1Char('/'));
+    // A bundle started from a downloaded .dmg or a quarantined download is run
+    // by the system from a randomized read-only copy: the path is not where the
+    // user keeps it, and a swap there replaces nothing they have.
+    if (readOnly || bundle.contains(QStringLiteral("/AppTranslocation/"))) {
+        return {};
+    }
+    return bundle;
+}
+
+bool onReadOnlyVolume(const QString& path) {
+    struct statfs volume{};
+    if (::statfs(path.toLocal8Bit().constData(), &volume) != 0) {
+        return false;
+    }
+    return (volume.f_flags & MNT_RDONLY) != 0;
+}
+
+QString installTarget() {
+    const QString directory = QCoreApplication::applicationDirPath();
+    return installTargetOf(directory, onReadOnlyVolume(directory));
 }
 
 std::expected<InstallDone, QString> installPackage(
@@ -281,6 +307,23 @@ std::expected<InstallDone, QString> installPackage(
         dropFresh();
         return std::unexpected(QStringLiteral("%1 (%2); %3 is unchanged")
                                    .arg(good.error(), fresh, target));
+    }
+
+    // What the system will run: the signature of every part of the copy, and
+    // that nothing in it changed since it was signed (the release is signed
+    // ad hoc by tools/package_macos.sh, which verifies the same way). A copy
+    // that does not pass would not start after the swap.
+    if (const auto signature =
+            run(CODESIGN,
+                {QStringLiteral("--verify"), QStringLiteral("--deep"),
+                 QStringLiteral("--strict"), fresh},
+                COPY_MS);
+        !signature) {
+        dropFresh();
+        return std::unexpected(
+            QStringLiteral("the copy of roost.app at %1 has no valid code "
+                           "signature: %2; %3 is unchanged")
+                .arg(fresh, signature.error(), target));
     }
 
     if (const QString why = rename(target, old); !why.isEmpty()) {

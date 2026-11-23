@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QtSystemDetection>
 
 #include <expected>
 #include <functional>
@@ -46,8 +47,24 @@ struct InstallDone {
 
 // What this run can replace in place: the path of the running bundle on macOS.
 // Empty when this run is not an installed copy (a build tree, an extracted
-// tree) or this platform has no installer.
+// tree), when it is not where an update can replace it (macOS: App
+// Translocation, a read-only volume such as the mounted .dmg), or this
+// platform has no installer.
 QString installTarget();
+
+#ifdef Q_OS_MACOS
+// The decision of installTarget() on macOS over what it looks at, so that a
+// test needs no real translocation: `executableDirectory` is the directory of
+// the running executable (QCoreApplication::applicationDirPath()), `readOnly`
+// is whether the volume of the bundle is mounted read-only. The bundle's path,
+// empty if the executable is not in <name>.app/Contents/MacOS, or the bundle
+// is under /AppTranslocation/, or `readOnly`.
+QString installTargetOf(const QString& executableDirectory, bool readOnly);
+
+// Whether the volume `path` is on is mounted read-only (statfs MNT_RDONLY);
+// false if that cannot be told.
+bool onReadOnlyVolume(const QString& path);
+#endif
 
 // Replaces `request.Target` with the release in `request.Package`. A failure
 // leaves the target as it was and says why, with the path.

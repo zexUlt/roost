@@ -276,7 +276,9 @@ ApplicationWindow {
         Rectangle {
             objectName: "updateStrip"
             Layout.fillWidth: true
-            visible: Roost.updates.available !== ""
+            // An install in work keeps the strip, whatever the offer or the
+            // setting says meanwhile; the setting is followed once it ends.
+            visible: Roost.updates.available !== "" || Roost.updates.installBusy
             implicitHeight: updateRow.implicitHeight + 8
             color: Roost.theme.controlBackground
 
@@ -293,9 +295,9 @@ ApplicationWindow {
                     text: {
                         const updates = Roost.updates;
                         if (updates.installState === "installing")
-                            return "Installing roost v" + updates.available + "...";
+                            return "Installing roost v" + updates.installVersion + "...";
                         if (updates.installBusy)
-                            return "Downloading roost v" + updates.available + ": " + Math.round(updates.downloadProgress * 100) + "%";
+                            return "Downloading roost v" + updates.installVersion + ": " + Math.round(updates.downloadProgress * 100) + "%";
                         if (updates.installError !== "")
                             return updates.installError;
                         return "roost v" + updates.available + " is out";
@@ -316,6 +318,7 @@ ApplicationWindow {
 
                 Button {
                     objectName: "updateLinkButton"
+                    visible: Roost.updates.url !== ""
                     flat: true
                     text: "Release page"
                     onClicked: {

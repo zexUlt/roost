@@ -19,6 +19,7 @@
 #include <QQuickItem>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QSysInfo>
 #include <QTcpServer>
@@ -28,6 +29,7 @@
 
 #include <unistd.h>
 
+#include <atomic>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -486,6 +488,45 @@ private:
         connect(&updates, &Updates::installed, this,
                 [this](const QString& old) { Trashed_.append(old); });
         QTRY_VERIFY_WITH_TIMEOUT(updates.canDownload(), TIMEOUT_MS);
+    }
+
+    // The Trash of the window held shut: the install stops after the swap and
+    // before it ends, so that a case can change things while it "runs".
+    // `Reached` is set when the install is there; `Open` lets it go on (it
+    // lets any number of Trash moves through).
+    struct TrashGate {
+        std::atomic<bool> Reached{false};
+        QSemaphore Open{0};
+        void Let() { Open.release(100); }
+    };
+
+    // Lets the install go on when the case ends, however it ends: a stopped
+    // install would hold the end of the window.
+    struct HeldTrash {
+        std::shared_ptr<TrashGate> Gate;
+        HeldTrash(const HeldTrash&) = delete;
+        HeldTrash& operator=(const HeldTrash&) = delete;
+        explicit HeldTrash(std::shared_ptr<TrashGate> gate)
+            : Gate(std::move(gate)) {}
+        ~HeldTrash() { Gate->Let(); }
+        TrashGate* operator->() const { return Gate.get(); }
+    };
+
+    HeldTrash HoldTrash() {
+        auto gate = std::make_shared<TrashGate>();
+        Singleton_->updates()->setTrash([this, gate](const QString& path) {
+            gate->Reached.store(true);
+            gate->Open.acquire();
+            const QString trash = Dir_->filePath("Trash");
+            const QString to = trash + "/" + QFileInfo(path).fileName();
+            return QDir().mkpath(trash) && QDir().rename(path, to) ? to
+                                                                   : QString();
+        });
+        return HeldTrash(gate);
+    }
+
+    void SetCheck(bool on) {
+        PatchSettings({{"updates", QJsonObject{{"check", on}}}});
     }
 
     QQuickItem* InstallButton() {
@@ -1465,6 +1506,157 @@ private slots:
         QCOMPARE(InstalledMarker(), QByteArray("old"));
         QCOMPARE(Quits_, 0);
         QVERIFY(InstallButton()->isEnabled());
+    }
+    // A download that fails at once (the release has no .dmg) says the same
+    // thing every time, and UpdateDownload does not say the same thing twice:
+    // the second click must still end in a visible state.
+    void ASecondClickAfterAnImmediateFailureEndsInTheFailure() {
+        ServeRelease();
+        QStringList names = AssetNames();
+        names.removeAll(PackageName());
+        Server_->Answer(200, ReleaseOf("v9.9.9", {}, names));
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QRegularExpression warning(
+            "roost: the download of the update failed: the release has no "
+            "file " +
+            QRegularExpression::escape(PackageName()));
+        QTest::ignoreMessage(QtWarningMsg, warning);
+        QTest::ignoreMessage(QtWarningMsg, warning);
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(StripText().contains("the release has no file"));
+        // Moved on by hand: the second click starts from nothing.
+        QVERIFY(InstallButton()->isEnabled());
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!Singleton_->updates()->installBusy(),
+                                 TIMEOUT_MS);
+        QVERIFY(StripText().contains("the release has no file"));
+        QVERIFY(InstallButton()->isEnabled());
+        QVERIFY(
+            Root()->findChild<QQuickItem*>("updateDismissButton")->isEnabled());
+        QCOMPARE(Quits_, 0);
+    }
+
+    // A newer release comes while the install runs: the strip still says what
+    // is being installed, and when the install ends (here: the new version
+    // cannot be started) the package of the old offer is not used for the new
+    // one: the next click fetches the package of the new offer.
+    void ANewOfferDuringTheInstallDoesNotKeepTheOldPackage() {
+        ServeRelease();
+        QStringList names = AssetNames();
+        names.append(packageAssetName("9.9.10"));
+        for (const QString& name : names) {
+            Server_->Serve(AssetPath("v9.9.10", name),
+                           ReleaseServer::Route::Serving(FileOf(name)));
+        }
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        RelaunchResult_ = std::unexpected(QString("no way"));
+        const auto gate = HoldTrash();
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        ClickItem(InstallButton());
+        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), TIMEOUT_MS);
+        QCOMPARE(InstallState(), QString("installing"));
+
+        // The newer release is found by a check made now.
+        Server_->Answer(200, ReleaseOf("v9.9.10", {}, names));
+        SetCheck(false);
+        SetCheck(true);
+        QTRY_COMPARE_WITH_TIMEOUT(Available(), QString("9.9.10"), TIMEOUT_MS);
+        QCOMPARE(InstallState(), QString("installing"));
+        QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
+        QCOMPARE(DownloadState(), QString("ready"));
+
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: roost 9.9.9 is installed, but this "
+                               "window cannot start it: no way"));
+        gate->Let();
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QCOMPARE(Relaunched_.size(), 1);
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
+        // The package of v9.9.9 is not the one of the offer any more.
+        QCOMPARE(DownloadState(), QString());
+
+        // The next click is for v9.9.10: its files are fetched (the signed
+        // files of the fixtures are v9.9.9's, so the download ends in the check
+        // of the release's name, before the package), the old package is not
+        // installed again.
+        ExpectFailure("the signed comment is");
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Server_->AskedFor(AssetPath("v9.9.10", "SHA256SUMS")), 1,
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!Singleton_->updates()->installBusy(),
+                                 TIMEOUT_MS);
+        QVERIFY(StripText().contains("roost v9.9.9 SHA256SUMS"));
+        QCOMPARE(Relaunched_.size(), 1);
+        QCOMPARE(Trashed_.size(), 1);
+        QCOMPARE(Quits_, 0);
+    }
+
+    // The check is turned off while the install runs: it goes on, and the strip
+    // with its text stays until it ends; then the setting is followed (the
+    // strip goes), or the window quits.
+    void TurningTheCheckOffDuringTheInstallKeepsTheStripUntilItEnds_data() {
+        QTest::addColumn<bool>("startFails");
+        QTest::newRow("the new version starts") << false;
+        QTest::newRow("the new version cannot be started") << true;
+    }
+
+    void TurningTheCheckOffDuringTheInstallKeepsTheStripUntilItEnds() {
+        QFETCH(bool, startFails);
+        ServeRelease();
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        if (startFails) {
+            RelaunchResult_ = std::unexpected(QString("no way"));
+        }
+        const auto gate = HoldTrash();
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        ClickItem(InstallButton());
+        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), TIMEOUT_MS);
+        SetCheck(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!Singleton_->updates()->enabled(), TIMEOUT_MS);
+        // The setting is off, and the install is still shown.
+        QVERIFY(StripShown());
+        QCOMPARE(InstallState(), QString("installing"));
+        QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
+        QVERIFY(!Root()
+                     ->findChild<QQuickItem*>("updateDismissButton")
+                     ->isEnabled());
+        if (startFails) {
+            QTest::ignoreMessage(
+                QtWarningMsg,
+                QRegularExpression("roost: roost 9.9.9 is installed, but this "
+                                   "window cannot start it: no way"));
+        }
+        gate->Let();
+        if (startFails) {
+            QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                      TIMEOUT_MS);
+            // Over: the setting is followed, and the package is dropped.
+            QTRY_VERIFY_WITH_TIMEOUT(!StripShown(), TIMEOUT_MS);
+            QCOMPARE(DownloadState(), QString());
+            QCOMPARE(Quits_, 0);
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+            QVERIFY(StripShown());
+            QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
+        }
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
     }
 #endif
 };

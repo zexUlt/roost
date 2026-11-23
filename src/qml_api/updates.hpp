@@ -111,6 +111,7 @@ class Updates : public QObject {
     Q_PROPERTY(QString installError READ installError NOTIFY changed)
     // Whether an install() is under way: its download or the install itself.
     Q_PROPERTY(bool installBusy READ installBusy NOTIFY changed)
+    Q_PROPERTY(QString installVersion READ installVersion NOTIFY changed)
 
 public:
     explicit Updates(QObject* parent = nullptr);
@@ -170,6 +171,11 @@ public:
     bool installBusy() const {
         return Phase_ == EInstall::Waiting || Phase_ == EInstall::Installing;
     }
+    // The version a click in work installs ("" when none is): the strip says
+    // it, not `available`, which may have moved on or gone while it runs.
+    QString installVersion() const {
+        return installBusy() ? InstallVersion_ : QString();
+    }
     // The verified package once the state is "ready", else empty; C++ only.
     QString downloadedPackage() const { return Download_.packagePath(); }
 
@@ -199,6 +205,7 @@ private:
     void cancelDownload();
     void onDownloadChanged();
     void startInstall();
+    void endInstall(const QString& error);
     void onInstalled(const std::expected<InstallDone, QString>& result);
 
     enum class EInstall { Idle, Waiting, Installing, Failed };

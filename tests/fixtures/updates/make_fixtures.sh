@@ -25,7 +25,9 @@ digest=$(shasum -a 256 "$scratch/asset.bin" | cut -d' ' -f1)
 # The macOS package of the install test: a .dmg with a roost.app that is as
 # much of a bundle as the installer looks at (Info.plist with the version, the
 # window and the daemon executables) and a file that says it is the new one.
-# Needs hdiutil: run this script on a Mac.
+# It is signed ad hoc, as tools/package_macos.sh signs the release (the daemon
+# first, then the bundle): the installer verifies the signature of the copy.
+# Needs hdiutil and codesign: run this script on a Mac.
 app="$scratch/dmg-root/roost.app/Contents"
 mkdir -p "$app/MacOS" "$app/Resources"
 cat >"$app/Info.plist" <<PLIST
@@ -41,6 +43,9 @@ for executable in roost roostd; do
     chmod +x "$app/MacOS/$executable"
 done
 printf 'new' >"$app/Resources/marker.txt"
+codesign --force --sign - --timestamp=none "$app/MacOS/roostd"
+codesign --force --sign - --timestamp=none "$scratch/dmg-root/roost.app"
+codesign --verify --deep --strict "$scratch/dmg-root/roost.app"
 hdiutil create -quiet -volname roost -srcfolder "$scratch/dmg-root" -fs HFS+ -format UDZO -ov "$scratch/package.dmg"
 dmg_digest=$(shasum -a 256 "$scratch/package.dmg" | cut -d' ' -f1)
 
