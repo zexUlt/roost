@@ -31,6 +31,10 @@ struct InstallRequest {
     // swap. Returns the reason of a failure, empty on success. Empty function:
     // the system's rename.
     std::function<QString(const QString& from, const QString& to)> Rename;
+    // For tests, which must not touch the user's Trash: moves the old version
+    // away and returns where it went, empty on a failure. Empty function: the
+    // system's Trash.
+    std::function<QString(const QString& path)> Trash;
 };
 
 // What a successful install left behind.

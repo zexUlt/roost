@@ -308,8 +308,11 @@ std::expected<InstallDone, QString> installPackage(
     // The old bundle goes to the Trash by the system's API, not deleted: the
     // user keeps what they had. If the Trash refuses it, it stays where it is:
     // the update is in place, which is what counts.
-    QString inTrash;
-    if (QFile::moveToTrash(old, &inTrash)) {
+    const auto trash = request.Trash ? request.Trash : [](const QString& path) {
+        QString inTrash;
+        return QFile::moveToTrash(path, &inTrash) ? inTrash : QString();
+    };
+    if (const QString inTrash = trash(old); !inTrash.isEmpty()) {
         return InstallDone{.Old = inTrash};
     }
     qWarning(

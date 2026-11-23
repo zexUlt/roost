@@ -146,7 +146,16 @@ private:
                 .Digest = Digest(package),
                 .Version = OFFERED,
                 .Target = Target(),
-                .Rename = {}};
+                .Rename = {},
+                .Trash = [this](const QString& path) { return ToTrash(path); }};
+    }
+
+    // The Trash of the case, not the user's.
+    QString Trash() const { return Dir_->filePath("Trash"); }
+    QString ToTrash(const QString& path) const {
+        const QString to = Trash() + "/" + QFileInfo(path).fileName();
+        return QDir().mkpath(Trash()) && QDir().rename(path, to) ? to
+                                                                 : QString();
     }
 
     void CheckUnchanged() {
@@ -216,11 +225,9 @@ private slots:
                     .isEmpty());
         // The old bundle is in the Trash, whole, not deleted.
         QVERIFY(!done->Old.startsWith(Applications()));
-        QVERIFY(done->Old.contains("/.Trash/"));
+        QVERIFY(done->Old.startsWith(Trash() + "/"));
         QCOMPARE(Read(done->Old + "/Contents/Resources/marker.txt"),
                  QByteArray("old"));
-        // This case's own file in the Trash.
-        QVERIFY(QDir(done->Old).removeRecursively());
     }
 
     void APackageChangedAfterTheCheckIsNotInstalled() {

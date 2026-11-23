@@ -476,6 +476,13 @@ private:
             return RelaunchResult_;
         });
         updates.setQuit([this] { ++Quits_; });
+        // The old version goes to a Trash of the case, not the user's.
+        updates.setTrash([this](const QString& path) {
+            const QString trash = Dir_->filePath("Trash");
+            const QString to = trash + "/" + QFileInfo(path).fileName();
+            return QDir().mkpath(trash) && QDir().rename(path, to) ? to
+                                                                   : QString();
+        });
         connect(&updates, &Updates::installed, this,
                 [this](const QString& old) { Trashed_.append(old); });
         QTRY_VERIFY_WITH_TIMEOUT(updates.canDownload(), TIMEOUT_MS);
@@ -512,10 +519,6 @@ private slots:
     }
 
     void cleanup() {
-        // The old bundles of the cases are this case's own files in the Trash.
-        for (const QString& old : Trashed_) {
-            QDir(old).removeRecursively();
-        }
         Trashed_.clear();
         Relaunched_.clear();
         RelaunchResult_ = {};
@@ -1330,6 +1333,7 @@ private slots:
         QCOMPARE(InstalledMarker(), QByteArray("new"));
         QCOMPARE(Relaunched_, QStringList{Installed()});
         QCOMPARE(Trashed_.size(), 1);
+        QVERIFY(Trashed_.first().startsWith(Dir_->filePath("Trash") + "/"));
         QCOMPARE(ReadFile(Trashed_.first() + "/Contents/Resources/marker.txt"),
                  QByteArray("old"));
         QCOMPARE(QDir(Dir_->filePath("Applications"))

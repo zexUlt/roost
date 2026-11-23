@@ -410,7 +410,8 @@ void Updates::startInstall() {
                                  .Digest = Download_.digest(),
                                  .Version = InstallVersion_,
                                  .Target = InstallTarget_,
-                                 .Rename = {}};
+                                 .Rename = {},
+                                 .Trash = Trash_};
     // The install copies and swaps a bundle of some tens of megabytes: not on
     // the thread of the window.
     auto promise =

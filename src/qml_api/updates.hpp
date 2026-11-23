@@ -138,6 +138,10 @@ public:
         Relaunch_ = std::move(relaunch);
     }
     void setQuit(std::function<void()> quit) { Quit_ = std::move(quit); }
+    // For tests: where the old version goes (InstallRequest::Trash).
+    void setTrash(std::function<QString(const QString&)> trash) {
+        Trash_ = std::move(trash);
+    }
 
     void follow(const QJsonObject& settings);
     void followState(const QJsonObject& document);
@@ -226,6 +230,7 @@ private:
     QFuture<std::expected<InstallDone, QString>> Work_;
     std::function<std::expected<void, QString>(const QString&)> Relaunch_;
     std::function<void()> Quit_;
+    std::function<QString(const QString&)> Trash_;
 };
 
 }  // namespace roost
