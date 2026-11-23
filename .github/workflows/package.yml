@@ -421,6 +421,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the public key: the signature is checked against the committed one.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging/minisign.pub
+          sparse-checkout-cone-mode: false
+          # gh takes GH_TOKEN; no git command needs the write token later.
+          persist-credentials: false
+
       - uses: actions/download-artifact@v4
         with:
           pattern: roost-*
@@ -442,10 +450,79 @@ jobs:
           sha256sum -- "${files[@]}" >SHA256SUMS
           cat SHA256SUMS
 
+      - name: Install minisign
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends minisign
+
+      # SHA256SUMS gets a minisign signature whose trusted comment names the
+      # tag. On a tag the secret key signs and packaging/minisign.pub verifies.
+      # A dry run signs with a throwaway pair, so the real key signs only tags
+      # (the "release key check" step proves the pair separately). The key file
+      # lives in a private directory that goes away on any exit. The secret
+      # comes in through env only and is never printed.
+      - name: Sign SHA256SUMS
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          set -euo pipefail
+          umask 077
+          keydir=$(mktemp -d "$RUNNER_TEMP/minisign.XXXXXX")
+          trap 'rm -rf "$keydir"' EXIT
+          if [ "$IS_TAG" = true ]; then
+            if [ -z "$MINISIGN_SECRET_KEY" ]; then
+              echo "::error::the secret MINISIGN_SECRET_KEY is empty"
+              exit 1
+            fi
+            printf '%s\n' "$MINISIGN_SECRET_KEY" >"$keydir/key"
+            pub="$GITHUB_WORKSPACE/packaging/minisign.pub"
+          else
+            minisign -G -W -p "$keydir/key.pub" -s "$keydir/key" >/dev/null
+            pub="$keydir/key.pub"
+          fi
+          comment="roost $TAG SHA256SUMS"
+          cd "$RUNNER_TEMP/release"
+          minisign -S -s "$keydir/key" -m SHA256SUMS -t "$comment"
+          rm -f "$keydir/key"
+          out=$(minisign -V -p "$pub" -m SHA256SUMS)
+          printf '%s\n' "$out"
+          if ! printf '%s\n' "$out" | grep -qxF "Trusted comment: $comment"; then
+            echo "::error::the trusted comment of SHA256SUMS.minisig is not '$comment'"
+            exit 1
+          fi
+          sed -n 2p "$pub" >"$RUNNER_TEMP/verify-key.txt"
+          ls -l SHA256SUMS.minisig
+
+      # A dry run never signs with the real key; this proves, before the first
+      # tag, that the secret and packaging/minisign.pub are one pair. The probe
+      # and its signature are not released.
+      - name: Release key check
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::the secret MINISIGN_SECRET_KEY is empty"
+            exit 1
+          fi
+          keydir=$(mktemp -d "$RUNNER_TEMP/minisign.XXXXXX")
+          trap 'rm -rf "$keydir"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" >"$keydir/key"
+          printf 'roost release key check\n' >"$keydir/probe.txt"
+          minisign -S -s "$keydir/key" -m "$keydir/probe.txt" -t "roost release key check"
+          rm -f "$keydir/key"
+          minisign -V -p "$GITHUB_WORKSPACE/packaging/minisign.pub" -m "$keydir/probe.txt"
+          echo "release key check: the secret and packaging/minisign.pub are one pair"
+
       # The source of the Qt of the packages must be where the notes say.
       - name: Notes
         env:
           TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
+          KEYSRC: ${{ startsWith(github.ref, 'refs/tags/v') && 'packaging/minisign.pub in the repository' || 'a dry run, so a throwaway key and not the release key' }}
         run: |
           src="https://download.qt.io/official_releases/qt/${QT_VERSION%.*}/${QT_VERSION}/single/qt-everywhere-src-${QT_VERSION}.tar.xz"
           curl -fsIL --retry 3 "$src" >/dev/null || { echo "::error::$src does not exist"; exit 1; }
@@ -462,6 +539,10 @@ jobs:
 
           Check the files against `SHA256SUMS`: `sha256sum -c SHA256SUMS --ignore-missing`.
 
+          `SHA256SUMS` is signed with minisign (`SHA256SUMS.minisig`). Check the signature with the public key (@KEYSRC@); the trusted comment names the tag, `roost @TAG@ SHA256SUMS`:
+
+              minisign -Vm SHA256SUMS -P @KEY@
+
           ## Licences
 
           roost is under the licence in `LICENSE`; the licence texts of the packages are in the packages (`Contents/Resources/licenses` of the app, `usr/share/licenses/roost` of the AppImage), with `THIRD_PARTY_LICENSES`.
@@ -474,6 +555,8 @@ jobs:
           # text in bash 5.2 unless the option is off (and the value quoted).
           shopt -u patsub_replacement 2>/dev/null || true
           notes=${notes//@TAG@/"$TAG"}
+          notes=${notes//@KEY@/"$(cat "$RUNNER_TEMP/verify-key.txt")"}
+          notes=${notes//@KEYSRC@/"$KEYSRC"}
           notes=${notes//@QT@/"$QT_VERSION"}
           notes=${notes//@SRC@/"$src"}
           printf '%s\n' "$notes" >"$RUNNER_TEMP/notes.md"
