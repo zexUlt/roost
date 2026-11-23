@@ -174,6 +174,14 @@ public:
                                           Q_ARG(int, row)));
         QVERIFY(moved);
         QTRY_COMPARE_WITH_TIMEOUT(cursor(), row, TIMEOUT_MS);
+        // The panel drops Enter while its list is being replaced; the checks
+        // and the press come in one turn of the event loop, so no reset
+        // starts between them.
+        const QQuickItem* panel = PanelByInstance(list);
+        QVERIFY(panel != nullptr && panel->property("resetting").isValid());
+        QTRY_VERIFY_WITH_TIMEOUT(!panel->property("resetting").toBool(),
+                                 TIMEOUT_MS);
+        QCOMPARE(cursor(), row);
         Press(Qt::Key_Return);
         // The terminal may be open with the session shown before.
         QTRY_COMPARE_WITH_TIMEOUT(
