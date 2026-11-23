@@ -37,6 +37,8 @@ qt_add_qml_module(roost_qml_api
 # The installer of an update, one file per platform (update_install.hpp).
 if(APPLE)
     target_sources(roost_qml_api PRIVATE update_install_macos.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(roost_qml_api PRIVATE update_install_appimage.cpp)
 else()
     target_sources(roost_qml_api PRIVATE update_install_unsupported.cpp)
 endif()

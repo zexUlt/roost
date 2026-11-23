@@ -11,10 +11,10 @@ namespace roost {
 
 // The installer of a downloaded and verified release package
 // (design/17-updates.md): one function per platform, chosen at compile time
-// like packageAssetName. macOS: update_install_macos.cpp; any other system:
-// update_install_unsupported.cpp. The AppImage installer (#251) is a third file
-// with the same functions. Plain functions, no Qt event loop: installPackage()
-// blocks and is for a worker thread.
+// like packageAssetName. macOS: update_install_macos.cpp; Linux:
+// update_install_appimage.cpp; any other system:
+// update_install_unsupported.cpp. Plain functions, no Qt event loop:
+// installPackage() blocks and is for a worker thread.
 
 // What to replace and with what.
 struct InstallRequest {
@@ -41,15 +41,17 @@ struct InstallRequest {
 // What a successful install left behind.
 struct InstallDone {
     // The replaced thing: in the Trash, or, if the Trash refused it, where it
-    // was left (a warning is written).
+    // was left (a warning is written). Empty where nothing of it is kept: the
+    // AppImage is replaced by a rename.
     QString Old;
 };
 
-// What this run can replace in place: the path of the running bundle on macOS.
+// What this run can replace in place: the path of the running bundle on macOS,
+// of the running AppImage file on Linux (RunningAppImagePath).
 // Empty when this run is not an installed copy (a build tree, an extracted
-// tree), when it is not where an update can replace it (macOS: App
-// Translocation, a read-only volume such as the mounted .dmg), or this
-// platform has no installer.
+// tree, a `cmake --install` tree), when it is not where an update can replace
+// it (macOS: App Translocation, a read-only volume such as the mounted .dmg),
+// or this platform has no installer.
 QString installTarget();
 
 #ifdef Q_OS_MACOS
@@ -71,7 +73,10 @@ bool onReadOnlyVolume(const QString& path);
 std::expected<InstallDone, QString> installPackage(
     const InstallRequest& request);
 
-// Starts the replaced `target` detached. Does not quit this process.
+// Starts the replaced `target` detached. Does not quit this process. On Linux
+// with the environment of a start from the desktop, not of this window
+// (RelaunchEnvironment); its output goes to roost.relaunch.log beside the other
+// logs.
 std::expected<void, QString> relaunch(const QString& target);
 
 }  // namespace roost

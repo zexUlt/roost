@@ -48,4 +48,9 @@ rpc::Error MakeError(EErrorCode code, QString message,
 // directory ($TMPDIR on macOS, which is already per user).
 QString SocketPath();
 
+// The directory of the logs: the one of the socket. roostd.log, roost.log (the
+// window's own, window_log.hpp) and the start logs of what the window starts
+// (roostd.start.log, roost.relaunch.log) are in it.
+QString LogDirectory(const QString& socketPath);
+
 }  // namespace roost::protocol

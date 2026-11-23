@@ -78,6 +78,8 @@ target_compile_definitions(update_verify_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 # Replacing the running AppImage: POSIX file operations in temp directories.
 roost_add_qt_test(appimage_install_test core/appimage_install_test.cpp)
+# The environment of what an AppImage starts: pure functions.
+roost_add_qt_test(appimage_environment_test core/appimage_environment_test.cpp)
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(rpc_client_peer_pid_test core/rpc_client_peer_pid_test.cpp
     roost_test_helpers)
@@ -856,6 +858,13 @@ roost_add_qt_test(layout_model_test roost/layout_model_test.cpp roost_app)
 # The installer of an update on macOS: the swap of a bundle for the one in a
 # .dmg, on fixture bundles in a temporary directory (design/17-updates.md).
 roost_add_qt_test(update_install_test roost/update_install_test.cpp roost_qml_api)
+
+# The installer of an update on Linux: the AppImage replaced and the new one
+# started, on fake files in a temporary directory (design/17-updates.md).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    roost_add_qt_test(update_install_appimage_test roost/update_install_appimage_test.cpp
+        roost_qml_api roost_test_helpers)
+endif()
 
 # The check for a newer release: the real window and roostd against a canned
 # server of the loopback (design/17-updates.md).

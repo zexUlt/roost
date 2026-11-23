@@ -100,6 +100,7 @@ private slots:
         Write(Dir_.filePath("run/roostd.start.log"), "");
         Write(Dir_.filePath("run/roost.log"), "window\n");
         Write(Dir_.filePath("run/roost.log.1"), "old window\n");
+        Write(Dir_.filePath("run/roost.relaunch.log"), "new version\n");
         Write(Dir_.filePath("run/roostd.sock.lock"), "not a log");
         BugReportRequest request = Request();
         request.Description =
@@ -113,7 +114,7 @@ private slots:
         for (const char* name :
              {"about.txt", "description.txt", "logs/roostd.log",
               "logs/roostd.log.1", "logs/roostd.start.log", "logs/roost.log",
-              "logs/roost.log.1"}) {
+              "logs/roost.log.1", "logs/roost.relaunch.log"}) {
             expected << FOLDER + name;
         }
         expected.sort();
