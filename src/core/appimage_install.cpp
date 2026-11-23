@@ -1,6 +1,7 @@
 #include "core/appimage_install.hpp"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,8 +12,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "core/update_verify.hpp"
 
 namespace roost {
 
@@ -55,8 +54,10 @@ public:
     void Release() { Path.clear(); }
 };
 
+// Copies and hashes what it copies: the digest is of the bytes written.
 std::expected<void, QString> Copy(int from, const QString& fromPath, int to,
-                                  const QString& toPath) {
+                                  const QString& toPath,
+                                  QCryptographicHash& hash) {
     QByteArray block(static_cast<qsizetype>(COPY_BLOCK), Qt::Uninitialized);
     for (;;) {
         const ssize_t got = ::read(from, block.data(), COPY_BLOCK);
@@ -70,6 +71,7 @@ std::expected<void, QString> Copy(int from, const QString& fromPath, int to,
         if (got == 0) {
             return {};
         }
+        hash.addData(QByteArrayView(block.constData(), got));
         for (ssize_t done = 0; done < got;) {
             const ssize_t put = ::write(to, block.constData() + done,
                                         static_cast<std::size_t>(got - done));
@@ -96,7 +98,10 @@ std::optional<QString> AppImagePath(const QString& appImage,
     }
     const QString root = QDir::cleanPath(appDir);
     const QString executable = QDir::cleanPath(executableDir);
-    if (executable != root && !executable.startsWith(root + QLatin1Char('/'))) {
+    // The root is the prefix of every path; "/" + "/" would match none.
+    const QString prefix =
+        root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
+    if (executable != root && !executable.startsWith(prefix)) {
         return std::nullopt;
     }
     return appImage;
@@ -121,10 +126,6 @@ std::expected<void, QString> ReplaceAppImage(const QString& appImage,
     if (target.isEmpty() || !QFileInfo(target).isFile()) {
         return std::unexpected(
             QStringLiteral("the AppImage %1 is missing").arg(appImage));
-    }
-    if (auto verified = VerifyFileDigest(package, digest); !verified) {
-        return std::unexpected(
-            QStringLiteral("%1: %2").arg(package, verified.error()));
     }
 
     const QByteArray targetPath = QFile::encodeName(target);
@@ -162,9 +163,17 @@ std::expected<void, QString> ReplaceAppImage(const QString& appImage,
     temporary.Path = pattern;
     const QString temporaryPath = QFile::decodeName(pattern);
 
-    if (auto copied = Copy(source, package, temporary.Fd, temporaryPath);
+    // The package is read once: what is installed is what was hashed.
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (auto copied = Copy(source, package, temporary.Fd, temporaryPath, hash);
         !copied) {
         return copied;
+    }
+    if (hash.result().toHex() != digest.toLower()) {
+        return std::unexpected(
+            QStringLiteral("%1: the package does not match its line in "
+                           "SHA256SUMS")
+                .arg(package));
     }
     if (::fchmod(temporary.Fd, mode) != 0) {
         return std::unexpected(QStringLiteral("cannot set the mode of %1: %2")
@@ -181,8 +190,13 @@ std::expected<void, QString> ReplaceAppImage(const QString& appImage,
     }
     temporary.Fd = -1;
     if (::rename(pattern.constData(), targetPath.constData()) != 0) {
-        return std::unexpected(QStringLiteral("cannot replace %1: %2")
-                                   .arg(target, ErrnoText(errno)));
+        const int error = errno;
+        const bool permission = error == EACCES || error == EPERM ||
+                                error == EROFS || error == EBUSY;
+        return std::unexpected(
+            QStringLiteral("cannot replace %1: %2%3")
+                .arg(target, ErrnoText(error),
+                     permission ? ManualSteps() : QString()));
     }
     temporary.Release();
     return {};

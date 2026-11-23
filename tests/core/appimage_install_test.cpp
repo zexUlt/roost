@@ -13,6 +13,9 @@
 #include <QTest>
 
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/stat.h>
+#endif
 
 #include "core/appimage_install.hpp"
 
@@ -47,6 +50,29 @@ QString Error(const std::expected<void, QString>& result) {
     return result ? QString() : result.error();
 }
 
+// Sets or clears an environment variable for a scope and restores it after.
+class ScopedEnv {
+public:
+    explicit ScopedEnv(const char* name)
+        : Name_(name),
+          Had_(qEnvironmentVariableIsSet(name)),
+          Old_(qgetenv(name)) {}
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+    ~ScopedEnv() {
+        if (Had_) {
+            qputenv(Name_, Old_);
+        } else {
+            qunsetenv(Name_);
+        }
+    }
+
+private:
+    const char* Name_;
+    bool Had_;
+    QByteArray Old_;
+};
+
 constexpr QFileDevice::Permissions EXECUTABLE =
     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
 
@@ -67,6 +93,9 @@ private slots:
     }
 
     void cleanup() {
+#ifdef __APPLE__
+        ::chflags(QFile::encodeName(AppImage_).constData(), 0);
+#endif
         // A case that made a directory read-only must not block the removal.
         QFile::setPermissions(Dir_.path() + "/bin",
                               QFileDevice::ReadOwner | QFileDevice::WriteOwner |
@@ -98,11 +127,14 @@ private slots:
         QCOMPARE(old.readAll(), OLD_CONTENT);
     }
 
-    void KeepsTheOwnerBits() {
+    void KeepsTheModeBitsOutside0755() {
+        // Group write is not in 0755: a bare 0755 would drop it.
         QVERIFY(QFile::setPermissions(AppImage_,
-                                      EXECUTABLE | QFileDevice::ReadGroup));
+                                      EXECUTABLE | QFileDevice::WriteGroup));
         QVERIFY(ReplaceAppImage(AppImage_, Package_, Digest(NEW_CONTENT)));
-        QVERIFY(QFile::permissions(AppImage_) & QFileDevice::ReadGroup);
+        const auto permissions = QFile::permissions(AppImage_);
+        QVERIFY(permissions & QFileDevice::WriteGroup);
+        QVERIFY(permissions & QFileDevice::ExeOther);
     }
 
     void RefusesWhenTheDigestChanged() {
@@ -192,6 +224,27 @@ private slots:
         QVERIFY(!QFileInfo::exists(Dir_.path() + "/nowhere"));
     }
 
+    void FailsWhenTheRenameIsRefused() {
+#ifdef __APPLE__
+        // An immutable AppImage: the temporary file is created, the rename
+        // over it is refused.
+        const QByteArray path = QFile::encodeName(AppImage_);
+        QVERIFY(::chflags(path.constData(), UF_IMMUTABLE) == 0);
+        const auto result =
+            ReplaceAppImage(AppImage_, Package_, Digest(NEW_CONTENT));
+        QVERIFY(!result.has_value());
+        QVERIFY2(Error(result).contains(AppImage_), qPrintable(Error(result)));
+        QVERIFY2(Error(result).contains("release page"),
+                 qPrintable(Error(result)));
+        QCOMPARE(Read(AppImage_), OLD_CONTENT);
+        QCOMPARE(
+            QDir(Dir_.path() + "/bin").entryList(QDir::Files | QDir::Hidden),
+            QStringList{"roost.AppImage"});
+#else
+        QSKIP("no unprivileged way to refuse a rename here (chflags is macOS)");
+#endif
+    }
+
     void DetectsTheRunningAppImage() {
         const QString appDir = Dir_.path() + "/mnt";
         QCOMPARE(AppImagePath(AppImage_, appDir, appDir + "/usr/bin"),
@@ -202,11 +255,18 @@ private slots:
 
     void NoAppImageWithoutTheVariables() {
         const QString appDir = Dir_.path() + "/mnt";
-        QVERIFY(!AppImagePath(QString(), appDir, appDir + "/usr/bin"));
         // An extracted AppDir has APPDIR but no APPIMAGE; a `cmake --install`
         // tree has neither.
         QVERIFY(!AppImagePath(QString(), appDir, appDir + "/usr/bin"));
         QVERIFY(!AppImagePath(AppImage_, QString(), "/usr/local/bin"));
+    }
+
+    void TheRootAsAppDirHoldsEveryExecutable() {
+        // An executable under "/" is inside "/": the variables decide.
+        QCOMPARE(AppImagePath(AppImage_, "/", "/usr/bin"),
+                 std::optional<QString>(AppImage_));
+        QCOMPARE(AppImagePath(AppImage_, "/", "/"),
+                 std::optional<QString>(AppImage_));
     }
 
     void NoAppImageWhenThePathIsNoFile() {
@@ -226,6 +286,8 @@ private slots:
     }
 
     void ReadsTheEnvironmentOfTheProcess() {
+        const ScopedEnv appImage("APPIMAGE");
+        const ScopedEnv appDir("APPDIR");
         qunsetenv("APPIMAGE");
         qunsetenv("APPDIR");
         QVERIFY(!RunningAppImagePath());
@@ -234,8 +296,6 @@ private slots:
         QCOMPARE(RunningAppImagePath(), std::optional<QString>(AppImage_));
         qputenv("APPIMAGE", (Dir_.path() + "/bin").toLocal8Bit());
         QVERIFY(!RunningAppImagePath());
-        qunsetenv("APPIMAGE");
-        qunsetenv("APPDIR");
     }
 
 private:
