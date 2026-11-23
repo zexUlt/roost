@@ -12,6 +12,7 @@ add_library(roost_core STATIC
     store.cpp
     terminal_theme.cpp
     theme_source.cpp
+    update_verify.cpp
     version.cpp
     vt_key_encoder.cpp
     vt_mouse_encoder.cpp
@@ -23,7 +24,7 @@ target_include_directories(roost_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(roost_core PRIVATE ROOST_VERSION="${PROJECT_VERSION}")
 target_link_libraries(roost_core
     PUBLIC roost::compile_options Qt6::Core Qt6::Network
-    PRIVATE ghostty-vt-static
+    PRIVATE ghostty-vt-static monocypher
 )
 
 # openpty() lives in libutil on Linux and in libc on macOS.

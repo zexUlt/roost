@@ -52,6 +52,8 @@ include(cmake/ghostty.cmake)
 include(cmake/Install.cmake)
 include(cmake/PluginGate.cmake)
 
+add_subdirectory(third_party/monocypher)
+
 add_subdirectory(src)
 add_subdirectory(plugins)
 

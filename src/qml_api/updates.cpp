@@ -1,15 +1,19 @@
 #include "qml_api/updates.hpp"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QStandardPaths>
+#include <QSysInfo>
 #include <QtLogging>
 
 #include <string>
 
 #include "api/api.hpp"
+#include "core/update_verify.hpp"
 #include "core/version.hpp"
 
 namespace roost {
@@ -24,11 +28,24 @@ constexpr auto RELEASE_PAGE_PREFIX =
     "https://github.com/zexUlt/roost/releases/";
 // For tests only: the URL of the check (design/17-updates.md).
 constexpr auto TEST_URL_VARIABLE = "ROOST_TEST_UPDATES_URL";
+// For tests only: the public key (the text of a minisign.pub) that checks the
+// signature of SHA256SUMS instead of the built-in one. Read only while
+// ROOST_TEST_UPDATES_URL is set and not empty.
+constexpr auto TEST_KEY_VARIABLE = "ROOST_TEST_UPDATES_PUBLIC_KEY";
+// For tests only: where a downloaded package goes instead of the cache
+// directory of the user.
+constexpr auto CACHE_VARIABLE = "ROOST_CACHE";
+// The public key of the releases: the key line of packaging/minisign.pub,
+// which CMake reads (src/qml_api/CMakeLists.txt).
+constexpr auto RELEASE_KEY = ROOST_UPDATE_PUBLIC_KEY;
 constexpr std::chrono::hours CHECK_INTERVAL{24};
 constexpr int TRANSFER_TIMEOUT_MS = 30000;
 // The answer of the GitHub API is a few kilobytes; a reply that is far
 // beyond that is not read.
 constexpr qint64 MAX_ANSWER_BYTES = 1 << 20;
+
+// Whether a test has pointed the check at a server of its own.
+bool testServer() { return !qEnvironmentVariableIsEmpty(TEST_URL_VARIABLE); }
 
 QString versionText(const ReleaseVersion& version) {
     return QStringLiteral("%1.%2.%3")
@@ -52,7 +69,62 @@ bool isNewer(const QString& candidate, const QString& than) {
     return !second || *first > *second;
 }
 
+std::expected<UpdateKey, QString> releaseKey() {
+    if (testServer() && !qEnvironmentVariableIsEmpty(TEST_KEY_VARIABLE)) {
+        return ParseUpdateKey(qgetenv(TEST_KEY_VARIABLE));
+    }
+    return ParseUpdateKey(QByteArray(RELEASE_KEY));
+}
+
+// Where the packages of this window are downloaded: a directory of its own
+// in the cache of the user (~/Library/Caches/roost, ~/.cache/roost).
+QString downloadRoot() {
+    QString base = qEnvironmentVariable(CACHE_VARIABLE);
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    }
+    return base.isEmpty() ? QString() : base + QStringLiteral("/updates");
+}
+
+// The name of an asset is a file name: no part of a path or of a URL.
+bool isAssetName(const QString& name) {
+    return !name.isEmpty() && name != u"." && name != u".." &&
+           !name.contains(QRegularExpression(QStringLiteral(R"([/\\?#%])")));
+}
+
 }  // namespace
+
+QString packageAssetName(const QString& version) {
+    const QString arch = QSysInfo::buildCpuArchitecture();
+#if defined(Q_OS_MACOS)
+    // tools/package_macos.sh: roost-<version>-macos-$(uname -m).dmg.
+    return QStringLiteral("roost-%1-macos-%2.dmg").arg(version, arch);
+#elif defined(Q_OS_LINUX)
+    if (arch == u"x86_64") {
+        return QStringLiteral("roost-x86_64.AppImage");
+    }
+    if (arch == u"arm64") {
+        return QStringLiteral("roost-aarch64.AppImage");
+    }
+    return {};
+#else
+    Q_UNUSED(version);
+    Q_UNUSED(arch);
+    return {};
+#endif
+}
+
+QString assetUrlPrefix(const QString& tag) {
+    if (testServer()) {
+        QUrl base(qEnvironmentVariable(TEST_URL_VARIABLE));
+        base.setPath(QStringLiteral("/releases/download/%1/").arg(tag));
+        base.setQuery(QString());
+        return base.toString();
+    }
+    return QStringLiteral(
+               "https://github.com/zexUlt/roost/releases/download/%1/")
+        .arg(tag);
+}
 
 std::optional<ReleaseVersion> parseReleaseVersion(const QString& text,
                                                   bool tagged) {
@@ -71,7 +143,13 @@ std::optional<ReleaseVersion> parseReleaseVersion(const QString& text,
 }
 
 Updates::Updates(QObject* parent)
-    : QObject(parent), Manager_(this), Timer_(this), Interval_(CHECK_INTERVAL) {
+    : QObject(parent),
+      Manager_(this),
+      Download_(Manager_, this),
+      Timer_(this),
+      Interval_(CHECK_INTERVAL) {
+    connect(&Download_, &UpdateDownload::changed, this, &Updates::changed);
+    connect(&Download_, &UpdateDownload::ready, this, &Updates::packageReady);
     Timer_.setSingleShot(false);
     connect(&Timer_, &QTimer::timeout, this, &Updates::startCheck);
 }
@@ -119,6 +197,7 @@ void Updates::follow(const QJsonObject& settings) {
         } else {
             Timer_.stop();
             cancelCheck();
+            Download_.cancel();
         }
     }
     if (changedCheck || problemsDiffer) {
@@ -156,6 +235,83 @@ void Updates::dismiss() {
                          qUtf8Printable(answer.error().Message));
             }
         });
+}
+
+bool Updates::canDownload() const {
+    return !available().isEmpty() && !packageAssetName(Latest_).isEmpty();
+}
+
+QString Updates::downloadState() const {
+    switch (Download_.state()) {
+        case UpdateDownload::EState::None:
+            return {};
+        case UpdateDownload::EState::Downloading:
+            return QStringLiteral("downloading");
+        case UpdateDownload::EState::Ready:
+            return QStringLiteral("ready");
+        case UpdateDownload::EState::Failed:
+            return QStringLiteral("failed");
+    }
+    return {};
+}
+
+// The three files of a release and where they come from, every URL checked:
+// the answer is data from the network, and the files are fetched from what it
+// says.
+std::optional<UpdateDownload::Request> Updates::downloadRequest() {
+    const QString tag = QStringLiteral("v") + Latest_;
+    const QString packageName = packageAssetName(Latest_);
+    const QString prefix = assetUrlPrefix(tag);
+    const auto urlOf = [&](const QString& name) -> std::optional<QUrl> {
+        for (const UpdateAsset& asset : Assets_) {
+            if (asset.Name != name) {
+                continue;
+            }
+            // The prefix and a file name: no path up, no query, no escape.
+            if (!asset.Url.startsWith(prefix) ||
+                !isAssetName(asset.Url.mid(prefix.size()))) {
+                Download_.fail(QStringLiteral("the release has %1 at an "
+                                              "address outside the "
+                                              "repository")
+                                   .arg(name));
+                return std::nullopt;
+            }
+            return QUrl(asset.Url);
+        }
+        Download_.fail(QStringLiteral("the release has no file %1").arg(name));
+        return std::nullopt;
+    };
+    const auto key = releaseKey();
+    if (!key) {
+        Download_.fail(QStringLiteral("the public key of the releases is not "
+                                      "valid: %1")
+                           .arg(key.error()));
+        return std::nullopt;
+    }
+    const auto package = urlOf(packageName);
+    const auto sums = package ? urlOf(QStringLiteral("SHA256SUMS")) : package;
+    const auto signature =
+        sums ? urlOf(QStringLiteral("SHA256SUMS.minisig")) : sums;
+    if (!signature) {
+        return std::nullopt;
+    }
+    return UpdateDownload::Request{.Root = downloadRoot(),
+                                   .Tag = tag,
+                                   .PackageName = packageName,
+                                   .PackageUrl = *package,
+                                   .SumsUrl = *sums,
+                                   .SignatureUrl = *signature,
+                                   .Key = *key};
+}
+
+void Updates::download() {
+    if (!canDownload() ||
+        Download_.state() == UpdateDownload::EState::Downloading) {
+        return;
+    }
+    if (const auto request = downloadRequest()) {
+        Download_.start(*request);
+    }
 }
 
 void Updates::startCheck() {
@@ -245,7 +401,17 @@ void Updates::readAnswer(QNetworkReply& reply) {
     const auto version = parseReleaseVersion(tag.toString(), true);
     const bool offerable = version && !release.value("draft").toBool() &&
                            !release.value("prerelease").toBool();
-    succeeded(offerable ? versionText(*version) : QString(), page.toString());
+    QList<UpdateAsset> assets;
+    for (const QJsonValue& entry : release.value("assets").toArray()) {
+        const QJsonObject asset = entry.toObject();
+        const QJsonValue name = asset.value("name");
+        const QJsonValue url = asset.value("browser_download_url");
+        if (name.isString() && url.isString()) {
+            assets.append({.Name = name.toString(), .Url = url.toString()});
+        }
+    }
+    succeeded(offerable ? versionText(*version) : QString(), page.toString(),
+              assets);
 }
 
 void Updates::failed(const QString& reason) {
@@ -256,16 +422,20 @@ void Updates::failed(const QString& reason) {
     }
 }
 
-void Updates::succeeded(const QString& version, const QString& url) {
+void Updates::succeeded(const QString& version, const QString& url,
+                        const QList<UpdateAsset>& assets) {
     LastFailure_.clear();
     const auto running = runningVersion();
     const bool newer = !version.isEmpty() && running &&
                        isNewer(version, versionText(*running));
     const QString latest = newer ? version : QString();
     const QString page = newer ? url : QString();
+    Assets_ = newer ? assets : QList<UpdateAsset>();
     if (latest == Latest_ && page == Url_) {
         return;
     }
+    // A download is of the release that was offered.
+    Download_.cancel();
     Latest_ = latest;
     Url_ = page;
     emit changed();

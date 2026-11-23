@@ -72,6 +72,10 @@ add_test(NAME test_environment_unset
     COMMAND ${CMAKE_COMMAND} -E env --unset=QT_QPA_PLATFORM --unset=QML_DISABLE_DISK_CACHE --unset=ROOST_TEST_UPDATES_URL
         $<TARGET_FILE:test_environment_test>)
 roost_add_qt_test(frame_test core/frame_test.cpp)
+# The check of a downloaded release against files made by the real minisign.
+roost_add_qt_test(update_verify_test core/update_verify_test.cpp)
+target_compile_definitions(update_verify_test PRIVATE
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 roost_add_qt_test(rpc_test core/rpc_test.cpp)
 roost_add_qt_test(rpc_client_peer_pid_test core/rpc_client_peer_pid_test.cpp
     roost_test_helpers)

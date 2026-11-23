@@ -7,6 +7,7 @@
 | Qt 6: Core, Gui, Qml, Quick, Quick Controls, Network | LGPLv3 | динамически, заменяемые библиотеки в `.app` и AppImage |
 | Qt Test | LGPLv3 | только тесты |
 | libghostty-vt | MIT | из исходников, статически |
+| Monocypher 4.0.3 | BSD-2-Clause или CC0-1.0 (используется BSD-2-Clause) | исходники в `third_party/monocypher`, статически в `roost` и `roostd`: подпись скачанного релиза (17-updates.md); текст лицензии — `THIRD_PARTY_LICENSES` и `third_party/monocypher/LICENCE.md` |
 | Zig | MIT | только сборка |
 | ICU 73 (из Qt сборки) | ICU (MIT-подобная) | только AppImage, динамически, рядом с Qt; текст лицензии — `licenses/ICU-LICENSE.txt` (`icu4c/LICENSE` тега `release-73-2`), в образе `usr/share/licenses/roost/ICU-LICENSE.txt` |
 | Библиотеки xcb в AppImage: xcb-util (cursor, icccm, image, keysyms, render-util, util), libxcb-shape, libxcb-xkb, libxkbcommon-x11 | MIT / X11 | только AppImage: `linuxdeploy` копирует с машины сборки то, чего может не быть на десктопе, и `copyright` пакета; динамически, заменяемые. Библиотеки, которые есть на любом десктопе (GLib, D-Bus, systemd, сжатие, Kerberos, libpng, X11), в образ не кладутся: список в `packaging/linux/system-libraries.txt` |
@@ -34,5 +35,7 @@
 
 1. Взять `qt_attribution.json` нового тега, сравнить набор `Id` с разделом, добавить новые компоненты и убрать пропавшие, поправить версии и копирайт-строки.
 2. Для рантайма: `strings` бинарника нового тега и `src/runtime/Makefile` — какие библиотеки и версии внутри, прочитать `LICENSE` тега.
+
+Статическая библиотека, как Monocypher, не попадает в `classify()` у `tools/check_appimage.sh` (он сверяет разделяемые библиотеки образа) и в проверки `tools/check_bundle.sh`: ей нужны только запись в таблице выше и раздел в `THIRD_PARTY_LICENSES`, который лежит в обоих пакетах целиком.
 
 Новая зависимость — только по согласованию, с записью в эту таблицу и в `THIRD_PARTY_LICENSES`.

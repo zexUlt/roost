@@ -1,6 +1,7 @@
 # 11. Сборка, тесты, упаковка
 
 - CMake с пресетами, Qt 6 (в CI одна версия, ставится через aqtinstall), C++23, clang, Zig для libghostty-vt.
+- Чужой код в дереве — `third_party/<имя>/` (сейчас Monocypher, статическая библиотека на C, 10-licenses.md): собирается как есть, без `roost::compile_options` (набор предупреждений — для нашего кода), каталога нет в `clang-format` и `clang-tidy` CI (они ходят по `src`, `tests`, `plugins`). Открытый ключ релизов `packaging/minisign.pub` читает CMake (`src/qml_api/CMakeLists.txt`): смена файла перенастраивает сборку.
 - Тесты: Qt Test для демона и моделей; Qt Quick Test для QML с `QT_QPA_PLATFORM=offscreen`; адаптеры — на записанном выводе `claude agents --json` плюс тест на настоящем `claude`, который включается явно.
 - Пресеты (`CMakePresets.json`): `dev` — Debug; `asan-ubsan` и `tsan` — Debug с санитайзерами; `release` — сборка для пакетов; `tsan-qt` — TSan против Qt, собранного с TSan: `tools/build_qt_tsan.sh <версия> <префикс>`, префикс передаётся в `ROOST_TSAN_QT_PREFIX`. `tsan-qt` идёт ночью (`.github/workflows/nightly-tsan.yml`); собранный Qt кешируется по версии и хешу скрипта, так что правка скрипта пересобирает Qt.
 - `ctest` по пресету идёт по три теста сразу (`execution.jobs` в `base` у пресетов тестов; три — ядра macos-15), пресет `tsan` — по одному. Параллельность безопасна, пока тест берёт только свои временный каталог и сокет (`ROOST_SOCKET`). Тест, которому нужен общий ресурс, получает `RESOURCE_LOCK` с комментарием, чем делится; `RUN_SERIAL` — только замерам времени (`frame_budget_test`).
