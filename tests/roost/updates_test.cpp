@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QProcess>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QRegularExpression>
@@ -25,6 +26,9 @@
 #include <QTest>
 #include <QUrl>
 
+#include <unistd.h>
+
+#include <expected>
 #include <memory>
 #include <optional>
 
@@ -346,7 +350,14 @@ private:
             return Fixture("SHA256SUMS");
         }
         return name == "SHA256SUMS.minisig" ? Fixture(signature)
-                                            : Fixture("asset.bin");
+                                            : PackageFixture(name);
+    }
+
+    // The bytes of a package: the .dmg that has a bundle in it for macOS, any
+    // bytes for the AppImages (SHA256SUMS lists each by its digest).
+    static QByteArray PackageFixture(const QString& name) {
+        return Fixture(name.endsWith(".dmg") ? "package-macos.bin"
+                                             : "asset.bin");
     }
 
     // The path of an asset of the release `tag` on the server.
@@ -403,6 +414,91 @@ private:
                                QRegularExpression::escape(reason)));
     }
 
+    // ---- install and restart ------------------------------------------
+
+    // A bundle as far as the installer looks at one: the plist with a
+    // version, the two executables, and a file that says whose it is.
+    static void MakeBundle(const QString& path, const QString& version,
+                           const QByteArray& marker) {
+        const auto write = [&](const QString& name, const QByteArray& content,
+                               bool executable) {
+            const QString file = path + "/" + name;
+            QVERIFY(QDir().mkpath(QFileInfo(file).absolutePath()));
+            QFile out(file);
+            QVERIFY(out.open(QIODevice::WriteOnly));
+            out.write(content);
+            out.close();
+            if (executable) {
+                QVERIFY(out.setPermissions(out.permissions() | QFile::ExeOwner |
+                                           QFile::ExeGroup | QFile::ExeOther));
+            }
+        };
+        write("Contents/Info.plist",
+              "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist "
+              "version=\"1.0\"><dict><key>CFBundleShortVersionString</key>"
+              "<string>" +
+                  version.toUtf8() + "</string></dict></plist>\n",
+              false);
+        write("Contents/MacOS/roost", "#!/bin/sh\nexit 0\n", true);
+        write("Contents/MacOS/roostd", "#!/bin/sh\nexit 0\n", true);
+        write("Contents/Resources/marker.txt", marker, false);
+    }
+
+    // `xattr -lr` of a path: the attributes of its files.
+    static QString Attributes(const QString& path) {
+        QProcess xattr;
+        xattr.setProcessChannelMode(QProcess::MergedChannels);
+        xattr.start("/usr/bin/xattr", {"-lr", path});
+        xattr.waitForFinished(30000);
+        return QString::fromUtf8(xattr.readAll());
+    }
+
+    QString Installed() const {
+        return Dir_->filePath("Applications/roost.app");
+    }
+    QByteArray InstalledMarker() const {
+        return ReadFile(Installed() + "/Contents/Resources/marker.txt");
+    }
+
+    // The window with the offer, a bundle "installed" in the directory of the
+    // case that the window is told to replace, and the start of the new
+    // version and the quit recorded instead of done.
+    void BootToInstall() {
+        MakeBundle(Installed(), "0.0.1", "old");
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Updates& updates = *Singleton_->updates();
+        updates.setInstallTarget(Installed());
+        updates.setRelaunch([this](const QString& target) {
+            Relaunched_.append(target);
+            return RelaunchResult_;
+        });
+        updates.setQuit([this] { ++Quits_; });
+        connect(&updates, &Updates::installed, this,
+                [this](const QString& old) { Trashed_.append(old); });
+        QTRY_VERIFY_WITH_TIMEOUT(updates.canDownload(), TIMEOUT_MS);
+    }
+
+    QQuickItem* InstallButton() {
+        return Root()->findChild<QQuickItem*>("updateInstallButton");
+    }
+    QString StripText() {
+        return Root()
+            ->findChild<QQuickItem*>("updateText")
+            ->property("text")
+            .toString();
+    }
+    QString InstallState() const {
+        return Singleton_->updates()->property("installState").toString();
+    }
+
+    QStringList Relaunched_;
+    std::expected<void, QString> RelaunchResult_;
+    int Quits_ = 0;
+    QStringList Trashed_;
+
     std::optional<ScopedEnv> Key_;
     std::optional<ScopedEnv> Cache_;
 
@@ -416,6 +512,14 @@ private slots:
     }
 
     void cleanup() {
+        // The old bundles of the cases are this case's own files in the Trash.
+        for (const QString& old : Trashed_) {
+            QDir(old).removeRecursively();
+        }
+        Trashed_.clear();
+        Relaunched_.clear();
+        RelaunchResult_ = {};
+        Quits_ = 0;
         Teardown();
         Url_.reset();
         Key_.reset();
@@ -847,7 +951,7 @@ private slots:
         QCOMPARE(ready.size(), 1);
         const QString path = ready.first().at(0).toString();
         QCOMPARE(updates.downloadedPackage(), path);
-        QCOMPARE(ReadFile(path), Fixture("asset.bin"));
+        QCOMPARE(ReadFile(path), PackageFixture(PackageName()));
         QCOMPARE(QFileInfo(path).fileName(), PackageName());
         // Under the cache directory, in a directory made for this attempt.
         QCOMPARE(Attempts().size(), 1);
@@ -880,8 +984,8 @@ private slots:
     void ARedirectToTheStorageIsFollowed() {
         ServeRelease();
         const QByteArray storage = "/storage/package?token=abc";
-        Server_->Serve(storage,
-                       ReleaseServer::Route::Serving(Fixture("asset.bin")));
+        Server_->Serve(storage, ReleaseServer::Route::Serving(
+                                    PackageFixture(PackageName())));
         Server_->Serve(AssetPath("v9.9.9", PackageName()),
                        ReleaseServer::Route::Redirecting(storage));
         BootWithOffer();
@@ -893,7 +997,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("ready"),
                                   TIMEOUT_MS);
         QCOMPARE(ReadFile(ready.first().at(0).toString()),
-                 Fixture("asset.bin"));
+                 PackageFixture(PackageName()));
         QCOMPARE(Server_->AskedFor(storage), 1);
     }
 
@@ -901,7 +1005,7 @@ private slots:
     // is there, and nothing is kept.
     void ATamperedPackageFails() {
         ServeRelease();
-        QByteArray tampered = Fixture("asset.bin");
+        QByteArray tampered = PackageFixture(PackageName());
         tampered[tampered.size() / 2] =
             static_cast<char>(tampered[tampered.size() / 2] ^ 0x01);
         Server_->Serve(AssetPath("v9.9.9", PackageName()),
@@ -923,8 +1027,9 @@ private slots:
         // The package was fetched: the check of the sums did not stop it.
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
         // A new attempt starts clean.
-        Server_->Serve(AssetPath("v9.9.9", PackageName()),
-                       ReleaseServer::Route::Serving(Fixture("asset.bin")));
+        Server_->Serve(
+            AssetPath("v9.9.9", PackageName()),
+            ReleaseServer::Route::Serving(PackageFixture(PackageName())));
         Singleton_->updates()->download();
         QTRY_COMPARE_WITH_TIMEOUT(DownloadState(), QString("ready"),
                                   TIMEOUT_MS);
@@ -1118,8 +1223,9 @@ private slots:
     // The check turned off ends a download in flight, and its directory goes.
     void TurningTheCheckOffCancelsTheDownload() {
         ServeRelease();
-        Server_->Serve(AssetPath("v9.9.9", PackageName()),
-                       ReleaseServer::Route::Waiting(Fixture("asset.bin")));
+        Server_->Serve(
+            AssetPath("v9.9.9", PackageName()),
+            ReleaseServer::Route::Waiting(PackageFixture(PackageName())));
         BootWithOffer();
         if (QTest::currentTestFailed()) {
             return;
@@ -1141,8 +1247,9 @@ private slots:
     // A newer release than the one being downloaded ends the download too.
     void ANewerOfferCancelsTheDownload() {
         ServeRelease();
-        Server_->Serve(AssetPath("v9.9.9", PackageName()),
-                       ReleaseServer::Route::Waiting(Fixture("asset.bin")));
+        Server_->Serve(
+            AssetPath("v9.9.9", PackageName()),
+            ReleaseServer::Route::Waiting(PackageFixture(PackageName())));
         Updates updates;
         updates.setInterval(std::chrono::milliseconds(50));
         updates.followState({});
@@ -1177,6 +1284,185 @@ private slots:
         QCOMPARE(DownloadState(), QString());
         QCOMPARE(Server_->Asked(), QList<QByteArray>{"/releases/latest"});
     }
+
+    // Where the run is no installed copy (a build tree, Linux), the strip has
+    // the link to the release and no install button, and install() is nothing.
+    void WithoutAnInstallableRunThereIsOnlyTheLink() {
+        ServeRelease();
+        BootWithOffer();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The test binary is in a build tree, not in an installed copy.
+        Updates& updates = *Singleton_->updates();
+        QVERIFY(!updates.canInstall());
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        QVERIFY(
+            Root()->findChild<QQuickItem*>("updateLinkButton")->isVisible());
+        QVERIFY(!InstallButton()->isVisible());
+        updates.install();
+        QCOMPARE(DownloadState(), QString());
+        QCOMPARE(InstallState(), QString());
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 0);
+    }
+
+#ifdef Q_OS_MACOS
+    // The click is download, install, start the new version, quit; nothing
+    // happens before it.
+    void TheClickInstallsAndRestarts() {
+        ServeRelease();
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QCOMPARE(InstallButton()->property("text").toString(),
+                 QString("Install and restart"));
+        // An offer alone fetches nothing and changes nothing.
+        QCOMPARE(DownloadState(), QString());
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 0);
+        QCOMPARE(InstalledMarker(), QByteArray("old"));
+        QVERIFY(Relaunched_.isEmpty());
+
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        // The new bundle is in place, started, and this window quit once.
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
+        QCOMPARE(Relaunched_, QStringList{Installed()});
+        QCOMPARE(Trashed_.size(), 1);
+        QCOMPARE(ReadFile(Trashed_.first() + "/Contents/Resources/marker.txt"),
+                 QByteArray("old"));
+        QCOMPARE(QDir(Dir_->filePath("Applications"))
+                     .entryList(QDir::Dirs | QDir::NoDotAndDotDot),
+                 QStringList{"roost.app"});
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
+        // A package the window downloads itself has no quarantine attribute,
+        // so the installer has no xattr step (design/17-updates.md).
+        QVERIFY(!Attributes(Dir_->filePath("cache/updates"))
+                     .contains("com.apple.quarantine"));
+        QVERIFY(!InstallButton()->isEnabled());
+        // The package is deleted with the window.
+        CloseWindow();
+        QVERIFY(Attempts().isEmpty());
+    }
+
+    // While the package comes, the strip says so with the share received, the
+    // button and Dismiss are off, and the install follows the download.
+    void TheStripShowsTheDownloadAndKeepsTheOfferUntilItEnds() {
+        ServeRelease();
+        Server_->Serve(
+            AssetPath("v9.9.9", PackageName()),
+            ReleaseServer::Route::Waiting(PackageFixture(PackageName())));
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Server_->Held(), 1, TIMEOUT_MS);
+        QVERIFY(StripText().startsWith("Downloading roost v9.9.9"));
+        QVERIFY(!InstallButton()->isEnabled());
+        QVERIFY(!Root()
+                     ->findChild<QQuickItem*>("updateDismissButton")
+                     ->isEnabled());
+        // Dismiss is nothing while the install is under way.
+        Singleton_->updates()->dismiss();
+        QCOMPARE(Available(), QString("9.9.9"));
+        // Another click does not start a second one.
+        Singleton_->updates()->install();
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+        Server_->Hold(false);
+        Server_->ReleaseHeld();
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
+    }
+
+    // An install that fails says why on the strip, changes nothing, and the
+    // button tries again: here the directory of the bundle is not writable,
+    // then it is.
+    void AFailedInstallIsShownAndCanBeTriedAgain() {
+        if (::geteuid() == 0) {
+            QSKIP("root writes through directory permissions");
+        }
+        ServeRelease();
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString directory = Dir_->filePath("Applications");
+        QVERIFY(QFile::setPermissions(directory,
+                                      QFile::ReadOwner | QFile::ExeOwner));
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("roost: the install of the update failed: "
+                               "cannot update .* is not writable by you"));
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(StripText().contains(directory + " is not writable"));
+        QVERIFY(StripText().contains("drag roost.app into " + directory));
+        QCOMPARE(InstalledMarker(), QByteArray("old"));
+        QVERIFY(Relaunched_.isEmpty());
+        QCOMPARE(Quits_, 0);
+        QVERIFY(InstallButton()->isEnabled());
+        // The package stays: the second try installs it without fetching.
+        QCOMPARE(DownloadState(), QString("ready"));
+        QVERIFY(QFile::setPermissions(
+            directory, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
+        QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+    }
+
+    // A new version that is installed but cannot be started is said so, with
+    // what to do; the window stays.
+    void ANewVersionThatCannotBeStartedIsShown() {
+        ServeRelease();
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        RelaunchResult_ = std::unexpected(QString("no way"));
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression(
+                "roost: roost 9.9.9 is installed, but this window "
+                "cannot start it: no way"));
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QCOMPARE(Relaunched_, QStringList{Installed()});
+        QCOMPARE(Quits_, 0);
+        QVERIFY(StripText().contains("roost 9.9.9 is installed"));
+        QVERIFY(StripText().contains("no way"));
+        QCOMPARE(InstalledMarker(), QByteArray("new"));
+    }
+
+    // A download that fails is the failure of the install: nothing is
+    // replaced.
+    void AFailedDownloadIsShownOnTheInstallStrip() {
+        ServeRelease();
+        Server_->Serve(AssetPath("v9.9.9", PackageName()),
+                       ReleaseServer::Route::Failing(404, "gone"));
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        ExpectFailure("cannot download " + PackageName() + ": HTTP 404");
+        ClickItem(InstallButton());
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  TIMEOUT_MS);
+        QVERIFY(StripText().contains("cannot download " + PackageName()));
+        QCOMPARE(InstalledMarker(), QByteArray("old"));
+        QCOMPARE(Quits_, 0);
+        QVERIFY(InstallButton()->isEnabled());
+    }
+#endif
 };
 
 QTEST_MAIN(UpdatesTest)

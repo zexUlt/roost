@@ -851,6 +851,10 @@ roost_add_qt_test(controls_style_test roost/controls_style_test.cpp
 # pure data, no plugins or window.
 roost_add_qt_test(layout_model_test roost/layout_model_test.cpp roost_app)
 
+# The installer of an update on macOS: the swap of a bundle for the one in a
+# .dmg, on fixture bundles in a temporary directory (design/17-updates.md).
+roost_add_qt_test(update_install_test roost/update_install_test.cpp roost_qml_api)
+
 # The check for a newer release: the real window and roostd against a canned
 # server of the loopback (design/17-updates.md).
 roost_add_qt_test(updates_test roost/updates_test.cpp

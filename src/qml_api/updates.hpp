@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
+#include <QFuture>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -12,9 +13,12 @@
 #include <QUrl>
 
 #include <chrono>
+#include <expected>
+#include <functional>
 #include <optional>
 
 #include "qml_api/update_download.hpp"
+#include "qml_api/update_install.hpp"
 
 namespace roost::api {
 class Api;
@@ -68,10 +72,18 @@ struct UpdateAsset {
 // (design/17-updates.md): `downloadState` is "" (nothing), "downloading",
 // "ready" or "failed", `downloadProgress` runs 0 to 1, `downloadError` is the
 // reason of a failure. The verified package is `downloadedPackage()` (C++ only)
-// and `packageReady(path)` says it is there; the installers use these. The
+// and `packageReady(path)` says it is there; the installer uses these. The
 // directory of the package is deleted with the window, by a cancel (a newer
-// offer, the check turned off) and by the next download. No part of the window
-// calls download() yet.
+// offer, the check turned off) and by the next download.
+//
+// install() is the click of "Install and restart" (design/17-updates.md):
+// download if the package is not there yet, install it by the installer of the
+// platform (update_install.hpp) on a worker thread, start the new version and
+// quit this window. `canInstall` is whether this run can do that (a platform
+// installer, and a window that is an installed copy); `installState` is ""
+// (nothing, or the download is still running), "installing" or "failed", with
+// `installError` the reason of a failure of the download or of the install.
+// Only the click starts it.
 //
 // follow() takes the document `settings` (key updates.check, default true:
 // false cancels a request in flight and makes no more), followState() the
@@ -94,9 +106,16 @@ class Updates : public QObject {
     Q_PROPERTY(QString downloadState READ downloadState NOTIFY changed)
     Q_PROPERTY(double downloadProgress READ downloadProgress NOTIFY changed)
     Q_PROPERTY(QString downloadError READ downloadError NOTIFY changed)
+    Q_PROPERTY(bool canInstall READ canInstall NOTIFY changed)
+    Q_PROPERTY(QString installState READ installState NOTIFY changed)
+    Q_PROPERTY(QString installError READ installError NOTIFY changed)
+    // Whether an install() is under way: its download or the install itself.
+    Q_PROPERTY(bool installBusy READ installBusy NOTIFY changed)
 
 public:
     explicit Updates(QObject* parent = nullptr);
+    // An install in progress is waited for: its package is under our directory.
+    ~Updates() override;
 
     // The window's API, for the write of a dismissal. Without one dismiss()
     // hides the offer for this run only. The Api must outlive this object.
@@ -108,6 +127,18 @@ public:
         Interval_ = interval;
     }
 
+    // For tests: what install() replaces (installTarget() otherwise), how the
+    // new version is started, and how this window quits.
+    void setInstallTarget(const QString& target) {
+        InstallTarget_ = target;
+        emit changed();
+    }
+    void setRelaunch(
+        std::function<std::expected<void, QString>(const QString&)> relaunch) {
+        Relaunch_ = std::move(relaunch);
+    }
+    void setQuit(std::function<void()> quit) { Quit_ = std::move(quit); }
+
     void follow(const QJsonObject& settings);
     void followState(const QJsonObject& document);
 
@@ -115,6 +146,11 @@ public:
     // Downloads the package of the offered release and checks it. Nothing
     // happens without an offer or while a download runs.
     Q_INVOKABLE void download();
+    // "Install and restart": downloads the package if it is not there, installs
+    // it, starts the new version and quits. Nothing happens without an offer,
+    // on a platform or run that cannot install, or while an install is under
+    // way.
+    Q_INVOKABLE void install();
 
     QString available() const;
     QString url() const { return available().isEmpty() ? QString() : Url_; }
@@ -124,6 +160,12 @@ public:
     QString downloadState() const;
     double downloadProgress() const { return Download_.progress(); }
     QString downloadError() const { return Download_.error(); }
+    bool canInstall() const;
+    QString installState() const;
+    QString installError() const { return InstallError_; }
+    bool installBusy() const {
+        return Phase_ == EInstall::Waiting || Phase_ == EInstall::Installing;
+    }
     // The verified package once the state is "ready", else empty; C++ only.
     QString downloadedPackage() const { return Download_.packagePath(); }
 
@@ -134,6 +176,9 @@ signals:
     void checked();
     // The package has been downloaded and verified; C++ only.
     void packageReady(const QString& path);
+    // The new version is in place; `oldBundle` is where the old one went
+    // (the Trash). Before the new version is started. C++ only.
+    void installed(const QString& oldBundle);
 
 private:
     void startCheck();
@@ -145,6 +190,14 @@ private:
     void succeeded(const QString& version, const QString& url,
                    const QList<UpdateAsset>& assets);
     std::optional<UpdateDownload::Request> downloadRequest();
+    // A download is of the release that was offered; but not while it is being
+    // installed.
+    void cancelDownload();
+    void onDownloadChanged();
+    void startInstall();
+    void onInstalled(const std::expected<InstallDone, QString>& result);
+
+    enum class EInstall { Idle, Waiting, Installing, Failed };
 
     QNetworkAccessManager Manager_;
     UpdateDownload Download_;
@@ -165,6 +218,14 @@ private:
     QList<UpdateAsset> Assets_;
     QString Dismissed_;
     QString LastFailure_;
+    EInstall Phase_ = EInstall::Idle;
+    QString InstallError_;
+    QString InstallTarget_;
+    // The version being installed: the offer may change while it is.
+    QString InstallVersion_;
+    QFuture<std::expected<InstallDone, QString>> Work_;
+    std::function<std::expected<void, QString>(const QString&)> Relaunch_;
+    std::function<void()> Quit_;
 };
 
 }  // namespace roost

@@ -290,9 +290,28 @@ ApplicationWindow {
                 Label {
                     objectName: "updateText"
                     Layout.fillWidth: true
-                    text: "roost v" + Roost.updates.available + " is out"
+                    text: {
+                        const updates = Roost.updates;
+                        if (updates.installState === "installing")
+                            return "Installing roost v" + updates.available + "...";
+                        if (updates.installBusy)
+                            return "Downloading roost v" + updates.available + ": " + Math.round(updates.downloadProgress * 100) + "%";
+                        if (updates.installError !== "")
+                            return updates.installError;
+                        return "roost v" + updates.available + " is out";
+                    }
                     color: Roost.theme.windowText
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
                     elide: Text.ElideRight
+                }
+
+                Button {
+                    objectName: "updateInstallButton"
+                    visible: Roost.updates.canInstall
+                    enabled: !Roost.updates.installBusy
+                    text: "Install and restart"
+                    onClicked: Roost.updates.install()
                 }
 
                 Button {
@@ -311,6 +330,7 @@ ApplicationWindow {
                 Button {
                     objectName: "updateDismissButton"
                     flat: true
+                    enabled: !Roost.updates.installBusy
                     text: "Dismiss"
                     onClicked: Roost.updates.dismiss()
                 }

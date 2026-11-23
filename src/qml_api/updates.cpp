@@ -1,15 +1,19 @@
 #include "qml_api/updates.hpp"
 
+#include <QCoreApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPromise>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QThreadPool>
 #include <QtLogging>
 
+#include <memory>
 #include <string>
 
 #include "api/api.hpp"
@@ -149,11 +153,30 @@ Updates::Updates(QObject* parent)
       Manager_(this),
       Download_(Manager_, this),
       Timer_(this),
-      Interval_(CHECK_INTERVAL) {
+      Interval_(CHECK_INTERVAL),
+      InstallTarget_(installTarget()),
+      Relaunch_(relaunch),
+      Quit_([] { QCoreApplication::quit(); }) {
+    // First the install's own state, then the signal that shows it.
+    connect(&Download_, &UpdateDownload::changed, this,
+            &Updates::onDownloadChanged);
     connect(&Download_, &UpdateDownload::changed, this, &Updates::changed);
     connect(&Download_, &UpdateDownload::ready, this, &Updates::packageReady);
+    connect(&Download_, &UpdateDownload::ready, this, [this] {
+        if (Phase_ == EInstall::Waiting) {
+            startInstall();
+        }
+    });
     Timer_.setSingleShot(false);
     connect(&Timer_, &QTimer::timeout, this, &Updates::startCheck);
+}
+
+Updates::~Updates() {
+    // The worker works on files of the directory of the download, which the
+    // member Download_ deletes after this body.
+    if (Work_.isValid()) {
+        Work_.waitForFinished();
+    }
 }
 
 QString Updates::available() const {
@@ -199,7 +222,7 @@ void Updates::follow(const QJsonObject& settings) {
         } else {
             Timer_.stop();
             cancelCheck();
-            Download_.cancel();
+            cancelDownload();
         }
     }
     if (changedCheck || problemsDiffer) {
@@ -220,7 +243,7 @@ void Updates::followState(const QJsonObject& document) {
 
 void Updates::dismiss() {
     const QString version = available();
-    if (version.isEmpty()) {
+    if (version.isEmpty() || installBusy()) {
         return;
     }
     Dismissed_ = version;
@@ -316,6 +339,122 @@ void Updates::download() {
     if (const auto request = downloadRequest()) {
         Download_.start(*request);
     }
+}
+
+bool Updates::canInstall() const {
+    return canDownload() && !InstallTarget_.isEmpty();
+}
+
+QString Updates::installState() const {
+    switch (Phase_) {
+        case EInstall::Installing:
+            return QStringLiteral("installing");
+        case EInstall::Failed:
+            return QStringLiteral("failed");
+        case EInstall::Idle:
+        case EInstall::Waiting:
+            break;
+    }
+    return {};
+}
+
+void Updates::cancelDownload() {
+    // The package of an install that runs is not taken from under it.
+    if (Phase_ != EInstall::Installing) {
+        Download_.cancel();
+    }
+}
+
+void Updates::install() {
+    if (!canInstall() || installBusy()) {
+        return;
+    }
+    InstallError_.clear();
+    Phase_ = EInstall::Waiting;
+    InstallVersion_ = Latest_;
+    if (Download_.state() == UpdateDownload::EState::Ready) {
+        startInstall();
+        return;
+    }
+    // A download that runs is waited for; else one starts, and may fail at
+    // once (onDownloadChanged).
+    if (Download_.state() != UpdateDownload::EState::Downloading) {
+        download();
+    }
+    emit changed();
+}
+
+void Updates::onDownloadChanged() {
+    if (Phase_ != EInstall::Waiting) {
+        return;
+    }
+    switch (Download_.state()) {
+        case UpdateDownload::EState::Failed:
+            Phase_ = EInstall::Failed;
+            InstallError_ = Download_.error();
+            break;
+        case UpdateDownload::EState::None:
+            // Cancelled: the offer is gone.
+            Phase_ = EInstall::Idle;
+            break;
+        case UpdateDownload::EState::Downloading:
+        case UpdateDownload::EState::Ready:
+            break;
+    }
+}
+
+void Updates::startInstall() {
+    Phase_ = EInstall::Installing;
+    emit changed();
+    const InstallRequest request{.Package = Download_.packagePath(),
+                                 .Digest = Download_.digest(),
+                                 .Version = InstallVersion_,
+                                 .Target = InstallTarget_,
+                                 .Rename = {}};
+    // The install copies and swaps a bundle of some tens of megabytes: not on
+    // the thread of the window.
+    auto promise =
+        std::make_shared<QPromise<std::expected<InstallDone, QString>>>();
+    Work_ = promise->future();
+    promise->start();
+    QThreadPool::globalInstance()->start([promise, request] {
+        promise->addResult(installPackage(request));
+        promise->finish();
+    });
+    Work_.then(this, [this](const std::expected<InstallDone, QString>& result) {
+        onInstalled(result);
+    });
+}
+
+void Updates::onInstalled(const std::expected<InstallDone, QString>& result) {
+    if (!result) {
+        qWarning("roost: the install of the update failed: %s",
+                 qUtf8Printable(result.error()));
+        Phase_ = EInstall::Failed;
+        InstallError_ = result.error();
+        emit changed();
+        return;
+    }
+    qInfo("roost: installed roost %s in %s; the old one is at %s",
+          qUtf8Printable(InstallVersion_), qUtf8Printable(InstallTarget_),
+          qUtf8Printable(result->Old));
+    emit installed(result->Old);
+    // The new version is in place. The window that runs is the old one: it
+    // starts the new and quits (the old roostd goes through the version
+    // mismatch flow of the new window).
+    if (const auto started = Relaunch_(InstallTarget_); !started) {
+        const QString reason =
+            QStringLiteral(
+                "roost %1 is installed, but this window cannot "
+                "start it: %2")
+                .arg(InstallVersion_, started.error());
+        qWarning("roost: %s", qUtf8Printable(reason));
+        Phase_ = EInstall::Failed;
+        InstallError_ = reason;
+        emit changed();
+        return;
+    }
+    Quit_();
 }
 
 void Updates::startCheck() {
@@ -439,9 +578,14 @@ void Updates::succeeded(const QString& version, const QString& url,
         return;
     }
     // A download is of the release that was offered.
-    Download_.cancel();
+    cancelDownload();
     Latest_ = latest;
     Url_ = page;
+    // A failure of the install is of the offer it was shown with.
+    if (Phase_ == EInstall::Failed) {
+        Phase_ = EInstall::Idle;
+        InstallError_.clear();
+    }
     emit changed();
 }
 
