@@ -21,8 +21,8 @@
 #include <utility>
 
 #include "core/log_file.hpp"
+#include "core/protocol.hpp"
 #include "core/version.hpp"
-#include "roost/daemon_launcher.hpp"
 
 namespace roost {
 
@@ -195,8 +195,7 @@ QByteArray FormatWindowLogLine(QtMsgType type,
 }
 
 QString WindowLogPath(const QString& socketPath) {
-    return DaemonLauncher::LogDirectory(socketPath) +
-           QStringLiteral("/roost.log");
+    return protocol::LogDirectory(socketPath) + QStringLiteral("/roost.log");
 }
 
 bool InstallWindowLog(const QString& path, qint64 rotateAbove) {

@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QSaveFile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -19,6 +20,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <optional>
 
 #include "helpers/scoped_env.hpp"
 #include "qml_api/update_install.hpp"
@@ -63,11 +65,19 @@ private slots:
         Package_ = Dir_.filePath("cache/roost-x86_64.AppImage");
         QVERIFY(QDir().mkpath(Dir_.filePath("Apps")));
         QVERIFY(QDir().mkpath(Dir_.filePath("cache")));
+        // The logs of the relaunch go beside the socket: the one of this
+        // directory, never the user's.
+        QVERIFY(QDir().mkpath(Dir_.filePath("run")));
+        Socket_.emplace("ROOST_SOCKET",
+                        Dir_.filePath("run/roostd.sock").toLocal8Bit());
         Write(AppImage_, OLD_CONTENT, EXECUTABLE);
         Write(Package_, NEW_CONTENT, QFile::ReadOwner | QFile::WriteOwner);
     }
 
-    void cleanup() { QDir(Dir_.path()).removeRecursively(); }
+    void cleanup() {
+        Socket_.reset();
+        QDir(Dir_.path()).removeRecursively();
+    }
 
     // The target is the AppImage this run is in: APPIMAGE, a file, with the
     // executable under APPDIR. A build tree, an extracted AppDir (no
@@ -178,6 +188,54 @@ private slots:
                  QFileInfo(Dir_.path()).canonicalFilePath().toLocal8Bit());
     }
 
+    // What the new one prints before it has a log of its own is kept, as for
+    // roostd, and is the log of this start only.
+    void TheOutputOfTheNewOneIsKeptInTheRelaunchLog() {
+        const QString out = Dir_.filePath("out.txt");
+        const QString log = Dir_.filePath("run/roost.relaunch.log");
+        Write(log, "left by an earlier start\n",
+              QFile::ReadOwner | QFile::WriteOwner);
+        WriteFakeAppImage(out);
+        const ScopedEnv home("HOME", Dir_.path().toLocal8Bit());
+        const ScopedEnv where("ROOST_TEST_OUT", out.toLocal8Bit());
+        const auto started = relaunch(AppImage_);
+        QVERIFY2(started.has_value(),
+                 qPrintable(started ? QString() : started.error()));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out), 30000);
+        QCOMPARE(Read(log), QByteArray("to stdout\nto stderr\n"));
+    }
+
+    // No FUSE: the window runs from an extracted AppImage (its APPDIR is a
+    // plain directory), and the new one is started so too. Inside a mount it
+    // is not, and the user's own value stays.
+    void AnExtractedWindowStartsTheNewOneExtracted() {
+        const QString extracted = Dir_.filePath("squashfs-root");
+        QVERIFY(QDir().mkpath(extracted));
+        const ScopedEnv appDir("APPDIR", extracted.toLocal8Bit());
+        const ScopedEnv user("APPIMAGE_EXTRACT_AND_RUN", std::nullopt);
+        QHash<QString, QByteArray> variables;
+        StartAndRead(variables);
+        QCOMPARE(variables.value("APPIMAGE_EXTRACT_AND_RUN"), QByteArray("1"));
+    }
+
+    void AMountedWindowStartsTheNewOneMounted() {
+        const ScopedEnv appDir("APPDIR", "/dev");
+        const ScopedEnv user("APPIMAGE_EXTRACT_AND_RUN", std::nullopt);
+        QHash<QString, QByteArray> variables;
+        StartAndRead(variables);
+        QVERIFY(!variables.contains("APPIMAGE_EXTRACT_AND_RUN"));
+    }
+
+    void TheUsersExtractAndRunReachesTheNewOne() {
+        const QString extracted = Dir_.filePath("squashfs-root");
+        QVERIFY(QDir().mkpath(extracted));
+        const ScopedEnv appDir("APPDIR", extracted.toLocal8Bit());
+        const ScopedEnv user("APPIMAGE_EXTRACT_AND_RUN", "0");
+        QHash<QString, QByteArray> variables;
+        StartAndRead(variables);
+        QCOMPARE(variables.value("APPIMAGE_EXTRACT_AND_RUN"), QByteArray("0"));
+    }
+
     void ATargetThatCannotBeStartedIsAFailureWithItsPath() {
         const QString missing = Dir_.filePath("Apps/missing.AppImage");
         const auto started = relaunch(missing);
@@ -186,11 +244,31 @@ private slots:
     }
 
 private:
+    // The variables the new version is started with, by name.
+    void StartAndRead(QHash<QString, QByteArray>& variables) {
+        const QString out = Dir_.filePath("out.txt");
+        WriteFakeAppImage(out);
+        const ScopedEnv home("HOME", Dir_.path().toLocal8Bit());
+        const ScopedEnv where("ROOST_TEST_OUT", out.toLocal8Bit());
+        const auto started = relaunch(AppImage_);
+        QVERIFY2(started.has_value(),
+                 qPrintable(started ? QString() : started.error()));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out), 30000);
+        for (const QByteArray& line : Read(out).split('\n')) {
+            const qsizetype equals = line.indexOf('=');
+            if (equals > 0) {
+                variables.insert(QString::fromLocal8Bit(line.first(equals)),
+                                 line.sliced(equals + 1));
+            }
+        }
+    }
+
     // The new version: writes its directory and its environment to the file,
     // atomically (the test waits for the file).
     void WriteFakeAppImage(const QString& out) {
         Write(AppImage_,
               "#!/bin/sh\n"
+              "echo 'to stdout'; echo 'to stderr' >&2\n"
               "{ pwd -P; env; } > \"$ROOST_TEST_OUT.tmp\"\n"
               "mv \"$ROOST_TEST_OUT.tmp\" \"$ROOST_TEST_OUT\"\n",
               EXECUTABLE);
@@ -205,6 +283,7 @@ private:
     }
 
     QTemporaryDir Dir_;
+    std::optional<ScopedEnv> Socket_;
     QString AppImage_;
     QString Package_;
 };

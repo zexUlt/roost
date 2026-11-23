@@ -467,7 +467,7 @@ void Updates::onInstalled(const std::expected<InstallDone, QString>& result) {
         const QString reason =
             QStringLiteral(
                 "roost %1 is installed, but this window cannot "
-                "start it: %2")
+                "start it: %2. Close this window and start roost again.")
                 .arg(InstallVersion_, started.error());
         qWarning("roost: %s", qUtf8Printable(reason));
         endInstall(reason);

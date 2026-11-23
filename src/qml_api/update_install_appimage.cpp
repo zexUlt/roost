@@ -6,10 +6,13 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 
 #include "core/appimage_environment.hpp"
 #include "core/appimage_install.hpp"
+#include "core/protocol.hpp"
 #include "qml_api/update_install.hpp"
 
 namespace roost {
@@ -39,11 +42,27 @@ std::expected<void, QString> relaunch(const QString& target) {
         QProcessEnvironment::systemEnvironment();
     QProcess process;
     process.setProgram(target);
-    process.setProcessEnvironment(RelaunchEnvironment(current));
+    process.setProcessEnvironment(RelaunchEnvironment(
+        current,
+        IsMountPoint(current.value(QStringLiteral("APPDIR"))).value_or(true)));
     process.setWorkingDirectory(RelaunchDirectory(current, QDir::homePath()));
     process.setStandardInputFile(QProcess::nullDevice());
-    process.setStandardOutputFile(QProcess::nullDevice());
-    process.setStandardErrorFile(QProcess::nullDevice());
+    // What the new one prints before it has a log of its own (the runtime that
+    // cannot mount, a missing library) goes to a file beside the other logs, as
+    // for roostd (DaemonLauncher::StartDetached), truncated per start. Without
+    // the directory: /dev/null.
+    const QString log = protocol::LogDirectory(protocol::SocketPath()) +
+                        QStringLiteral("/roost.relaunch.log");
+    // Emptied here, then both channels append: two opens that truncate would
+    // overwrite each other.
+    if (QFileInfo(log).dir().exists() &&
+        QFile(log).open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        process.setStandardOutputFile(log, QIODevice::Append);
+        process.setStandardErrorFile(log, QIODevice::Append);
+    } else {
+        process.setStandardOutputFile(QProcess::nullDevice());
+        process.setStandardErrorFile(QProcess::nullDevice());
+    }
     // Its own session, as for roostd (DaemonLauncher): it outlives this window
     // and has no controlling terminal of ours.
     QProcess::UnixProcessParameters parameters;

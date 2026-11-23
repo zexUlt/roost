@@ -1,6 +1,7 @@
 #include "core/protocol.hpp"
 
 #include <QDir>
+#include <QFileInfo>
 
 #include <unistd.h>
 
@@ -30,6 +31,10 @@ QString SocketPath() {
     return QDir::cleanPath(
         QDir::tempPath() +
         QStringLiteral("/roost-%1/roostd.sock").arg(::geteuid()));
+}
+
+QString LogDirectory(const QString& socketPath) {
+    return QFileInfo(socketPath).absolutePath();
 }
 
 }  // namespace roost::protocol

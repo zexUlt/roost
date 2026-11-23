@@ -8,6 +8,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <optional>
+
 #include "core/appimage_environment.hpp"
 
 using namespace roost;
@@ -52,14 +54,14 @@ private slots:
         QFETCH(QString, name);
         const QProcessEnvironment input = InsideTheMount();
         QVERIFY(input.contains(name));
-        QVERIFY(!RelaunchEnvironment(input).contains(name));
+        QVERIFY(!RelaunchEnvironment(input, true).contains(name));
     }
 
     // Everything the session has is the new version's, as from the desktop:
     // PATH as it is (AppRun does not change it), the display, the home.
     void TheRelaunchKeepsTheRest() {
         const QProcessEnvironment output =
-            RelaunchEnvironment(InsideTheMount());
+            RelaunchEnvironment(InsideTheMount(), true);
         QCOMPARE(output.value("PATH"), QString("/usr/local/bin:/usr/bin:/bin"));
         QCOMPARE(output.value("HOME"), QString("/home/u"));
         QCOMPARE(output.value("DISPLAY"), QString(":0"));
@@ -86,7 +88,55 @@ private slots:
     }
 
     void AnEmptyEnvironmentStaysEmpty() {
-        QVERIFY(RelaunchEnvironment(QProcessEnvironment()).isEmpty());
+        QVERIFY(RelaunchEnvironment(QProcessEnvironment(), false).isEmpty());
+    }
+
+    // No FUSE: the window runs from an extracted AppImage, and the new one has
+    // to be run so too, or it cannot mount.
+    void AnExtractedAppImageRelaunchesExtracted() {
+        const QProcessEnvironment output =
+            RelaunchEnvironment(InsideTheMount(), false);
+        QCOMPARE(output.value("APPIMAGE_EXTRACT_AND_RUN"), QString("1"));
+        QVERIFY(!output.contains("APPDIR"));
+        QCOMPARE(output.keys().size(), 6);
+    }
+
+    void AMountedAppImageRelaunchesMounted() {
+        QVERIFY(!RelaunchEnvironment(InsideTheMount(), true)
+                     .contains("APPIMAGE_EXTRACT_AND_RUN"));
+    }
+
+    // Not an AppImage at all: no APPDIR, nothing to extract.
+    void WithoutAppDirNothingIsAdded() {
+        QProcessEnvironment environment;
+        environment.insert("PATH", "/usr/bin");
+        QVERIFY(!RelaunchEnvironment(environment, false)
+                     .contains("APPIMAGE_EXTRACT_AND_RUN"));
+    }
+
+    // The user's own value is theirs, whatever it is.
+    void TheUsersExtractAndRunStays() {
+        for (const QString& value : {QString("1"), QString("0"), QString()}) {
+            QProcessEnvironment environment = InsideTheMount();
+            environment.insert("APPIMAGE_EXTRACT_AND_RUN", value);
+            for (const bool mounted : {true, false}) {
+                const QProcessEnvironment output =
+                    RelaunchEnvironment(environment, mounted);
+                QVERIFY(output.contains("APPIMAGE_EXTRACT_AND_RUN"));
+                QCOMPARE(output.value("APPIMAGE_EXTRACT_AND_RUN"), value);
+            }
+        }
+    }
+
+    // A directory of the temporary tree shares the device of its parent;
+    // /dev is a mount of its own on Linux and macOS alike.
+    void AMountPointIsToldByTheDeviceOfTheParent() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QCOMPARE(IsMountPoint(directory.path()), std::optional<bool>(false));
+        QCOMPARE(IsMountPoint("/dev"), std::optional<bool>(true));
+        QCOMPARE(IsMountPoint(directory.path() + "/gone"), std::nullopt);
+        QCOMPARE(IsMountPoint(""), std::nullopt);
     }
 
     void TheDirectoryIsOwdOrTheHome() {

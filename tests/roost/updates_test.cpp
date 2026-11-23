@@ -1569,6 +1569,9 @@ private slots:
         QCOMPARE(Quits_, 0);
         QVERIFY(StripText().contains("roost 9.9.9 is installed"));
         QVERIFY(StripText().contains("no way"));
+        // The way out: the new version is in place, a start finds it.
+        QVERIFY(
+            StripText().contains("Close this window and start roost again."));
         QCOMPARE(InstalledMarker(), QByteArray("new"));
     }
 

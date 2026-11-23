@@ -11,7 +11,6 @@
 #include "core/protocol.hpp"
 #include "core/store.hpp"
 #include "roost/bug_report.hpp"
-#include "roost/daemon_launcher.hpp"
 
 namespace roost {
 
@@ -54,7 +53,7 @@ QString ConfigDirectoryOrEmpty() {
 }
 
 QString LogDirectory() {
-    return DaemonLauncher::LogDirectory(protocol::SocketPath());
+    return protocol::LogDirectory(protocol::SocketPath());
 }
 
 }  // namespace

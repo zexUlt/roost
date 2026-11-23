@@ -75,7 +75,8 @@ std::expected<InstallDone, QString> installPackage(
 
 // Starts the replaced `target` detached. Does not quit this process. On Linux
 // with the environment of a start from the desktop, not of this window
-// (RelaunchEnvironment).
+// (RelaunchEnvironment); its output goes to roost.relaunch.log beside the other
+// logs.
 std::expected<void, QString> relaunch(const QString& target);
 
 }  // namespace roost

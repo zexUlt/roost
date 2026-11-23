@@ -21,10 +21,6 @@ namespace {
 constexpr int STOP_POLL_MS = 50;
 }  // namespace
 
-QString DaemonLauncher::LogDirectory(const QString& socketPath) {
-    return QFileInfo(socketPath).absolutePath();
-}
-
 DaemonLauncher::Command DaemonLauncher::DefaultCommand(
     const QString& socketPath) {
     return CommandFor(socketPath, qEnvironmentVariable("APPIMAGE"),
@@ -35,7 +31,7 @@ DaemonLauncher::Command DaemonLauncher::DefaultCommand(
 DaemonLauncher::Command DaemonLauncher::CommandFor(
     const QString& socketPath, const QString& appImage, const QString& appDir,
     const QString& executableDir) {
-    const QString dir = LogDirectory(socketPath);
+    const QString dir = protocol::LogDirectory(socketPath);
     const QString log = dir + QStringLiteral("/roostd.log");
     const QString startLog = dir + QStringLiteral("/roostd.start.log");
     // An APPIMAGE of another app's environment does not count: this
