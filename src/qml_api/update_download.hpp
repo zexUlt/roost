@@ -59,6 +59,11 @@ public:
     const QString& error() const { return Error_; }
     // The verified package, when Ready; empty otherwise.
     QString packagePath() const;
+    // The line of the package in the signed SHA256SUMS (hex), when Ready;
+    // empty otherwise. The installer checks the package against it again.
+    QByteArray digest() const {
+        return State_ == EState::Ready ? Digest_ : QByteArray();
+    }
 
 signals:
     void changed();

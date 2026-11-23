@@ -28,10 +28,18 @@ qt_add_qml_module(roost_qml_api
         theme.hpp
         update_download.cpp
         update_download.hpp
+        update_install.hpp
         updates.cpp
         updates.hpp
     NO_CACHEGEN
 )
+
+# The installer of an update, one file per platform (update_install.hpp).
+if(APPLE)
+    target_sources(roost_qml_api PRIVATE update_install_macos.cpp)
+else()
+    target_sources(roost_qml_api PRIVATE update_install_unsupported.cpp)
+endif()
 
 target_link_libraries(roost_qml_api PUBLIC roost_api roost_terminal Qt6::Quick)
 # calling_context.cpp only: the private API of QtQml (see the file).

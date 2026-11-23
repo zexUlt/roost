@@ -8,9 +8,9 @@
 #
 #   tests/fixtures/updates/make_fixtures.sh
 #
-# The fake release is roost v9.9.9. SHA256SUMS lists the same asset bytes under
-# the name of each package the app can ask for (macOS .dmg and Linux AppImage,
-# both architectures); its signature is what the release workflow makes: the
+# The fake release is roost v9.9.9. SHA256SUMS lists package-macos.bin under the
+# name of each macOS package and asset.bin under each Linux one (both
+# architectures); its signature is what the release workflow makes: the
 # default (prehashed) one with the trusted comment `roost <tag> SHA256SUMS`.
 set -eu
 
@@ -21,9 +21,39 @@ tag=v9.9.9
 
 printf 'roost %s: a fake package for the tests of the update check.\n' "$tag" >"$scratch/asset.bin"
 digest=$(shasum -a 256 "$scratch/asset.bin" | cut -d' ' -f1)
+
+# The macOS package of the install test: a .dmg with a roost.app that is as
+# much of a bundle as the installer looks at (Info.plist with the version, the
+# window and the daemon executables) and a file that says it is the new one.
+# It is signed ad hoc, as tools/package_macos.sh signs the release (the daemon
+# first, then the bundle): the installer verifies the signature of the copy.
+# Needs hdiutil and codesign: run this script on a Mac.
+app="$scratch/dmg-root/roost.app/Contents"
+mkdir -p "$app/MacOS" "$app/Resources"
+cat >"$app/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>roost</string>
+<key>CFBundleShortVersionString</key><string>${tag#v}</string>
+</dict></plist>
+PLIST
+for executable in roost roostd; do
+    printf '#!/bin/sh\nexit 0\n' >"$app/MacOS/$executable"
+    chmod +x "$app/MacOS/$executable"
+done
+printf 'new' >"$app/Resources/marker.txt"
+codesign --force --sign - --timestamp=none "$app/MacOS/roostd"
+codesign --force --sign - --timestamp=none "$scratch/dmg-root/roost.app"
+codesign --verify --deep --strict "$scratch/dmg-root/roost.app"
+hdiutil create -quiet -volname roost -srcfolder "$scratch/dmg-root" -fs HFS+ -format UDZO -ov "$scratch/package.dmg"
+dmg_digest=$(shasum -a 256 "$scratch/package.dmg" | cut -d' ' -f1)
+
 : >"$scratch/SHA256SUMS"
-for name in roost-9.9.9-macos-arm64.dmg roost-9.9.9-macos-x86_64.dmg \
-    roost-x86_64.AppImage roost-aarch64.AppImage; do
+for name in roost-9.9.9-macos-arm64.dmg roost-9.9.9-macos-x86_64.dmg; do
+    printf '%s  %s\n' "$dmg_digest" "$name" >>"$scratch/SHA256SUMS"
+done
+for name in roost-x86_64.AppImage roost-aarch64.AppImage; do
     printf '%s  %s\n' "$digest" "$name" >>"$scratch/SHA256SUMS"
 done
 
@@ -42,5 +72,7 @@ minisign -V -p "$scratch/other.pub" -x "$scratch/SHA256SUMS.other.minisig" -m "$
 
 cp "$scratch/key.pub" "$here/test.pub"
 cp "$scratch/other.pub" "$here/other.pub"
+# .bin: the repository ignores *.dmg.
+cp "$scratch/package.dmg" "$here/package-macos.bin"
 cp "$scratch/asset.bin" "$scratch/SHA256SUMS" "$scratch/SHA256SUMS.minisig" \
     "$scratch/SHA256SUMS.legacy.minisig" "$scratch/SHA256SUMS.other.minisig" "$here/"
