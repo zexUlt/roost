@@ -38,7 +38,12 @@ private:
     void ClickInMenu(const QString& instance, const char* item) {
         QQuickItem* slot = SlotByInstance(instance);
         QVERIFY(slot != nullptr);
-        QVERIFY(slot->isVisible());
+        // A slot that was just added is shown before the layout gives it a
+        // size and a place (0x0 at the corner); a click in its middle then
+        // reaches no menu area.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            slot->isVisible() && slot->width() > 0 && slot->height() > 0,
+            TIMEOUT_MS);
         QTest::mouseClick(
             Window(), Qt::RightButton, Qt::NoModifier,
             slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
