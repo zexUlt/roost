@@ -33,17 +33,35 @@ private:
         return count;
     }
 
+    // The size, place and visibility of an item, for a failure message.
+    static QString Describe(const QQuickItem* item) {
+        if (item == nullptr) {
+            return QStringLiteral("no item");
+        }
+        const QPointF at = item->mapToScene(QPointF(0, 0));
+        return QStringLiteral("%1x%2 at %3,%4, visible %5")
+            .arg(item->width())
+            .arg(item->height())
+            .arg(at.x())
+            .arg(at.y())
+            .arg(item->isVisible());
+    }
+
     // A right click in the middle of the panel opens its menu; a left click
     // on the item runs it. One write of the layout follows.
     void ClickInMenu(const QString& instance, const char* item) {
-        QQuickItem* slot = SlotByInstance(instance);
-        QVERIFY(slot != nullptr);
         // A slot that was just added is shown before the layout gives it a
         // size and a place (0x0 at the corner); a click in its middle then
-        // reaches no menu area.
-        QTRY_VERIFY_WITH_TIMEOUT(
-            slot->isVisible() && slot->width() > 0 && slot->height() > 0,
-            TIMEOUT_MS);
+        // misses its menu area. The slot is looked up anew each time: a change
+        // of the layout rebuilds the nodes.
+        QQuickItem* slot = nullptr;
+        const auto placed = [&] {
+            slot = SlotByInstance(instance);
+            return slot != nullptr && slot->isVisible() && slot->width() > 0 &&
+                   slot->height() > 0;
+        };
+        QTRY_VERIFY2_WITH_TIMEOUT(placed(), qPrintable(Describe(slot)),
+                                  TIMEOUT_MS);
         QTest::mouseClick(
             Window(), Qt::RightButton, Qt::NoModifier,
             slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
@@ -98,8 +116,17 @@ private:
 
     // A click on the button of the tab, as the user does it.
     void ClickTab(int index) {
-        QTRY_VERIFY_WITH_TIMEOUT(TabButtons().size() > index, TIMEOUT_MS);
-        QQuickItem* button = TabButtons().at(index);
+        // The same as for a slot: the button may be shown before it has a
+        // size and a place.
+        QQuickItem* button = nullptr;
+        const auto placed = [&] {
+            const QList<QQuickItem*> buttons = TabButtons();
+            button = buttons.size() > index ? buttons.at(index) : nullptr;
+            return button != nullptr && button->isVisible() &&
+                   button->width() > 0 && button->height() > 0;
+        };
+        QTRY_VERIFY2_WITH_TIMEOUT(placed(), qPrintable(Describe(button)),
+                                  TIMEOUT_MS);
         QTest::mouseClick(
             Window(), Qt::LeftButton, Qt::NoModifier,
             button
