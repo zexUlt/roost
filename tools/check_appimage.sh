@@ -260,6 +260,10 @@ done
 # The agent icons of the sessions list are SVG.
 [ -f "$appdir/usr/plugins/imageformats/libqsvg.so" ] ||
     fail "usr/plugins/imageformats/libqsvg.so is missing"
+# The check for a newer release is HTTPS (design/17-updates.md); the backend
+# loads the libssl of the system when it runs.
+[ -f "$appdir/usr/plugins/tls/libqopensslbackend.so" ] ||
+    fail "usr/plugins/tls/libqopensslbackend.so is missing"
 
 # --- the AppImage itself ---------------------------------------------------
 # The same isolation as tests/roost/window_spawn_test.cpp: nothing of the real

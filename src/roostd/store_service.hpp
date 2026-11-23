@@ -10,9 +10,9 @@ class PluginRegistry;
 class Server;
 
 // The state over the socket (design.md §8): each loaded plugin has one JSON
-// document, kept by Store, and so have the window's "layout" and "settings",
-// which belong to no plugin. "plugin" below is the id of a loaded plugin or
-// one of those two. It adds to the server:
+// document, kept by Store, and so have the window's "layout", "settings" and
+// "updates", which belong to no plugin. "plugin" below is the id of a loaded
+// plugin or one of those three. It adds to the server:
 //
 //   store.get {plugin}               {document}
 //     The plugin's document, {} if it has none yet. InvalidParams if plugin is

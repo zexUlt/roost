@@ -189,13 +189,13 @@ done < <(grep -v -e '^#' -e '^$' "$root/packaging/linux/system-libraries.txt")
 # Layouts and Templates; the other styles, Dialogs, Effects, Particles,
 # Shapes, VectorImage, LocalStorage, XmlListModel and DesignSupport are
 # imported by no QML of roost, Fusion or Basic. The image formats but qsvg (the
-# agent icons of the sessions list are SVG) and the TLS backends: roost makes no
-# TLS connection. The Qt libraries that only these needed go below.
+# agent icons of the sessions list are SVG). The TLS backends stay: the window
+# asks the GitHub API over HTTPS whether a newer release is out
+# (design/17-updates.md). The Qt libraries that only these needed go below.
 unused=(
     usr/qml/QtQuick/Controls/{Imagine,Material,Universal,FluentWinUI3,Native,designer,iOS,macOS}
     usr/qml/QtQuick/{Dialogs,Effects,Particles,Shapes,VectorImage,LocalStorage,tooling}
     usr/qml/QtQml/{DesignSupport,XmlListModel}
-    usr/plugins/tls
 )
 for path in "${unused[@]}"; do
     rm -rf "${appdir:?}/$path"

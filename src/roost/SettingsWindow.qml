@@ -35,6 +35,8 @@ ApplicationWindow {
     property string readError
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
+    // settings.updates.check as stored; on when the key is not a bool.
+    readonly property bool updatesCheck: settingsDocument.updates?.check !== false
     readonly property string platformName: Qt.platform.os === "osx" ? "mac" : "linux"
 
     // The user pressed "Open keymap.json".
@@ -91,6 +93,7 @@ ApplicationWindow {
                 field.text = field.shown();
             }
         }
+        updatesCheckSwitch.checked = updatesCheck;
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
     }
 
@@ -330,6 +333,24 @@ ApplicationWindow {
                             });
                         }
                     }
+                }
+            }
+
+            FieldRow {
+                label: "Check for updates"
+
+                Switch {
+                    id: updatesCheckSwitch
+
+                    objectName: "updatesCheckSwitch"
+                    // The default until the document is read; showDocument()
+                    // sets it, a binding would not survive a click.
+                    checked: true
+                    onToggled: root.patchSettings({
+                        "updates": {
+                            "check": checked
+                        }
+                    })
                 }
             }
 
