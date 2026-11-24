@@ -1,4 +1,5 @@
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -23,6 +24,11 @@ constexpr int TIMEOUT_MS = 10000;
 // good margin, so what would come after the first event is in by then. A state
 // that is expected is awaited with QTRY, not with this.
 constexpr int SETTLE_MS = 600;
+// The three writes of a chunked file are within the delay of the service (100
+// ms) when they took less than this. That bounds the writer only: a daemon
+// kept off the CPU for longer than the delay between two of its file events
+// can still publish twice. Closing that needs a debounce the test can set.
+constexpr qint64 CHUNKS_WITHIN_MS = 40;
 const QJsonValue UNBIND{QJsonValue::Null};
 
 QJsonObject Binding(const QString& key, const QString& command,
@@ -411,33 +417,64 @@ private slots:
 
     // A writer that writes in place and not by rename, in chunks that come
     // within the delay of the service: there is one event, for the whole file.
+    // Whether the chunks came within the delay depends on the writer being on
+    // the CPU, so the writer times itself: a round in which it took long is not
+    // the case under test and is done again, until the deadline.
     void ChunksWithinTheDelayGiveOneEvent() {
         QVERIFY(SaveFile(QJsonArray{}));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
         Get("linux");
 
-        QFile file(KeymapPath());
-        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
         const QByteArray whole =
             R"([{"key": "Ctrl+S", "command": "beta.new"}])";
         const qsizetype third = whole.size() / 3;
-        for (const QByteArray& chunk :
-             {whole.left(third), whole.mid(third, third),
-              whole.mid(2 * third)}) {
-            QCOMPARE(file.write(chunk), qsizetype(chunk.size()));
-            QVERIFY(file.flush());
+        const QJsonObject wholeBinding = Binding("Ctrl+S", "beta.new", "user");
+        const QJsonObject closing = Binding("Ctrl+S", "alpha.next", "user");
+        QElapsedTimer deadline;
+        deadline.start();
+        while (!deadline.hasExpired(TIMEOUT_MS)) {
+            const qsizetype before = Changes().size();
+            QElapsedTimer writing;
+            writing.start();
+            QFile file(KeymapPath());
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            for (const QByteArray& chunk :
+                 {whole.left(third), whole.mid(third, third),
+                  whole.mid(2 * third)}) {
+                QCOMPARE(file.write(chunk), qsizetype(chunk.size()));
+                QVERIFY(file.flush());
+            }
+            file.close();
+            const bool withinTheDelay = writing.elapsed() < CHUNKS_WITHIN_MS;
+
+            // The event of the writes, then the event of a later save by
+            // rename. All the writes are over before that save, so the event
+            // of the saved file is the last one of the round.
+            QTRY_VERIFY_WITH_TIMEOUT(Changes().size() > before, TIMEOUT_MS);
+            QVERIFY(SaveFile(QJsonArray{
+                QJsonObject{{"key", "Ctrl+S"}, {"command", "alpha.next"}}}));
+            QTRY_VERIFY_WITH_TIMEOUT(
+                Changes().size() > before + 1 && Changes()
+                                                     .last()
+                                                     .value("bindings")
+                                                     .toArray()
+                                                     .contains(closing),
+                TIMEOUT_MS);
+            if (!withinTheDelay) {
+                continue;
+            }
+            QCOMPARE(Changes().size(), before + 2);
+            QVERIFY(Changes()[before]
+                        .value("bindings")
+                        .toArray()
+                        .contains(wholeBinding));
+            QCOMPARE(ProblemsWith(Changes()[before], "keymap.json is ignored")
+                         .size(),
+                     0);
+            return;
         }
-        file.close();
-        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 1);
-        QVERIFY(Changes()[0]
-                    .value("bindings")
-                    .toArray()
-                    .contains(Binding("Ctrl+S", "beta.new", "user")));
-        QCOMPARE(ProblemsWith(Changes()[0], "keymap.json is ignored").size(),
-                 0);
+        QFAIL("the writer was never fast enough to keep within the delay");
     }
 
     // A writer that pauses between the chunks for longer than the delay may
@@ -678,24 +715,37 @@ private slots:
     void ClosedConnectionIsForgotten() {
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
-        QVERIFY(!Get("linux").isEmpty());
+        QVERIFY(!Get("mac").isEmpty());
         Events_.reset();
         Client_.reset();
 
-        // A second connection asks for the other platform, and its event
-        // shows the daemon has handled the change. roostd says nothing when it
-        // has seen the first connection go, so the change waits a while for
-        // that; one change, so a late one cannot be counted twice.
+        // A second connection asks for the other platform. roostd says nothing
+        // when it has seen the first connection go, so each change is a probe:
+        // the daemon publishes the platforms in the order mac, linux, in one
+        // step, so the event for linux, which this connection asked for, is the
+        // last of the change, and a mac event before it shows that the daemon
+        // still remembers the first connection. Then the next change tries
+        // again, until the deadline.
         QVERIFY(Connect());
-        QVERIFY(!Get("mac").isEmpty());
-        QTest::qWait(SETTLE_MS);
-        QVERIFY(SaveFile(QJsonArray{
-            QJsonObject{{"key", "Ctrl+S"}, {"command", "beta.new"}}}));
-        QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 1, TIMEOUT_MS);
-        // What else the change published is in by then.
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 1);
-        QCOMPARE(Changes()[0].value("platform"), QJsonValue("mac"));
+        QVERIFY(!Get("linux").isEmpty());
+        QElapsedTimer deadline;
+        deadline.start();
+        for (int change = 0; !deadline.hasExpired(TIMEOUT_MS); ++change) {
+            const qsizetype before = Changes().size();
+            // Each file is not the one before it, or nothing is published.
+            QVERIFY(SaveFile(change % 2 == 0 ? QJsonArray{QJsonObject{
+                                                   {"key", "Ctrl+S"},
+                                                   {"command", "beta.new"}}}
+                                             : QJsonArray{}));
+            QTRY_VERIFY_WITH_TIMEOUT(
+                Changes().size() > before &&
+                    Changes().last().value("platform") == QJsonValue("linux"),
+                TIMEOUT_MS);
+            if (Changes().size() == before + 1) {
+                return;
+            }
+        }
+        QFAIL("the daemon still publishes for the closed connection");
     }
 };
 
