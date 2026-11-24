@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 #include "roost/controls_style.hpp"
 
 using namespace roost;
@@ -166,6 +167,7 @@ private slots:
         const QString description =
             QString::fromUtf8("Не открывается сессия ✓");
         Dialog()->setProperty("description", description);
+        QVERIFY(testing::SaveSnapshot(Window_, "form"));
         QVERIFY(QMetaObject::invokeMethod(
             Window_->findChild<QObject*>("createButton"), "clicked"));
         QVERIFY(Dialog()->property("done").toBool());
@@ -182,6 +184,7 @@ private slots:
                  "Saved: " + zip);
         QVERIFY(Window_->findChild<QQuickItem*>("showButton")->isVisible());
         QVERIFY(Window_->findChild<QQuickItem*>("issueButton")->isVisible());
+        QVERIFY(testing::SaveSnapshot(Window_, "done"));
 
         const QString unzip = QStandardPaths::findExecutable("unzip");
         if (unzip.isEmpty()) {
