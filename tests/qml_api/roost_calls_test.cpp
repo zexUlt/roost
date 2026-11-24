@@ -4,6 +4,7 @@
 // callback(error, result) in the GUI thread, and every method of the
 // dispatcher is reachable by name.
 
+#include <QtCore/qscopeguard.h>
 #include <QJSEngine>
 #include <QJSValue>
 #include <QJSValueList>
@@ -20,6 +21,9 @@
 #include <QThread>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <future>
 #include <initializer_list>
 #include <memory>
 #include <vector>
@@ -414,13 +418,37 @@ private slots:
     // the older one of the answer.
     void AReadIsNotOlderThanAnEventThatOvertookIt() {
         QVERIFY(Setup());
+        // The IO thread tells when the event of the patch has been handed to
+        // the GUI thread. The connection is direct and made after the one of
+        // BusService, so the slot runs in the IO thread right after the
+        // event has been queued for the bus.
+        std::promise<void> queued;
+        std::future<void> eventQueued = queued.get_future();
+        std::atomic_flag told;
+        const QMetaObject::Connection heard = connect(
+            &Api_->Io(), &IoThread::Notified, this,
+            [&](const QString& method, const QJsonValue& params) {
+                const QJsonObject object = params.toObject();
+                if (method == "bus.event" &&
+                    object.value("name").toString() == "store.changed" &&
+                    !told.test_and_set()) {
+                    queued.set_value();
+                }
+            },
+            Qt::DirectConnection);
+        QVERIFY(heard);
+        const auto disconnectHeard = qScopeGuard([&] { disconnect(heard); });
+
         Invoke("storeGet", {"fixture"});
         const QFuture<rpc::Result> patched =
             Api_->Store().Patch("fixture", Doc(1));
-        // The GUI thread does not run the event loop, so that the answer of
-        // the read, the answer of the patch and the event are all queued for
-        // it by the time it does: the event is handled before the callback.
-        QTest::qSleep(300);
+        // The GUI thread does not run the event loop until then, so that the
+        // answer of the read and the event are both queued for it when it
+        // does: the event is handled before the callback.
+        QVERIFY2(eventQueued.wait_for(std::chrono::milliseconds(TIMEOUT_MS)) ==
+                     std::future_status::ready,
+                 "the event of the patch never reached the GUI thread's queue");
+        disconnect(heard);
         QVERIFY(Wait(patched));
         const QJsonObject got = WaitForTag("get");
         QVERIFY2(!got.contains("timedOut"), "no answer");
