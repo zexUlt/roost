@@ -234,9 +234,11 @@ jobs:
   # see the Q_OS_MACOS and __APPLE__ branches (src/core/pty.cpp,
   # src/roostd/server.cpp, src/terminal/qt_key_mapping.cpp,
   # tests/qml_api/terminal_item_input_test.cpp,
-  # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp
-  # and src/qml_api/update_install_macos.cpp, which are built on macOS only:
-  # the pre-commit tidy on the Mac covers them.
+  # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp,
+  # src/qml_api/update_install_macos.cpp and
+  # tests/qml_api/terminal_grid_tree_test.cpp (it needs Qt6::QuickPrivate,
+  # which the Linux images lack), which are built on macOS only: the
+  # pre-commit tidy on the Mac covers them.
   tidy:
     name: tidy
     needs: changes
@@ -370,7 +372,8 @@ jobs:
           clang-tidy-cache --zero-stats
           find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
             -not -path tests/bench/terminal_memory.cpp \
-            -not -path src/qml_api/update_install_macos.cpp | sort |
+            -not -path src/qml_api/update_install_macos.cpp \
+            -not -path tests/qml_api/terminal_grid_tree_test.cpp | sort |
             xargs -P "$(nproc)" -n 1 clang-tidy-cache "$(command -v clang-tidy)" \
               -p build/dev --quiet --warnings-as-errors='*'
 

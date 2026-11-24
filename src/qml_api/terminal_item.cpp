@@ -12,6 +12,7 @@
 #include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QSGRectangleNode>
 #include <QStyleHints>
 #include <QWheelEvent>
 #include <QtLogging>
@@ -900,7 +901,45 @@ QSGNode* TerminalItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
         qCDebug(TerminalCategory, "first paint of %s",
                 qPrintable(LoggedSession_));
     }
-    auto* node = Renderer_.Update(*window(), *Session_, oldNode);
+    // The node is a background and the grid the renderer draws: the item fits
+    // whole cells, and what is left (below and to the right of the grid) has
+    // the default background of the terminal, not what lies under the item.
+    // The grid stays in the tree from frame to frame: taking it out and
+    // putting it back marks the whole subtree as removed and added, and the
+    // batch renderer registers every row again, on a frame that changed
+    // nothing too.
+    QSGNode* node = oldNode;
+    QSGNode* grid = node != nullptr ? node->lastChild() : nullptr;
+    QSGNode* drawn = Renderer_.Update(*window(), *Session_, grid);
+    if (drawn == nullptr) {
+        // Nothing to show: the renderer has deleted the grid.
+        delete oldNode;
+        return nullptr;
+    }
+    QSGRectangleNode* background = nullptr;
+    if (node == nullptr) {
+        node = new QSGNode;
+        background = window()->createRectangleNode();
+        node->appendChildNode(background);
+    } else {
+        background = static_cast<QSGRectangleNode*>(node->firstChild());
+    }
+    if (drawn != grid) {
+        // The first frame, or the renderer made another grid (its old one,
+        // given back to it, is deleted by it, and is still the child here).
+        if (grid != nullptr) {
+            node->removeChildNode(grid);
+        }
+        node->appendChildNode(drawn);
+    }
+    const auto fill = Session_->RenderState().DefaultBackground();
+    const QColor color(fill.R, fill.G, fill.B);
+    if (background->color() != color) {
+        background->setColor(color);
+    }
+    if (background->rect() != boundingRect()) {
+        background->setRect(boundingRect());
+    }
     // The terminal drops a selection when its text is erased; the GUI thread
     // finds out from here.
     if (Session_->SelectionAtLastRender() != HasSelection_) {

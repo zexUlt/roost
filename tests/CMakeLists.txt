@@ -99,6 +99,7 @@ roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_termina
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_layout_test qml_api/terminal_item_layout_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_remainder_test qml_api/terminal_item_remainder_test.cpp roost_qml_api)
 roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
     roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
@@ -111,6 +112,18 @@ add_test(NAME terminal_paint_node_test_threaded COMMAND terminal_paint_node_test
 set_tests_properties(terminal_paint_node_test_threaded PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
     LABELS threads)
+# The structure of the scene graph, read from the notifications it sends to its
+# renderer: needs Qt6::QuickPrivate, so it is built only where that exists. Qt's
+# QuickPrivate depends on GuiPrivate, which needs the Vulkan headers and XKB;
+# the Linux CI images do not have them, so the test does not run there (it runs
+# on macOS).
+if(TARGET Qt6::QuickPrivate)
+    roost_add_qt_test(terminal_grid_tree_test qml_api/terminal_grid_tree_test.cpp
+        roost_qml_api Qt6::Quick Qt6::QuickPrivate)
+    set_tests_properties(terminal_grid_tree_test PROPERTIES
+        ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic"
+        LABELS threads)
+endif()
 
 # The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
@@ -568,6 +581,19 @@ target_compile_definitions(layout_card_focus_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_card_focus_test roostd fake_tui claude-adapter
+    sessions_qml)
+
+# The edges of the window against the light design: the gap between cards
+# shows the canvas, and the menu bar row takes no room where the bar is native.
+roost_add_qt_test(window_edges_test roost/window_edges_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(window_edges_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(window_edges_test roostd fake_tui claude-adapter
     sessions_qml)
 
 # A tab the user clicks takes the keyboard and is stored as the shown one.
