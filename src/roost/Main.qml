@@ -177,11 +177,34 @@ ApplicationWindow {
             }
         }
 
-        // Not on macOS: there the action is in the native menu bar.
+        // Not on macOS: there the action is in the native menu bar. A `surface`
+        // bar with a hairline of `line` under it (derived, no mockup:
+        // docs/design/18-style.md).
         ToolBar {
             objectName: "toolBar"
             visible: Qt.platform.os !== "osx"
             Layout.fillWidth: true
+            // The room of the focus ring of a button, which lies outside it
+            // with a gap of 2 px: the edge of the window and the next item of
+            // the column must not cut it. The bottom has the hairline too.
+            leftPadding: 2 + Roost.theme.cursorRingWidth
+            rightPadding: 2 + Roost.theme.cursorRingWidth
+            topPadding: 2 + Roost.theme.cursorRingWidth
+            bottomPadding: 3 + Roost.theme.cursorRingWidth
+            background: Item {
+                Rectangle {
+                    anchors.fill: parent
+                    color: Roost.theme.surface
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: Roost.theme.line
+                }
+            }
 
             RowLayout {
                 anchors.fill: parent
@@ -190,19 +213,19 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
 
-                ToolButton {
+                ToolbarButton {
                     objectName: "paletteButton"
                     text: "Command Palette…"
                     onClicked: root.openPalette()
                 }
 
-                ToolButton {
+                ToolbarButton {
                     objectName: "settingsButton"
                     text: "Settings…"
                     onClicked: root.openSettings()
                 }
 
-                ToolButton {
+                ToolbarButton {
                     objectName: "reportBugButton"
                     text: "Report a Bug…"
                     onClicked: root.reportBug()
@@ -230,7 +253,10 @@ ApplicationWindow {
                     objectName: "connectionText"
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    color: Roost.theme.bannerText
+                    // A failure is in the colour of the error, the rest waits
+                    // for the user: `bannerText`, `attention` by default
+                    // (derived, no mockup).
+                    color: root.connection === "refused" || root.connection === "startFailed" ? Roost.theme.error : Roost.theme.bannerText
                     text: {
                         switch (root.connection) {
                         case "connecting":
@@ -301,6 +327,10 @@ ApplicationWindow {
 
                 Label {
                     objectName: "updateText"
+                    // The text below is the error of the install: the same
+                    // order of the cases.
+                    readonly property bool failed: Roost.updates.installState !== "installing" && !Roost.updates.installBusy && Roost.updates.installError !== ""
+
                     Layout.fillWidth: true
                     text: {
                         const updates = Roost.updates;
@@ -312,7 +342,7 @@ ApplicationWindow {
                             return updates.installError;
                         return "roost v" + updates.available + " is out";
                     }
-                    color: Roost.theme.windowText
+                    color: failed ? Roost.theme.error : Roost.theme.attention
                     wrapMode: Text.Wrap
                     maximumLineCount: 4
                     elide: Text.ElideRight

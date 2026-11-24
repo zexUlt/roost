@@ -42,12 +42,22 @@ PanelCard {
         anchors.right: parent.right
         anchors.margins: stack.bare ? 0 : Roost.theme.cornerInset
         focusPolicy: Qt.NoFocus
+        // The strip the tabs lie on: the `canvas`, so that the current tab,
+        // a `surface` one, stands out (derived, no mockup: docs/design/18-style.md).
+        background: Rectangle {
+            color: Roost.theme.canvas
+        }
+
         Repeater {
             model: stack.node !== null ? stack.node.children : []
 
             delegate: TabButton {
+                id: tab
+
                 required property var modelData
                 required property int index
+                // The tab the bar is on (the same index the pages follow).
+                readonly property bool current: bar.currentIndex === index
 
                 focusPolicy: Qt.NoFocus
                 // A tab with nothing to show (a hidden list) has no button.
@@ -57,7 +67,31 @@ PanelCard {
                 visible: modelData.hidden !== true
                 width: visible ? implicitWidth : -bar.spacing
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
+                font: Roost.theme.rowFont
+                // The plate has room around the text (18-style.md, sizes
+                // without tokens).
+                horizontalPadding: 12
+                verticalPadding: 6
                 onClicked: stack.choose(index)
+
+                // The Fusion bevel is replaced: the current tab is a `surface`
+                // plate with its text in `focus`, the others are
+                // `textSecondary`, `hoverBackground` under the mouse.
+                contentItem: Text {
+                    objectName: "tabText"
+                    text: tab.text
+                    font: tab.font
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    color: tab.current ? Roost.theme.focus : Roost.theme.textSecondary
+                }
+
+                background: Rectangle {
+                    objectName: "tabPlate"
+                    radius: Roost.theme.radiusControl
+                    color: tab.current ? Roost.theme.surface : tab.hovered ? Roost.theme.hoverBackground : "transparent"
+                }
             }
         }
     }

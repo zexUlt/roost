@@ -369,7 +369,11 @@ private slots:
             return item->property("font").value<QFont>();
         };
         const qreal before = sizeOf(button);
-        QCOMPARE(sizeOf(text), before);
+        // The placeholder of a slot is on the type scale (`metaFont`, a share
+        // of the size of the window), not the font of the window itself.
+        const qreal placeholderBefore = sizeOf(text);
+        QCOMPARE(placeholderBefore,
+                 Singleton_->theme()->metaFont().pointSizeF());
         // The chip and the prompt input as they are before the change: the
         // reset has to bring them back to these, not to what the theme says.
         const qreal chipBefore = sizeOf(tab);
@@ -379,7 +383,8 @@ private slots:
         WriteSettings({{"uiFontSize", bigger}});
 
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), bigger, TIMEOUT_MS);
-        QCOMPARE(sizeOf(text), bigger);
+        QCOMPARE(sizeOf(text), Singleton_->theme()->metaFont().pointSizeF());
+        QVERIFY(sizeOf(text) > placeholderBefore);
         // The title and the chips are on the type scale: the font of the
         // theme, a share of the size of the window.
         QCOMPARE(fontOf(panelText), Singleton_->theme()->titleFont());
@@ -395,7 +400,7 @@ private slots:
 
         WriteSettings({});
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), before, TIMEOUT_MS);
-        QCOMPARE(sizeOf(text), before);
+        QCOMPARE(sizeOf(text), placeholderBefore);
         QCOMPARE(sizeOf(tab), chipBefore);
         QCOMPARE(fontOf(prompt), promptBefore);
         QCOMPARE(sizeOf(report), before);

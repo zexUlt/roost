@@ -11,6 +11,8 @@
 
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
+#include "qml_api/theme.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -132,6 +134,23 @@ private:
             button
                 ->mapToScene(QPointF(button->width() / 2, button->height() / 2))
                 .toPoint());
+    }
+
+    // The first item below `item` with the object name, by visual parents.
+    static QQuickItem* InButton(QQuickItem* item, const QString& name) {
+        for (QQuickItem* child : item->childItems()) {
+            if (child->objectName() == name) {
+                return child;
+            }
+            if (QQuickItem* found = InButton(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
+    static QColor ColorOf(const QQuickItem* item) {
+        return item->property("color").value<QColor>();
     }
 
     int StoredActive() {
@@ -330,6 +349,74 @@ private slots:
             TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(StoredActive(), 2, TIMEOUT_MS);
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
+    }
+
+    // The current tab is a `surface` plate with its text in `focus`, the
+    // others have `textSecondary` and no plate; the colours follow a click.
+    // Derived, no mockup (docs/design/18-style.md).
+    void TheCurrentTabIsASurfacePlateWithFocusText() {
+        StackOfThree();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const Theme* theme = Singleton_->theme();
+        const auto expectCurrent = [&](int current) {
+            const QList<QQuickItem*> buttons = TabButtons();
+            QCOMPARE(buttons.size(), 3);
+            for (int i = 0; i < 3; ++i) {
+                QQuickItem* text = InButton(buttons.at(i), "tabText");
+                QQuickItem* plate = InButton(buttons.at(i), "tabPlate");
+                QVERIFY(text != nullptr && plate != nullptr);
+                if (i == current) {
+                    QCOMPARE(ColorOf(text), theme->focus());
+                    QCOMPARE(ColorOf(plate), theme->surface());
+                } else {
+                    QCOMPARE(ColorOf(text), theme->textSecondary());
+                    QCOMPARE(ColorOf(plate).alpha(), 0);
+                }
+            }
+        };
+        // The bar takes the tab of the document after the buttons are there.
+        const auto textOf = [&](int index) -> QColor {
+            const QList<QQuickItem*> buttons = TabButtons();
+            QQuickItem* text = buttons.size() > index
+                                   ? InButton(buttons.at(index), "tabText")
+                                   : nullptr;
+            return text != nullptr ? ColorOf(text) : QColor();
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(textOf(0), theme->focus(), TIMEOUT_MS);
+        expectCurrent(0);
+        QVERIFY(SaveSnapshot(Window(), "list-current"));
+        ClickTab(2);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredActive(), 2, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(textOf(2), theme->focus(), TIMEOUT_MS);
+        expectCurrent(2);
+        QVERIFY(SaveSnapshot(Window(), "terminal-2-current"));
+    }
+
+    // A tab is a plate with room around its text, not the text with a hair of
+    // padding: at least as high as the text and both vertical paddings, and
+    // at least as wide as the text and both horizontal ones (18-style.md).
+    void ATabIsAPlateWithRoomAroundItsText() {
+        StackOfThree();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(TabButtons().size(), 3, TIMEOUT_MS);
+        for (QQuickItem* tab : TabButtons()) {
+            QQuickItem* text = InButton(tab, "tabText");
+            QVERIFY(text != nullptr);
+            const double vertical = tab->property("verticalPadding").toDouble();
+            const double horizontal =
+                tab->property("horizontalPadding").toDouble();
+            QCOMPARE(vertical, 6.0);
+            QCOMPARE(horizontal, 12.0);
+            QTRY_VERIFY_WITH_TIMEOUT(tab->height() > 0, TIMEOUT_MS);
+            QVERIFY2(tab->height() >= text->implicitHeight() + 2 * vertical,
+                     qPrintable(QString::number(tab->height())));
+            QVERIFY2(tab->width() >= text->implicitWidth() + 2 * horizontal,
+                     qPrintable(QString::number(tab->width())));
+        }
     }
 };
 
