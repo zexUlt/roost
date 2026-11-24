@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -73,6 +74,29 @@ LayoutEdit SetLink(const Layout& layout, const QString& instance,
 // Removes the link of the input; not a refusal when there is none.
 LayoutEdit RemoveLink(const Layout& layout, const QString& instance,
                       const QString& input);
+
+// Hides every list of sessions of the window, or shows them again when they
+// are hidden: only the state `ListsHidden` of the layout changes, no node, so
+// the panels, their links and their sizes stay. The lists are the panel types
+// of `known` that ListPanelTypes names. Hiding is refused when the window has
+// no list, and when it has only lists (nothing would be left to show); the
+// state that has no list to hide is cleared, not refused. When the keyboard
+// is in a list that gets hidden (`instance`), `Focus` is the panel that takes
+// it, found as for Close: the neighbour before it in the split (the one after
+// it for the first) that shows a panel, else the one next to the split.
+LayoutEdit ToggleLists(const Layout& layout, const QString& instance,
+                       const LayoutKnownPanels& known);
+
+// The panel types the state of the layout hides now: the lists when
+// `ListsHidden`, none otherwise.
+QSet<QString> HiddenTypes(const Layout& layout, const LayoutKnownPanels& known);
+
+// Whether nothing of the node is shown: all its leaves are of `hidden` types.
+bool IsCollapsed(const LayoutNode& node, const QSet<QString>& hidden);
+
+// The tab of a stack that is shown: `Active`, or, when that one is collapsed,
+// the next tab that is not (the previous one if none comes after it).
+int ShownTab(const LayoutNode& tabs, const QSet<QString>& hidden);
 
 // An output a link can take from.
 struct LayoutLinkChoice {
