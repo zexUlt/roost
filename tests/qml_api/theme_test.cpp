@@ -217,10 +217,10 @@ private slots:
         FailOnWarnings();
         const Theme theme;
         const QHash<QByteArray, int> sizes{
-            {"radiusCard", 12},     {"radiusControl", 6}, {"radiusSmall", 5},
-            {"windowMargin", 16},   {"panelGap", 12},     {"panelPadding", 16},
-            {"rowHeight", 56},      {"rowGap", 3},        {"focusRingWidth", 3},
-            {"cursorRingWidth", 2},
+            {"radiusCard", 12},    {"cornerInset", 5},     {"radiusControl", 6},
+            {"radiusSmall", 5},    {"windowMargin", 16},   {"panelGap", 12},
+            {"panelPadding", 16},  {"rowHeight", 56},      {"rowGap", 3},
+            {"focusRingWidth", 3}, {"cursorRingWidth", 2},
         };
         int found = 0;
         const QMetaObject& meta = Theme::staticMetaObject;
@@ -393,7 +393,7 @@ private slots:
         QCOMPARE(ColorOf(bannerText), QColor("#18232e"));
         QCOMPARE(ColorOf(strip), QColor("#fff4e0"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
-                 QColor("#5a6a7a"));
+                 QColor("#5f6e80"));
 
         QVERIFY(theme->load(TestTheme()));
 
@@ -403,7 +403,7 @@ private slots:
         QCOMPARE(ColorOf(bannerText), Given("bannerText"));
         QCOMPARE(ColorOf(strip), Given("problemsBackground"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
-                 Given("textSecondary"));
+                 Given("textMuted"));
         // The banner of a refusal has a colour of its own.
         Root()->setProperty("connection", "refused");
         QCOMPARE(ColorOf(banner), Given("bannerRefusedBackground"));

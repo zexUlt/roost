@@ -78,7 +78,7 @@ FocusScope {
         anchors.margins: 12
         visible: root.panel === null
         text: root.error !== "" ? root.error : root.panelType
-        color: Roost.theme.textSecondary
+        color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

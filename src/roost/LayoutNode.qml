@@ -14,8 +14,9 @@ Item {
 
     // The node is the first leaf of the layout: it takes the keyboard at start.
     readonly property bool first: root.path.every(index => index === 0)
-    // The node is a page of a stack of tabs: the card is the stack's, and the
-    // panel on the page has none of its own.
+    // The node is on a page of a stack of tabs, or in a split or a stack that
+    // is: the card is the stack's, and nothing under it has a card or a ring
+    // of its own.
     property bool stacked: false
 
     // A split or a stack of tabs is loaded by file name: SplitNode and TabNode
@@ -36,6 +37,7 @@ Item {
         onLoaded: {
             // The node last: it makes the children.
             item.view = Qt.binding(() => root.view);
+            item.stacked = Qt.binding(() => root.stacked);
             item.path = Qt.binding(() => root.path);
             item.node = Qt.binding(() => root.node);
         }

@@ -15,6 +15,9 @@ PanelCard {
     property var node: null
     property var view: null
     property var path: []
+    // The stack is on a page of another one: it has no card of its own.
+    property bool stacked: false
+    bare: stack.stacked
 
     // The card of the stack: the tabs on top, the shown panel under them.
     focused: stack.view !== null && stack.view.holdsLastFocused(stack.node)
@@ -33,11 +36,11 @@ PanelCard {
     TabBar {
         id: bar
 
-        // The bar is square: off the rounded corners of the card.
+        // The bar is square: off the rounded corners of the card, if there is one.
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: Math.ceil(Roost.theme.radiusCard * (1 - Math.SQRT1_2)) + 1
+        anchors.margins: stack.bare ? 0 : Roost.theme.cornerInset
         focusPolicy: Qt.NoFocus
         Repeater {
             model: stack.node !== null ? stack.node.children : []

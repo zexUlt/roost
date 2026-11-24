@@ -1427,6 +1427,8 @@ FocusScope {
         objectName: "sessionsHelp"
         anchors.fill: parent
         visible: root.helpOpen
+        // The corners of the card the panel sits in.
+        radius: Roost.theme.radiusCard
         color: Roost.theme.overlayBackground
 
         TapHandler {

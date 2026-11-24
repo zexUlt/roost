@@ -52,7 +52,7 @@ FocusScope {
         anchors.fill: parent
         // The cells are square: off the rounded corners of the card, where
         // the square lies inside the arc of radiusCard (and its line).
-        anchors.margins: Math.ceil(Roost.theme.radiusCard * (1 - Math.SQRT1_2)) + 1
+        anchors.margins: Roost.theme.cornerInset
         focus: true
         session: root.session
         // The family and size of settings.terminalFont, in every window.
@@ -100,7 +100,7 @@ FocusScope {
         anchors.fill: parent
         anchors.margins: 12
         visible: text !== ""
-        color: Roost.theme.textSecondary
+        color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

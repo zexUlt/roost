@@ -5,14 +5,14 @@ import Roost.Api
 // outline and rounded corners, on the canvas of the window. What is put in it
 // (`content`) fills the card, and the outline is drawn over it. A panel that
 // paints a background of its own rounds its corners with `radiusCard` too; a
-// panel that paints a square (the terminal) keeps `cornerInset` from the
-// edge, where the square lies inside the arc: Qt Quick cannot clip to a round
-// shape without drawing the panel into a texture first. The focus ring is
+// panel that paints a square (the terminal) keeps `Roost.theme.cornerInset`
+// from the edge, where the square lies inside the arc: Qt Quick cannot clip to
+// a round shape without drawing the panel into a texture first. The focus ring is
 // drawn outside the card, `focusRingWidth` wide; the room for it is the gap
 // between the cards and the margin of the window.
 //
-// A card with `bare` set draws nothing: the panels of a tab stack sit in the
-// card of the stack.
+// A card with `bare` set draws nothing: whatever lies on a page of a tab
+// stack, a panel, a split or another stack, sits in the card of the stack.
 Item {
     id: card
 
