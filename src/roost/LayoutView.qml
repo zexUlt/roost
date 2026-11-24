@@ -12,6 +12,9 @@ Item {
     // active, children} or {kind: "leaf", instance, panel}. A size is a
     // number of pixels, 0 for the rest. null: nothing is built.
     property var tree: null
+    // The lists of sessions are hidden: collapsed, not closed. Read-only; the
+    // command `layout.toggleLists` hides them and shows them again.
+    readonly property bool listsHidden: view.tree !== null && view.tree.listsHidden === true
     // The panel types that are lists of sessions, as Shell works them out.
     property var listTypes: []
     // Instance id -> its PanelSlot; replaced as a whole when a slot comes or
@@ -28,7 +31,7 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, close, editLinks, setLink) and its
+    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -268,6 +271,7 @@ Item {
             "layout.intoTabs": "intoTabs",
             "layout.outOfTabs": "outOfTabs",
             "layout.close": "close",
+            "layout.toggleLists": "toggleLists",
             "layout.editLinks": "editLinks"
         };
         for (const id of Object.keys(actions)) {

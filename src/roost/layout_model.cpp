@@ -545,11 +545,27 @@ LayoutParseResult ParseLayout(const QJsonValue& document,
                            "is used"));
         return Resolved(fallback, std::move(lines), true, known);
     }
-    return Resolved({.Root = std::move(*root)}, std::move(lines), true, known);
+    Layout tree{.Root = std::move(*root)};
+    // Optional, and no reason to refuse the document: a value of another type
+    // is the same as none.
+    const QJsonValue hidden = object.value("listsHidden");
+    if (hidden.isBool()) {
+        tree.ListsHidden = hidden.toBool();
+    } else if (!hidden.isUndefined() && !hidden.isNull()) {
+        lines.append(
+            QStringLiteral("listsHidden: must be true or false; "
+                           "the lists are shown"));
+    }
+    return Resolved(std::move(tree), std::move(lines), true, known);
 }
 
 QJsonObject LayoutToJson(const Layout& layout) {
-    return {{"version", LAYOUT_VERSION}, {"root", NodeToJson(layout.Root)}};
+    QJsonObject document{{"version", LAYOUT_VERSION},
+                         {"root", NodeToJson(layout.Root)}};
+    if (layout.ListsHidden) {
+        document.insert("listsHidden", true);
+    }
+    return document;
 }
 
 }  // namespace roost

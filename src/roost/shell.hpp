@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QQuickItem>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -30,7 +31,8 @@ namespace roost {
 // before the layout is known). It writes by patch: when the user finishes
 // resizing a split (`splitResized`), when the user chooses a tab
 // (`tabChosen`), after each edit of the layout
-// (`layoutEdit`: split, tabs, close, links; src/roost/layout_commands.hpp),
+// (`layoutEdit`: split, tabs, close, links, hide or show the lists;
+// src/roost/layout_commands.hpp),
 // and in SetLayout. A failed write is a problem of the window. A change of the
 // document by another writer is not followed while the window runs.
 //
@@ -198,6 +200,8 @@ private:
     bool LayoutMode_ = false;
     Layout Layout_;
     bool LayoutPublished_ = false;
+    // The panel types the published tree has collapsed.
+    QSet<QString> HiddenPublished_;
     bool LayoutRequested_ = false;
     bool LayoutAnswered_ = false;
     bool LayoutSettled_ = false;

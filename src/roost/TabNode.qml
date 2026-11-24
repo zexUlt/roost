@@ -40,6 +40,9 @@ Item {
                 required property int index
 
                 focusPolicy: Qt.NoFocus
+                // A tab with nothing to show (a hidden list) has no button.
+                visible: modelData.hidden !== true
+                width: visible ? implicitWidth : 0
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
                 onClicked: stack.choose(index)
             }
@@ -89,7 +92,7 @@ Item {
                 parent: pages
                 width: pages.width
                 height: pages.height
-                visible: index === bar.currentIndex
+                visible: index === bar.currentIndex && modelData.hidden !== true
                 node: modelData
                 view: stack.view
                 path: stack.path.concat([index])
