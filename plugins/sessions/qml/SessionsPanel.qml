@@ -961,19 +961,19 @@ FocusScope {
             }
         }
 
-        // The chips and the open title set family, size and weight one by one:
-        // a `font:` binding cannot be combined with `font.weight:` on one item,
-        // and a Control around them would take the right button that goes to
-        // the menu of the panel.
+        // The current chip and the open title are DemiBold: `font:` cannot be
+        // combined with `font.weight:` on one item, and a Control around them
+        // would take the right button that goes to the menu of the panel, so the
+        // font comes whole from `Roost.theme.withWeight`.
         Item {
             x: Roost.theme.panelPadding
             implicitWidth: chips.implicitWidth
-            implicitHeight: 32
+            implicitHeight: chips.implicitHeight
 
             Row {
                 id: chips
 
-                spacing: 3
+                spacing: Roost.theme.rowGap
 
                 Repeater {
                     model: root.tabs
@@ -986,14 +986,15 @@ FocusScope {
                         readonly property bool current: sessionsList.tab === modelData.name
 
                         objectName: "sessionsTab"
-                        height: 32
-                        leftPadding: 7
-                        rightPadding: 7
+                        height: Math.max(32, implicitHeight)
+                        // The text of a chip starts where the title does (20),
+                        // and three chips with counts of two digits fit the
+                        // panel of 200.
+                        leftPadding: 4
+                        rightPadding: 4
                         verticalAlignment: Text.AlignVCenter
                         color: current ? Roost.theme.focus : Roost.theme.textSecondary
-                        font.family: Roost.theme.metaFont.family
-                        font.pointSize: Roost.theme.metaFont.pointSize
-                        font.weight: current ? Font.DemiBold : Roost.theme.metaFont.weight
+                        font: current ? Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold) : Roost.theme.metaFont
                         text: modelData.label + " " + (sessionsList.counts[modelData.name] ?? 0)
                         background: Rectangle {
                             radius: Roost.theme.radiusSmall
@@ -1109,8 +1110,19 @@ FocusScope {
             // cursor.
             readonly property bool showsDetail: !isHeader && (!sessionsList.compact || index === sessionsList.cursorRow)
 
+            // The cursor ring is drawn only while the list has the keyboard.
+            readonly property bool ringShown: isCursor && list.activeFocus
+            // The room of a row above and below its text.
+            readonly property real textPadding: 6
+            readonly property real inset: Math.max(0, Math.min(15, (height - 12) / 2))
+
             width: ListView.view.width
-            height: isHeader ? 34 : Roost.theme.rowHeight
+            // A row is as high as its text needs and not lower than the row of
+            // the style (`rowHeight`, a header 34): a large interface font
+            // makes the row taller, not the next one overlap. In the compact
+            // view a session row is as high as its text: the title alone, or
+            // with the second line under the cursor.
+            height: isHeader ? Math.max(34, headerText.implicitHeight + 8) : sessionsList.compact ? lines.implicitHeight + 2 * textPadding : Math.max(Roost.theme.rowHeight, lines.implicitHeight + 2 * textPadding)
 
             // The ground of the row: the open one is `selectedBackground`
             // whether the cursor is on it or not; the cursor is the focused or
@@ -1127,14 +1139,14 @@ FocusScope {
             }
 
             // The open session: a bar at the left edge, moved right of the
-            // ring when the cursor is on the row.
+            // ring while the ring is drawn.
             Rectangle {
                 objectName: "openBar"
                 visible: row.isOpen
-                x: row.isCursor ? 4 : 1
-                y: 15
+                x: row.ringShown ? 4 : 1
+                y: row.inset
                 width: 3
-                height: parent.height - 30
+                height: parent.height - 2 * row.inset
                 radius: 2
                 color: Roost.theme.accent
             }
@@ -1143,7 +1155,7 @@ FocusScope {
             // keyboard focus.
             Rectangle {
                 objectName: "cursorRing"
-                visible: row.isCursor && list.activeFocus
+                visible: row.ringShown
                 anchors.fill: parent
                 radius: Roost.theme.radiusControl
                 color: "transparent"
@@ -1214,12 +1226,7 @@ FocusScope {
                 Label {
                     objectName: "headerCount"
                     color: Roost.theme.textSecondary
-                    font.family: Roost.theme.metaFont.family
-                    font.pointSize: Roost.theme.metaFont.pointSize
-                    font.weight: Roost.theme.metaFont.weight
-                    font.features: {
-                        "tnum": 1
-                    }
+                    font: Roost.theme.withWeight(Roost.theme.metaFont, Roost.theme.metaFont.weight, true)
                     text: row.isHeader ? String(row.model.count) : ""
                 }
             }
@@ -1284,9 +1291,7 @@ FocusScope {
                     width: parent.width
                     elide: Text.ElideRight
                     color: row.isOpen ? Roost.theme.accent : Roost.theme.text
-                    font.family: Roost.theme.rowFont.family
-                    font.pointSize: Roost.theme.rowFont.pointSize
-                    font.weight: row.isOpen ? Font.DemiBold : Roost.theme.rowFont.weight
+                    font: row.isOpen ? Roost.theme.withWeight(Roost.theme.rowFont, Font.DemiBold) : Roost.theme.rowFont
                     text: row.isHeader ? "" : root.oneLine(row.model.title)
                 }
 

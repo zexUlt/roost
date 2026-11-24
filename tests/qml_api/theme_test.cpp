@@ -265,6 +265,43 @@ private slots:
         QCOMPARE(theme.smallFont().pointSizeF(), 21.0);
     }
 
+    // `withWeight` changes the weight and nothing else: the size stays in
+    // pixels or in points, fractions too, and the other attributes stay.
+    void WithWeightKeepsTheRestOfTheFont() {
+        FailOnWarnings();
+        QFont points;
+        points.setFamily(QStringLiteral("Helvetica"));
+        points.setPointSizeF(10.5);
+        points.setItalic(true);
+        points.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
+        const QFont bold = Theme::withWeight(points, QFont::DemiBold);
+        QCOMPARE(bold.weight(), QFont::DemiBold);
+        QCOMPARE(bold.pointSizeF(), 10.5);
+        QCOMPARE(bold.pixelSize(), -1);
+        QCOMPARE(bold.family(), points.family());
+        QVERIFY(bold.italic());
+        QCOMPARE(bold.letterSpacing(), 0.5);
+
+        QFont pixels;
+        pixels.setPixelSize(14);
+        const QFont heavy = Theme::withWeight(pixels, QFont::Bold);
+        QCOMPARE(heavy.pixelSize(), 14);
+        QCOMPARE(heavy.pointSizeF(), -1.0);
+        QCOMPARE(heavy.weight(), QFont::Bold);
+
+        // Digits of one width, on request only.
+        QVERIFY(!Theme::withWeight(pixels, QFont::Normal)
+                     .featureTags()
+                     .contains(QFont::Tag("tnum")));
+        const QFont tabular = Theme::withWeight(pixels, QFont::Normal, true);
+        QCOMPARE(tabular.featureValue(QFont::Tag("tnum")), 1U);
+        QCOMPARE(tabular.pixelSize(), 14);
+
+        // A weight out of range is the nearest one that exists.
+        QCOMPARE(Theme::withWeight(pixels, 5000).weight(), 1000);
+        QCOMPARE(Theme::withWeight(pixels, -3).weight(), 1);
+    }
+
     // Text is 4.5:1 against what it lies on, a ring is 3:1 against the surface
     // and the canvas (18-style.md).
     void TheDefaultThemeHasTheContrastOfTheStyleGuide() {

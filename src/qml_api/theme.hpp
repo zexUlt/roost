@@ -193,6 +193,13 @@ public:
     static constexpr int rowGap() { return 3; }
     static constexpr int focusRingWidth() { return 3; }
     static constexpr int cursorRingWidth() { return 2; }
+    // The font with another weight, and the digits of one width if asked; all
+    // else in it, the size in points (fractions too) or in pixels among it, is
+    // as it was. For an item that needs a theme font and a weight of its own:
+    // `font:` cannot be combined with `font.weight:` on one item, and the
+    // pieces of a font in QML cannot tell a size in pixels from one in points.
+    Q_INVOKABLE static QFont withWeight(const QFont& font, int weight,
+                                        bool tabularDigits = false);
     QFont titleFont() const;
     QFont headingFont() const;
     QFont rowFont() const;

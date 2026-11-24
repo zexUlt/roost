@@ -6,15 +6,22 @@
 
 #include <QColor>
 #include <QDir>
+#include <QFont>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QQuickItemGrabResult>
 #include <QSaveFile>
 #include <QSignalSpy>
 #include <QTest>
 
+#include <functional>
+
 #include "helpers/sessions_window.hpp"
+#include "qml_api/roost_singleton.hpp"
+#include "qml_api/theme.hpp"
 #include "terminal/physical_keys.hpp"
 
 using namespace roost;
@@ -36,6 +43,27 @@ constexpr int LIST_WIDTH = 320;
 constexpr int WIDTH_STEP = 20;
 constexpr int WIDTH_MIN = 200;
 constexpr int WIDTH_MAX = 560;
+
+// The sessions of a fake `claude` that lists COUNT_MANY of them, all waiting
+// (active, and unread when the document says so): the counts of the chips have
+// two digits.
+constexpr int COUNT_MANY = 99;
+const QString MANY_CLAUDE = QStringLiteral(R"sh(#!/bin/sh
+case "$1" in
+agents)
+    i=0
+    printf '['
+    while [ $i -lt COUNT ]; do
+        [ $i -gt 0 ] && printf ','
+        printf '{"id":"bg-%08x","cwd":"/work/s%d","kind":"background","startedAt":1790150000000,"sessionId":"00000000-0000-4000-8000-%012d","name":"Session %d","state":"blocked","pid":4242,"status":"busy"}' $i $i $i $i
+        i=$((i + 1))
+    done
+    printf ']'
+    ;;
+*) exit 2 ;;
+esac
+)sh")
+                                .replace("COUNT", QString::number(COUNT_MANY));
 
 }  // namespace
 
@@ -147,15 +175,64 @@ private:
         Boot(rows);
     }
 
+    // The font of the application, which the theme takes as its base, is a
+    // state of the process: a case that changes it puts it back.
+    void SetAppFont(const std::function<void(QFont&)>& change) {
+        QFont font = QGuiApplication::font();
+        change(font);
+        QGuiApplication::setFont(font);
+    }
+
+    // The font of an item.
+    static QFont FontOf(const QQuickItem* item) {
+        return item->property("font").value<QFont>();
+    }
+
+    // Where the part of the row's delegate lies inside the row.
+    static QRectF InsideRow(QQuickItem* row, QQuickItem* part) {
+        return QRectF(part->mapToItem(row, QPointF(0, 0)),
+                      QSizeF(part->width(), part->height()));
+    }
+
+    // Saves a picture of the window as <case>-<step>.png when
+    // ROOST_TEST_SNAPSHOTS names a directory, for a person to look at.
+    void Snapshot(const QString& step) {
+        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
+        if (directory.isEmpty()) {
+            return;
+        }
+        QVERIFY(QDir().mkpath(directory));
+        const QString name =
+            QStringLiteral("%1-%2.png")
+                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
+        // The content item, not the window: grabWindow distorts the terminal
+        // in the offscreen platform.
+        QSharedPointer<QQuickItemGrabResult> result =
+            Window()->contentItem()->grabToImage();
+        QVERIFY(!result.isNull());
+        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
+        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
+        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
+    }
+
+    // The number of the first header in the list.
+    int FirstHeader() { return static_cast<int>(Kinds().indexOf("header")); }
+
+    QFont AppFont_;
+
 private slots:
     void init() {
         // The layout is a state of the process: each test starts on a Latin
         // one and tells its own.
         roost::SetNonLatinLayout(false);
+        AppFont_ = QGuiApplication::font();
         Prepare();
     }
 
-    void cleanup() { Teardown(); }
+    void cleanup() {
+        Teardown();
+        QGuiApplication::setFont(AppFont_);
+    }
 
     void TheHeadShowsTitleAndTabCounts() {
         FailOnWarnings();
@@ -676,7 +753,8 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        // A window that shows about two rows.
+        // A window with room for three rows at most (the list is under 180
+        // px).
         Window()->setHeight(300);
         QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 180, TIMEOUT_MS);
 
@@ -857,6 +935,49 @@ private slots:
         QVERIFY(ListView()->y() + ListView()->height() <= Part("footer")->y());
     }
 
+    // The counts of two digits: the three chips stay inside the head of the
+    // narrowest panel, with the padding of the panel at the right.
+    void TheChipsFitTheNarrowestPanelWithTwoDigitCounts() {
+        FailOnWarnings();
+        QStringList unread;
+        for (int i = 0; i < COUNT_MANY; ++i) {
+            unread << KeyOf(QStringLiteral("bg-%1").arg(i, 8, 16, QChar('0')));
+        }
+        QVERIFY(
+            Seed(Document({{"unread", QJsonArray::fromStringList(unread)}})));
+        Boot(COUNT_MANY, MANY_CLAUDE.toUtf8().constData());
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        for (int i = 0; i < 30; ++i) {
+            Press(Qt::Key_Comma);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MIN, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Tabs(),
+            (QStringList{QStringLiteral("All %1").arg(COUNT_MANY),
+                         QStringLiteral("Active %1").arg(COUNT_MANY),
+                         QStringLiteral("Unread %1").arg(COUNT_MANY)}),
+            TIMEOUT_MS);
+
+        const QQuickItem* head = Part("sessionsHead");
+        const qreal padding = Singleton_->theme()->panelPadding();
+        qreal previousRight = 0;
+        for (QQuickItem* tab : TabItems()) {
+            const QRectF box = InsideRow(Part("sessionsHead"), tab);
+            QVERIFY2(box.right() <= head->width() - padding,
+                     qPrintable(QStringLiteral("%1: %2 > %3 - %4")
+                                    .arg(tab->property("text").toString())
+                                    .arg(box.right())
+                                    .arg(head->width())
+                                    .arg(padding)));
+            // The chips follow one another, a row gap apart.
+            QVERIFY(box.left() >= previousRight);
+            previousRight = box.right();
+        }
+        Snapshot("chips-99");
+    }
+
     void TheHeadFitsTheNarrowestPanel() {
         FailOnWarnings();
         const QString query =
@@ -891,6 +1012,153 @@ private slots:
         }
         QVERIFY(Part("sessionsHead")->property("implicitWidth").toReal() <=
                 panel);
+    }
+
+    // The text of the panel is in the fonts of the type scale whatever the
+    // base font is made of: with a base in pixels (no point size) the chip, the
+    // count of a header and the title of a row have the pixel size of their
+    // theme font, not the default one.
+    void ThePanelKeepsTheSizeOfAThemeFontInPixels() {
+        FailOnWarnings();
+        SetAppFont([](QFont& font) { font.setPixelSize(17); });
+        BootWith(Document({{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}}));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const Theme* theme = Singleton_->theme();
+        QCOMPARE(theme->uiFont().pointSizeF(), -1.0);
+        QVERIFY(theme->metaFont().pixelSize() > 0);
+        QVERIFY(theme->rowFont().pixelSize() > 0);
+        QVERIFY(theme->metaFont().pixelSize() != theme->rowFont().pixelSize());
+
+        // The current chip (DemiBold) and one that is not (the theme's weight).
+        const QList<QQuickItem*> chips = TabItems();
+        QCOMPARE(chips.size(), 3);
+        QVERIFY(chips[0]->property("current").toBool());
+        QCOMPARE(FontOf(chips[0]).pixelSize(), theme->metaFont().pixelSize());
+        QCOMPARE(FontOf(chips[0]).weight(), QFont::DemiBold);
+        QCOMPARE(FontOf(chips[1]).pixelSize(), theme->metaFont().pixelSize());
+        QCOMPARE(FontOf(chips[1]), theme->metaFont());
+
+        const QQuickItem* count =
+            InRow(FirstHeader(), QStringLiteral("headerCount"));
+        QVERIFY(count != nullptr);
+        QCOMPARE(FontOf(count).pixelSize(), theme->metaFont().pixelSize());
+        QCOMPARE(FontOf(count).weight(), theme->metaFont().weight());
+        QVERIFY(FontOf(count).family() == theme->metaFont().family());
+
+        const QQuickItem* title =
+            InRow(ViewRow(0), QStringLiteral("sessionTitle"));
+        QVERIFY(title != nullptr);
+        QCOMPARE(FontOf(title), theme->rowFont());
+    }
+
+    // A large interface font makes the rows taller: the text of each row is
+    // inside it, and a row ends above the next one.
+    void RowsGrowWithALargeInterfaceFont() {
+        FailOnWarnings();
+        SetAppFont(
+            [](QFont& font) { font.setPointSizeF(font.pointSizeF() * 2.5); });
+        BootWith(Document({{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}}));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const Theme* theme = Singleton_->theme();
+        const int rows = static_cast<int>(Kinds().size());
+        QTRY_VERIFY_WITH_TIMEOUT(ViewItem(rows - 1) != nullptr, TIMEOUT_MS);
+        // The case means something only if two lines do not fit in a row of
+        // the style.
+        QQuickItem* first = RowItem(0);
+        const qreal text =
+            first->findChild<QQuickItem*>("sessionTitle")->implicitHeight() +
+            first->findChild<QQuickItem*>("sessionDetail")->implicitHeight();
+        QVERIFY2(text + 12 > theme->rowHeight(),
+                 qPrintable(QString::number(text)));
+
+        for (int row = 0; row < rows; ++row) {
+            QQuickItem* item = ViewItem(row);
+            QVERIFY(item != nullptr);
+            if (Kinds().at(row) == "header") {
+                QVERIFY(item->height() >= 34);
+                QVERIFY(InsideRow(item, InRow(row, "headerTitle")).bottom() <=
+                        item->height());
+            } else {
+                QVERIFY(item->height() > theme->rowHeight());
+                for (const char* name : {"sessionTitle", "sessionDetail"}) {
+                    const QRectF box = InsideRow(item, InRow(row, name));
+                    QVERIFY2(box.top() >= 0 && box.bottom() <= item->height(),
+                             name);
+                }
+            }
+            if (row + 1 < rows) {
+                QVERIFY(item->y() + item->height() <= ViewItem(row + 1)->y());
+            }
+        }
+        Snapshot("large-font");
+    }
+
+    // The compact view: a row is as high as its text and the padding, the
+    // title alone, or with the second line under the cursor; the title keeps
+    // its place in the row when the cursor comes to it.
+    void CompactRowsAreAsHighAsTheirText() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const qreal rowHeight = Singleton_->theme()->rowHeight();
+        const auto height = [&](int session) {
+            return RowItem(session)->height();
+        };
+        const auto titleTop = [&](int session) {
+            return InsideRow(RowItem(session),
+                             InRow(ViewRow(session), "sessionTitle"))
+                .top();
+        };
+        for (int session = 0; session < 4; ++session) {
+            QCOMPARE(height(session), rowHeight);
+        }
+
+        Press(Qt::Key_M);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !InRow(ViewRow(1), "sessionDetail")->isVisible(), TIMEOUT_MS);
+        const auto textHeight = [&](int session, bool detail) {
+            return InRow(ViewRow(session), "sessionTitle")->implicitHeight() +
+                   (detail ? InRow(ViewRow(session), "sessionDetail")
+                                 ->implicitHeight()
+                           : 0);
+        };
+        // The cursor row has both lines; the others are lower, by the second
+        // line, and none is lower than its title needs.
+        QTRY_COMPARE_WITH_TIMEOUT(height(0), textHeight(0, true) + 12,
+                                  TIMEOUT_MS);
+        for (int session = 1; session < 4; ++session) {
+            QTRY_COMPARE_WITH_TIMEOUT(
+                height(session), textHeight(session, false) + 12, TIMEOUT_MS);
+            QVERIFY(height(session) < height(0));
+            QVERIFY(height(session) < rowHeight);
+        }
+        const qreal top = titleTop(0);
+        QCOMPARE(titleTop(1), top);
+        QCOMPARE(titleTop(2), top);
+        Snapshot("compact-cursor-0");
+
+        // The cursor moves: the same for the next row, the title does not jump.
+        Press(Qt::Key_Down);
+        QTRY_COMPARE_WITH_TIMEOUT(height(1), textHeight(1, true) + 12,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(height(0), textHeight(0, false) + 12,
+                                  TIMEOUT_MS);
+        QCOMPARE(titleTop(0), top);
+        QCOMPARE(titleTop(1), top);
+        QTRY_COMPARE_WITH_TIMEOUT(height(2), textHeight(2, false) + 12,
+                                  TIMEOUT_MS);
+
+        // The full view again: every row has the height of the style.
+        Press(Qt::Key_M);
+        for (int session = 0; session < 4; ++session) {
+            QTRY_COMPARE_WITH_TIMEOUT(height(session), rowHeight, TIMEOUT_MS);
+        }
     }
 };
 

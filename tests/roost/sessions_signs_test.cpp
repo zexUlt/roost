@@ -129,10 +129,12 @@ private slots:
 
     void cleanup() { Teardown(); }
 
-    // One row is open, under the cursor of the focused list, unread and
-    // waiting: each sign is drawn by its own item, and the rows with no sign
-    // draw none.
-    void AllFourSignsShowOnOneRow() {
+    // The four signs are independent in the row's delegate: one row is open,
+    // under the cursor of the focused list, unread and waiting, and each sign
+    // is drawn by its own item; the rows with no sign draw none. The model
+    // never produces the open and unread state (see below), so the case sets
+    // it directly on the panel: what it proves is the delegate, not the model.
+    void TheFourSignsAreIndependentInTheDelegate() {
         FailOnWarnings();
         BootWithUnreadBeta();
         if (QTest::currentTestFailed()) {
@@ -143,9 +145,10 @@ private slots:
         // IsShownUnread), so the two signs meet only when the panel's
         // `selected` is set without the model's `opened` following it, which
         // `restored` = false does. The list keeps the keyboard.
-        while (CursorId() != BETA) {
+        for (int step = 0; step < Count() && CursorId() != BETA; ++step) {
+            const QString previous = CursorId();
             Press(Qt::Key_Down);
-            QTRY_VERIFY_WITH_TIMEOUT(!CursorId().isEmpty(), TIMEOUT_MS);
+            QTRY_VERIFY_WITH_TIMEOUT(CursorId() != previous, TIMEOUT_MS);
         }
         QQuickItem* const panel = PanelOf(LIST);
         QVERIFY(panel->setProperty("restored", false));
@@ -215,6 +218,8 @@ private slots:
         QCOMPARE(ColorOf(In(row, "rowBackground")),
                  theme->selectedBackground());
         QCOMPARE(ColorOf(In(row, "sessionDetail")), theme->attention());
+        // The bar steps aside for the ring only while the ring is drawn.
+        QCOMPARE(In(row, "openBar")->x(), 1.0);
         Snapshot("2-unfocused");
     }
 
@@ -236,6 +241,7 @@ private slots:
         QVERIFY(row->property("isCursor").toBool());
         QVERIFY(!In(row, "cursorRing")->isVisible());
         QVERIFY(In(row, "openBar")->isVisible());
+        QCOMPARE(In(row, "openBar")->x(), 1.0);
         QCOMPARE(ColorOf(In(row, "rowBackground")),
                  theme->selectedBackground());
         // An open session is not unread.
@@ -244,12 +250,13 @@ private slots:
 
         BackToList();
         QVERIFY(In(row, "cursorRing")->isVisible());
+        QCOMPARE(In(row, "openBar")->x(), 4.0);
 
         // The cursor leaves the open row to a row that is not open.
         const int beta = Number(BETA);
         Press(Qt::Key_Down);
         QTRY_VERIFY_WITH_TIMEOUT(Cursor() != beta, TIMEOUT_MS);
-        QQuickItem* other = RowItem(Cursor());
+        QQuickItem* other = Row(CursorId());
         QVERIFY(HasParts(other));
         QVERIFY(In(other, "cursorRing")->isVisible());
         QCOMPARE(ColorOf(In(other, "rowBackground")), theme->cursorFocused());

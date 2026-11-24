@@ -370,6 +370,10 @@ private slots:
         };
         const qreal before = sizeOf(button);
         QCOMPARE(sizeOf(text), before);
+        // The chip and the prompt input as they are before the change: the
+        // reset has to bring them back to these, not to what the theme says.
+        const qreal chipBefore = sizeOf(tab);
+        const QFont promptBefore = fontOf(prompt);
         const qreal bigger = before + 9;
 
         WriteSettings({{"uiFontSize", bigger}});
@@ -392,8 +396,8 @@ private slots:
         WriteSettings({});
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), before, TIMEOUT_MS);
         QCOMPARE(sizeOf(text), before);
-        QCOMPARE(sizeOf(tab), Singleton_->theme()->metaFont().pointSizeF());
-        QCOMPARE(fontOf(prompt), Singleton_->theme()->rowFont());
+        QCOMPARE(sizeOf(tab), chipBefore);
+        QCOMPARE(fontOf(prompt), promptBefore);
         QCOMPARE(sizeOf(report), before);
     }
 
