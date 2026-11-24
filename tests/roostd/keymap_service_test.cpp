@@ -25,7 +25,9 @@ constexpr int TIMEOUT_MS = 10000;
 // that is expected is awaited with QTRY, not with this.
 constexpr int SETTLE_MS = 600;
 // The three writes of a chunked file are within the delay of the service (100
-// ms) when they took less than this.
+// ms) when they took less than this. That bounds the writer only: a daemon
+// kept off the CPU for longer than the delay between two of its file events
+// can still publish twice. Closing that needs a debounce the test can set.
 constexpr qint64 CHUNKS_WITHIN_MS = 40;
 const QJsonValue UNBIND{QJsonValue::Null};
 
@@ -447,8 +449,8 @@ private slots:
             const bool withinTheDelay = writing.elapsed() < CHUNKS_WITHIN_MS;
 
             // The event of the writes, then the event of a later save by
-            // rename: it comes after anything the writes would still give, so
-            // when it is in, the writes are done with.
+            // rename. All the writes are over before that save, so the event
+            // of the saved file is the last one of the round.
             QTRY_VERIFY_WITH_TIMEOUT(Changes().size() > before, TIMEOUT_MS);
             QVERIFY(SaveFile(QJsonArray{
                 QJsonObject{{"key", "Ctrl+S"}, {"command", "alpha.next"}}}));
