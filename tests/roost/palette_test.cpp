@@ -14,10 +14,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QQuickItemGrabResult>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTest>
 
+#include <cmath>
 #include <optional>
 
 #include "helpers/scoped_env.hpp"
@@ -326,6 +328,58 @@ private:
         return QStringLiteral("no delegate for row %1").arg(current);
     }
 
+    // The delegate of a shown command; null if the list has none for it.
+    QQuickItem* RowDelegate(const QString& command) {
+        const auto* const list = PaletteItem("paletteList");
+        const auto* const view =
+            list->property("contentItem").value<QQuickItem*>();
+        for (QQuickItem* delegate : view->childItems()) {
+            if (delegate->objectName() == "paletteRow" &&
+                delegate->property("commandId").toString() == command) {
+                return delegate;
+            }
+        }
+        return nullptr;
+    }
+
+    // The card: the item of the popup, the parent of its content.
+    QQuickItem* Card() {
+        return Palette()
+            ->property("contentItem")
+            .value<QQuickItem*>()
+            ->parentItem();
+    }
+
+    QQuickItem* PaletteItem(const QString& name) {
+        return Descendant(
+            Palette()->property("contentItem").value<QQuickItem*>(), name);
+    }
+
+    // The height of the card as its parts add up: the header with its top
+    // margin, the field with its top margin, the list with its margins (or,
+    // without rows, the line that says so), and the footer with its hairline.
+    // The numbers are the margins of CommandPalette.qml.
+    qreal ContentHeight() {
+        constexpr qreal headerTop = 17;
+        constexpr qreal fieldTop = 6;
+        constexpr qreal listMargins = 16;
+        constexpr qreal emptyBottom = 8;
+        constexpr qreal hairline = 1;
+        const QQuickItem* const heading = PaletteItem("paletteHeading");
+        const QQuickItem* const footer =
+            PaletteItem("paletteFooterKeys")->parentItem();
+        const QQuickItem* const empty = PaletteItem("paletteEmpty");
+        qreal sum =
+            headerTop + heading->parentItem()->height() + fieldTop +
+            Field()->height() + listMargins +
+            PaletteItem("paletteList")->property("contentHeight").toReal() +
+            hairline + footer->height();
+        if (empty->isVisible()) {
+            sum += empty->height() + emptyBottom;
+        }
+        return sum;
+    }
+
     // The palette opened by its key, as the user does; the field has the
     // keyboard.
     void OpenByKey() {
@@ -340,6 +394,27 @@ private:
                        "paletteList");
         QVERIFY(list != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(list->height() > 0, TIMEOUT_MS);
+    }
+
+    // Saves a picture of the window as <case>-<step>.png when asked to
+    // (ROOST_TEST_SNAPSHOTS), as layout_tabs_menu_test does.
+    void Snapshot(const QString& step) {
+        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
+        if (directory.isEmpty()) {
+            return;
+        }
+        QVERIFY(QDir().mkpath(directory));
+        const QString name =
+            QStringLiteral("%1-%2.png")
+                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
+        // The content item, not the window: grabWindow distorts the terminal
+        // in the offscreen platform.
+        QSharedPointer<QQuickItemGrabResult> result =
+            Window()->contentItem()->grabToImage();
+        QVERIFY(!result.isNull());
+        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
+        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
+        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
     }
 
     void Type(const QString& text) {
@@ -717,7 +792,13 @@ private slots:
         const auto subscription = Api_->Bus().Subscribe(
             "plugin.backendCrashed", Root(),
             [&crashed](const QString&, const QJsonValue& payload) {
-                crashed.append(payload.toObject().value("plugin").toString());
+                // Other plugins of the boot (codex has no backend here) crash
+                // and restart on their own; only the fixture is checked.
+                const QString plugin =
+                    payload.toObject().value("plugin").toString();
+                if (plugin == "fixture") {
+                    crashed.append(plugin);
+                }
             });
         QVERIFY(subscription.has_value());
         QVERIFY(!Api_->Commands().HasLocal("fixture.crash"));
@@ -760,6 +841,12 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
         Press(Qt::Key_Up);
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        Press(Qt::Key_Down);
+        QCOMPARE(Palette()->property("currentRow").toInt(), 1);
+        Snapshot("typed-row-selected");
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         Press(Qt::Key_Escape);
         QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
     }
@@ -776,7 +863,13 @@ private slots:
         const auto subscription = Api_->Bus().Subscribe(
             "plugin.backendCrashed", Root(),
             [&crashed](const QString&, const QJsonValue& payload) {
-                crashed.append(payload.toObject().value("plugin").toString());
+                // Other plugins of the boot (codex has no backend here) crash
+                // and restart on their own; only the fixture is checked.
+                const QString plugin =
+                    payload.toObject().value("plugin").toString();
+                if (plugin == "fixture") {
+                    crashed.append(plugin);
+                }
             });
         QVERIFY(subscription.has_value());
         OpenByKey();
@@ -918,6 +1011,240 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), RowOf(chosen));
         QVERIFY(Palette()->property("currentRow").toInt() > 0);
         QTRY_VERIFY_WITH_TIMEOUT(CurrentRowProblem().isEmpty(), TIMEOUT_MS);
+    }
+
+    // A few rows: the card is as high as its parts, well below half of the
+    // window, and the list does not scroll.
+    void TheCardIsAsHighAsAFewRows() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("pb.gamma");
+        QCOMPARE(Model()->rowCount(), 1);
+        const qreal half = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  ContentHeight(), TIMEOUT_MS);
+        QVERIFY(Palette()->property("height").toReal() < half - 50);
+        const auto* const list = PaletteItem("paletteList");
+        QVERIFY(list->property("contentHeight").toReal() <=
+                list->height() + 0.5);
+        // The one row has its delegate, is not lower than the row of the
+        // style guide and is in view.
+        const QQuickItem* const delegate = RowDelegate("pb.gamma");
+        QVERIFY(delegate != nullptr);
+        QVERIFY(delegate->height() >= 47);
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+        Snapshot("few-rows");
+    }
+
+    // A command with a long key and both marks: the title keeps at least half
+    // of the row, the key is cut on the right, and nothing of the row goes
+    // past the inner right edge of the card.
+    void ALongKeyDoesNotCrowdTheTitleOrLeaveTheCard() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(
+            WriteKeymap(R"([{"key": "Ctrl+Alt+J", "command": "pa.delta"}])"));
+        QTRY_COMPARE_WITH_TIMEOUT(CellOf("pa.delta", "overridden").toBool(),
+                                  true, TIMEOUT_MS);
+        QCOMPARE(CellOf("pa.delta", "key").toString(),
+                 "Ctrl+Alt+L (sessions.list), Ctrl+Alt+J");
+        QCOMPARE(CellOf("pa.delta", "capturesInput").toBool(), true);
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("pa.delta");
+        QCOMPARE(Model()->rowCount(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(RowDelegate("pa.delta") != nullptr,
+                                 TIMEOUT_MS);
+        QQuickItem* const delegate = RowDelegate("pa.delta");
+        QQuickItem* const title = Descendant(delegate, "paletteTitle");
+        QQuickItem* const key = Descendant(delegate, "paletteKey");
+        QQuickItem* const overridden =
+            Descendant(delegate, "paletteOverridden");
+        QQuickItem* const captures = Descendant(delegate, "paletteCaptures");
+        QVERIFY(title != nullptr && key != nullptr && overridden != nullptr &&
+                captures != nullptr);
+        QVERIFY(overridden->isVisible() && captures->isVisible());
+        QTRY_VERIFY_WITH_TIMEOUT(key->property("truncated").toBool(),
+                                 TIMEOUT_MS);
+        const qreal inner = Card()->width() - 16;
+        const qreal rowWidth = delegate->width() - 24;
+        QVERIFY(title->width() >= rowWidth / 2);
+        for (const QQuickItem* const item :
+             {title, key, overridden, captures}) {
+            const qreal right =
+                item->mapToItem(Card(), QPointF(item->width(), 0)).x();
+            QVERIFY2(
+                right <= inner + 0.5,
+                qPrintable(
+                    QStringLiteral("%1 ends at %2, the card's inner edge is %3")
+                        .arg(item->objectName())
+                        .arg(right)
+                        .arg(inner)));
+        }
+        // The marks are on the second line, under the title and the key.
+        QVERIFY(overridden->mapToItem(delegate, QPointF(0, 0)).y() >=
+                key->mapToItem(delegate, QPointF(0, key->height())).y() - 0.5);
+        Snapshot("long-key");
+    }
+
+    // A window lower than the fixed parts of the card and a row: the card is
+    // not shorter than them, the chosen row is in view, and the footer is
+    // inside the card.
+    void ASmallWindowKeepsTheChosenRowAndTheFooter() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Window()->resize(Window()->width(), 300);
+        QTRY_COMPARE_WITH_TIMEOUT(Window()->height(), 300, TIMEOUT_MS);
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const auto* const list = PaletteItem("paletteList");
+        QTRY_VERIFY_WITH_TIMEOUT(list->height() >= 47, TIMEOUT_MS);
+        const int rows = Model()->rowCount();
+        QVERIFY(rows > 3);
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), rows - 1);
+        QTRY_VERIFY2_WITH_TIMEOUT(CurrentRowProblem().isEmpty(),
+                                  qPrintable(CurrentRowProblem()), TIMEOUT_MS);
+        QVERIFY(Card()->height() <= 300 - 2 * 16);
+        QVERIFY(Card()->height() > 150);
+        const QQuickItem* const footer =
+            PaletteItem("paletteFooterBack")->parentItem();
+        QVERIFY(footer->mapToItem(Card(), QPointF(0, footer->height())).y() <=
+                Card()->height() + 0.5);
+        QCOMPARE(Card()->height(), std::round(Card()->height()));
+        QCOMPARE(Card()->y(), std::round(Card()->y()));
+        Snapshot("small-window");
+    }
+
+    // Typing from many rows to one: the card grows and shrinks downward only,
+    // so the field stays where it was in the window.
+    void TheFieldDoesNotMoveWhileTyping() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The card has settled at the cap before the position is taken.
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  Window()->height() / 2.0, TIMEOUT_MS);
+        const qreal fieldY = Field()->mapToScene(QPointF(0, 0)).y();
+        const qreal cardY = Card()->mapToScene(QPointF(0, 0)).y();
+        const qreal tall = Card()->height();
+        Snapshot("before-typing");
+        Type("pb.gamma");
+        QCOMPARE(Model()->rowCount(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  ContentHeight(), TIMEOUT_MS);
+        QVERIFY(Card()->height() < tall);
+        QCOMPARE(Field()->mapToScene(QPointF(0, 0)).y(), fieldY);
+        QCOMPARE(Card()->mapToScene(QPointF(0, 0)).y(), cardY);
+        Snapshot("after-typing");
+    }
+
+    // No rows: the card is as high as the header, the field, the line "No
+    // command matches." and the footer.
+    void TheCardIsAsHighAsTheLineOfNoRows() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("zzzz");
+        QCOMPARE(Model()->rowCount(), 0);
+        QVERIFY(PaletteItem("paletteEmpty")->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  ContentHeight(), TIMEOUT_MS);
+        QVERIFY(Palette()->property("height").toReal() <
+                Window()->height() / 2.0 - 50);
+    }
+
+    // Rows that do not fit in half of the window: the card is half of the
+    // window, the list scrolls, and the chosen row after many Down presses is
+    // in the visible part of the list.
+    void TheCardStopsAtHalfOfTheWindowAndTheListScrolls() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const qreal half = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(), half,
+                                  TIMEOUT_MS);
+        const auto* const list = PaletteItem("paletteList");
+        QVERIFY(list->property("contentHeight").toReal() > list->height());
+        QVERIFY(ContentHeight() > half);
+        const int rows = Model()->rowCount();
+        QVERIFY(rows > 3);
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), rows - 1);
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+        QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > 0,
+                                 TIMEOUT_MS);
+        QCOMPARE(Palette()->property("height").toReal(), half);
+        Snapshot("many-rows");
+    }
+
+    // The cap follows the window: a smaller window, a smaller card, and the
+    // chosen row is still in view.
+    void TheCapFollowsAResizeOfTheWindow() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const qreal before = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  before, TIMEOUT_MS);
+        const int rows = Model()->rowCount();
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        Window()->resize(Window()->width(), Window()->height() * 5 / 6);
+        const qreal after = Window()->height() / 2.0;
+        QVERIFY(after < before);
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(), after,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY2_WITH_TIMEOUT(CurrentRowProblem().isEmpty(),
+                                  qPrintable(CurrentRowProblem()), TIMEOUT_MS);
     }
 
 #ifndef Q_OS_MACOS
