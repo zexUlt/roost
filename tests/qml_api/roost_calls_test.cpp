@@ -423,7 +423,7 @@ private slots:
         // taken the future of the read: a continuation of a future that is
         // already finished runs at once, not through the event loop, and the
         // event would then come after the callback was queued.
-        constexpr char GATE[] = "gate";
+        constexpr char gateName[] = "gate";
         std::promise<void> reached;
         std::future<void> inGate = reached.get_future();
         std::promise<void> open;
@@ -442,7 +442,7 @@ private slots:
                     return;
                 }
                 const QString name = object.value("name").toString();
-                if (name == GATE && !gated.test_and_set()) {
+                if (name == gateName && !gated.test_and_set()) {
                     reached.set_value();
                     opened.wait_for(std::chrono::milliseconds(TIMEOUT_MS));
                 } else if (name == "store.changed" && !told.test_and_set()) {
@@ -465,13 +465,13 @@ private slots:
             }
         });
 
-        QVERIFY(Api_->Bus().Subscribe(GATE, this, [](auto&&, auto&&) {}));
+        QVERIFY(Api_->Bus().Subscribe(gateName, this, [](auto&&, auto&&) {}));
         // The answer to a request on the same socket comes after the one to
         // the subscription: roostd has it now.
         QVERIFY(Wait(Api_->Bus().Publish("flush", 1)));
         const auto second = ConnectApi();
         QVERIFY(second);
-        QVERIFY(Wait(second->Bus().Publish(GATE, 1)));
+        QVERIFY(Wait(second->Bus().Publish(gateName, 1)));
         QVERIFY2(inGate.wait_for(std::chrono::milliseconds(TIMEOUT_MS)) ==
                      std::future_status::ready,
                  "the IO thread never heard the gate event");
