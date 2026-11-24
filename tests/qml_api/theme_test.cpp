@@ -17,6 +17,7 @@
 #include <cmath>
 
 #include "helpers/sessions_window.hpp"
+#include "helpers/snapshot.hpp"
 #include "qml_api/theme.hpp"
 
 using namespace roost;
@@ -352,6 +353,16 @@ private slots:
             {"problemsText", "problemsBackground", 4.5},
             {"bannerText", "bannerBackground", 4.5},
             {"bannerText", "bannerRefusedBackground", 4.5},
+            // The text of the strips of the window: the banner, the update
+            // strip, the toolbar (derived, no mockup).
+            {"attention", "bannerBackground", 4.5},
+            {"error", "bannerBackground", 4.5},
+            {"attention", "bannerRefusedBackground", 4.5},
+            {"error", "bannerRefusedBackground", 4.5},
+            {"attention", "controlBackground", 4.5},
+            {"error", "controlBackground", 4.5},
+            {"textSecondary", "surface", 4.5},
+            {"text", "surface", 4.5},
             {"warning", "surface", 4.5},
             {"error", "surface", 4.5},
             {"windowError", "canvas", 4.5},
@@ -430,7 +441,7 @@ private slots:
         auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
         QVERIFY(banner != nullptr && bannerText != nullptr && strip != nullptr);
         QCOMPARE(ColorOf(banner), QColor("#fff4e0"));
-        QCOMPARE(ColorOf(bannerText), QColor("#18232e"));
+        QCOMPARE(ColorOf(bannerText), QColor("#8b500b"));
         QCOMPARE(ColorOf(strip), QColor("#fff4e0"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
                  QColor("#5f6e80"));
@@ -440,13 +451,99 @@ private slots:
         // The window is the canvas the cards lie on.
         QCOMPARE(Root()->property("color").value<QColor>(), Given("canvas"));
         QCOMPARE(ColorOf(banner), Given("bannerBackground"));
-        QCOMPARE(ColorOf(bannerText), Given("bannerText"));
+        QCOMPARE(ColorOf(bannerText), Given("attention"));
         QCOMPARE(ColorOf(strip), Given("problemsBackground"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
                  Given("textMuted"));
         // The banner of a refusal has a colour of its own.
         Root()->setProperty("connection", "refused");
         QCOMPARE(ColorOf(banner), Given("bannerRefusedBackground"));
+    }
+
+    // The strips of the window, the toolbar and the placeholder are the tokens
+    // of the style (18-style.md): a failure of the connection is in the colour
+    // of the error, the rest of the banner waits for the user (`attention`).
+    // The toolbar is built on macOS too, though it is not shown there.
+    void TheStripsTakeTheTextColoursOfTheStyle() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* bannerText = Root()->findChild<QQuickItem*>("connectionText");
+        QVERIFY(bannerText != nullptr);
+        const auto textIs = [&](const char* connection, const char* token) {
+            Root()->setProperty("connection", connection);
+            QCOMPARE(ColorOf(bannerText), Given(token));
+        };
+        QVERIFY(Singleton_->theme()->load(TestTheme()));
+        textIs("connecting", "attention");
+        textIs("starting", "attention");
+        textIs("restarting", "attention");
+        textIs("disconnected", "attention");
+        textIs("startFailed", "error");
+        textIs("refused", "error");
+    }
+
+    void TheToolbarAndThePlaceholderTakeTheTokensOfTheStyle() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Singleton_->theme()->load(TestTheme()));
+        auto* bar = Root()->findChild<QQuickItem*>("toolBar");
+        QVERIFY(bar != nullptr);
+        // A `surface` bar with a hairline of `line` under it.
+        const auto* barBackground =
+            bar->property("background").value<QQuickItem*>();
+        QVERIFY(barBackground != nullptr);
+        const QList<QQuickItem*> layers = barBackground->childItems();
+        QCOMPARE(layers.size(), 2);
+        QCOMPARE(ColorOf(layers.at(0)), Given("surface"));
+        QCOMPARE(ColorOf(layers.at(1)), Given("line"));
+        QCOMPARE(layers.at(1)->height(), 1.0);
+        for (const char* name :
+             {"paletteButton", "settingsButton", "reportBugButton"}) {
+            auto* button = Root()->findChild<QQuickItem*>(name);
+            QVERIFY2(button != nullptr, name);
+            QCOMPARE(
+                ColorOf(button->property("contentItem").value<QQuickItem*>()),
+                Given("textSecondary"));
+            const auto* plate =
+                button->property("background").value<QQuickItem*>();
+            QVERIFY2(plate != nullptr, name);
+            QCOMPARE(plate->property("radius").toInt(),
+                     Singleton_->theme()->radiusControl());
+        }
+        // The text of a panel without a panel: `textMuted`, `metaFont`.
+        auto* placeholder =
+            Slot(LIST)->findChild<QQuickItem*>("placeholderText");
+        QVERIFY(placeholder != nullptr);
+        QCOMPARE(ColorOf(placeholder), Given("textMuted"));
+        QCOMPARE(placeholder->property("font").value<QFont>(),
+                 Singleton_->theme()->metaFont());
+    }
+
+    void TheStripsOfTheWindowCanBeSaved() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Root()->setProperty("connection", "connecting");
+        Root()->setProperty("problems",
+                            QStringList{"plugin demo: the manifest has no id",
+                                        "panel list: cannot load the page"});
+        auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
+        QVERIFY(strip != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(strip->isVisible() && strip->height() > 0,
+                                 TIMEOUT_MS);
+        QVERIFY(SaveSnapshot(Window(), "banner-and-problems"));
+        Root()->setProperty("connection", "refused");
+        Root()->setProperty("connectionMessage",
+                            "roostd 0.3 does not speak this protocol.");
+        QVERIFY(SaveSnapshot(Window(), "banner-refused"));
     }
 
     void TheListTakesTheColoursOfTheTokens() {

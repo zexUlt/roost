@@ -26,7 +26,7 @@
 | `primary`, `primaryHover`, `primaryText` | главная кнопка, под мышью, её текст | `#2e66ce`, `#2658b5`, `#ffffff` |
 | `stateWorking`, `stateBlocked`, `stateFailed` | состояния сессии: работает (зелёный), ждёт (как `attention`), упала | `#2b7a3b`, `#8b500b`, `#c0262d` |
 | `warning`, `error`, `windowError` | предупреждение и ошибка | `#8b500b`, `#c0262d`, `#b00020` |
-| `bannerBackground`, `bannerRefusedBackground`, `bannerText` | баннер соединения | `#fff4e0`, `#fde8e8`, `#18232e` |
+| `bannerBackground`, `bannerRefusedBackground`, `bannerText` | фон баннера соединения; текст баннера берёт `attention` и `error`, `bannerText` остаётся для плагинов | `#fff4e0`, `#fde8e8`, `#18232e` |
 | `problemsBackground`, `problemsText` | полоса проблем | `#fff4e0`, `#8b500b` |
 | `selection` | выделение текста | `#cfe0fb` |
 | `controlBackground` | фон поля поиска, кнопки Controls и недоступной кнопки формы | `#f8fafc` |
@@ -119,6 +119,22 @@
 Тень меню — три слоя цвета `text` с прозрачностью 0.04, каждый на пиксель шире предыдущего и сдвинут вниз на 2: без модуля эффектов.
 
 Внутренний боковой отступ контролов формы и строк меню — 12, как у строки списка.
+
+## Полосы окна, вкладки, переключатель и панель инструментов
+
+«Выведено, макета нет». Те же токены; Fusion перекрашен собственными `background` и `contentItem`.
+
+| что | вид |
+|---|---|
+| баннер соединения | фон `bannerBackground` (отказ — `bannerRefusedBackground`); текст `attention`, у ошибки старта и отказа — `error` |
+| полоса обновления | фон `controlBackground`; текст `attention`, у ошибки установки — `error` |
+| полоса проблем | фон `problemsBackground`, текст `problemsText` |
+| вкладки (`TabNode.qml`) | полоса на `canvas`; текущая вкладка — плита `surface` с `radiusControl`, текст `focus`; остальные — `textSecondary`, под мышью `hoverBackground`; шрифт `rowFont`; скрытая вкладка по-прежнему шириной `-spacing` |
+| переключатель (`Switch` в настройках) | дорожка 40×22 с полным радиусом: включён `primary`, выключен `textMuted`; ручка `surface`, отступ 2; кольцо фокуса снаружи, как у кнопки |
+| панель инструментов (Linux; на macOS родное меню) | фон `surface`, линия `line` 1 снизу; `ToolbarButton`: высота 34, отступы 12, `rowFont`, `radiusControl`, текст `textSecondary` (под мышью `text`), фон под мышью `hoverBackground`, кольцо фокуса снаружи с зазором 2 |
+| заглушка панели, пустое состояние | `textMuted`, `metaFont` |
+
+Подсказок (`ToolTip`) в окне нет, стилизовать нечего.
 
 ## Кольцо фокуса
 

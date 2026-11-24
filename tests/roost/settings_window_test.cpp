@@ -31,6 +31,7 @@
 #include "helpers/scoped_env.hpp"
 #include "helpers/snapshot.hpp"
 #include "qml_api/roost_singleton.hpp"
+#include "qml_api/theme.hpp"
 #include "roost/controls_style.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/settings_pages.hpp"
@@ -646,6 +647,37 @@ private slots:
         QTRY_VERIFY(
             other->Find("updatesCheckSwitch")->property("checked").toBool());
         QCOMPARE(Document("settings").value("uiFontSize"), QJsonValue(14));
+    }
+
+    // The switch is a track and a knob in the tokens: `primary` and the knob
+    // at the right when on, `textMuted` and the knob at the left when off.
+    // Derived, no mockup (docs/design/18-style.md).
+    void TheUpdateSwitchIsDrawnInTheTokens() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QVERIFY(check != nullptr);
+        QQuickItem* track = window->Find("switchTrack");
+        QQuickItem* knob = window->Find("switchKnob");
+        QVERIFY(track != nullptr && knob != nullptr);
+        const auto color = [](const QQuickItem* item) {
+            return item->property("color").value<QColor>();
+        };
+        const Theme* theme = window->Singleton->theme();
+        QTRY_VERIFY_WITH_TIMEOUT(track->width() > 0, TIMEOUT_MS);
+        QVERIFY(check->property("checked").toBool());
+        QCOMPARE(color(track), theme->primary());
+        QCOMPARE(color(knob), theme->surface());
+        QCOMPARE(knob->x(), track->width() - knob->width() - 2);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "switch-on"));
+
+        Click(*window, check);
+        QTRY_VERIFY_WITH_TIMEOUT(!check->property("checked").toBool(),
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(color(track), theme->textMuted(), TIMEOUT_MS);
+        QCOMPARE(color(knob), theme->surface());
+        QTRY_COMPARE_WITH_TIMEOUT(knob->x(), 2.0, TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "switch-off"));
     }
 
     void TheUpdateSwitchShowsTheStoredKey() {

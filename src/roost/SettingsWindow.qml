@@ -362,6 +362,28 @@ ApplicationWindow {
                     // sets it, a binding would not survive a click.
                     checked: true
                     implicitHeight: 38
+                    // The track and the knob in the tokens (derived, no mockup:
+                    // docs/design/18-style.md): `primary` on, `textMuted` off
+                    // (the white knob keeps its contrast).
+                    indicator: Rectangle {
+                        objectName: "switchTrack"
+                        x: updatesCheckSwitch.leftPadding
+                        y: (updatesCheckSwitch.height - height) / 2
+                        implicitWidth: 40
+                        implicitHeight: 22
+                        radius: height / 2
+                        color: updatesCheckSwitch.checked ? Roost.theme.primary : Roost.theme.textMuted
+
+                        Rectangle {
+                            objectName: "switchKnob"
+                            x: updatesCheckSwitch.checked ? parent.width - width - 2 : 2
+                            y: 2
+                            width: parent.height - 4
+                            height: width
+                            radius: width / 2
+                            color: Roost.theme.surface
+                        }
+                    }
                     background: Item {
                         // The ring of the focus, outside with a gap of 2 px.
                         Rectangle {

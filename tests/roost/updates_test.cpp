@@ -9,6 +9,7 @@
 // by the real minisign, tests/fixtures/updates) and a case changes one thing
 // in what it serves.
 
+#include <QColor>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -37,6 +38,8 @@
 #include "core/version.hpp"
 #include "helpers/scoped_env.hpp"
 #include "helpers/sessions_window.hpp"
+#include "helpers/snapshot.hpp"
+#include "qml_api/theme.hpp"
 #include "qml_api/updates.hpp"
 
 using namespace roost;
@@ -654,6 +657,24 @@ private slots:
         QVERIFY(head.startsWith("GET /releases/latest "));
         QVERIFY(head.toLower().contains("user-agent: roost/"));
         QVERIFY(head.toLower().contains("accept: application/vnd.github+json"));
+    }
+
+    // The offer waits for the user: its text is in `attention` (derived, no
+    // mockup: docs/design/18-style.md).
+    void TheTextOfTheOfferIsInAttention() {
+        Serve(200, Release("v9.9.9"));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
+        QVERIFY(text != nullptr);
+        QCOMPARE(text->property("color").value<QColor>(),
+                 Singleton_->theme()->attention());
+        QCOMPARE(Strip()->property("color").value<QColor>(),
+                 Singleton_->theme()->controlBackground());
+        QVERIFY(testing::SaveSnapshot(Window(), "offer"));
     }
 
     // The link goes to the page of the release; the browser is not started.
@@ -1545,6 +1566,32 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
         QCOMPARE(InstalledMarker(), QByteArray("new"));
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
+    }
+
+    // The text of a failed install is in the colour of the error.
+    void TheTextOfAFailedInstallIsInError() {
+        ServeRelease();
+        BootToInstall();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        RelaunchResult_ = std::unexpected(QString("no way"));
+        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression(
+                "roost: roost 9.9.9 is installed, but this window "
+                "cannot start it: no way"));
+        ClickItem(InstallButton());
+        // The install copies a bundle: under a loaded machine it takes
+        // longer than the usual bound.
+        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
+                                  6 * TIMEOUT_MS);
+        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
+        QVERIFY(text != nullptr);
+        QCOMPARE(text->property("color").value<QColor>(),
+                 Singleton_->theme()->error());
+        QVERIFY(testing::SaveSnapshot(Window(), "install-failed"));
     }
 
     // A new version that is installed but cannot be started is said so, with
