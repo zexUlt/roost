@@ -78,6 +78,30 @@ Dialog {
     anchors.centerIn: Overlay.overlay
     closePolicy: Popup.CloseOnEscape
     standardButtons: Dialog.Close
+    padding: Roost.theme.panelPadding
+
+    background: Rectangle {
+        radius: Roost.theme.radiusCard
+        color: Roost.theme.surface
+        border.width: 1
+        border.color: Roost.theme.line
+    }
+
+    header: Label {
+        text: root.title
+        font: Roost.theme.headingFont
+        elide: Text.ElideRight
+        padding: Roost.theme.panelPadding
+        bottomPadding: 0
+    }
+
+    footer: DialogButtonBox {
+        padding: Roost.theme.panelPadding
+        topPadding: 0
+        spacing: 8
+        background: null
+        delegate: FormButton {}
+    }
 
     contentItem: ColumnLayout {
         spacing: 8
@@ -112,7 +136,7 @@ Dialog {
                     elide: Text.ElideRight
                 }
 
-                ComboBox {
+                FormComboBox {
                     id: box
 
                     objectName: "linkInput_" + row.modelData.input
