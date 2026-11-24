@@ -131,7 +131,11 @@ ApplicationWindow {
         // elsewhere MenuBar would draw a bar inside the window. Help → "Report a
         // Bug…" is there instead of the toolbar button. It is the first row of
         // the column, so that it takes room of its own and does not lie over
-        // the banner. The item "Settings…" has no role in Qt Quick Controls;
+        // the banner. Where Qt makes the bar native it sets the height of the
+        // MenuBar to 0 (QQuickMenuBarPrivate::createNativeMenuBar) but leaves
+        // its implicit height, which the Loader reports to the column: the row
+        // follows the height of the item, so that the native bar takes none.
+        // The item "Settings…" has no role in Qt Quick Controls;
         // the Cocoa menu takes it for the application's settings by its text
         // ("Setting", "Preferences", ...) and moves it to the application menu.
         Loader {
@@ -139,6 +143,7 @@ ApplicationWindow {
             active: Qt.platform.os === "osx"
             visible: active
             Layout.fillWidth: true
+            Layout.preferredHeight: item !== null ? item.height : 0
             sourceComponent: MenuBar {
                 Menu {
                     title: "roost"

@@ -12,6 +12,7 @@
 #include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QSGRectangleNode>
 #include <QStyleHints>
 #include <QWheelEvent>
 #include <QtLogging>
@@ -900,7 +901,38 @@ QSGNode* TerminalItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
         qCDebug(TerminalCategory, "first paint of %s",
                 qPrintable(LoggedSession_));
     }
-    auto* node = Renderer_.Update(*window(), *Session_, oldNode);
+    // The node is a background and the grid the renderer draws: the item fits
+    // whole cells, and what is left (below and to the right of the grid) has
+    // the default background of the terminal, not what lies under the item.
+    QSGNode* grid = nullptr;
+    if (oldNode != nullptr) {
+        grid = oldNode->lastChild();
+        oldNode->removeChildNode(grid);
+    }
+    grid = Renderer_.Update(*window(), *Session_, grid);
+    if (grid == nullptr) {
+        // Nothing to show: the renderer has deleted the grid.
+        delete oldNode;
+        return nullptr;
+    }
+    QSGNode* node = oldNode;
+    QSGRectangleNode* background = nullptr;
+    if (node == nullptr) {
+        node = new QSGNode;
+        background = window()->createRectangleNode();
+        node->appendChildNode(background);
+    } else {
+        background = static_cast<QSGRectangleNode*>(node->firstChild());
+    }
+    node->appendChildNode(grid);
+    const auto fill = Session_->RenderState().DefaultBackground();
+    const QColor color(fill.R, fill.G, fill.B);
+    if (background->color() != color) {
+        background->setColor(color);
+    }
+    if (background->rect() != boundingRect()) {
+        background->setRect(boundingRect());
+    }
     // The terminal drops a selection when its text is erased; the GUI thread
     // finds out from here.
     if (Session_->SelectionAtLastRender() != HasSelection_) {

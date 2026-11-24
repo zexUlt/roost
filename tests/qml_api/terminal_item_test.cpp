@@ -295,14 +295,16 @@ private slots:
         QCOMPARE(Session_->RenderState().Columns(), quint16{30});
 
         // The rows the smaller grid no longer has are gone from the scene:
-        // what is left there is the window's own colour, not a stale row.
+        // what is left there is the default background the item paints
+        // under the grid, not a stale row.
         const auto cell = roost::MeasureCell(Item_->font());
         const auto image = Window_.grabWindow();
         const auto ratio = image.devicePixelRatio();
         const auto stale =
             image.pixelColor(static_cast<int>(0.5 * cell.Width * ratio),
                              static_cast<int>(6.5 * cell.Height * ratio));
-        QCOMPARE(stale.rgb(), QColor(Qt::magenta).rgb());
+        QCOMPARE(stale.rgb(),
+                 ToQColor(Session_->RenderState().DefaultBackground()).rgb());
     }
 
     void GlyphColorReachesThePixels() {
@@ -447,10 +449,13 @@ private slots:
         QCOMPARE(Item_->rowsRebuilt(), int{ROWS});
         QCOMPARE(Session_->RenderState().Columns(), quint16{12});
 
+        // The columns the narrower grid no longer has show the default
+        // background that the item paints under the grid, not a red row.
         const auto probe = Grab();
-        const QColor magenta(Qt::magenta);
+        const QColor background =
+            ToQColor(Session_->RenderState().DefaultBackground());
         for (int row = 0; row < ROWS; ++row) {
-            QCOMPARE(probe.Count({row, 14, 1}, magenta, 0),
+            QCOMPARE(probe.Count({row, 14, 1}, background, 0),
                      probe.CellWidth * probe.CellHeight *
                          static_cast<int>(probe.Image.devicePixelRatio() *
                                           probe.Image.devicePixelRatio()));

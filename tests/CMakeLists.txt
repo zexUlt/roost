@@ -99,6 +99,7 @@ roost_add_qt_test(default_font_test terminal/default_font_test.cpp roost_termina
 roost_add_qt_test(terminal_item_test qml_api/terminal_item_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_input_test qml_api/terminal_item_input_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_layout_test qml_api/terminal_item_layout_test.cpp roost_qml_api)
+roost_add_qt_test(terminal_item_remainder_test qml_api/terminal_item_remainder_test.cpp roost_qml_api)
 roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
     roost_qml_api roost_qml_apiplugin Qt6::Qml)
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
@@ -568,6 +569,19 @@ target_compile_definitions(layout_card_focus_test PRIVATE
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_card_focus_test roostd fake_tui claude-adapter
+    sessions_qml)
+
+# The edges of the window against the light design: the gap between cards
+# shows the canvas, and the menu bar row takes no room where the bar is native.
+roost_add_qt_test(window_edges_test roost/window_edges_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(window_edges_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(window_edges_test roostd fake_tui claude-adapter
     sessions_qml)
 
 # A tab the user clicks takes the keyboard and is stored as the shown one.
