@@ -777,7 +777,7 @@ private slots:
         QCOMPARE(Status(), QString("none"));
         // The cursor is where the user left it, and Return works again.
         QCOMPARE(CursorId(), BETA);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), BETA, TIMEOUT_MS);
     }
 

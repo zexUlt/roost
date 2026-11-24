@@ -724,7 +724,7 @@ private slots:
         // Closed, the same Enter opens the row.
         Press(Qt::Key_Escape);
         QVERIFY(!HelpOpen());
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
         QCOMPARE(activated.count(), 1);
     }
