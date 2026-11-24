@@ -141,50 +141,80 @@ QML-модуль плагина, без библиотеки на C ABI:
 - Ошибки аргументов `subscribe` (владелец `null`, колбэк не функция, неверный шаблон) бросают `TypeError`; ошибки самих вызовов приходят в колбэк.
 - `Roost.bindingKey(event)`: клавиша, которую обработчик `Keys.onPressed` сравнивает с `Qt.Key_*`, на любой раскладке. Принимает `KeyEvent`, возвращает `Qt.Key_*`: `event.key` на латинской раскладке, на нелатинской — клавиша US-раскладки на той же физической позиции (`о` на русской — `Qt.Key_J`, Shift+`б` — `Qt.Key_Less`). Буква приходит заглавной, цифра и символ следуют за Shift. Метод оконный: он ничего не просит у `roostd`, не метод диспетчера и в `host->call` его нет. Вызывать из обработчика клавиши, пока событие доставляется. Фильтр приложения нужен потому, что `KeyEvent` в QML не отдаёт `nativeVirtualKey`, а на macOS физическая клавиша только в нём: синглтон при создании ставит фильтр событий приложения, и тот запоминает ключ, модификаторы и нативные коды последнего нажатия или отпускания. Коды берутся, если ключ и модификаторы запомненного события равны ключу и модификаторам `KeyEvent`, иначе метод возвращает `event.key`. Окно создаёт `Roost` при старте (`singletonInstance` в `main.cpp` до загрузки QML), чтобы фильтр стоял до первой клавиши: синглтон, созданный первым обработчиком клавиши, пропустил бы то нажатие.
 - `Roost.connected` — только чтение, `true` пока окно соединено с `roostd`.
-- `Roost.theme` — только чтение, цвета окна и панелей по ролям (`src/qml_api/theme.hpp`); свойство синглтона, потому что встроенные плагины ходят через публичный API (ADR 009). Токен — роль, а не место: QML берёт `Roost.theme.textSecondary`, а не литерал. Любой токен — `color`, кроме `categories`: список из восьми цветов, индекс — `colorIndex` модели. Один сигнал `Roost.theme.changed` на любое изменение (привязки перечитываются сами). Тема по умолчанию — ресурс `src/core/themes/default.json` со сегодняшними значениями, вид окна не меняется. Тему выбирает `settings.theme` (id темы): окно следит за документом `settings` (`Theme::follow`), `roostd` читает его при старте и после каждой записи (§ «Цвета» в 03-terminal.md). Встроенная тема одна, `default`; неизвестный id или не строка — `default` и предупреждение в лог. Для тестов id `test` берёт токены из файла, названного переменной окружения `ROOST_TEST_THEME_FILE` (его читают и окно, и `roostd`); без переменной `test` — неизвестный id. Токены терминала не свойства QML: их берёт C++ (`Theme::terminalColors()`). Шрифты — тоже свойства темы, но берутся из `settings`, а не из темы: `Roost.theme.terminalFont` (шрифт терминалов) и `Roost.theme.uiFont` (шрифт окна), оба `font`. `Theme::follow` читает `settings.terminalFont {family, size}` и `settings.uiFontSize` (`ResolveFontSettings`, `src/core/theme_source.hpp`, один разбор для всех окон). Без ключей — вид сегодняшний: системный моноширинный шрифт терминала (`DefaultTerminalFont()`) его размера и шрифт приложения по умолчанию для окна. Размер — число пунктов от 6 до 72 (`MIN_FONT_SIZE`, `MAX_FONT_SIZE`); не число, меньше 6 или больше 72 — размер по умолчанию. Семейство, которого нет в системе или которое не моноширинное, — системный моноширинный шрифт; общее имя `monospace` (любой регистр) и есть системный моноширинный шрифт, без проблемы (`QFontDatabase` такого семейства не знает). Каждая неверная настройка — одна строка в `Roost.theme.fontProblems`, а окно показывает её в полосе проблем: `settings.terminalFont.family "X" is not an installed monospace font; the system monospace font is used`, `settings.terminalFont.family must be a font family name; the system monospace font is used` (не строка или пустая), `settings.terminalFont must be an object with family and size; the defaults are used`, `settings.terminalFont.size must be a number from 6 to 72; the default size is used` и `settings.uiFontSize must be a number from 6 to 72; the default size is used`; исправил настройку — строка уходит. Смена шрифта действует во всех окнах сразу (`store.changed`); у открытого терминала пересчитываются ячейка и сетка, новый размер уходит в PTY (`session.resize`). Окно (`Main.qml`) — `ApplicationWindow` с `font: Roost.theme.uiFont`: шрифт наследуют Controls и `Label` под ним, панели плагинов в том числе. Простой `Text` шрифт родителя не наследует, поэтому в панелях вместо него `Label`; `TextInput` берёт `font` у соседнего `Label`, `TextEdit` — у `root.font` диалога. Шаблон плагина (`templates/plugin-qml`) тоже на `Label`. Терминальная панель привязывает `font: Roost.theme.terminalFont`. В QML окна и плагинов (`src/roost/**`, все `.qml` в `plugins/<id>/`, `templates/plugin-qml/**`) значением цветового свойства (имя оканчивается сегментом с `color`: `color`, `border.color`, `fillColor`; `palette.<роль>`; объявление `property color <имя>`; привязка `имя: значение` или присваивание `x.color = значение`) не бывает литерал цвета (`"#rrggbb"`, `"#aarrggbb"`) и имя цвета (кроме `"transparent"`); вызовов `Qt.rgba` и подобных нет нигде. Строка `text: "Orange"` или `text: "#123"` не цвет; это держит `tools/check_qml_colors.sh` (CI, задача `gates`), фикстуры — `tests/gates/qml_colors/`.
+- `Roost.theme` — только чтение, цвета окна и панелей по ролям (`src/qml_api/theme.hpp`); свойство синглтона, потому что встроенные плагины ходят через публичный API (ADR 009). Токен — роль, а не место: QML берёт `Roost.theme.textSecondary`, а не литерал. Любой токен — `color`, кроме `categories`: список из восьми цветов, индекс — `colorIndex` модели. Один сигнал `Roost.theme.changed` на любое изменение (привязки перечитываются сами). Тема по умолчанию — ресурс `src/core/themes/default.json`, светлая (18-style.md). Тему выбирает `settings.theme` (id темы): окно следит за документом `settings` (`Theme::follow`), `roostd` читает его при старте и после каждой записи (§ «Цвета» в 03-terminal.md). Встроенная тема одна, `default`; неизвестный id или не строка — `default` и предупреждение в лог. Для тестов id `test` берёт токены из файла, названного переменной окружения `ROOST_TEST_THEME_FILE` (его читают и окно, и `roostd`); без переменной `test` — неизвестный id. Токены терминала не свойства QML: их берёт C++ (`Theme::terminalColors()`). Шрифты — тоже свойства темы, но берутся из `settings`, а не из темы: `Roost.theme.terminalFont` (шрифт терминалов) и `Roost.theme.uiFont` (шрифт окна), оба `font`. `Theme::follow` читает `settings.terminalFont {family, size}` и `settings.uiFontSize` (`ResolveFontSettings`, `src/core/theme_source.hpp`, один разбор для всех окон). Без ключей — вид сегодняшний: системный моноширинный шрифт терминала (`DefaultTerminalFont()`) его размера и шрифт приложения по умолчанию для окна. Размер — число пунктов от 6 до 72 (`MIN_FONT_SIZE`, `MAX_FONT_SIZE`); не число, меньше 6 или больше 72 — размер по умолчанию. Семейство, которого нет в системе или которое не моноширинное, — системный моноширинный шрифт; общее имя `monospace` (любой регистр) и есть системный моноширинный шрифт, без проблемы (`QFontDatabase` такого семейства не знает). Каждая неверная настройка — одна строка в `Roost.theme.fontProblems`, а окно показывает её в полосе проблем: `settings.terminalFont.family "X" is not an installed monospace font; the system monospace font is used`, `settings.terminalFont.family must be a font family name; the system monospace font is used` (не строка или пустая), `settings.terminalFont must be an object with family and size; the defaults are used`, `settings.terminalFont.size must be a number from 6 to 72; the default size is used` и `settings.uiFontSize must be a number from 6 to 72; the default size is used`; исправил настройку — строка уходит. Смена шрифта действует во всех окнах сразу (`store.changed`); у открытого терминала пересчитываются ячейка и сетка, новый размер уходит в PTY (`session.resize`). Окно (`Main.qml`) — `ApplicationWindow` с `font: Roost.theme.uiFont`: шрифт наследуют Controls и `Label` под ним, панели плагинов в том числе. Простой `Text` шрифт родителя не наследует, поэтому в панелях вместо него `Label`; `TextInput` берёт `font` у соседнего `Label`, `TextEdit` — у `root.font` диалога. Шаблон плагина (`templates/plugin-qml`) тоже на `Label`. Терминальная панель привязывает `font: Roost.theme.terminalFont`. В QML окна и плагинов (`src/roost/**`, все `.qml` в `plugins/<id>/`, `templates/plugin-qml/**`) значением цветового свойства (имя оканчивается сегментом с `color`: `color`, `border.color`, `fillColor`; `palette.<роль>`; объявление `property color <имя>`; привязка `имя: значение` или присваивание `x.color = значение`) не бывает литерал цвета (`"#rrggbb"`, `"#aarrggbb"`) и имя цвета (кроме `"transparent"`); вызовов `Qt.rgba` и подобных нет нигде. Строка `text: "Orange"` или `text: "#123"` не цвет; это держит `tools/check_qml_colors.sh` (CI, задача `gates`), фикстуры — `tests/gates/qml_colors/`.
 
   | токен | роль | значение по умолчанию |
   |---|---|---|
-  | `windowBackground` | окно за панелями | `#ffffff` |
-  | `windowText` | текст Controls на окне, в том числе на кнопках и в полях | `#000000` |
-  | `controlBackground` | фон кнопки Controls | `#efefef` |
+  | `windowBackground` | окно за панелями | `#f3f6f8` |
+  | `windowText` | текст Controls на окне, в том числе на кнопках и в полях | `#18232e` |
+  | `controlBackground` | фон кнопки Controls | `#f8fafc` |
   | `inputBackground` | фон поля ввода Controls | `#ffffff` |
-  | `panelBackground` | фон панели | `#1e1e1e` |
-  | `overlayBackground` | то, что лежит над панелью (справка) | `#f01e1e1e` |
-  | `text` | основной текст на панели | `#e0e0e0` |
-  | `textStrong` | выделенный текст (текущая вкладка, вопрос) | `#ffffff` |
-  | `textSecondary` | второстепенный текст | `#a0a0a0` |
-  | `textMuted` | приглушённый текст (подсказки, заглушки) | `#808080` |
-  | `accent` | акцент (открытая сессия, непрочитанное) | `#5aa0ff` |
-  | `accentTint` | подкраска строки открытой сессии | `#225aa0ff` |
-  | `selection` | выделение текста | `#3d5a80` |
-  | `cursorFocused` | курсор списка с фокусом | `#3d5a80` |
-  | `cursorUnfocused` | курсор списка без фокуса | `#3a3a3a` |
-  | `stateWorking` | сессия работает | `#d78700` |
-  | `stateBlocked` | сессия ждёт пользователя | `#005fd7` |
-  | `stateFailed` | сессия упала | `#d70000` |
+  | `panelBackground` | фон панели | `#ffffff` |
+  | `overlayBackground` | то, что лежит над панелью (справка) | `#f2ffffff` |
+  | `text` | основной текст на панели | `#18232e` |
+  | `textStrong` | выделенный текст (текущая вкладка, вопрос) | `#18232e` |
+  | `textSecondary` | второстепенный текст | `#5a6a7a` |
+  | `textMuted` | приглушённый текст (подсказки, заглушки) | `#647385` |
+  | `accent` | акцент (открытая сессия, непрочитанное) | `#225fc2` |
+  | `accentTint` | подкраска строки открытой сессии | `#e9f1ff` |
+  | `selection` | выделение текста | `#cfe0fb` |
+  | `cursorFocused` | курсор списка с фокусом | `#f8fbff` |
+  | `cursorUnfocused` | курсор списка без фокуса | `#f2f5f8` |
+  | `stateWorking` | сессия работает | `#a35f00` |
+  | `stateBlocked` | сессия ждёт пользователя | `#8b500b` |
+  | `stateFailed` | сессия упала | `#c0262d` |
   | `categories` | восемь цветов категорий | `#0087d7 #d70000 #008700 #d75f00 #8700d7 #008787 #d700af #875f00` |
-  | `bannerBackground` | баннер соединения | `#4a4a2a` |
-  | `bannerRefusedBackground` | баннер отказа | `#5c1f1f` |
-  | `bannerText` | текст баннера | `#ffffff` |
-  | `problemsBackground` | полоса проблем | `#3a2a1a` |
-  | `problemsText` | текст полосы проблем | `#ffd9a0` |
-  | `warning` | предупреждение на панели | `#e0a060` |
-  | `error` | ошибка на панели | `#e06060` |
+  | `bannerBackground` | баннер соединения | `#fff4e0` |
+  | `bannerRefusedBackground` | баннер отказа | `#fde8e8` |
+  | `bannerText` | текст баннера | `#18232e` |
+  | `problemsBackground` | полоса проблем | `#fff4e0` |
+  | `problemsText` | текст полосы проблем | `#8b500b` |
+  | `warning` | предупреждение на панели | `#8b500b` |
+  | `error` | ошибка на панели | `#c0262d` |
   | `windowError` | ошибка на фоне окна | `#b00020` |
+  | `canvas` | холст за карточками (стиль, 18-style.md) | `#f3f6f8` |
+  | `surface` | карточка панели | `#ffffff` |
+  | `line` | тонкая линия вокруг карточки и между частями | `#dde4ea` |
+  | `selectedBackground` | выбранная строка, включённый фильтр | `#e9f1ff` |
+  | `hoverBackground` | строка под мышью | `#f5f8fb` |
+  | `focus` | кольцо фокуса | `#225fc2` |
+  | `attention` | то, что ждёт пользователя (мета-строка ждущей сессии) | `#8b500b` |
+  | `primary` | главная кнопка | `#2e66ce` |
+  | `primaryHover` | главная кнопка под мышью | `#2658b5` |
+  | `primaryText` | текст главной кнопки | `#ffffff` |
+
+  Размеры стиля — свойства `int` (логические пиксели), константы `Theme`, а не токены темы: файл темы их не меняет. Шрифты шкалы — свойства `font`, считаются от `uiFont` и следуют `settings.uiFontSize`.
+
+  | свойство | роль | значение |
+  |---|---|---|
+  | `radiusCard` | радиус карточки | 12 |
+  | `radiusControl` | радиус кнопки, поля, строки списка | 6 |
+  | `radiusSmall` | радиус фильтра, маленькой кнопки | 5 |
+  | `windowMargin` | поле окна вокруг карточек | 16 |
+  | `panelGap` | промежуток между карточками | 12 |
+  | `panelPadding` | отступ внутри карточки | 16 |
+  | `rowHeight` | высота строки списка | 56 |
+  | `rowGap` | шаг между строками списка | 3 |
+  | `focusRingWidth` | толщина кольца фокуса карточки (снаружи) | 3 |
+  | `cursorRingWidth` | толщина кольца курсора строки (внутри) | 2 |
+  | `titleFont` | заголовок панели | `uiFont` ×20/13, DemiBold |
+  | `headingFont` | заголовок терминала | `uiFont` ×16/13, DemiBold |
+  | `rowFont` | строка списка, кнопка | `uiFont` ×12/13, Medium |
+  | `metaFont` | мета-строка, фильтры, заголовки групп | `uiFont` ×11/13 |
+  | `smallFont` | мелкая мета-строка | `uiFont` ×10.5/13 |
 
   Цвета терминала — токены той же темы, цвет строго `#rrggbb`; токен, которого нет в файле темы, берётся из `default`. Неверный токен (не цвет, не тот размер списка, `terminalPalette` с неверной длиной) — вся тема отвергается целиком, окно остаётся при прежних цветах, `roostd` берёт `default` и пишет причину в лог.
 
   | токен | роль | значение по умолчанию |
   |---|---|---|
-  | `terminalForeground` | цвет текста по умолчанию (OSC 10) | `#ffffff` |
-  | `terminalBackground` | фон по умолчанию (OSC 11) | `#000000` |
-  | `terminalCursor` | курсор (OSC 12) | `#ffffff` |
-  | `terminalSelection` | фон выделения | `#ffffff` |
-  | `terminalAnsi` | 16 базовых цветов, ровно 16 значений (индексы 0–15) | палитра libghostty: `#1d1f21 #cc6666 #b5bd68 #f0c674 #81a2be #b294bb #8abeb7 #c5c8c6 #666666 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea` |
+  | `terminalForeground` | цвет текста по умолчанию (OSC 10) | `#4d4d4c` |
+  | `terminalBackground` | фон по умолчанию (OSC 11) | `#ffffff` |
+  | `terminalCursor` | курсор (OSC 12) | `#4d4d4c` |
+  | `terminalSelection` | фон выделения | `#d6d6d6` |
+  | `terminalAnsi` | 16 базовых цветов, ровно 16 значений (индексы 0–15) | Tomorrow: `#000000 #c82829 #718c00 #f5871f #4271ae #8959a8 #3e999f #d6d6d6 #666666 #ff3334 #9ec400 #eab700 #4271ae #b777e0 #54ced6 #efefef` |
   | `terminalPalette` | необязательно: вся палитра, ровно 256 значений; `terminalAnsi` ложится поверх индексов 0–15 | нет: индексы 16–231 — куб xterm (уровни 0, 95, 135, 175, 215, 255), 232–255 — серые `8 + 10·i` |
 
-  Значения по умолчанию воспроизводят вид до этого шага (белый на чёрном, палитра libghostty). Текст выделенной ячейки не токен: это тот из `terminalForeground` и `terminalBackground`, у кого выше контраст (WCAG) с `terminalSelection`. С дефолтом выделение — белый фон и чёрный текст, то есть прежняя смена местами цветов текста и фона.
+  Значения по умолчанию — светлая палитра Tomorrow (18-style.md). Текст выделенной ячейки не токен: это тот из `terminalForeground` и `terminalBackground`, у кого выше контраст (WCAG) с `terminalSelection`. С дефолтом выделение — серый фон `#d6d6d6` и тёмный текст `#4d4d4c`.
 
   `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: на фоне окна (белом) они читаются, на тёмном фоне панели (`panelBackground`) плагин задаёт свой `palette` из токенов, иначе текст Controls будет чёрным на тёмном. Диалог берёт палитру окна, пока открыт. Цвета терминала задаёт та же тема (токены ниже).
 

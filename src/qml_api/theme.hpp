@@ -29,7 +29,8 @@ namespace roost {
 // theme: terminalFont (the terminals' font) and uiFont (the font of the
 // window), both `font` values. follow() reads settings.terminalFont
 // {family, size} and settings.uiFontSize; what they leave out is the system
-// monospace font at its size of today and the application's default font.
+// monospace font at its size of today and the application's default font. The
+// type scale (titleFont, ... smallFont) is uiFont at a ratio of its size.
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -61,6 +62,44 @@ class Theme : public QObject {
     Q_PROPERTY(QColor stateWorking READ stateWorking NOTIFY changed)
     Q_PROPERTY(QColor stateBlocked READ stateBlocked NOTIFY changed)
     Q_PROPERTY(QColor stateFailed READ stateFailed NOTIFY changed)
+    // The light style (docs/design/18-style.md). The canvas lies behind the
+    // cards, the surface is a card, the line is the hairline around a card and
+    // between the parts of one.
+    Q_PROPERTY(QColor canvas READ canvas NOTIFY changed)
+    Q_PROPERTY(QColor surface READ surface NOTIFY changed)
+    Q_PROPERTY(QColor line READ line NOTIFY changed)
+    // A selected row, a chosen filter, a hovered item of a list.
+    Q_PROPERTY(QColor selectedBackground READ selectedBackground NOTIFY changed)
+    Q_PROPERTY(QColor hoverBackground READ hoverBackground NOTIFY changed)
+    // The focus ring, and the colour of what asks for attention (a waiting
+    // session).
+    Q_PROPERTY(QColor focus READ focus NOTIFY changed)
+    Q_PROPERTY(QColor attention READ attention NOTIFY changed)
+    // The primary button: normal, hovered, and its text.
+    Q_PROPERTY(QColor primary READ primary NOTIFY changed)
+    Q_PROPERTY(QColor primaryHover READ primaryHover NOTIFY changed)
+    Q_PROPERTY(QColor primaryText READ primaryText NOTIFY changed)
+    // Sizes in logical pixels: the radii, the spaces of the window and of a
+    // list, the rings of the focus. Constants of the style, not of a theme.
+    Q_PROPERTY(int radiusCard READ radiusCard CONSTANT)
+    Q_PROPERTY(int radiusControl READ radiusControl CONSTANT)
+    Q_PROPERTY(int radiusSmall READ radiusSmall CONSTANT)
+    Q_PROPERTY(int windowMargin READ windowMargin CONSTANT)
+    Q_PROPERTY(int panelGap READ panelGap CONSTANT)
+    Q_PROPERTY(int panelPadding READ panelPadding CONSTANT)
+    Q_PROPERTY(int rowHeight READ rowHeight CONSTANT)
+    Q_PROPERTY(int rowGap READ rowGap CONSTANT)
+    Q_PROPERTY(int focusRingWidth READ focusRingWidth CONSTANT)
+    Q_PROPERTY(int cursorRingWidth READ cursorRingWidth CONSTANT)
+    // The type scale: uiFont at a ratio of its size (and at a weight), so it
+    // follows settings.uiFontSize like uiFont. The title of a panel, the title
+    // of the terminal, a row and a button, the meta line and the filters, the
+    // small meta line.
+    Q_PROPERTY(QFont titleFont READ titleFont NOTIFY changed)
+    Q_PROPERTY(QFont headingFont READ headingFont NOTIFY changed)
+    Q_PROPERTY(QFont rowFont READ rowFont NOTIFY changed)
+    Q_PROPERTY(QFont metaFont READ metaFont NOTIFY changed)
+    Q_PROPERTY(QFont smallFont READ smallFont NOTIFY changed)
     // The font of the terminals; the default is DefaultTerminalFont().
     Q_PROPERTY(QFont terminalFont READ terminalFont NOTIFY changed)
     // The font of the window: the application's default font, at the size of
@@ -134,6 +173,31 @@ public:
     QColor stateWorking() const { return StateWorking_; }
     QColor stateBlocked() const { return StateBlocked_; }
     QColor stateFailed() const { return StateFailed_; }
+    QColor canvas() const { return Canvas_; }
+    QColor surface() const { return Surface_; }
+    QColor line() const { return Line_; }
+    QColor selectedBackground() const { return SelectedBackground_; }
+    QColor hoverBackground() const { return HoverBackground_; }
+    QColor focus() const { return Focus_; }
+    QColor attention() const { return Attention_; }
+    QColor primary() const { return Primary_; }
+    QColor primaryHover() const { return PrimaryHover_; }
+    QColor primaryText() const { return PrimaryText_; }
+    static constexpr int radiusCard() { return 12; }
+    static constexpr int radiusControl() { return 6; }
+    static constexpr int radiusSmall() { return 5; }
+    static constexpr int windowMargin() { return 16; }
+    static constexpr int panelGap() { return 12; }
+    static constexpr int panelPadding() { return 16; }
+    static constexpr int rowHeight() { return 56; }
+    static constexpr int rowGap() { return 3; }
+    static constexpr int focusRingWidth() { return 3; }
+    static constexpr int cursorRingWidth() { return 2; }
+    QFont titleFont() const;
+    QFont headingFont() const;
+    QFont rowFont() const;
+    QFont metaFont() const;
+    QFont smallFont() const;
     QFont terminalFont() const { return TerminalFont_; }
     QFont uiFont() const { return UiFont_; }
     QStringList fontProblems() const { return FontProblems_; }
@@ -171,6 +235,16 @@ private:
     QColor StateWorking_;
     QColor StateBlocked_;
     QColor StateFailed_;
+    QColor Canvas_;
+    QColor Surface_;
+    QColor Line_;
+    QColor SelectedBackground_;
+    QColor HoverBackground_;
+    QColor Focus_;
+    QColor Attention_;
+    QColor Primary_;
+    QColor PrimaryHover_;
+    QColor PrimaryText_;
     QVariantList Categories_;
     QColor BannerBackground_;
     QColor BannerRefusedBackground_;
