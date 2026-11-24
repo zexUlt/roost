@@ -3,8 +3,10 @@ import QtQuick.Controls
 import Roost.Api
 
 // The panel terminal.view: the session chosen in the list, shown in a
-// TerminalItem. The shell writes `session`; the item opens it and reports how
-// it stands. Enter reopens a session that ended or failed to open.
+// TerminalItem under a head (76 high) with the session's title and meta line
+// and the buttons "Lists" and "Commands". The shell writes `session`; the item
+// opens it and reports how it stands. Enter reopens a session that ended or
+// failed to open.
 FocusScope {
     id: root
 
@@ -30,7 +32,69 @@ FocusScope {
 
     property bool reopenWanted: false
     property int reopenWaitMs: 10000
-    onSessionChanged: reopenWanted = false
+    onSessionChanged: {
+        reopenWanted = false;
+        refreshInfo();
+    }
+
+    // {title, cwd, state} of the shown session in Roost.sessions, or null when
+    // it is not listed (yet) or the window has no API; the roles are the fields
+    // of sessions.list in order: agent, id, title, cwd, state.
+    property var info: null
+
+    function refreshInfo() {
+        let found = null;
+        if (session && Roost.sessions !== null) {
+            const count = Roost.sessions.rowCount();
+            for (let row = 0; row < count; ++row) {
+                const at = Roost.sessions.index(row, 0);
+                if (Roost.sessions.data(at, Qt.UserRole) === session.agent && Roost.sessions.data(at, Qt.UserRole + 1) === session.id) {
+                    found = {
+                        "title": Roost.sessions.data(at, Qt.UserRole + 2),
+                        "cwd": Roost.sessions.data(at, Qt.UserRole + 3),
+                        "state": Roost.sessions.data(at, Qt.UserRole + 4)
+                    };
+                    break;
+                }
+            }
+        }
+        info = found;
+    }
+
+    // The head: the title the list shows for the session (its id, if it has
+    // none), or the placeholder without a session.
+    readonly property string headTitle: {
+        if (!session) {
+            return "No session";
+        }
+        return info && info.title ? info.title : session.id;
+    }
+
+    // `state · cwd`, as the row of the list; empty without a listed session.
+    readonly property string headMeta: {
+        if (!session || !info) {
+            return "";
+        }
+        const state = info.state === "blocked" || info.state === "needs_input" ? "waiting" : info.state;
+        return [state, info.cwd].filter(part => part).join(" · ");
+    }
+
+    Connections {
+        target: Roost.sessions
+
+        function onModelReset() {
+            root.refreshInfo();
+        }
+        function onRowsInserted() {
+            root.refreshInfo();
+        }
+        function onRowsRemoved() {
+            root.refreshInfo();
+        }
+        function onDataChanged() {
+            root.refreshInfo();
+        }
+    }
 
     // The command terminal.copy (declared by the manifest of the plugin
     // `shell`, which gives it Cmd+C and Ctrl+Shift+C in this panel) copies the
@@ -43,13 +107,122 @@ FocusScope {
         if (Roost.commands !== null) {
             Roost.commands.registerCommand("terminal.copy", () => terminal.copy());
         }
+        refreshInfo();
+    }
+
+    // The head, on the card: title and meta on the left, the quiet buttons on
+    // the right. The buttons take no focus, so a click leaves the keyboard in
+    // the terminal (as the buttons of the tab bar, TabNode.qml).
+    Rectangle {
+        id: head
+
+        objectName: "terminalHead"
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 76
+        color: Roost.theme.surface
+
+        Column {
+            id: heading
+
+            anchors.left: parent.left
+            anchors.leftMargin: 20
+            anchors.right: buttons.left
+            anchors.rightMargin: Roost.theme.panelPadding
+            anchors.verticalCenter: parent.verticalCenter
+
+            Text {
+                objectName: "terminalTitle"
+                width: parent.width
+                text: root.headTitle
+                font: Roost.theme.headingFont
+                color: Roost.theme.text
+                elide: Text.ElideRight
+            }
+
+            Text {
+                objectName: "terminalMeta"
+                width: parent.width
+                visible: text !== ""
+                text: root.headMeta
+                font: Roost.theme.metaFont
+                color: Roost.theme.textSecondary
+                elide: Text.ElideRight
+            }
+        }
+
+        Row {
+            id: buttons
+
+            anchors.right: parent.right
+            anchors.rightMargin: Roost.theme.panelPadding
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 8
+
+            HeadButton {
+                objectName: "listsButton"
+                text: "Lists"
+                tip: "Show or hide the session lists"
+                onClicked: root.runCommand("layout.toggleLists")
+            }
+
+            HeadButton {
+                objectName: "commandsButton"
+                text: "Commands"
+                tip: "Open the command palette"
+                onClicked: root.runCommand("shell.palette")
+            }
+        }
+    }
+
+    function runCommand(command) {
+        if (Roost.commands !== null) {
+            Roost.commands.run(command);
+        }
+    }
+
+    // A quiet button of the head: no fill, `hoverBackground` under the mouse,
+    // 34 high, `radiusControl`. Not FormButton of the shell: a plugin does not
+    // import it, and it takes the focus.
+    component HeadButton: Button {
+        id: control
+
+        property string tip: ""
+
+        implicitHeight: 34
+        leftPadding: 12
+        rightPadding: 12
+        focusPolicy: Qt.NoFocus
+        font: Roost.theme.rowFont
+        ToolTip.visible: hovered && tip !== ""
+        ToolTip.text: tip
+        ToolTip.delay: 600
+
+        contentItem: Text {
+            text: control.text
+            font: control.font
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            color: control.hovered ? Roost.theme.text : Roost.theme.textSecondary
+        }
+
+        background: Rectangle {
+            implicitWidth: 64
+            radius: Roost.theme.radiusControl
+            color: control.hovered || control.down ? Roost.theme.hoverBackground : "transparent"
+        }
     }
 
     TerminalItem {
         id: terminal
 
         objectName: "terminal"
-        anchors.fill: parent
+        anchors.top: head.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         // The cells are square: off the rounded corners of the card, where
         // the square lies inside the arc of radiusCard (and its line).
         anchors.margins: Roost.theme.cornerInset
@@ -97,7 +270,10 @@ FocusScope {
 
     Label {
         objectName: "terminalStatus"
-        anchors.fill: parent
+        anchors.top: head.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         anchors.margins: 12
         visible: text !== ""
         color: Roost.theme.textMuted
