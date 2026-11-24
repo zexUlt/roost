@@ -20,6 +20,7 @@
 
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 #include "roost/layout_commands.hpp"
 #include "terminal/session_pane.hpp"
 
@@ -304,6 +305,7 @@ private:
         QVERIFY(box != nullptr);
         box->forceActiveFocus();
         QTRY_VERIFY_WITH_TIMEOUT(box->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(SaveSnapshot(Window(), "link-editor"));
     }
 
     // The key that moves the box of the session input to the other entry.

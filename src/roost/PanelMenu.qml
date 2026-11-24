@@ -6,7 +6,7 @@ import Roost.Api
 // `layout.*`, on the panel it was opened on. It is opened by a right click
 // that reaches the PanelSlot (see there), and does nothing itself: every item
 // asks the layout view for an edit, which the shell applies.
-Menu {
+RoostMenu {
     id: root
 
     // The layout view that applies the edits.
@@ -35,19 +35,19 @@ Menu {
 
     objectName: "panelMenu"
 
-    MenuItem {
+    MenuRow {
         objectName: "menuSplitRight"
         text: "Split right"
         onTriggered: root.run("splitRight", {})
     }
 
-    MenuItem {
+    MenuRow {
         objectName: "menuSplitDown"
         text: "Split down"
         onTriggered: root.run("splitDown", {})
     }
 
-    Menu {
+    RoostMenu {
         id: splitWith
 
         objectName: "menuSplitWith"
@@ -57,7 +57,7 @@ Menu {
         Instantiator {
             model: root.panelTypes.length * 2
 
-            delegate: MenuItem {
+            delegate: MenuRow {
                 required property int index
 
                 readonly property string type: root.panelTypes[Math.floor(index / 2)]
@@ -74,32 +74,48 @@ Menu {
         }
     }
 
-    MenuSeparator {}
+    MenuSeparator {
+        padding: 4
+        topPadding: 4
+        bottomPadding: 4
+        contentItem: Rectangle {
+            implicitHeight: 1
+            color: Roost.theme.line
+        }
+    }
 
-    MenuItem {
+    MenuRow {
         objectName: "menuIntoTabs"
         text: "Move into tabs"
         enabled: root.info.canIntoTabs
         onTriggered: root.run("intoTabs", {})
     }
 
-    MenuItem {
+    MenuRow {
         objectName: "menuOutOfTabs"
         text: "Move out of tabs"
         enabled: root.info.inTabs
         onTriggered: root.run("outOfTabs", {})
     }
 
-    MenuItem {
+    MenuRow {
         objectName: "menuEditLinks"
         text: "Edit links…"
         enabled: root.info.hasInputs
         onTriggered: root.run("editLinks", {})
     }
 
-    MenuSeparator {}
+    MenuSeparator {
+        padding: 4
+        topPadding: 4
+        bottomPadding: 4
+        contentItem: Rectangle {
+            implicitHeight: 1
+            color: Roost.theme.line
+        }
+    }
 
-    MenuItem {
+    MenuRow {
         objectName: "menuClose"
         text: "Close"
         enabled: root.info.canClose

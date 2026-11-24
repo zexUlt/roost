@@ -28,6 +28,7 @@
 #include "api/api_test_support.hpp"
 #include "helpers/roostd_process.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/controls_style.hpp"
 #include "roost/plugin_loader.hpp"
@@ -317,6 +318,21 @@ private slots:
         QVERIFY(field->parentItem()->parentItem() != nullptr);
         QVERIFY(section->height() > field->height());
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
+    }
+
+    // The window with a field in the keyboard, the plugin's section and the
+    // keys; saved as a picture when ROOST_TEST_SNAPSHOTS asks for it.
+    void TheFilledWindowCanBeSaved() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
+                                 TIMEOUT_MS);
+        QQuickItem* field = window->Find("terminalSizeField");
+        QVERIFY(field != nullptr);
+        field->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(field->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "settings"));
     }
 
     void APluginWithoutAPageHasNoSection() {

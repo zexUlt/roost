@@ -124,7 +124,7 @@ ApplicationWindow {
     visible: false
     // A window of its own, not a sheet of the main one.
     transientParent: null
-    color: Roost.theme.windowBackground
+    color: Roost.theme.canvas
     font: Roost.theme.uiFont
 
     palette {
@@ -218,8 +218,12 @@ ApplicationWindow {
         }
     }
 
+    // What the ring of a focused control takes outside of it: the gap and the
+    // ring (docs/design/18-style.md). The scroll area leaves it free.
+    readonly property int ringSpace: 2 + Roost.theme.cursorRingWidth
+
     component SectionTitle: Label {
-        font.bold: true
+        font: Roost.theme.titleFont
         Layout.topMargin: 8
     }
 
@@ -236,13 +240,23 @@ ApplicationWindow {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: Roost.theme.windowMargin
+        radius: Roost.theme.radiusCard
+        color: Roost.theme.surface
+        border.width: 1
+        border.color: Roost.theme.line
+    }
+
     ScrollView {
         anchors.fill: parent
-        anchors.margins: 16
+        anchors.margins: Roost.theme.windowMargin + Roost.theme.panelPadding
         contentWidth: availableWidth
 
         ColumnLayout {
-            width: parent.width
+            x: root.ringSpace
+            width: parent.width - 2 * root.ringSpace
             spacing: 8
 
             SectionTitle {
@@ -252,7 +266,7 @@ ApplicationWindow {
             FieldRow {
                 label: "Theme"
 
-                ComboBox {
+                FormComboBox {
                     id: themeBox
 
                     objectName: "themeBox"
@@ -267,7 +281,7 @@ ApplicationWindow {
             FieldRow {
                 label: "Terminal font"
 
-                TextField {
+                FormField {
                     id: terminalFamilyField
 
                     function shown() {
@@ -289,7 +303,7 @@ ApplicationWindow {
             FieldRow {
                 label: "Terminal font size"
 
-                TextField {
+                FormField {
                     id: terminalSizeField
 
                     function shown() {
@@ -313,7 +327,7 @@ ApplicationWindow {
             FieldRow {
                 label: "Interface font size"
 
-                TextField {
+                FormField {
                     id: uiSizeField
 
                     function shown() {
@@ -346,6 +360,13 @@ ApplicationWindow {
                     // The default until the document is read; showDocument()
                     // sets it, a binding would not survive a click.
                     checked: true
+                    implicitHeight: 38
+                    background: Rectangle {
+                        radius: Roost.theme.radiusControl
+                        color: "transparent"
+                        border.width: updatesCheckSwitch.visualFocus ? Roost.theme.cursorRingWidth : 0
+                        border.color: Roost.theme.focus
+                    }
                     onToggled: root.patchSettings({
                         "updates": {
                             "check": checked
@@ -430,7 +451,7 @@ ApplicationWindow {
                     text: "Read-only. Edit the file to change keys."
                 }
 
-                Button {
+                FormButton {
                     objectName: "openKeymapButton"
                     text: "Open keymap.json"
                     onClicked: root.openKeymap()

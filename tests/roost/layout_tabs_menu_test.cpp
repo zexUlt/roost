@@ -14,6 +14,7 @@
 
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -89,6 +90,7 @@ private:
         QQuickItem* entry = Root()->findChild<QQuickItem*>(item);
         QVERIFY(entry != nullptr);
         QVERIFY(entry->isEnabled());
+        QVERIFY(SaveSnapshot(Window(), QString("menu-") + item));
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         QTest::mouseClick(
             Window(), Qt::LeftButton, Qt::NoModifier,
