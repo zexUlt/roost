@@ -80,7 +80,7 @@ FocusScope {
     property var forgetPending: []
 
     // The colours come from Roost.theme: the categories by the `colorIndex`
-    // of the model, and the states.
+    // of the model.
     readonly property var categoryColors: Roost.theme.categories
     readonly property color textColor: Roost.theme.text
     readonly property var tabs: [
@@ -97,20 +97,6 @@ FocusScope {
             "label": "Unread"
         }
     ]
-
-    function stateColor(state) {
-        switch (state) {
-        case "working":
-            return Roost.theme.stateWorking;
-        case "blocked":
-        case "needs_input":
-            return Roost.theme.stateBlocked;
-        case "failed":
-            return Roost.theme.stateFailed;
-        default:
-            return textColor;
-        }
-    }
 
     // The text with its control characters (a newline, a tab, the line and
     // paragraph separators) as spaces: a label shows each of them as a break
@@ -934,8 +920,8 @@ FocusScope {
         drainForget();
     }
 
-    // The head: the title and the query, and the tabs with the counts of the
-    // view.
+    // The head: the title and the query, and the filter chips with the counts
+    // of the view.
     Column {
         id: head
 
@@ -943,57 +929,86 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.margins: 8
-        spacing: 4
         // The rows are cut at the panel edge, not drawn over its neighbour.
         clip: true
 
-        Row {
+        Item {
             width: parent.width
-            spacing: 8
+            height: 76
 
             Label {
+                id: title
+
                 objectName: "sessionsTitle"
+                x: 20
+                anchors.verticalCenter: parent.verticalCenter
                 color: root.textColor
-                font.bold: true
+                font: Roost.theme.titleFont
                 text: sessionsList.viewArchive ? "Archive" : "Sessions"
             }
 
             Label {
                 objectName: "sessionsQuery"
                 visible: sessionsList.query !== ""
+                x: title.x + title.width + 8
+                anchors.verticalCenter: parent.verticalCenter
                 // The query takes what the title leaves.
-                width: Math.max(0, parent.width - x)
+                width: Math.max(0, parent.width - x - Roost.theme.panelPadding)
                 elide: Text.ElideRight
                 color: Roost.theme.textSecondary
+                font: Roost.theme.metaFont
                 text: "/ " + sessionsList.query
             }
         }
 
-        Row {
-            width: parent.width
-            spacing: 12
+        // The chips and the open title set family, size and weight one by one:
+        // a `font:` binding cannot be combined with `font.weight:` on one item,
+        // and a Control around them would take the right button that goes to
+        // the menu of the panel.
+        Item {
+            x: Roost.theme.panelPadding
+            implicitWidth: chips.implicitWidth
+            implicitHeight: 32
 
-            Repeater {
-                model: root.tabs
+            Row {
+                id: chips
 
-                // A tap on a tab selects it.
-                delegate: Label {
-                    id: tab
+                spacing: 3
 
-                    required property var modelData
-                    readonly property bool current: sessionsList.tab === modelData.name
+                Repeater {
+                    model: root.tabs
 
-                    objectName: "sessionsTab"
-                    color: current ? Roost.theme.textStrong : Roost.theme.textMuted
-                    font.bold: current
-                    font.underline: current
-                    text: modelData.label + " " + (sessionsList.counts[modelData.name] ?? 0)
+                    // A filter chip; a tap on it selects the tab.
+                    delegate: Label {
+                        id: tab
 
-                    TapHandler {
-                        onTapped: {
-                            sessionsList.tab = tab.modelData.name;
-                            list.forceActiveFocus();
+                        required property var modelData
+                        readonly property bool current: sessionsList.tab === modelData.name
+
+                        objectName: "sessionsTab"
+                        height: 32
+                        leftPadding: 7
+                        rightPadding: 7
+                        verticalAlignment: Text.AlignVCenter
+                        color: current ? Roost.theme.focus : Roost.theme.textSecondary
+                        font.family: Roost.theme.metaFont.family
+                        font.pointSize: Roost.theme.metaFont.pointSize
+                        font.weight: current ? Font.DemiBold : Roost.theme.metaFont.weight
+                        text: modelData.label + " " + (sessionsList.counts[modelData.name] ?? 0)
+                        background: Rectangle {
+                            radius: Roost.theme.radiusSmall
+                            color: tab.current ? Roost.theme.selectedBackground : tabHover.hovered ? Roost.theme.hoverBackground : "transparent"
+                        }
+
+                        HoverHandler {
+                            id: tabHover
+                        }
+
+                        TapHandler {
+                            onTapped: {
+                                sessionsList.tab = tab.modelData.name;
+                                list.forceActiveFocus();
+                            }
                         }
                     }
                 }
@@ -1007,18 +1022,21 @@ FocusScope {
         objectName: "sessionList"
         anchors.left: parent.left
         anchors.right: parent.right
+        anchors.leftMargin: Roost.theme.panelPadding
+        anchors.rightMargin: Roost.theme.panelPadding
         anchors.top: head.bottom
-        anchors.topMargin: 6
+        anchors.topMargin: 8
         // The list ends above the list of unavailable agents, and above the
         // footer.
         anchors.bottom: unavailable.visible ? unavailable.top : footer.top
         focus: true
         clip: true
         model: sessionsList
+        spacing: Roost.theme.rowGap
         highlightMoveDuration: 0
-        highlight: Rectangle {
-            color: list.activeFocus ? Roost.theme.cursorFocused : Roost.theme.cursorUnfocused
-        }
+        // The cursor is drawn by the delegate, which combines it with the
+        // other signs of its row; the view only keeps the row in sight.
+        highlight: null
 
         // The model owns the cursor: whatever the view does to its index
         // (rows inserted, removed) is put back.
@@ -1082,47 +1100,89 @@ FocusScope {
                 "agent": model.agent,
                 "id": model.id
             })
+            // The signs of a row (docs/design/18-style.md), each on its own:
+            // the cursor, an unread session, a session that waits.
+            readonly property bool isCursor: index === list.currentIndex
+            readonly property bool isUnread: !isHeader && model.unread
+            readonly property bool isWaiting: !isHeader && (model.state === "blocked" || model.state === "needs_input")
             // The second line of a session; in the compact view only under the
             // cursor.
             readonly property bool showsDetail: !isHeader && (!sessionsList.compact || index === sessionsList.cursorRow)
 
             width: ListView.view.width
-            height: isHeader ? headerText.implicitHeight + 8 : titleText.implicitHeight + (showsDetail ? detailText.implicitHeight : 0) + 12
+            height: isHeader ? 34 : Roost.theme.rowHeight
 
-            // The open session: a tint over the row and a bar at its edge.
+            // The ground of the row: the open one is `selectedBackground`
+            // whether the cursor is on it or not; the cursor is the focused or
+            // unfocused tone of the list; a row under the mouse is lighter.
             Rectangle {
-                objectName: "openTint"
-                visible: row.isOpen
+                objectName: "rowBackground"
                 anchors.fill: parent
-                color: Roost.theme.accentTint
+                radius: Roost.theme.radiusControl
+                color: row.isOpen ? Roost.theme.selectedBackground : row.isCursor ? (list.activeFocus ? Roost.theme.cursorFocused : Roost.theme.cursorUnfocused) : rowHover.hovered && !row.isHeader ? Roost.theme.hoverBackground : "transparent"
             }
 
+            HoverHandler {
+                id: rowHover
+            }
+
+            // The open session: a bar at the left edge, moved right of the
+            // ring when the cursor is on the row.
             Rectangle {
+                objectName: "openBar"
                 visible: row.isOpen
+                x: row.isCursor ? 4 : 1
+                y: 15
                 width: 3
-                height: parent.height
+                height: parent.height - 30
+                radius: 2
                 color: Roost.theme.accent
             }
 
-            // A header: the category ("Uncategorized" for none) in its colour,
-            // the number of its sessions, and a mark of a folded one; at the
-            // right the marks of a pinned category and of the unread sessions
-            // of a folded one.
+            // The cursor: a ring inside the row, only while the list has the
+            // keyboard focus.
+            Rectangle {
+                objectName: "cursorRing"
+                visible: row.isCursor && list.activeFocus
+                anchors.fill: parent
+                radius: Roost.theme.radiusControl
+                color: "transparent"
+                border.width: Roost.theme.cursorRingWidth
+                border.color: Roost.theme.focus
+            }
+
+            // A header: the folded or unfolded mark and the category
+            // ("Uncategorized" for none), the mark of its colour after the
+            // name, and at the right the marks of a pinned category and of the
+            // unread sessions of a folded one, then the number of its
+            // sessions.
             Label {
                 id: headerText
 
                 objectName: "headerTitle"
                 visible: row.isHeader
-                anchors.left: parent.left
-                anchors.right: marks.left
+                x: 12
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: 10
-                anchors.rightMargin: 8
+                width: Math.min(implicitWidth, Math.max(0, marks.x - 8 - x - (categoryMark.visible ? categoryMark.width + 6 : 0)))
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                color: row.isHeader && row.model.colorIndex >= 0 ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : Roost.theme.textSecondary
-                font.bold: true
-                text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : root.oneLine(row.model.category)) + " · " + row.model.count : ""
+                color: Roost.theme.textSecondary
+                font: Roost.theme.metaFont
+                text: row.isHeader ? (row.model.folded ? "▸ " : "▾ ") + (row.model.category === "" ? "Uncategorized" : root.oneLine(row.model.category)) : ""
+            }
+
+            // The colour of the category, a dot next to its name.
+            Rectangle {
+                id: categoryMark
+
+                objectName: "categoryMark"
+                visible: row.isHeader && row.model.colorIndex >= 0
+                x: headerText.x + headerText.width + 6
+                anchors.verticalCenter: parent.verticalCenter
+                width: 8
+                height: 8
+                radius: 4
+                color: visible ? root.categoryColors[row.model.colorIndex % root.categoryColors.length] : "transparent"
             }
 
             Row {
@@ -1130,7 +1190,7 @@ FocusScope {
 
                 visible: row.isHeader
                 anchors.right: parent.right
-                anchors.rightMargin: 8
+                anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 8
 
@@ -1138,6 +1198,7 @@ FocusScope {
                     objectName: "pinMark"
                     visible: row.isHeader && row.model.pinned
                     color: Roost.theme.textSecondary
+                    font: Roost.theme.metaFont
                     text: "▲"
                 }
 
@@ -1145,17 +1206,35 @@ FocusScope {
                     objectName: "headerUnread"
                     visible: row.isHeader && row.model.folded && row.model.unreadCount > 0
                     color: Roost.theme.accent
+                    font: Roost.theme.metaFont
                     text: row.isHeader ? "● " + row.model.unreadCount : ""
+                }
+
+                // The digits of one width, so that the counts line up.
+                Label {
+                    objectName: "headerCount"
+                    color: Roost.theme.textSecondary
+                    font.family: Roost.theme.metaFont.family
+                    font.pointSize: Roost.theme.metaFont.pointSize
+                    font.weight: Roost.theme.metaFont.weight
+                    font.features: {
+                        "tnum": 1
+                    }
+                    text: row.isHeader ? String(row.model.count) : ""
                 }
             }
 
-            Label {
+            // Unread: a dot at the right edge of the row.
+            Rectangle {
                 objectName: "unreadDot"
-                visible: !row.isHeader && row.model.unread
-                x: 10
-                y: 6
+                visible: row.isUnread
+                anchors.right: parent.right
+                anchors.rightMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                width: 6
+                height: 6
+                radius: 3
                 color: Roost.theme.accent
-                text: "●"
             }
 
             // The icon of the agent of the session, at the left of the title
@@ -1170,8 +1249,8 @@ FocusScope {
 
                 objectName: "agentIcon"
                 visible: !row.isHeader
-                x: 26
-                y: Math.round(6 + (titleText.implicitHeight - height) / 2)
+                x: 12
+                y: Math.round(lines.y + (titleText.implicitHeight - height) / 2)
                 width: 16
                 height: 16
                 fillMode: Image.PreserveAspectFit
@@ -1185,12 +1264,17 @@ FocusScope {
                 }
             }
 
+            // The title and the second line, centred in the row.
             Column {
+                id: lines
+
                 visible: !row.isHeader
-                anchors.fill: parent
-                anchors.leftMargin: 48
-                anchors.rightMargin: 8
-                anchors.topMargin: 6
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 36
+                // The dot of an unread session keeps its own place.
+                anchors.rightMargin: row.isUnread ? 26 : 12
+                anchors.verticalCenter: parent.verticalCenter
 
                 Label {
                     id: titleText
@@ -1199,8 +1283,10 @@ FocusScope {
                     textFormat: Text.PlainText
                     width: parent.width
                     elide: Text.ElideRight
-                    color: row.isHeader ? root.textColor : (row.isOpen || row.index === list.currentIndex ? Roost.theme.textStrong : root.stateColor(row.model.state))
-                    font.bold: row.isOpen
+                    color: row.isOpen ? Roost.theme.accent : Roost.theme.text
+                    font.family: Roost.theme.rowFont.family
+                    font.pointSize: Roost.theme.rowFont.pointSize
+                    font.weight: row.isOpen ? Font.DemiBold : Roost.theme.rowFont.weight
                     text: row.isHeader ? "" : root.oneLine(row.model.title)
                 }
 
@@ -1212,8 +1298,8 @@ FocusScope {
                     width: parent.width
                     visible: row.showsDetail
                     elide: Text.ElideMiddle
-                    color: Roost.theme.textMuted
-                    font.pixelSize: titleText.font.pixelSize * 0.85
+                    color: row.isWaiting ? Roost.theme.attention : Roost.theme.textSecondary
+                    font: Roost.theme.smallFont
                     text: row.isHeader ? "" : root.oneLine(root.stateWord(row.model.state) + " · " + row.model.cwd)
                 }
             }
@@ -1264,9 +1350,10 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: footer.top
-        anchors.margins: 8
+        anchors.margins: Roost.theme.panelPadding
         visible: text !== ""
         color: Roost.theme.warning
+        font: Roost.theme.metaFont
         wrapMode: Text.Wrap
         text: Roost.sessions.unavailable.map(entry => entry.agent + ": " + entry.reason).join("\n")
     }
@@ -1288,11 +1375,12 @@ FocusScope {
         Label {
             objectName: "sessionsProblem"
             width: parent.width
-            leftPadding: 8
-            rightPadding: 8
+            leftPadding: Roost.theme.panelPadding
+            rightPadding: Roost.theme.panelPadding
             bottomPadding: 4
             visible: text !== ""
             color: sessionsList.readOnly ? Roost.theme.error : Roost.theme.warning
+            font: Roost.theme.metaFont
             wrapMode: Text.Wrap
             text: sessionsList.problem
         }
@@ -1302,11 +1390,12 @@ FocusScope {
             objectName: "sessionsConfirm"
             textFormat: Text.PlainText
             width: parent.width
-            leftPadding: 8
-            rightPadding: 8
+            leftPadding: Roost.theme.panelPadding
+            rightPadding: Roost.theme.panelPadding
             bottomPadding: 4
             visible: root.confirm !== null
-            color: Roost.theme.textStrong
+            color: Roost.theme.text
+            font: Roost.theme.rowFont
             wrapMode: Text.Wrap
             text: root.confirm === null ? "" : root.confirm.text
         }
@@ -1330,9 +1419,10 @@ FocusScope {
 
                     objectName: "sessionsPromptLabel"
                     anchors.left: parent.left
-                    anchors.leftMargin: 8
+                    anchors.leftMargin: Roost.theme.panelPadding
                     anchors.verticalCenter: parent.verticalCenter
                     color: Roost.theme.textSecondary
+                    font: Roost.theme.rowFont
                     text: root.promptLabels[root.promptKind] ?? ""
                 }
 
@@ -1343,7 +1433,7 @@ FocusScope {
                     anchors.left: promptLabel.right
                     anchors.leftMargin: 6
                     anchors.right: parent.right
-                    anchors.rightMargin: 8
+                    anchors.rightMargin: Roost.theme.panelPadding
                     anchors.verticalCenter: parent.verticalCenter
                     clip: true
                     // A TextInput does not inherit the font of the window; the
@@ -1396,10 +1486,11 @@ FocusScope {
             Label {
                 objectName: "sessionsPromptHint"
                 width: parent.width
-                leftPadding: 8
-                rightPadding: 8
+                leftPadding: Roost.theme.panelPadding
+                rightPadding: Roost.theme.panelPadding
                 visible: root.promptPicksCategory && promptInput.text === "" && sessionsList.knownCategories.length > 0
                 color: Roost.theme.textMuted
+                font: Roost.theme.metaFont
                 elide: Text.ElideRight
                 text: sessionsList.knownCategories.slice(0, 9).map((name, i) => (i + 1) + " " + name).join("   ")
             }
@@ -1410,11 +1501,12 @@ FocusScope {
             objectName: "sessionsNotice"
             textFormat: Text.PlainText
             width: parent.width
-            leftPadding: 8
-            rightPadding: 8
+            leftPadding: Roost.theme.panelPadding
+            rightPadding: Roost.theme.panelPadding
             bottomPadding: 4
             visible: root.notice !== ""
             color: Roost.theme.textSecondary
+            font: Roost.theme.metaFont
             wrapMode: Text.Wrap
             text: root.notice
         }

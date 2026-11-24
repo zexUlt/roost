@@ -581,18 +581,26 @@ private slots:
         QVERIFY(InRow(ViewRowOf(GAMMA), "unreadDot")->isVisible());
         QVERIFY(!Role(ViewRowOf(ALPHA), "unread").toBool());
         QVERIFY(!InRow(ViewRowOf(ALPHA), "unreadDot")->isVisible());
-        // The title takes the colour of the state; a session that is done keeps
-        // the text colour. The row under the cursor (BETA) is in the strong
-        // text colour.
+        // The state does not colour the title: every row has the text colour
+        // (none is open), and a session that waits has its second line in the
+        // colour of attention, the others in the secondary colour.
         const auto titleColor = [this](const QString& id) {
             return InRow(ViewRowOf(id), "sessionTitle")
                 ->property("color")
                 .value<QColor>();
         };
         QCOMPARE(CursorId(), BETA);
-        QCOMPARE(titleColor(ALPHA), QColor("#2b7a3b"));
+        QCOMPARE(titleColor(ALPHA), QColor("#18232e"));
         QCOMPARE(titleColor(BETA), QColor("#18232e"));
         QCOMPARE(titleColor(GAMMA), QColor("#18232e"));
+        const auto detailColor = [this](const QString& id) {
+            return InRow(ViewRowOf(id), "sessionDetail")
+                ->property("color")
+                .value<QColor>();
+        };
+        QCOMPARE(detailColor(BETA), QColor("#8b500b"));
+        QCOMPARE(detailColor(ALPHA), QColor("#5a6a7a"));
+        QCOMPARE(detailColor(GAMMA), QColor("#5a6a7a"));
         // A blocked session says it waits.
         QCOMPARE(InRow(ViewRowOf(BETA), "sessionDetail")
                      ->property("text")
@@ -618,7 +626,11 @@ private slots:
         // The header of the category is the row before its session.
         const int ops = ViewRowOf(GAMMA) - 1;
         QCOMPARE(Role(ops, "category").toString(), QString("Ops"));
+        // The name is secondary; the colour of the category is the dot.
         QCOMPARE(InRow(ops, "headerTitle")->property("color").value<QColor>(),
+                 QColor("#5a6a7a"));
+        QVERIFY(InRow(ops, "categoryMark")->isVisible());
+        QCOMPARE(InRow(ops, "categoryMark")->property("color").value<QColor>(),
                  QColor("#008700"));
         // An unfolded header shows no count of unread.
         QVERIFY(!InRow(ops, "headerUnread")->isVisible());
@@ -637,6 +649,7 @@ private slots:
         QCOMPARE(Role(none, "category").toString(), QString());
         QCOMPARE(InRow(none, "headerTitle")->property("color").value<QColor>(),
                  QColor("#5a6a7a"));
+        QVERIFY(!InRow(none, "categoryMark")->isVisible());
     }
 
     void AListThatCannotBeWrittenShowsItsProblem() {
@@ -664,8 +677,8 @@ private slots:
             return;
         }
         // A window that shows about two rows.
-        Window()->setHeight(130);
-        QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 100, TIMEOUT_MS);
+        Window()->setHeight(300);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 180, TIMEOUT_MS);
 
         for (int i = 0; i < 3; ++i) {
             Press(Qt::Key_J);

@@ -211,20 +211,14 @@ private slots:
             QCOMPARE(Cursor(), cursor);
             QQuickItem* item = RowItem(session);
             QVERIFY(item != nullptr);
-            const QQuickItem* tint = item->findChild<QQuickItem*>("openTint");
-            QVERIFY(tint != nullptr);
-            QCOMPARE(tint->isVisible(), open);
-            QColor ground = panel;
-            if (session == cursor) {
-                const auto* highlight =
-                    ListView()->property("highlightItem").value<QQuickItem*>();
-                QVERIFY(highlight != nullptr);
-                ground =
-                    Over(highlight->property("color").value<QColor>(), ground);
-            }
-            if (open) {
-                ground = Over(tint->property("color").value<QColor>(), ground);
-            }
+            const QQuickItem* bar = item->findChild<QQuickItem*>("openBar");
+            const QQuickItem* rowGround =
+                item->findChild<QQuickItem*>("rowBackground");
+            QVERIFY(bar != nullptr && rowGround != nullptr);
+            QCOMPARE(bar->isVisible(), open);
+            // One rectangle is the ground of the row, whatever signs it has.
+            const QColor ground =
+                Over(rowGround->property("color").value<QColor>(), panel);
             const QColor titleColor =
                 item->findChild<QQuickItem*>("sessionTitle")
                     ->property("color")
@@ -272,17 +266,16 @@ private slots:
             if (QTest::currentTestFailed()) {
                 return;
             }
-            // The state is still to be seen: the title of a row with neither
-            // the tint nor the cursor keeps the colour of its state, and the
-            // state is a word in the second line.
+            // The state does not colour the title: a row with neither the
+            // open sign nor the cursor has the text colour, and the state is
+            // a word in the second line.
             const int plain = session == 0 ? 2 : 0;
             const QColor titleColor =
                 RowItem(plain)
                     ->findChild<QQuickItem*>("sessionTitle")
                     ->property("color")
                     .value<QColor>();
-            QVERIFY2(titleColor != QColor("#ffffff"),
-                     qPrintable(titleColor.name()));
+            QCOMPARE(titleColor, QColor("#18232e"));
             Press(Qt::Key_Up);
             QTRY_COMPARE_WITH_TIMEOUT(Cursor(), session, TIMEOUT_MS);
         }
@@ -1010,7 +1003,10 @@ private slots:
         auto* title = header->findChild<QQuickItem*>("headerTitle");
         QVERIFY(title != nullptr);
         QCOMPARE(title->property("text").toString(),
-                 QString("▾ Uncategorized · 4"));
+                 QString("▾ Uncategorized"));
+        auto* count = header->findChild<QQuickItem*>("headerCount");
+        QVERIFY(count != nullptr);
+        QCOMPARE(count->property("text").toString(), QString("4"));
     }
 
     // The header is one line like a row: a newline of a category is a space.
@@ -1038,7 +1034,7 @@ private slots:
         const auto* odd = ViewItem(0)->findChild<QQuickItem*>("headerTitle");
         const auto* plain = ViewItem(2)->findChild<QQuickItem*>("headerTitle");
         QVERIFY(odd != nullptr && plain != nullptr);
-        QCOMPARE(odd->property("text").toString(), QString("▾ wo rk · 1"));
+        QCOMPARE(odd->property("text").toString(), QString("▾ wo rk"));
         QCOMPARE(odd->property("lineCount").toInt(), 1);
         QCOMPARE(odd->property("height").toDouble(),
                  plain->property("height").toDouble());

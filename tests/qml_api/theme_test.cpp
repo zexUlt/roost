@@ -420,27 +420,28 @@ private slots:
             return ColorOf(InRow(ViewRow(static_cast<int>(Ids().indexOf(id))),
                                  "sessionTitle"));
         };
-        const auto stateColor = [panel](const char* state) {
-            QVariant color;
-            QMetaObject::invokeMethod(panel, "stateColor", qReturnArg(color),
-                                      QVariant(QString(state)));
-            return color.value<QColor>();
+        const auto detailColor = [this](const QString& id) {
+            return ColorOf(InRow(ViewRow(static_cast<int>(Ids().indexOf(id))),
+                                 "sessionDetail"));
         };
         // The header of the sessions with no category.
         const int none = ViewRow(0) - 1;
-        // The row under the cursor (ALPHA) is in the strong text colour.
+        // The state does not colour the title; a session that waits (BETA)
+        // has its second line in the colour of attention.
         QCOMPARE(titleColor(ALPHA), QColor("#18232e"));
-        QCOMPARE(titleColor(BETA), QColor("#8b500b"));
+        QCOMPARE(titleColor(BETA), QColor("#18232e"));
         QCOMPARE(titleColor(GAMMA), QColor("#18232e"));
-        QCOMPARE(stateColor("failed"), QColor("#c0262d"));
+        QCOMPARE(detailColor(BETA), QColor("#8b500b"));
+        QCOMPARE(detailColor(GAMMA), QColor("#5a6a7a"));
         QCOMPARE(ColorOf(InRow(none, "headerTitle")), QColor("#5a6a7a"));
 
         QVERIFY(Singleton_->theme()->load(TestTheme()));
 
-        QCOMPARE(titleColor(ALPHA), Given("textStrong"));
-        QCOMPARE(titleColor(BETA), Given("stateBlocked"));
+        QCOMPARE(titleColor(ALPHA), Given("text"));
+        QCOMPARE(titleColor(BETA), Given("text"));
         QCOMPARE(titleColor(GAMMA), Given("text"));
-        QCOMPARE(stateColor("failed"), Given("stateFailed"));
+        QCOMPARE(detailColor(BETA), Given("attention"));
+        QCOMPARE(detailColor(GAMMA), Given("textSecondary"));
         QCOMPARE(ColorOf(InRow(none, "headerTitle")), Given("textSecondary"));
         QCOMPARE(ColorOf(panel->findChild<QQuickItem*>("sessionsTitle")),
                  Given("text"));
@@ -450,14 +451,15 @@ private slots:
         for (int i = 0; i < 8; ++i) {
             QCOMPARE(categories.at(i).value<QColor>(), TestColor(100 + i));
         }
-        // The current tab is emphasised, the others are muted.
+        // The current chip is in the colour of the focus, the others are
+        // secondary.
         QList<QQuickItem*> tabs;
         Collect(panel, "sessionsTab", tabs);
         QCOMPARE(tabs.size(), 3);
         for (const QQuickItem* tab : tabs) {
             QCOMPARE(ColorOf(tab), tab->property("current").toBool()
-                                       ? Given("textStrong")
-                                       : Given("textMuted"));
+                                       ? Given("focus")
+                                       : Given("textSecondary"));
         }
     }
 };
