@@ -769,7 +769,13 @@ private slots:
         const auto subscription = Api_->Bus().Subscribe(
             "plugin.backendCrashed", Root(),
             [&crashed](const QString&, const QJsonValue& payload) {
-                crashed.append(payload.toObject().value("plugin").toString());
+                // Other plugins of the boot (codex has no backend here) crash
+                // and restart on their own; only the fixture is checked.
+                const QString plugin =
+                    payload.toObject().value("plugin").toString();
+                if (plugin == "fixture") {
+                    crashed.append(plugin);
+                }
             });
         QVERIFY(subscription.has_value());
         QVERIFY(!Api_->Commands().HasLocal("fixture.crash"));
@@ -834,7 +840,13 @@ private slots:
         const auto subscription = Api_->Bus().Subscribe(
             "plugin.backendCrashed", Root(),
             [&crashed](const QString&, const QJsonValue& payload) {
-                crashed.append(payload.toObject().value("plugin").toString());
+                // Other plugins of the boot (codex has no backend here) crash
+                // and restart on their own; only the fixture is checked.
+                const QString plugin =
+                    payload.toObject().value("plugin").toString();
+                if (plugin == "fixture") {
+                    crashed.append(plugin);
+                }
             });
         QVERIFY(subscription.has_value());
         OpenByKey();
@@ -1050,7 +1062,8 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), rows - 1);
         QVERIFY2(CurrentRowProblem().isEmpty(),
                  qPrintable(CurrentRowProblem()));
-        QVERIFY(list->property("contentY").toReal() > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(list->property("contentY").toReal() > 0,
+                                 TIMEOUT_MS);
         QCOMPARE(Palette()->property("height").toReal(), half);
         Snapshot("many-rows");
     }
