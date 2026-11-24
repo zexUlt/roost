@@ -327,6 +327,36 @@ private:
         return QStringLiteral("no delegate for row %1").arg(current);
     }
 
+    QQuickItem* PaletteItem(const QString& name) {
+        return Descendant(
+            Palette()->property("contentItem").value<QQuickItem*>(), name);
+    }
+
+    // The height of the card as its parts add up: the header with its top
+    // margin, the field with its top margin, the list with its margins (or,
+    // without rows, the line that says so), and the footer with its hairline.
+    // The numbers are the margins of CommandPalette.qml.
+    qreal ContentHeight() {
+        constexpr qreal headerTop = 17;
+        constexpr qreal fieldTop = 6;
+        constexpr qreal listMargins = 16;
+        constexpr qreal emptyBottom = 8;
+        constexpr qreal hairline = 1;
+        const QQuickItem* const heading = PaletteItem("paletteHeading");
+        const QQuickItem* const footer =
+            PaletteItem("paletteFooterKeys")->parentItem();
+        const QQuickItem* const empty = PaletteItem("paletteEmpty");
+        qreal sum =
+            headerTop + heading->parentItem()->height() + fieldTop +
+            Field()->height() + listMargins +
+            PaletteItem("paletteList")->property("contentHeight").toReal() +
+            hairline + footer->height();
+        if (empty->isVisible()) {
+            sum += empty->height() + emptyBottom;
+        }
+        return sum;
+    }
+
     // The palette opened by its key, as the user does; the field has the
     // keyboard.
     void OpenByKey() {
@@ -946,6 +976,111 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), RowOf(chosen));
         QVERIFY(Palette()->property("currentRow").toInt() > 0);
         QTRY_VERIFY_WITH_TIMEOUT(CurrentRowProblem().isEmpty(), TIMEOUT_MS);
+    }
+
+    // A few rows: the card is as high as its parts, well below half of the
+    // window, and the list does not scroll.
+    void TheCardIsAsHighAsAFewRows() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("pb.gamma");
+        QCOMPARE(Model()->rowCount(), 1);
+        const qreal half = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  ContentHeight(), TIMEOUT_MS);
+        QVERIFY(Palette()->property("height").toReal() < half - 50);
+        const auto* const list = PaletteItem("paletteList");
+        QVERIFY(list->property("contentHeight").toReal() <=
+                list->height() + 0.5);
+        Snapshot("few-rows");
+    }
+
+    // No rows: the card is as high as the header, the field, the line "No
+    // command matches." and the footer.
+    void TheCardIsAsHighAsTheLineOfNoRows() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("zzzz");
+        QCOMPARE(Model()->rowCount(), 0);
+        QVERIFY(PaletteItem("paletteEmpty")->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  ContentHeight(), TIMEOUT_MS);
+        QVERIFY(Palette()->property("height").toReal() <
+                Window()->height() / 2.0 - 50);
+    }
+
+    // Rows that do not fit in half of the window: the card is half of the
+    // window, the list scrolls, and the chosen row after many Down presses is
+    // in the visible part of the list.
+    void TheCardStopsAtHalfOfTheWindowAndTheListScrolls() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const qreal half = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(), half,
+                                  TIMEOUT_MS);
+        const auto* const list = PaletteItem("paletteList");
+        QVERIFY(list->property("contentHeight").toReal() > list->height());
+        QVERIFY(ContentHeight() > half);
+        const int rows = Model()->rowCount();
+        QVERIFY(rows > 3);
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(Palette()->property("currentRow").toInt(), rows - 1);
+        QVERIFY2(CurrentRowProblem().isEmpty(),
+                 qPrintable(CurrentRowProblem()));
+        QVERIFY(list->property("contentY").toReal() > 0);
+        QCOMPARE(Palette()->property("height").toReal(), half);
+        Snapshot("many-rows");
+    }
+
+    // The cap follows the window: a smaller window, a smaller card, and the
+    // chosen row is still in view.
+    void TheCapFollowsAResizeOfTheWindow() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const qreal before = Window()->height() / 2.0;
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(),
+                                  before, TIMEOUT_MS);
+        const int rows = Model()->rowCount();
+        for (int step = 1; step < rows; ++step) {
+            Press(Qt::Key_Down);
+        }
+        Window()->resize(Window()->width(), Window()->height() * 5 / 6);
+        const qreal after = Window()->height() / 2.0;
+        QVERIFY(after < before);
+        QTRY_COMPARE_WITH_TIMEOUT(Palette()->property("height").toReal(), after,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY2_WITH_TIMEOUT(CurrentRowProblem().isEmpty(),
+                                  qPrintable(CurrentRowProblem()), TIMEOUT_MS);
     }
 
 #ifndef Q_OS_MACOS

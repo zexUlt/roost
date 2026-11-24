@@ -42,10 +42,11 @@ Popup {
     parent: Overlay.overlay
     anchors.centerIn: Overlay.overlay
     // The card of the prototype's side view (docs/design/18-style.md): 304
-    // wide, as tall as the window leaves it, a margin of the window on each
-    // side.
+    // wide, as tall as its content (the rows of the list included), but not
+    // above half of the window and not above what the window leaves after a
+    // margin on each side; the list scrolls when the rows do not fit.
     width: Math.min(304, parent.width - 2 * Roost.theme.windowMargin)
-    height: parent.height - 2 * Roost.theme.windowMargin
+    height: Math.min(contentItem.implicitHeight + topPadding + bottomPadding, parent.height / 2, parent.height - 2 * Roost.theme.windowMargin)
     padding: 0
     modal: true
     closePolicy: Popup.CloseOnEscape
@@ -186,6 +187,9 @@ Popup {
             objectName: "paletteList"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // As tall as the rows; the card caps the height, and the layout
+            // takes the rest from this list first.
+            Layout.preferredHeight: contentHeight
             Layout.topMargin: 8
             Layout.bottomMargin: 8
             Layout.leftMargin: Roost.theme.panelPadding
@@ -197,6 +201,12 @@ Popup {
             // No delegates are made ahead of the view: one that is still being
             // made when the filter shrinks the list is cancelled with a Qt warning.
             cacheBuffer: 0
+            // A smaller window shortens the list: the chosen row stays on it.
+            onHeightChanged: {
+                if (currentIndex >= 0) {
+                    positionViewAtIndex(currentIndex, ListView.Contain);
+                }
+            }
             onCurrentIndexChanged: {
                 if (currentIndex >= 0) {
                     // Keep the row that Enter would run on the screen.
