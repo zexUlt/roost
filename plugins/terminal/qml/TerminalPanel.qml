@@ -3,7 +3,7 @@ import QtQuick.Controls
 import Roost.Api
 
 // The panel terminal.view: the session chosen in the list, shown in a
-// TerminalItem under a head (76 high) with the session's title and meta line
+// TerminalItem under a head (76 high at least) with the session's title and meta line
 // and the buttons "Lists" and "Commands". The shell writes `session`; the item
 // opens it and reports how it stands. Enter reopens a session that ended or
 // failed to open.
@@ -34,7 +34,7 @@ FocusScope {
     property int reopenWaitMs: 10000
     onSessionChanged: {
         reopenWanted = false;
-        refreshInfo();
+        refreshAll();
     }
 
     // {title, cwd, state} of the shown session in Roost.sessions, or null when
@@ -42,11 +42,13 @@ FocusScope {
     // of sessions.list in order: agent, id, title, cwd, state.
     property var info: null
 
-    function refreshInfo() {
+    // The shown session in rows `first`..`last` of Roost.sessions: its
+    // {title, cwd, state}, or null if it is not there.
+    function findInfo(first, last) {
         let found = null;
         if (session && Roost.sessions !== null) {
             const count = Roost.sessions.rowCount();
-            for (let row = 0; row < count; ++row) {
+            for (let row = Math.max(0, first); row <= Math.min(last, count - 1); ++row) {
                 const at = Roost.sessions.index(row, 0);
                 if (Roost.sessions.data(at, Qt.UserRole) === session.agent && Roost.sessions.data(at, Qt.UserRole + 1) === session.id) {
                     found = {
@@ -58,7 +60,43 @@ FocusScope {
                 }
             }
         }
-        info = found;
+        return found;
+    }
+
+    // The whole model, for a change of the session or of the rows.
+    function refreshAll() {
+        setInfo(findInfo(0, Number.MAX_SAFE_INTEGER));
+    }
+
+    // A change of rows `first`..`last`: a row is replaced by remove and insert,
+    // never by a change of its agent and id, so only a row that is the session
+    // can bring news of it.
+    function refreshRows(first, last) {
+        const found = findInfo(first, last);
+        if (found !== null) {
+            setInfo(found);
+        }
+    }
+
+    // `info` changes only when the title, cwd or state does: the bindings of
+    // the head wake on an assignment, equal or not.
+    function setInfo(found) {
+        const same = found === null || info === null ? found === info : found.title === info.title && found.cwd === info.cwd && found.state === info.state;
+        if (!same) {
+            info = found;
+        }
+    }
+
+    // One line of plain text: the controls and the line breaks of a title or
+    // a cwd become spaces. The twin of `oneLine` in SessionsPanel.qml: plugins
+    // cannot share QML code, so the function is copied.
+    function oneLine(text) {
+        return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+    }
+
+    // The words of the meta line; the twin of `stateWord` in SessionsPanel.qml.
+    function stateWord(state) {
+        return state === "blocked" || state === "needs_input" ? "waiting" : state;
     }
 
     // The head: the title the list shows for the session (its id, if it has
@@ -67,7 +105,7 @@ FocusScope {
         if (!session) {
             return "No session";
         }
-        return info && info.title ? info.title : session.id;
+        return oneLine(info && info.title ? info.title : session.id);
     }
 
     // `state · cwd`, as the row of the list; empty without a listed session.
@@ -75,24 +113,23 @@ FocusScope {
         if (!session || !info) {
             return "";
         }
-        const state = info.state === "blocked" || info.state === "needs_input" ? "waiting" : info.state;
-        return [state, info.cwd].filter(part => part).join(" · ");
+        return oneLine([stateWord(info.state), info.cwd].filter(part => part).join(" · "));
     }
 
     Connections {
         target: Roost.sessions
 
         function onModelReset() {
-            root.refreshInfo();
+            root.refreshAll();
         }
         function onRowsInserted() {
-            root.refreshInfo();
+            root.refreshAll();
         }
         function onRowsRemoved() {
-            root.refreshInfo();
+            root.refreshAll();
         }
-        function onDataChanged() {
-            root.refreshInfo();
+        function onDataChanged(topLeft, bottomRight) {
+            root.refreshRows(topLeft.row, bottomRight.row);
         }
     }
 
@@ -107,24 +144,29 @@ FocusScope {
         if (Roost.commands !== null) {
             Roost.commands.registerCommand("terminal.copy", () => terminal.copy());
         }
-        refreshInfo();
+        refreshAll();
     }
 
     // The head, on the card: title and meta on the left, the quiet buttons on
-    // the right. The buttons take no focus, so a click leaves the keyboard in
-    // the terminal (as the buttons of the tab bar, TabNode.qml).
-    Rectangle {
+    // the right. It has no fill: the card paints `surface` under it, and a
+    // square of its own would stick out of the arc of the card's corners. The
+    // buttons take no focus, so a click leaves the keyboard in the terminal
+    // (as the buttons of the tab bar, TabNode.qml). It is 76 high, or as high
+    // as the two lines with the padding above and below when a large font of
+    // the interface needs more.
+    Item {
         id: head
 
         objectName: "terminalHead"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 76
-        color: Roost.theme.surface
+        height: Math.max(76, heading.implicitHeight + 2 * Roost.theme.panelPadding)
 
         Column {
             id: heading
+
+            objectName: "terminalHeading"
 
             anchors.left: parent.left
             anchors.leftMargin: 20
@@ -135,6 +177,7 @@ FocusScope {
             Text {
                 objectName: "terminalTitle"
                 width: parent.width
+                textFormat: Text.PlainText
                 text: root.headTitle
                 font: Roost.theme.headingFont
                 color: Roost.theme.text
@@ -145,15 +188,22 @@ FocusScope {
                 objectName: "terminalMeta"
                 width: parent.width
                 visible: text !== ""
+                textFormat: Text.PlainText
                 text: root.headMeta
                 font: Roost.theme.metaFont
                 color: Roost.theme.textSecondary
-                elide: Text.ElideRight
+                // The end of a path is the part that tells.
+                elide: Text.ElideMiddle
             }
         }
 
+        // The title keeps at least `titleMin`: when the head is too narrow
+        // for it and both buttons, "Commands" goes first, then "Lists".
         Row {
             id: buttons
+
+            readonly property real titleMin: 80
+            readonly property real room: head.width - 20 - 2 * Roost.theme.panelPadding - titleMin
 
             anchors.right: parent.right
             anchors.rightMargin: Roost.theme.panelPadding
@@ -161,7 +211,10 @@ FocusScope {
             spacing: 8
 
             HeadButton {
+                id: listsButton
+
                 objectName: "listsButton"
+                visible: implicitWidth <= buttons.room
                 text: "Lists"
                 tip: "Show or hide the session lists"
                 onClicked: root.runCommand("layout.toggleLists")
@@ -169,6 +222,7 @@ FocusScope {
 
             HeadButton {
                 objectName: "commandsButton"
+                visible: listsButton.implicitWidth + buttons.spacing + implicitWidth <= buttons.room
                 text: "Commands"
                 tip: "Open the command palette"
                 onClicked: root.runCommand("shell.palette")
@@ -222,10 +276,14 @@ FocusScope {
         anchors.top: head.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.leftMargin: Roost.theme.cornerInset
+        anchors.rightMargin: Roost.theme.cornerInset
         // The cells are square: off the rounded corners of the card, where
-        // the square lies inside the arc of radiusCard (and its line).
-        anchors.margins: Roost.theme.cornerInset
+        // the square lies inside the arc of radiusCard (and its line). The
+        // head covers the top corners, so there is no inset under it. Not
+        // anchored to the bottom: a card shorter than the head would give a
+        // negative height.
+        height: Math.max(0, root.height - head.height - Roost.theme.cornerInset)
         focus: true
         session: root.session
         // The family and size of settings.terminalFont, in every window.
