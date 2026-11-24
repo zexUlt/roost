@@ -9,6 +9,7 @@
 // by the real minisign, tests/fixtures/updates) and a case changes one thing
 // in what it serves.
 
+#include <QColor>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -37,6 +38,8 @@
 #include "core/version.hpp"
 #include "helpers/scoped_env.hpp"
 #include "helpers/sessions_window.hpp"
+#include "helpers/snapshot.hpp"
+#include "qml_api/theme.hpp"
 #include "qml_api/updates.hpp"
 
 using namespace roost;
@@ -654,6 +657,24 @@ private slots:
         QVERIFY(head.startsWith("GET /releases/latest "));
         QVERIFY(head.toLower().contains("user-agent: roost/"));
         QVERIFY(head.toLower().contains("accept: application/vnd.github+json"));
+    }
+
+    // The offer waits for the user: its text is in `attention` (derived, no
+    // mockup: docs/design/18-style.md).
+    void TheTextOfTheOfferIsInAttention() {
+        Serve(200, Release("v9.9.9"));
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(StripShown(), TIMEOUT_MS);
+        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
+        QVERIFY(text != nullptr);
+        QCOMPARE(text->property("color").value<QColor>(),
+                 Singleton_->theme()->attention());
+        QCOMPARE(Strip()->property("color").value<QColor>(),
+                 Singleton_->theme()->controlBackground());
+        QVERIFY(testing::SaveSnapshot(Window(), "offer"));
     }
 
     // The link goes to the page of the release; the browser is not started.
@@ -1569,6 +1590,12 @@ private slots:
         QCOMPARE(Quits_, 0);
         QVERIFY(StripText().contains("roost 9.9.9 is installed"));
         QVERIFY(StripText().contains("no way"));
+        // The text of a failed install is in the colour of the error.
+        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
+        QVERIFY(text != nullptr);
+        QCOMPARE(text->property("color").value<QColor>(),
+                 Singleton_->theme()->error());
+        QVERIFY(testing::SaveSnapshot(Window(), "install-failed"));
         // The way out: the new version is in place, a start finds it.
         QVERIFY(
             StripText().contains("Close this window and start roost again."));

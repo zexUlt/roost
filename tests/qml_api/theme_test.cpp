@@ -17,6 +17,7 @@
 #include <cmath>
 
 #include "helpers/sessions_window.hpp"
+#include "helpers/snapshot.hpp"
 #include "qml_api/theme.hpp"
 
 using namespace roost;
@@ -74,7 +75,7 @@ constexpr DefaultColor DEFAULT_COLORS[] = {
     // The banner and the strip of problems of the window.
     {"bannerBackground", "#fff4e0"},
     {"bannerRefusedBackground", "#fde8e8"},
-    {"bannerText", "#18232e"},
+    {"bannerText", "#8b500b"},
     {"problemsBackground", "#fff4e0"},
     {"problemsText", "#8b500b"},
     {"warning", "#8b500b"},
@@ -350,8 +351,14 @@ private slots:
             {"attention", "selectedBackground", 4.5},
             {"attention", "canvas", 4.5},
             {"problemsText", "problemsBackground", 4.5},
+            // The text of the strips of the window (derived, no mockup): the
+            // banner (`bannerText`, a refusal and a failed start in `error`),
+            // the update strip, the toolbar.
             {"bannerText", "bannerBackground", 4.5},
-            {"bannerText", "bannerRefusedBackground", 4.5},
+            {"error", "bannerBackground", 4.5},
+            {"error", "bannerRefusedBackground", 4.5},
+            {"attention", "controlBackground", 4.5},
+            {"error", "controlBackground", 4.5},
             {"warning", "surface", 4.5},
             {"error", "surface", 4.5},
             {"windowError", "canvas", 4.5},
@@ -363,6 +370,9 @@ private slots:
             {"focus", "cursorFocused", 3.0},
             // Text too: the label of the current filter chip.
             {"focus", "selectedBackground", 4.5},
+            // The knob of the switch on its track: not text.
+            {"surface", "primary", 3.0},
+            {"surface", "textMuted", 3.0},
         };
         for (const Pair& pair : pairs) {
             const double ratio = Contrast(color(pair.Front), color(pair.Back));
@@ -430,7 +440,7 @@ private slots:
         auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
         QVERIFY(banner != nullptr && bannerText != nullptr && strip != nullptr);
         QCOMPARE(ColorOf(banner), QColor("#fff4e0"));
-        QCOMPARE(ColorOf(bannerText), QColor("#18232e"));
+        QCOMPARE(ColorOf(bannerText), QColor("#8b500b"));
         QCOMPARE(ColorOf(strip), QColor("#fff4e0"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
                  QColor("#5f6e80"));
@@ -447,6 +457,154 @@ private slots:
         // The banner of a refusal has a colour of its own.
         Root()->setProperty("connection", "refused");
         QCOMPARE(ColorOf(banner), Given("bannerRefusedBackground"));
+    }
+
+    // The strips of the window, the toolbar and the placeholder are the tokens
+    // of the style (18-style.md): a failure of the connection is in the colour
+    // of the error, the rest of the banner waits for the user (`attention`).
+    // The toolbar is built on macOS too, though it is not shown there.
+    void TheStripsTakeTheTextColoursOfTheStyle() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* bannerText = Root()->findChild<QQuickItem*>("connectionText");
+        QVERIFY(bannerText != nullptr);
+        const auto textIs = [&](const char* connection, const char* token) {
+            Root()->setProperty("connection", connection);
+            QCOMPARE(ColorOf(bannerText), Given(token));
+        };
+        QVERIFY(Singleton_->theme()->load(TestTheme()));
+        // `bannerText` is the contract with the plugins (05-plugins.md).
+        textIs("connecting", "bannerText");
+        textIs("starting", "bannerText");
+        textIs("restarting", "bannerText");
+        textIs("disconnected", "bannerText");
+        textIs("startFailed", "error");
+        textIs("refused", "error");
+    }
+
+    void TheToolbarAndThePlaceholderTakeTheTokensOfTheStyle() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Singleton_->theme()->load(TestTheme()));
+        auto* bar = Root()->findChild<QQuickItem*>("toolBar");
+        QVERIFY(bar != nullptr);
+        // A `surface` bar with a hairline of `line` under it.
+        const auto* barBackground =
+            bar->property("background").value<QQuickItem*>();
+        QVERIFY(barBackground != nullptr);
+        const QList<QQuickItem*> layers = barBackground->childItems();
+        QCOMPARE(layers.size(), 2);
+        QCOMPARE(ColorOf(layers.at(0)), Given("surface"));
+        QCOMPARE(ColorOf(layers.at(1)), Given("line"));
+        QCOMPARE(layers.at(1)->height(), 1.0);
+        for (const char* name :
+             {"paletteButton", "settingsButton", "reportBugButton"}) {
+            auto* button = Root()->findChild<QQuickItem*>(name);
+            QVERIFY2(button != nullptr, name);
+            QCOMPARE(
+                ColorOf(button->property("contentItem").value<QQuickItem*>()),
+                Given("textSecondary"));
+            const auto* plate =
+                button->property("background").value<QQuickItem*>();
+            QVERIFY2(plate != nullptr, name);
+            QCOMPARE(plate->property("radius").toInt(),
+                     Singleton_->theme()->radiusControl());
+        }
+        // The text of a panel without a panel: `textMuted`, `metaFont`.
+        auto* placeholder =
+            Slot(LIST)->findChild<QQuickItem*>("placeholderText");
+        QVERIFY(placeholder != nullptr);
+        QCOMPARE(ColorOf(placeholder), Given("textMuted"));
+        QCOMPARE(placeholder->property("font").value<QFont>(),
+                 Singleton_->theme()->metaFont());
+    }
+
+    // The ring of a button focused by the keyboard lies outside it with a gap:
+    // the toolbar has room for it, the window edge and the next item of the
+    // column do not cut it.
+    void TheFocusRingOfAToolbarButtonIsInsideTheToolbar() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        auto* bar = Root()->findChild<QQuickItem*>("toolBar");
+        QVERIFY(bar != nullptr);
+        // The bar is not shown on macOS (the native menu bar has the actions);
+        // the item is the same, so it is shown here to be laid out.
+        bar->setVisible(true);
+        for (const char* name :
+             {"paletteButton", "settingsButton", "reportBugButton"}) {
+            auto* button = Root()->findChild<QQuickItem*>(name);
+            QVERIFY2(button != nullptr, name);
+            auto* ring = button->findChild<QQuickItem*>("focusRing");
+            QVERIFY2(ring != nullptr, name);
+            button->forceActiveFocus(Qt::TabFocusReason);
+            QTRY_VERIFY_WITH_TIMEOUT(ring->isVisible() && ring->width() > 0,
+                                     TIMEOUT_MS);
+            QTRY_VERIFY_WITH_TIMEOUT(bar->height() > 0, TIMEOUT_MS);
+            const QRectF barRect =
+                bar->mapRectToScene(QRectF(0, 0, bar->width(), bar->height()));
+            const QRectF ringRect = ring->mapRectToScene(
+                QRectF(0, 0, ring->width(), ring->height()));
+            QVERIFY2(barRect.contains(ringRect),
+                     qPrintable(QStringLiteral("%1 ring %2 bar %3")
+                                    .arg(QLatin1String(name))
+                                    .arg(QDebug::toString(ringRect))
+                                    .arg(QDebug::toString(barRect))));
+            // The ring does not reach the hairline of the bar either.
+            QVERIFY2(ringRect.bottom() <= barRect.bottom() - 1, name);
+            // Nothing later in the column starts above the bottom of the ring.
+            for (QQuickItem* next :
+                 {Root()->findChild<QQuickItem*>("connectionBanner"),
+                  Root()->findChild<QQuickItem*>("layoutView")}) {
+                QVERIFY(next != nullptr);
+                if (!next->isVisible()) {
+                    continue;
+                }
+                QVERIFY2(next->mapRectToScene(QRectF(0, 0, 1, 1)).top() >=
+                             ringRect.bottom(),
+                         name);
+            }
+        }
+        QVERIFY(SaveSnapshot(Window(), "toolbar-focused"));
+    }
+
+    void TheStripsOfTheWindowCanBeSaved() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Root()->setProperty("connection", "connecting");
+        Root()->setProperty("problems",
+                            QStringList{"plugin demo: the manifest has no id",
+                                        "panel list: cannot load the page"});
+        auto* strip = Root()->findChild<QQuickItem*>("problemsStrip");
+        auto* banner = Root()->findChild<QQuickItem*>("connectionBanner");
+        auto* bannerText = Root()->findChild<QQuickItem*>("connectionText");
+        QVERIFY(strip != nullptr && banner != nullptr && bannerText != nullptr);
+        const Theme* theme = Singleton_->theme();
+        QTRY_VERIFY_WITH_TIMEOUT(strip->isVisible() && strip->height() > 0 &&
+                                     banner->isVisible() &&
+                                     banner->height() > 0,
+                                 TIMEOUT_MS);
+        QCOMPARE(ColorOf(bannerText), theme->bannerText());
+        QVERIFY(SaveSnapshot(Window(), "banner-and-problems"));
+        Root()->setProperty("connection", "refused");
+        Root()->setProperty("connectionMessage",
+                            "roostd 0.3 does not speak this protocol.");
+        QTRY_COMPARE_WITH_TIMEOUT(ColorOf(bannerText), theme->error(),
+                                  TIMEOUT_MS);
+        QCOMPARE(ColorOf(banner), theme->bannerRefusedBackground());
+        QVERIFY(banner->isVisible() && bannerText->isVisible());
+        QVERIFY(SaveSnapshot(Window(), "banner-refused"));
     }
 
     void TheListTakesTheColoursOfTheTokens() {

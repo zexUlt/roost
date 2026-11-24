@@ -110,6 +110,7 @@ Dialog {
             objectName: "linkEditorEmpty"
             visible: root.model === null || root.model.inputs.length === 0
             text: "This panel has no inputs to link."
+            font: Roost.theme.metaFont
             color: Roost.theme.textMuted
         }
 
