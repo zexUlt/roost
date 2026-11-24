@@ -105,13 +105,25 @@ roost_add_qt_test(roost_binding_key_test qml_api/roost_binding_key_test.cpp
 roost_add_qt_test(terminal_item_mouse_test qml_api/terminal_item_mouse_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_item_selection_test qml_api/terminal_item_selection_test.cpp roost_qml_api)
 roost_add_qt_test(terminal_paint_node_test qml_api/terminal_paint_node_test.cpp
-    roost_qml_api Qt6::Quick Qt6::QuickPrivate)
+    roost_qml_api Qt6::Quick)
 set_tests_properties(terminal_paint_node_test PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic")
 add_test(NAME terminal_paint_node_test_threaded COMMAND terminal_paint_node_test)
 set_tests_properties(terminal_paint_node_test_threaded PROPERTIES
     ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=threaded"
     LABELS threads)
+# The structure of the scene graph, read from the notifications it sends to its
+# renderer: needs Qt6::QuickPrivate, so it is built only where that exists. Qt's
+# QuickPrivate depends on GuiPrivate, which needs the Vulkan headers and XKB;
+# the Linux CI images do not have them, so the test does not run there (it runs
+# on macOS).
+if(TARGET Qt6::QuickPrivate)
+    roost_add_qt_test(terminal_grid_tree_test qml_api/terminal_grid_tree_test.cpp
+        roost_qml_api Qt6::Quick Qt6::QuickPrivate)
+    set_tests_properties(terminal_grid_tree_test PROPERTIES
+        ENVIRONMENT "${ROOST_TEST_ENVIRONMENT};QSG_RENDER_LOOP=basic"
+        LABELS threads)
+endif()
 
 # The frame benchmark (design.md section 9): ten sessions fed 1 MB/s each by one
 # writer, the GUI thread's time per frame measured apart from rendering. Offscreen has no
