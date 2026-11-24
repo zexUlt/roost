@@ -42,8 +42,13 @@ option(ROOST_WERROR "Treat warnings as errors" ON)
 # QmlPrivate: used only by src/qml_api/calling_context.cpp. Qt warns that a
 # private module ties the build to one Qt version; that is accepted there, CI
 # pins the version. The warning is silenced for this call only.
+# QuickPrivate: used only by tests/qml_api/terminal_grid_tree_test.cpp, which
+# listens to the notifications a scene graph sends to its renderer. Optional:
+# it needs GuiPrivate (Vulkan headers, XKB), missing in the Linux CI images, and
+# the test is built only where the module is found.
 set(QT_NO_PRIVATE_MODULE_WARNING ON)
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 QmlPrivate)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 QmlPrivate
+    OPTIONAL_COMPONENTS QuickPrivate)
 unset(QT_NO_PRIVATE_MODULE_WARNING)
 qt_standard_project_setup(REQUIRES 6.8)
 
