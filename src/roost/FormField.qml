@@ -7,8 +7,8 @@ import Roost.Api
 // keyboard.
 TextField {
     implicitHeight: 38
-    leftPadding: 10
-    rightPadding: 10
+    leftPadding: 12
+    rightPadding: 12
     selectionColor: Roost.theme.selection
     selectedTextColor: Roost.theme.textStrong
 

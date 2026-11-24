@@ -6,8 +6,18 @@ import Roost.Api
 // `radiusControl` with a hairline of `line` and a soft shadow, rows of MenuRow.
 // The shadow is a few faint layers of the text colour, no effect module.
 Menu {
+    // The widest item of the menu.
+    function widest() {
+        let width = 0;
+        for (let i = 0; i < count; ++i) {
+            width = Math.max(width, itemAt(i)?.implicitWidth ?? 0);
+        }
+        return width;
+    }
+
     padding: 4
-    implicitWidth: 180
+    // A long item widens the menu instead of being cut.
+    implicitWidth: Math.max(180, widest() + leftPadding + rightPadding)
     delegate: MenuRow {}
 
     background: Item {

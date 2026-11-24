@@ -9,19 +9,18 @@ ComboBox {
     id: control
 
     implicitHeight: 38
-    leftPadding: 10
+    leftPadding: 12
     font: Roost.theme.uiFont
 
     delegate: ItemDelegate {
-        required property var model
         required property int index
 
         width: ListView.view ? ListView.view.width : control.width
         implicitHeight: 34
-        leftPadding: 10
+        leftPadding: 12
         highlighted: control.highlightedIndex === index
         font: Roost.theme.rowFont
-        text: model[control.textRole] ?? ""
+        text: control.textAt(index)
 
         contentItem: Text {
             text: parent.text

@@ -74,15 +74,7 @@ RoostMenu {
         }
     }
 
-    MenuSeparator {
-        padding: 4
-        topPadding: 4
-        bottomPadding: 4
-        contentItem: Rectangle {
-            implicitHeight: 1
-            color: Roost.theme.line
-        }
-    }
+    MenuSeparatorRow {}
 
     MenuRow {
         objectName: "menuIntoTabs"
@@ -105,15 +97,7 @@ RoostMenu {
         onTriggered: root.run("editLinks", {})
     }
 
-    MenuSeparator {
-        padding: 4
-        topPadding: 4
-        bottomPadding: 4
-        contentItem: Rectangle {
-            implicitHeight: 1
-            color: Roost.theme.line
-        }
-    }
+    MenuSeparatorRow {}
 
     MenuRow {
         objectName: "menuClose"

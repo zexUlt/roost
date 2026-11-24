@@ -250,6 +250,7 @@ ApplicationWindow {
     }
 
     ScrollView {
+        objectName: "settingsScroll"
         anchors.fill: parent
         anchors.margins: Roost.theme.windowMargin + Roost.theme.panelPadding
         contentWidth: availableWidth
@@ -361,11 +362,17 @@ ApplicationWindow {
                     // sets it, a binding would not survive a click.
                     checked: true
                     implicitHeight: 38
-                    background: Rectangle {
-                        radius: Roost.theme.radiusControl
-                        color: "transparent"
-                        border.width: updatesCheckSwitch.visualFocus ? Roost.theme.cursorRingWidth : 0
-                        border.color: Roost.theme.focus
+                    background: Item {
+                        // The ring of the focus, outside with a gap of 2 px.
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                            visible: updatesCheckSwitch.visualFocus
+                            radius: Roost.theme.radiusControl + 2 + Roost.theme.cursorRingWidth
+                            color: "transparent"
+                            border.width: Roost.theme.cursorRingWidth
+                            border.color: Roost.theme.focus
+                        }
                     }
                     onToggled: root.patchSettings({
                         "updates": {

@@ -4,6 +4,7 @@
 #include <QQuickItemGrabResult>
 #include <QQuickWindow>
 #include <QSharedPointer>
+#include <QSignalSpy>
 #include <QString>
 #include <QTest>
 
@@ -24,6 +25,15 @@ inline bool SaveSnapshot(QQuickWindow* window, const QString& step) {
     const QString name =
         QStringLiteral("%1-%2.png")
             .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
+    // A picture of what is on the screen: after a frame that was drawn once the
+    // caller had made the window the way it should look (a menu that has just
+    // opened is in the scene, but not yet drawn).
+    constexpr int frameTimeoutMs = 10000;
+    QSignalSpy swapped(window, &QQuickWindow::frameSwapped);
+    window->update();
+    if (!swapped.wait(frameTimeoutMs) && swapped.isEmpty()) {
+        return false;
+    }
     QSharedPointer<QQuickItemGrabResult> result =
         window->contentItem()->grabToImage();
     if (result.isNull()) {

@@ -18,6 +18,7 @@
 #include <functional>
 #include <optional>
 
+#include "helpers/combo_popup.hpp"
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
 #include "helpers/snapshot.hpp"
@@ -336,6 +337,27 @@ private:
 Item { property var level: 3; property var picked: null })");
         write("Meter.qml", R"(import QtQuick
 Item { property var level: null })");
+    }
+
+    // A plugin with one panel type whose id is long: its items of "Split
+    // with…" are wider than the least width of a menu.
+    static constexpr const char* LONG_PANEL =
+        "probe-long.a-panel-type-with-a-very-long-name";
+
+    void WriteLongPlugin() {
+        const QString dir = Dir_->filePath("plugins/probe-long");
+        QVERIFY(QDir().mkpath(dir));
+        const auto write = [&dir](const char* name, const QByteArray& text) {
+            QFile file(dir + "/" + name);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write(text) > 0);
+        };
+        write("plugin.json", R"({
+  "id": "probe-long", "version": "0.1.0", "api": "0",
+  "contributes": {"panels": [
+    {"id": "a-panel-type-with-a-very-long-name", "qml": "Long.qml",
+     "inputs": {}, "outputs": {}}]}})");
+        write("Long.qml", "import QtQuick\nItem {}\n");
     }
 
 private slots:
@@ -1467,6 +1489,86 @@ private slots:
                  (QStringList{"list", "terminal", "terminal-2"}));
         QCOMPARE(Shell_->CurrentLayout().Root.Children[1].Kind,
                  ELayoutNodeKind::Split);
+    }
+
+    // The rows of the list of a combo box of the link editor carry the labels
+    // of the entries (the objects of its model, read by `textRole`).
+    void TheListOfALinkComboShowsTheLabelsOfItsEntries() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        Focus("terminal");
+        Api_->Commands().Run("layout.editLinks");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Popup("linkEditor") != nullptr &&
+                Popup("linkEditor")->property("visible").toBool(),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Offered("session").size(), 2, TIMEOUT_MS);
+        const QStringList labels = Offered("session");
+        QVERIFY(!labels.contains(QString()));
+        QQuickItem* box = Named("linkInput_session");
+        QVERIFY(box != nullptr);
+        QCOMPARE(OpenedRowTexts(Window(), box, 2, TIMEOUT_MS), labels);
+        QVERIFY(SaveSnapshot(Window(), "link-list"));
+    }
+
+    // An item of "Split with…" with a long panel type is not cut: the menu is
+    // as wide as its widest item needs.
+    void TheSplitWithMenuIsWideEnoughForALongPanelType() {
+        FailOnWarnings();
+        WriteLongPlugin();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        QTRY_VERIFY_WITH_TIMEOUT(Loader_->Info(LONG_PANEL).has_value(),
+                                 TIMEOUT_MS);
+        QQuickItem* slot = SlotByInstance("terminal");
+        QVERIFY(slot != nullptr);
+        QTest::mouseClick(
+            Window(), Qt::RightButton, Qt::NoModifier,
+            slot->mapToScene(QPointF(slot->width() / 2, slot->height() / 2))
+                .toPoint());
+        QObject* panelMenu = Root()->findChild<QObject*>("panelMenu");
+        QVERIFY(panelMenu != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(panelMenu->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        // The user points at "Split with…": the row of the menu whose submenu
+        // it is.
+        QObject* submenu = Root()->findChild<QObject*>("menuSplitWith");
+        QVERIFY(submenu != nullptr);
+        QQuickItem* row = nullptr;
+        for (int i = 0; row == nullptr; ++i) {
+            QQuickItem* candidate = nullptr;
+            QVERIFY(QMetaObject::invokeMethod(
+                panelMenu, "itemAt", Q_RETURN_ARG(QQuickItem*, candidate),
+                Q_ARG(int, i)));
+            QVERIFY(candidate != nullptr);
+            if (candidate->property("subMenu").value<QObject*>() == submenu) {
+                row = candidate;
+            }
+        }
+        QTest::mouseClick(
+            Window(), Qt::LeftButton, Qt::NoModifier,
+            row->mapToScene(QPointF(row->width() / 2, row->height() / 2))
+                .toPoint());
+        QTRY_VERIFY_WITH_TIMEOUT(submenu->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        for (const char* side : {"_right", "_down"}) {
+            const QString name =
+                "menuSplitWith_" + QString::fromLatin1(LONG_PANEL) + side;
+            QQuickItem* item = Root()->findChild<QQuickItem*>(name);
+            QVERIFY2(item != nullptr, qPrintable(name));
+            auto* text = item->property("contentItem").value<QQuickItem*>();
+            QVERIFY(text != nullptr);
+            QTRY_VERIFY_WITH_TIMEOUT(text->width() > 0, TIMEOUT_MS);
+            QVERIFY2(!text->property("truncated").toBool(), qPrintable(name));
+        }
+        QVERIFY(SaveSnapshot(Window(), "split-with"));
     }
 
     void TheMenuOfTheLastPanelCannotClose() {

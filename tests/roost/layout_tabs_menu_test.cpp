@@ -6,8 +6,6 @@
 // With ROOST_TEST_SNAPSHOTS set to a directory, each step saves a picture of
 // the window there, for a person to look at.
 
-#include <QDir>
-#include <QQuickItemGrabResult>
 #include <QSignalSpy>
 #include <QTest>
 #include <optional>
@@ -54,22 +52,7 @@ private:
 
     // Saves a picture of the window as <case>-<step>.png when asked to.
     void Snapshot(const QString& step) {
-        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
-        if (directory.isEmpty()) {
-            return;
-        }
-        QVERIFY(QDir().mkpath(directory));
-        const QString name =
-            QStringLiteral("%1-%2.png")
-                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
-        // The content item, not the window: grabWindow distorts the terminal
-        // in the offscreen platform.
-        QSharedPointer<QQuickItemGrabResult> result =
-            Window()->contentItem()->grabToImage();
-        QVERIFY(!result.isNull());
-        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
-        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
-        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
+        QVERIFY(SaveSnapshot(Window(), step));
     }
 
     // A right click in the middle of the panel opens its menu; a left click
