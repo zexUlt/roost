@@ -73,6 +73,11 @@ private:
 
     QQuickItem* Field() { return Part("sessionsPromptInput"); }
 
+    // The search field of the head.
+    QQuickItem* Search() { return Part("sessionsSearchInput"); }
+
+    QString SearchText() { return Search()->property("text").toString(); }
+
     // What the field holds.
     QString Typed() { return Field()->property("text").toString(); }
 
@@ -168,20 +173,21 @@ private slots:
 
         Press(Qt::Key_Slash);
 
-        QCOMPARE(PromptKind(), QString("search"));
-        QVERIFY(Part("sessionsPrompt")->isVisible());
-        QVERIFY(Field()->hasActiveFocus());
+        // The field of the head, not the prompt of the footer.
+        QCOMPARE(PromptKind(), QString());
+        QVERIFY(!Part("sessionsPrompt")->isVisible());
+        QVERIFY(Search()->hasActiveFocus());
         QVERIFY(!ListView()->hasActiveFocus());
-        // The "/" that opened it is not in the field.
-        QCOMPARE(Typed(), QString());
+        // The "/" that moved the keyboard is not in the field.
+        QCOMPARE(SearchText(), QString());
+        QVERIFY(Part("sessionsSearchPlaceholder")->isVisible());
 
         // Live: the list follows every edit, before any Enter.
         Type("flaky");
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA}), TIMEOUT_MS);
         QCOMPARE(Query(), QString("flaky"));
-        QVERIFY(Part("sessionsQuery")->isVisible());
-        QCOMPARE(Part("sessionsQuery")->property("text").toString(),
-                 QString("/ flaky"));
+        QCOMPARE(SearchText(), QString("flaky"));
+        QVERIFY(!Part("sessionsSearchPlaceholder")->isVisible());
         QTRY_COMPARE_WITH_TIMEOUT(StoredSection("view")
                                       .value("list")
                                       .toObject()
@@ -200,7 +206,8 @@ private slots:
         Press(Qt::Key_Escape);
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), ORDER, TIMEOUT_MS);
         QCOMPARE(Query(), QString());
-        QVERIFY(!Part("sessionsQuery")->isVisible());
+        QCOMPARE(SearchText(), QString());
+        QVERIFY(Part("sessionsSearchPlaceholder")->isVisible());
         QVERIFY(ListView()->hasActiveFocus());
         // With no query, Esc is not taken by the list.
         QVERIFY(!PressAccepted(Qt::Key_Escape));
@@ -219,8 +226,8 @@ private slots:
 
         // The field starts with the query that is.
         Press(Qt::Key_Slash);
-        QCOMPARE(PromptKind(), QString("search"));
-        QCOMPARE(Typed(), QString("flaky"));
+        QVERIFY(Search()->hasActiveFocus());
+        QCOMPARE(SearchText(), QString("flaky"));
         Press(Qt::Key_Backspace);
         QTRY_COMPARE_WITH_TIMEOUT(Query(), QString("flak"), TIMEOUT_MS);
 
@@ -243,9 +250,8 @@ private slots:
         PressNative(Qt::Key_Slash, QStringLiteral("/"), 0x2A, 51,
                     Qt::ShiftModifier);
 
-        QCOMPARE(PromptKind(), QString("search"));
-        QVERIFY(Field()->hasActiveFocus());
-        QCOMPARE(Typed(), QString());
+        QVERIFY(Search()->hasActiveFocus());
+        QCOMPARE(SearchText(), QString());
     }
 
     void RussianPeriodDoesNotOpenSearch() {
@@ -276,12 +282,11 @@ private slots:
         Type("zda");
         TypeRussianFYa();
 
-        QCOMPARE(Typed(), QStringLiteral("zdaфя"));
+        QCOMPARE(SearchText(), QStringLiteral("zdaфя"));
         QTRY_COMPARE_WITH_TIMEOUT(Query(), QStringLiteral("zdaфя"), TIMEOUT_MS);
         QCOMPARE(TabNow(), QString("all"));
         QCOMPARE(Title(), QString("Sessions"));
-        QCOMPARE(PromptKind(), QString("search"));
-        QVERIFY(Field()->hasActiveFocus());
+        QVERIFY(Search()->hasActiveFocus());
         QVERIFY(!HelpOpen());
 
         // Nothing matches; what was typed goes away with the query, and the
@@ -721,8 +726,8 @@ private slots:
         Type("flaky");
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA}), TIMEOUT_MS);
         tapTab(0);
-        QTRY_VERIFY_WITH_TIMEOUT(PromptKind().isEmpty(), TIMEOUT_MS);
-        QVERIFY(ListView()->hasActiveFocus());
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+        QCOMPARE(SearchText(), QString("flaky"));
         QCOMPARE(Query(), QString("flaky"));
         QCOMPARE(Ids(), (QStringList{ALPHA}));
     }

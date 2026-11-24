@@ -944,20 +944,18 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
         Press(Qt::Key_Slash);
-        QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsSearchInput")->hasActiveFocus(),
                                  TIMEOUT_MS);
         // A text the new session matches, so that the panel's list has it.
         Type("do");
-        QCOMPARE(PromptText(), QString("do"));
+        QCOMPARE(TextOf("sessionsSearchInput"), QString("do"));
 
         QVERIFY(Put("agents.json", AgentsWithStarted()));
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
         QTest::qWait(300);
 
-        QVERIFY(Prompting());
-        QCOMPARE(PromptText(), QString("do"));
-        QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
+        QCOMPARE(TextOf("sessionsSearchInput"), QString("do"));
+        QVERIFY(Part("sessionsSearchInput")->hasActiveFocus());
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
         QCOMPARE(activated.count(), 0);

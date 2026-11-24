@@ -244,7 +244,9 @@ private slots:
         QCOMPARE(Title(), QString("Sessions"));
         // Only GAMMA is done.
         QCOMPARE(Tabs(), (QStringList{"All 4", "Active 3", "Unread 0"}));
-        QVERIFY(!Part("sessionsQuery")->isVisible());
+        QCOMPARE(Part("sessionsSearchInput")->property("text").toString(),
+                 QString());
+        QVERIFY(Part("sessionsSearchPlaceholder")->isVisible());
         QVERIFY(!Part("sessionsProblem")->isVisible());
         QVERIFY(!HelpOpen());
     }
@@ -990,19 +992,21 @@ private slots:
             Press(Qt::Key_Comma);
         }
         QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MIN, TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsQuery")->isVisible(),
-                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Part("sessionsSearchPlaceholder")->isVisible(), TIMEOUT_MS);
 
         // Whatever is drawn in the head stays inside the panel: the query is
-        // elided and the tabs fit.
+        // clipped by its field and the tabs fit.
         const qreal panel = PanelOf(LIST)->width();
         QCOMPARE(panel, static_cast<qreal>(WIDTH_MIN));
         const auto right = [&](QQuickItem* item) {
             return item->mapToItem(PanelOf(LIST), QPointF(item->width(), 0))
                 .x();
         };
-        QVERIFY(right(Part("sessionsQuery")) <= panel);
-        QVERIFY(Part("sessionsQuery")->property("truncated").toBool());
+        QVERIFY(right(Part("sessionsSearch")) <= panel);
+        QVERIFY(right(Part("sessionsSearchInput")) <=
+                right(Part("sessionsSearch")));
+        QVERIFY(right(Part("sessionsNewButton")) <= panel);
         QVERIFY(Part("sessionsHead")->clip());
         QVERIFY(right(Part("sessionsTitle")) <= panel);
         QCOMPARE(TabItems().size(), 3);

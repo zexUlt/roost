@@ -11,14 +11,17 @@ import RoostSessions
 // row, writes the session under the cursor to `selected`, the output of the
 // panel; Enter on a folded header unfolds it. Moving does not change
 // `selected`: opening a session is not free. A tap on a header folds or
-// unfolds it. The head shows the title (Sessions, or Archive), the query and
-// the tabs with their counts; the keys a, v, m, z, Z, p, ?, < and > act on the
-// view (the help overlay lists them). The keys /, c and e open the prompt in
-// the footer: the search, the category and the name of the session under the
-// cursor; n opens it for the task and the category of a new session. The keys
-// d, x, r and R run the commands of the agent of the session
-// (`<agent>.<verb>`, Roost.commands); the footer asks for a confirmation (y)
-// and shows the outcome as a notice.
+// unfolds it. The head shows the title (Sessions, or Archive), the button
+// "+ New", the search field and the tabs with their counts; the keys a, v, m,
+// z, Z, p, ?, < and > act on the view (the help overlay lists them). The key /
+// moves the keyboard to the search field (Esc clears the query, Enter or Down
+// keeps it and returns to the list). The keys c and e open the prompt in the
+// footer: the category and the name of the session under the cursor; n opens
+// it for the task and the category of a new session. "+ New" opens the form of
+// a new session in place of the list: a name and a category; its draft lives
+// in the panel. The keys d, x, r and R run the commands of the agent of the
+// session (`<agent>.<verb>`, Roost.commands); the footer asks for a
+// confirmation (y) and shows the outcome as a notice.
 FocusScope {
     id: root
 
@@ -56,7 +59,7 @@ FocusScope {
     property string notice: ""
     property int noticeMs: 8000
 
-    // The prompt of the footer: "search", "category", "rename", "task" and
+    // The prompt of the footer: "category", "rename", "task" and
     // "newCategory" (the two steps of n), or "" when there is none. The session
     // a category or a name is for is taken when the prompt opens (`promptRef`),
     // and the agent, the directory and the task of a new one are (`promptNew`),
@@ -65,7 +68,6 @@ FocusScope {
     property var promptRef: null
     property var promptNew: null
     readonly property var promptLabels: ({
-            "search": "/",
             "category": "Category:",
             "rename": "Name:",
             "task": "Task:",
@@ -275,6 +277,76 @@ FocusScope {
         return sessionsList.data(sessionsList.index(row, 0), Qt.UserRole + 4) ?? "";
     }
 
+    // The form of a new session ("+ New"), shown in place of the list. Its
+    // draft is kept here, in the panel, while the form is open, whatever
+    // takes the keyboard: Cancel, Esc and Create end it.
+    property bool newOpen: false
+    property string draftName: ""
+    // The category of the draft: a known one, "" for none, or a new one typed
+    // in `draftNewName` when `draftNewCategory` is set.
+    property string draftCategory: ""
+    property bool draftNewCategory: false
+    property string draftNewName: ""
+    // The agent and the directory of the session, taken from the cursor when
+    // the form opens, as n does.
+    property var draftTarget: null
+
+    // The entries of the category list of the form: none, the known ones, a
+    // new one.
+    readonly property var categoryChoices: ["Uncategorized"].concat(sessionsList.knownCategories, ["New category…"])
+
+    // The keyboard goes to the search field, with its query to edit.
+    function focusSearch() {
+        searchInput.forceActiveFocus();
+        searchInput.cursorPosition = searchInput.text.length;
+    }
+
+    // Esc in the field: the query goes, the list has the keyboard.
+    function clearSearch() {
+        sessionsList.query = "";
+        list.forceActiveFocus();
+    }
+
+    function openNewForm() {
+        if (!newOpen) {
+            const base = newSessionBase();
+            draftName = "";
+            draftCategory = base.category;
+            draftNewCategory = false;
+            draftNewName = "";
+            draftTarget = {
+                "agent": base.agent,
+                "cwd": base.cwd
+            };
+            newOpen = true;
+        }
+        newNameField.forceActiveFocus();
+    }
+
+    // Cancel and Esc: the draft goes, the list has the keyboard.
+    function closeNewForm() {
+        newOpen = false;
+        draftTarget = null;
+        list.forceActiveFocus();
+    }
+
+    function canCreate() {
+        return draftName.trim() !== "" && (!draftNewCategory || draftNewName.trim() !== "");
+    }
+
+    // Create: the session starts as n starts it, and takes the name of the form
+    // as its title.
+    function createFromForm() {
+        if (!newOpen || !canCreate()) {
+            return;
+        }
+        const target = draftTarget;
+        const name = draftName.trim();
+        const category = draftNewCategory ? draftNewName.trim() : draftCategory;
+        closeNewForm();
+        startSession(target.agent, target.cwd, name, category, name);
+    }
+
     // Opens the prompt of the footer with its text. The keys then go to the
     // text field, not to the list.
     function openPrompt(kind, ref, text) {
@@ -293,8 +365,7 @@ FocusScope {
         list.forceActiveFocus();
     }
 
-    // Enter: the category or the name goes to the model, the search keeps its
-    // query, which is already set. In n the task goes on to the category, and
+    // Enter: the category or the name goes to the model. In n the task goes on to the category, and
     // the category starts the session.
     function submitPrompt() {
         const ref = promptRef;
@@ -325,11 +396,8 @@ FocusScope {
         }
     }
 
-    // Esc: nothing changes, but the search drops its query.
+    // Esc: nothing changes.
     function cancelPrompt() {
-        if (promptKind === "search") {
-            sessionsList.query = "";
-        }
         closePrompt();
     }
 
@@ -418,7 +486,7 @@ FocusScope {
             return true;
         case Qt.Key_Slash:
             if (act) {
-                openPrompt("search", null, sessionsList.query);
+                focusSearch();
             }
             return true;
         case Qt.Key_Question:
@@ -758,23 +826,35 @@ FocusScope {
     // n opens the prompt immediately and keeps the cursor's directory and
     // category. The agent is chosen when the completed prompt is submitted.
     function openNewSessionPrompt() {
-        const ref = sessionsList.cursorSession;
-        const data = ref === null ? null : sessionData(ref);
-        const category = sessionsList.cursorCategory;
+        const base = newSessionBase();
         promptNew = {
-            "agent": ref === null ? "" : ref.agent,
-            "cwd": data && data.cwd ? data.cwd : homeDirectory(),
-            "category": category === null ? "" : category,
+            "agent": base.agent,
+            "cwd": base.cwd,
+            "category": base.category,
             "task": ""
         };
         openPrompt("task", null, "");
+    }
+
+    // The agent, the directory and the category of a new session: those of the
+    // session under the cursor, the home directory without one.
+    function newSessionBase() {
+        const ref = sessionsList.cursorSession;
+        const data = ref === null ? null : sessionData(ref);
+        const category = sessionsList.cursorCategory;
+        return {
+            "agent": ref === null ? "" : ref.agent,
+            "cwd": data && data.cwd ? data.cwd : homeDirectory(),
+            "category": category === null ? "" : category
+        };
     }
 
     function homeDirectory() {
         return decodeURIComponent(StandardPaths.writableLocation(StandardPaths.HomeLocation).toString().replace(/^file:\/\//, ""));
     }
 
-    function startSession(preferredAgent, cwd, task, category) {
+    // `title`, when given, is the title of the session once it is listed.
+    function startSession(preferredAgent, cwd, task, category, title) {
         showNotice("Starting…");
         agentsWithCommand("newSession", agents => {
             if (agents.size === 0) {
@@ -797,6 +877,9 @@ FocusScope {
                 showNotice("\"" + result.title + "\" started");
                 if (category !== "") {
                     sessionsList.setCategory(ref, category);
+                }
+                if (title) {
+                    sessionsList.rename(ref, title);
                 }
             });
         });
@@ -922,8 +1005,178 @@ FocusScope {
         drainForget();
     }
 
-    // The head: the title and the query, and the filter chips with the counts
-    // of the view.
+    // The controls of the panel, in the light style (docs/design/18-style.md).
+    // The plugin does not import them from the shell: they follow the same
+    // tokens and sizes as FormButton, FormField and FormComboBox of the shell.
+    component PanelButton: Button {
+        id: control
+
+        // The main button: the accepting one.
+        property bool primary: false
+
+        implicitHeight: 34
+        leftPadding: 12
+        rightPadding: 12
+        font: Roost.theme.rowFont
+
+        Keys.onReturnPressed: {
+            if (control.enabled) {
+                control.clicked();
+            }
+        }
+        Keys.onEnterPressed: {
+            if (control.enabled) {
+                control.clicked();
+            }
+        }
+
+        contentItem: Text {
+            text: control.text
+            font: control.font
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            color: !control.enabled ? Roost.theme.textMuted : control.primary ? Roost.theme.primaryText : control.hovered ? Roost.theme.text : Roost.theme.textSecondary
+        }
+
+        background: Rectangle {
+            implicitWidth: 64
+            radius: Roost.theme.radiusControl
+            color: !control.enabled ? Roost.theme.controlBackground : control.primary ? (control.hovered || control.down ? Roost.theme.primaryHover : Roost.theme.primary) : (control.hovered || control.down ? Roost.theme.hoverBackground : Roost.theme.surface)
+            border.width: 1
+            border.color: control.primary && control.enabled ? color : Roost.theme.line
+
+            // The ring of the focus, outside with a gap of 2 px.
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                visible: control.visualFocus
+                radius: Roost.theme.radiusControl + 2 + Roost.theme.cursorRingWidth
+                color: "transparent"
+                border.width: Roost.theme.cursorRingWidth
+                border.color: Roost.theme.focus
+            }
+        }
+    }
+
+    // The link back to the list: text only, the ring of the focus around it.
+    component PanelLink: Button {
+        id: link
+
+        implicitHeight: 28
+        leftPadding: 4
+        rightPadding: 4
+        font: Roost.theme.rowFont
+
+        Keys.onReturnPressed: link.clicked()
+        Keys.onEnterPressed: link.clicked()
+
+        contentItem: Text {
+            text: link.text
+            font: link.font
+            verticalAlignment: Text.AlignVCenter
+            color: link.hovered ? Roost.theme.text : Roost.theme.textSecondary
+        }
+
+        background: Rectangle {
+            radius: Roost.theme.radiusSmall
+            color: "transparent"
+            border.width: link.visualFocus ? Roost.theme.cursorRingWidth : 0
+            border.color: Roost.theme.focus
+        }
+    }
+
+    component PanelField: TextField {
+        implicitHeight: 38
+        leftPadding: 12
+        rightPadding: 12
+        font: Roost.theme.uiFont
+        color: Roost.theme.text
+        placeholderTextColor: Roost.theme.textMuted
+        selectionColor: Roost.theme.selection
+        selectedTextColor: Roost.theme.textStrong
+
+        background: Rectangle {
+            radius: Roost.theme.radiusControl
+            color: Roost.theme.inputBackground
+            border.width: parent.activeFocus ? Roost.theme.cursorRingWidth : 1
+            border.color: parent.activeFocus ? Roost.theme.focus : Roost.theme.line
+        }
+    }
+
+    component PanelComboBox: ComboBox {
+        id: combo
+
+        implicitHeight: 38
+        leftPadding: 12
+        font: Roost.theme.uiFont
+
+        delegate: ItemDelegate {
+            required property int index
+
+            width: ListView.view ? ListView.view.width : combo.width
+            implicitHeight: 34
+            leftPadding: 12
+            highlighted: combo.highlightedIndex === index
+            font: Roost.theme.rowFont
+            text: combo.textAt(index)
+
+            contentItem: Text {
+                text: parent.text
+                font: parent.font
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+                color: Roost.theme.text
+            }
+
+            background: Rectangle {
+                radius: Roost.theme.radiusControl
+                color: parent.highlighted ? Roost.theme.hoverBackground : "transparent"
+            }
+        }
+
+        background: Rectangle {
+            radius: Roost.theme.radiusControl
+            color: Roost.theme.inputBackground
+            border.width: 1
+            border.color: Roost.theme.line
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                visible: combo.visualFocus
+                radius: Roost.theme.radiusControl + 2 + Roost.theme.cursorRingWidth
+                color: "transparent"
+                border.width: Roost.theme.cursorRingWidth
+                border.color: Roost.theme.focus
+            }
+        }
+
+        popup: Popup {
+            y: combo.height + 2
+            width: combo.width
+            implicitHeight: Math.min(contentItem.implicitHeight + 2 * padding, 300)
+            padding: 4
+
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: combo.popup.visible ? combo.delegateModel : null
+                currentIndex: combo.highlightedIndex
+                spacing: Roost.theme.rowGap
+            }
+
+            background: Rectangle {
+                radius: Roost.theme.radiusControl
+                color: Roost.theme.surface
+                border.width: 1
+                border.color: Roost.theme.line
+            }
+        }
+    }
+
+    // The head: the title and "+ New", the search field, and the filter chips
+    // with the counts of the view.
     Column {
         id: head
 
@@ -931,6 +1184,7 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
+        visible: !root.newOpen
         // The rows are cut at the panel edge, not drawn over its neighbour.
         clip: true
 
@@ -944,22 +1198,95 @@ FocusScope {
                 objectName: "sessionsTitle"
                 x: 20
                 anchors.verticalCenter: parent.verticalCenter
+                // The title takes what the button leaves.
+                width: Math.min(implicitWidth, Math.max(0, newButton.x - 8 - x))
+                elide: Text.ElideRight
                 color: root.textColor
                 font: Roost.theme.titleFont
                 text: sessionsList.viewArchive ? "Archive" : "Sessions"
             }
 
-            Label {
-                objectName: "sessionsQuery"
-                visible: sessionsList.query !== ""
-                x: title.x + title.width + 8
+            PanelButton {
+                id: newButton
+
+                objectName: "sessionsNewButton"
+                primary: true
+                anchors.right: parent.right
+                anchors.rightMargin: Roost.theme.panelPadding
                 anchors.verticalCenter: parent.verticalCenter
-                // The query takes what the title leaves.
-                width: Math.max(0, parent.width - x - Roost.theme.panelPadding)
-                elide: Text.ElideRight
-                color: Roost.theme.textSecondary
-                font: Roost.theme.metaFont
-                text: "/ " + sessionsList.query
+                text: "+ New"
+                onClicked: root.openNewForm()
+            }
+        }
+
+        // The search field: a hairline of `line`, which the ring of the focus
+        // replaces while the field has the keyboard.
+        Item {
+            width: parent.width
+            height: 62
+
+            Rectangle {
+                objectName: "sessionsSearch"
+                x: Roost.theme.panelPadding
+                y: 4
+                width: parent.width - 2 * Roost.theme.panelPadding
+                height: 40
+                radius: Roost.theme.radiusControl
+                color: Roost.theme.controlBackground
+                border.width: searchInput.activeFocus ? Roost.theme.cursorRingWidth : 1
+                border.color: searchInput.activeFocus ? Roost.theme.focus : Roost.theme.line
+
+                Label {
+                    objectName: "sessionsSearchIcon"
+                    x: 13
+                    anchors.verticalCenter: parent.verticalCenter
+                    font: Roost.theme.headingFont
+                    color: Roost.theme.textMuted
+                    text: "⌕"
+                }
+
+                Label {
+                    objectName: "sessionsSearchPlaceholder"
+                    x: 39
+                    width: parent.width - x - 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: searchInput.text === "" && searchInput.preeditText === ""
+                    elide: Text.ElideRight
+                    color: Roost.theme.textMuted
+                    font: Roost.theme.uiFont
+                    text: "Search sessions"
+                }
+
+                // The query is the model's: the field shows it and every edit
+                // sets it, so that the list follows at once. The text is typed
+                // as it is, not through bindingKey, so that any layout types
+                // its letters.
+                TextInput {
+                    id: searchInput
+
+                    objectName: "sessionsSearchInput"
+                    x: 39
+                    width: parent.width - x - 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    clip: true
+                    // A TextInput does not inherit the font of the window.
+                    font: Roost.theme.uiFont
+                    color: root.textColor
+                    selectionColor: Roost.theme.selection
+                    selectedTextColor: Roost.theme.textStrong
+                    selectByMouse: true
+                    text: sessionsList.query
+
+                    onTextEdited: sessionsList.query = text
+                    // Enter and Down keep the query and give the list the
+                    // keyboard; Esc drops the query first.
+                    onAccepted: list.forceActiveFocus()
+                    Keys.onDownPressed: list.forceActiveFocus()
+                    Keys.onEscapePressed: root.clearSearch()
+                    // Tab does not leave the field.
+                    Keys.onTabPressed: event => event.accepted = true
+                    Keys.onBacktabPressed: event => event.accepted = true
+                }
             }
         }
 
@@ -1032,6 +1359,7 @@ FocusScope {
         // The list ends above the list of unavailable agents, and above the
         // footer.
         anchors.bottom: unavailable.visible ? unavailable.top : footer.top
+        visible: !root.newOpen
         focus: true
         clip: true
         model: sessionsList
@@ -1326,11 +1654,161 @@ FocusScope {
         }
     }
 
+    // The form of a new session, in place of the head and the list. Tab and
+    // Shift+Tab walk its controls; Esc, or the link back, cancels it. The
+    // draft is kept in `draft*` of the panel.
+    FocusScope {
+        id: newForm
+
+        objectName: "sessionsNewForm"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: footer.top
+        visible: root.newOpen
+        clip: true
+
+        Keys.onEscapePressed: root.closeNewForm()
+
+        PanelLink {
+            id: newBack
+
+            objectName: "sessionsNewBack"
+            x: 16
+            y: 18
+            text: "← Sessions"
+            KeyNavigation.tab: newNameField
+            KeyNavigation.backtab: newCreate
+            onClicked: root.closeNewForm()
+        }
+
+        Label {
+            id: newTitle
+
+            objectName: "sessionsNewTitle"
+            x: 20
+            anchors.top: newBack.bottom
+            anchors.topMargin: 16
+            color: root.textColor
+            font: Roost.theme.titleFont
+            text: "New session"
+        }
+
+        Column {
+            id: newFields
+
+            x: 20
+            anchors.top: newTitle.bottom
+            anchors.topMargin: 20
+            width: parent.width - 40
+            spacing: 8
+
+            Label {
+                color: Roost.theme.textSecondary
+                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                text: "Name"
+            }
+
+            PanelField {
+                id: newNameField
+
+                objectName: "sessionsNewName"
+                width: parent.width
+                text: root.draftName
+                onTextEdited: root.draftName = text
+                onAccepted: root.createFromForm()
+                KeyNavigation.tab: newCategoryBox
+                KeyNavigation.backtab: newBack
+            }
+
+            Label {
+                topPadding: 8
+                color: Roost.theme.textSecondary
+                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                text: "Category"
+            }
+
+            PanelComboBox {
+                id: newCategoryBox
+
+                objectName: "sessionsNewCategory"
+                width: parent.width
+                model: root.categoryChoices
+                currentIndex: root.draftNewCategory ? root.categoryChoices.length - 1 : Math.max(0, root.categoryChoices.indexOf(root.draftCategory))
+                onActivated: index => {
+                    if (index === root.categoryChoices.length - 1) {
+                        root.draftNewCategory = true;
+                        newCategoryName.forceActiveFocus();
+                    } else {
+                        root.draftNewCategory = false;
+                        root.draftCategory = index === 0 ? "" : root.categoryChoices[index];
+                    }
+                }
+                KeyNavigation.tab: newCategoryName.visible ? newCategoryName : newCreate
+                KeyNavigation.backtab: newNameField
+            }
+
+            PanelField {
+                id: newCategoryName
+
+                objectName: "sessionsNewCategoryName"
+                width: parent.width
+                visible: root.draftNewCategory
+                placeholderText: "Name of the category"
+                text: root.draftNewName
+                onTextEdited: root.draftNewName = text
+                onAccepted: root.createFromForm()
+                KeyNavigation.tab: newCreate
+                KeyNavigation.backtab: newCategoryBox
+            }
+
+            Item {
+                width: 1
+                height: 12
+            }
+
+            PanelButton {
+                id: newCreate
+
+                objectName: "sessionsNewCreate"
+                primary: true
+                enabled: root.canCreate()
+                text: "Create session"
+                onClicked: root.createFromForm()
+                KeyNavigation.tab: newBack
+                KeyNavigation.backtab: newCategoryName.visible ? newCategoryName : newCategoryBox
+            }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: newHint.top
+            height: 1
+            color: Roost.theme.line
+        }
+
+        Label {
+            id: newHint
+
+            objectName: "sessionsNewHint"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            padding: 18
+            leftPadding: 20
+            color: Roost.theme.textMuted
+            font: Roost.theme.metaFont
+            elide: Text.ElideRight
+            text: "Esc: back to the list"
+        }
+    }
+
     Label {
         objectName: "sessionsStatus"
         anchors.fill: list
         anchors.margins: 12
-        visible: text !== ""
+        visible: text !== "" && !root.newOpen
         color: Roost.theme.textMuted
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
@@ -1358,7 +1836,7 @@ FocusScope {
         anchors.right: parent.right
         anchors.bottom: footer.top
         anchors.margins: Roost.theme.panelPadding
-        visible: text !== ""
+        visible: text !== "" && !root.newOpen
         color: Roost.theme.warning
         font: Roost.theme.metaFont
         wrapMode: Text.Wrap
@@ -1407,8 +1885,8 @@ FocusScope {
             text: root.confirm === null ? "" : root.confirm.text
         }
 
-        // The prompt, one for the whole footer: the search, the category and
-        // the name of a session, and the Task and the Category of a new one.
+        // The prompt, one for the whole footer: the category and the name of a
+        // session, and the Task and the Category of a new one.
         // Enter submits, Esc cancels; the text is typed as it is, not through
         // bindingKey, so that any layout types its letters.
         Column {
@@ -1450,23 +1928,12 @@ FocusScope {
                     selectionColor: Roost.theme.selection
                     selectByMouse: true
 
-                    // The search is live: the list follows every edit.
-                    onTextEdited: {
-                        if (root.promptKind === "search") {
-                            sessionsList.query = text;
-                        }
-                    }
                     onAccepted: root.submitPrompt()
-                    // A tap on the list takes the keyboard away: the search
-                    // keeps its query, the others are dropped. Not when the
-                    // whole window lost the focus.
+                    // A tap on the list takes the keyboard away: the prompt is
+                    // dropped. Not when the whole window lost the focus.
                     onActiveFocusChanged: {
                         if (!activeFocus && root.promptKind !== "" && Window.active) {
-                            if (root.promptKind === "search") {
-                                root.closePrompt();
-                            } else {
-                                root.cancelPrompt();
-                            }
+                            root.cancelPrompt();
                         }
                     }
 
@@ -1554,7 +2021,7 @@ FocusScope {
                 width: parent.width
                 color: root.textColor
                 wrapMode: Text.Wrap
-                text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor\n/   search, live (Enter keeps it, Esc clears it)\nc   category of the session under the cursor (1-9 picks a known one, empty clears)\ne   rename the session under the cursor (empty restores the agent's title)"
+                text: "View\na   next tab (All, Active, Unread)\nv   sessions or archive\nm   compact: the second line only under the cursor\nz   fold the category under the cursor\nShift+z   unfold all\np   pin the category under the cursor\n/   search field, live (Enter or Down keeps the query, Esc clears it)\nc   category of the session under the cursor (1-9 picks a known one, empty clears)\ne   rename the session under the cursor (empty restores the agent's title)"
             }
 
             Label {
