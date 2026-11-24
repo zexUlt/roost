@@ -319,7 +319,8 @@ private slots:
             {"windowError", "canvas", 4.5},
             {"primaryText", "primary", 4.5},
             {"primaryText", "primaryHover", 4.5},
-            {"focus", "surface", 3.0},
+            // The palette's hint is text in `focus` (18-style.md).
+            {"focus", "surface", 4.5},
             {"focus", "canvas", 3.0},
             {"focus", "cursorFocused", 3.0},
             {"focus", "selectedBackground", 3.0},

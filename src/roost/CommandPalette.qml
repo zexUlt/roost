@@ -20,6 +20,20 @@ Popup {
     property string pendingCommand: ""
     // The command of the chosen row: a rebuild of the rows chooses it again.
     property string chosenCommand: ""
+    // The height of a palette row (18-style.md): the least the list may have.
+    readonly property int rowHeight: 47
+    // The card never gets higher than this: half of the window, but not below
+    // the fixed parts and one row, and not above what the window leaves after
+    // a margin on each side. Whole pixels: a half pixel blurs the hairline.
+    readonly property real maxHeight: {
+        // Summed from the parts, not taken from the content's implicit height:
+        // that one holds the list's contentHeight, which depends on the height
+        // of the list, which depends on this cap.
+        const emptyLine = emptyLabel.visible ? emptyLabel.implicitHeight + emptyLabel.Layout.bottomMargin : 0;
+        const fixedParts = topPadding + bottomPadding + header.Layout.topMargin + header.implicitHeight + filterField.Layout.topMargin + filterField.Layout.preferredHeight + list.Layout.topMargin + list.Layout.bottomMargin + emptyLine + hairline.Layout.preferredHeight + footer.Layout.preferredHeight;
+        const half = Math.max(Math.floor(parent.height / 2), fixedParts + rowHeight);
+        return Math.max(0, Math.min(half, parent.height - 2 * Roost.theme.windowMargin));
+    }
 
     // A font of the scale at the weight of the prototype's titles.
     function demiBold(base) {
@@ -40,13 +54,16 @@ Popup {
 
     objectName: "commandPalette"
     parent: Overlay.overlay
-    anchors.centerIn: Overlay.overlay
     // The card of the prototype's side view (docs/design/18-style.md): 304
-    // wide, as tall as its content (the rows of the list included), but not
-    // above half of the window and not above what the window leaves after a
-    // margin on each side; the list scrolls when the rows do not fit.
+    // wide, as tall as its content (the rows of the list included) up to
+    // maxHeight; the list scrolls when the rows do not fit. The top is where a
+    // card of maxHeight would have it centred, so typing, which changes the
+    // number of rows, grows and shrinks the card downward only and the header
+    // and the field stay put.
     width: Math.min(304, parent.width - 2 * Roost.theme.windowMargin)
-    height: Math.min(contentItem.implicitHeight + topPadding + bottomPadding, parent.height / 2, parent.height - 2 * Roost.theme.windowMargin)
+    height: Math.round(Math.min(contentItem.implicitHeight + topPadding + bottomPadding, maxHeight))
+    x: Math.round((parent.width - width) / 2)
+    y: Math.round((parent.height - maxHeight) / 2)
     padding: 0
     modal: true
     closePolicy: Popup.CloseOnEscape
@@ -109,6 +126,8 @@ Popup {
 
         // The header: the title, and the line that says where the keys go.
         ColumnLayout {
+            id: header
+
             Layout.fillWidth: true
             Layout.fillHeight: false
             Layout.topMargin: 17
@@ -118,12 +137,15 @@ Popup {
 
             Label {
                 objectName: "paletteHeading"
+                Layout.fillWidth: true
+                elide: Text.ElideRight
                 font: Roost.theme.titleFont
                 color: Roost.theme.text
                 text: "Commands"
             }
 
             RowLayout {
+                Layout.fillWidth: true
                 spacing: 6
 
                 Rectangle {
@@ -135,6 +157,8 @@ Popup {
 
                 Label {
                     objectName: "paletteHint"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                     font: root.demiBold(Roost.theme.metaFont)
                     color: Roost.theme.focus
                     text: "Input in commands · Esc to close"
@@ -175,7 +199,7 @@ Popup {
                 objectName: "paletteSearchIcon"
                 x: 13
                 anchors.verticalCenter: parent.verticalCenter
-                font.pixelSize: 18
+                font: Roost.theme.headingFont
                 color: Roost.theme.textMuted
                 text: "⌕"
             }
@@ -190,6 +214,9 @@ Popup {
             // As tall as the rows; the card caps the height, and the layout
             // takes the rest from this list first.
             Layout.preferredHeight: contentHeight
+            // One row at least, so a small window does not take the chosen
+            // row away.
+            Layout.minimumHeight: Math.min(root.rowHeight, contentHeight)
             Layout.topMargin: 8
             Layout.bottomMargin: 8
             Layout.leftMargin: Roost.theme.panelPadding
@@ -231,7 +258,7 @@ Popup {
 
                 objectName: "paletteRow"
                 width: ListView.view.width
-                implicitHeight: Math.max(47, contentItem.implicitHeight + topPadding + bottomPadding)
+                implicitHeight: Math.max(root.rowHeight, contentItem.implicitHeight + topPadding + bottomPadding)
                 topPadding: 4
                 bottomPadding: 4
                 leftPadding: 12
@@ -263,6 +290,32 @@ Popup {
                             text: row.title
                         }
 
+                        // The key takes at most 45% of the row, the rest is the
+                        // title's; a long key is cut on the right.
+                        Label {
+                            objectName: "paletteKey"
+                            Layout.maximumWidth: Math.floor(row.availableWidth * 0.45)
+                            elide: Text.ElideRight
+                            font: Roost.theme.smallFont
+                            color: Roost.theme.textSecondary
+                            text: row.key
+                        }
+                    }
+
+                    // The second line: where the command comes from, then the
+                    // marks of its key. The marks do not elide; the id does.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font: Roost.theme.smallFont
+                            color: Roost.theme.textMuted
+                            text: row.plugin + " · " + row.commandId
+                        }
+
                         Label {
                             objectName: "paletteOverridden"
                             visible: row.overridden
@@ -278,21 +331,6 @@ Popup {
                             color: Roost.theme.warning
                             text: "captures input"
                         }
-
-                        Label {
-                            objectName: "paletteKey"
-                            font: Roost.theme.smallFont
-                            color: Roost.theme.textSecondary
-                            text: row.key
-                        }
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        font: Roost.theme.smallFont
-                        color: Roost.theme.textMuted
-                        text: row.plugin + " · " + row.commandId
                     }
 
                     Label {
@@ -314,8 +352,10 @@ Popup {
         }
 
         Label {
+            id: emptyLabel
+
             objectName: "paletteEmpty"
-            Layout.leftMargin: 28
+            Layout.leftMargin: Roost.theme.panelPadding + 12
             Layout.bottomMargin: 8
             visible: list.count === 0
             font: Roost.theme.metaFont
@@ -325,12 +365,16 @@ Popup {
 
         // The footer: a hairline, and what the keys do.
         Rectangle {
+            id: hairline
+
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: Roost.theme.line
         }
 
         ColumnLayout {
+            id: footer
+
             Layout.fillWidth: true
             Layout.fillHeight: false
             Layout.preferredHeight: 56
