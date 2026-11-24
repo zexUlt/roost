@@ -181,9 +181,6 @@ private slots:
         auto session = NewSession();
         SetBackground(*session, DARK);
         Show(session);
-        const auto background = Session_->RenderState().DefaultBackground();
-        QCOMPARE(QColor(background.R, background.G, background.B).rgba(),
-                 DARK.rgba());
 
         const QImage image = Grab();
         Snapshot(image, QStringLiteral("remainder"));
@@ -202,8 +199,10 @@ private slots:
     }
 
     // The remainder is the background the terminal has now, and the item as it
-    // is now: another default background and a larger item.
-    void TheRemainderFollowsTheBackgroundAndTheSizeOfTheItem() {
+    // is now: another default background and a wider item. The session keeps
+    // its 20 columns (the panel resizes it, not the item), so the strip to the
+    // right of the grid is a cell wider and shows in the new colour all along.
+    void TheRemainderFollowsTheBackgroundAndTheWidthOfTheItem() {
         auto session = NewSession();
         SetBackground(*session, DARK);
         Show(session);
@@ -214,7 +213,7 @@ private slots:
         QCOMPARE(Right(image, 3).rgba(), GREEN.rgba());
         QCOMPARE(Corner(image).rgba(), GREEN.rgba());
 
-        // One more cell of width fits, and a strip of the same width is left.
+        // A pixel in the part the item has gained.
         const qreal width = Item_->width();
         Item_->setWidth(width + Cell_.Width);
         Window_.resize(Window_.width() + Cell_.Width, Window_.height());

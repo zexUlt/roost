@@ -112,9 +112,10 @@ private slots:
 
     // macOS: a MenuBar that Qt makes native has the height 0
     // (QQuickMenuBarPrivate::createNativeMenuBar), and the row of the layout
-    // follows it: the panels start right under the title bar. The native bar
+    // is 0 then: the panels start right under the title bar. The native bar
     // cannot be had offscreen (no QPlatformMenuBar), so the case sets the
-    // height as Qt does and checks the row. Elsewhere there is no menu bar.
+    // height as Qt does and asks the loader to decide again. Elsewhere there
+    // is no menu bar, and the layout starts right under the toolbar.
     void TheMenuBarRowTakesNoRoomWhereTheMenuIsNative() {
         BootPair();
         if (QTest::currentTestFailed()) {
@@ -122,24 +123,70 @@ private slots:
         }
         QQuickItem* loader = Child("menuBarLoader");
         QQuickItem* layoutView = Child("layoutView");
+        QQuickItem* toolBar = Child("toolBar");
         QVERIFY(loader != nullptr);
         QVERIFY(layoutView != nullptr);
+        QVERIFY(toolBar != nullptr);
 #ifdef Q_OS_MACOS
         QVERIFY(loader->isVisible());
         auto* bar = loader->property("item").value<QQuickItem*>();
         QVERIFY(bar != nullptr);
-        // Offscreen the bar is in the window, above the panels.
+        // Offscreen the bar is in the window, above the panels: not native.
+        QVERIFY(!loader->property("nativeBar").toBool());
         QTRY_VERIFY_WITH_TIMEOUT(loader->height() > 0, TIMEOUT_MS);
         const qreal row = loader->height();
         const qreal top = layoutView->y();
-        QCOMPARE(row, bar->height());
+        QCOMPARE(row, bar->implicitHeight());
 
         bar->setHeight(0);
+        QVERIFY(QMetaObject::invokeMethod(loader, "detectNative"));
+        QVERIFY(loader->property("nativeBar").toBool());
         QTRY_COMPARE_WITH_TIMEOUT(loader->height(), 0.0, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(layoutView->y(), top - row, TIMEOUT_MS);
 #else
         QVERIFY(!loader->isVisible());
         QCOMPARE(loader->height(), 0.0);
+        // No row takes room above the toolbar: it is the first item of the
+        // window, and the layout lies under it at the margin of the window,
+        // the one it has to the left (the banner is hidden when connected).
+        QCOMPARE(toolBar->y(), 0.0);
+        QVERIFY(layoutView->x() > 0);
+        QCOMPARE(layoutView->y(),
+                 toolBar->y() + toolBar->height() + layoutView->x());
+#endif
+    }
+
+    // The row of an in-window bar follows the bar: a larger interface font
+    // makes the bar taller, and the row grows with it (it once kept the first
+    // height of the item). Only macOS has the loader.
+    void TheMenuBarRowFollowsTheHeightOfTheBar() {
+        BootPair();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+#ifdef Q_OS_MACOS
+        QQuickItem* loader = Child("menuBarLoader");
+        QQuickItem* layoutView = Child("layoutView");
+        QVERIFY(loader != nullptr);
+        QVERIFY(layoutView != nullptr);
+        auto* bar = loader->property("item").value<QQuickItem*>();
+        QVERIFY(bar != nullptr);
+        QVERIFY(!loader->property("nativeBar").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(loader->height() > 0, TIMEOUT_MS);
+        const qreal row = loader->height();
+        const qreal top = layoutView->y();
+
+        QFont font = bar->property("font").value<QFont>();
+        font.setPixelSize(font.pixelSize() > 0 ? font.pixelSize() * 3 : 48);
+        bar->setProperty("font", font);
+        QTRY_VERIFY_WITH_TIMEOUT(bar->implicitHeight() > row, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(loader->height(), bar->implicitHeight(),
+                                  TIMEOUT_MS);
+        QCOMPARE(bar->height(), bar->implicitHeight());
+        QTRY_COMPARE_WITH_TIMEOUT(layoutView->y(), top + loader->height() - row,
+                                  TIMEOUT_MS);
+#else
+        QSKIP("The menu bar row is only on macOS");
 #endif
     }
 };

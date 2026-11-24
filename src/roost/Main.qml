@@ -132,9 +132,13 @@ ApplicationWindow {
         // Bug…" is there instead of the toolbar button. It is the first row of
         // the column, so that it takes room of its own and does not lie over
         // the banner. Where Qt makes the bar native it sets the height of the
-        // MenuBar to 0 (QQuickMenuBarPrivate::createNativeMenuBar) but leaves
-        // its implicit height, which the Loader reports to the column: the row
-        // follows the height of the item, so that the native bar takes none.
+        // MenuBar to 0 (QQuickMenuBarPrivate::createNativeMenuBar) and leaves
+        // its implicit height above 0; Qt Quick Controls has no public flag
+        // for it, so `nativeBar` is decided once, when the bar is created. The
+        // row is the implicit height of the bar, so that it follows the bar
+        // when the bar grows (a larger interface font), and 0 for the native
+        // one: the row cannot follow `item.height`, which the Loader itself
+        // sets from the row and which then keeps its first value.
         // The item "Settings…" has no role in Qt Quick Controls;
         // the Cocoa menu takes it for the application's settings by its text
         // ("Setting", "Preferences", ...) and moves it to the application menu.
@@ -143,7 +147,14 @@ ApplicationWindow {
             active: Qt.platform.os === "osx"
             visible: active
             Layout.fillWidth: true
-            Layout.preferredHeight: item !== null ? item.height : 0
+            Layout.preferredHeight: item === null || nativeBar ? 0 : item.implicitHeight
+            property bool nativeBar: false
+            // Decides `nativeBar` from the bar as Qt has just made it. A function
+            // of its own so that the test can call it after setting the height.
+            function detectNative() {
+                nativeBar = item !== null && item.height === 0 && item.implicitHeight > 0;
+            }
+            onLoaded: detectNative()
             sourceComponent: MenuBar {
                 Menu {
                     title: "roost"
