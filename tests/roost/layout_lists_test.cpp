@@ -743,9 +743,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(TerminalsFillTheSplit(), TIMEOUT_MS);
         Snapshot("1-hidden");
         const double beforeDrag = Wide("terminal");
-        // Narrower, so that the room is enough for the lists to come back.
-        Drag(DividerRightOf("terminal"), -150);
-        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") < beforeDrag - 100,
+        // Narrower, so that the room is enough for the lists to come back
+        // beside both terminals (the window margins and the gaps between the
+        // cards take room too).
+        Drag(DividerRightOf("terminal"), -250);
+        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") < beforeDrag - 200,
                                  TIMEOUT_MS);
         const int dragged = qRound(Wide("terminal"));
         // The terminals are as the user left them, the lists as they were.

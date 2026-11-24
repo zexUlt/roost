@@ -545,6 +545,19 @@ target_compile_definitions(layout_tabs_menu_test PRIVATE
 add_dependencies(layout_tabs_menu_test roostd fake_tui claude-adapter
     sessions_qml)
 
+# The panels are cards and the card of the panel that had the keyboard last
+# has the focus ring, also while a popup holds the keyboard.
+roost_add_qt_test(layout_card_focus_test roost/layout_card_focus_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_card_focus_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_card_focus_test roostd fake_tui claude-adapter
+    sessions_qml)
+
 # A tab the user clicks takes the keyboard and is stored as the shown one.
 roost_add_qt_test(layout_tabs_choice_test roost/layout_tabs_choice_test.cpp
     roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin

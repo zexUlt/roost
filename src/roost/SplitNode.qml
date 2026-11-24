@@ -26,20 +26,36 @@ SplitView {
     property var node: null
     property var view: null
     property var path: []
+    // The split is in a stack of tabs: no card under it shows the gap, so the
+    // divider is the line it was before the cards.
+    property bool stacked: false
 
     orientation: split.node !== null && !split.node.horizontal ? Qt.Vertical : Qt.Horizontal
 
-    readonly property int handleSize: 1
-    // How far from the line a press still takes the divider.
+    // The handle lies in the gap between two cards and draws nothing; in a
+    // stack it is a line of 1 px.
+    readonly property int handleSize: split.stacked ? 1 : Roost.theme.panelGap
+    // How far from the handle a press still takes the divider. The #224 catch
+    // is 2 px to either side of the line the divider was; the edge of a card
+    // is that line now, so the zone reaches 2 px into each card, where lie
+    // the outline and a pixel of the surface, under the content (the terminal
+    // keeps `cornerInset` off the edge).
     readonly property int handleGrab: 2
     readonly property bool horizontal: split.node !== null && split.node.horizontal
 
     handle: Item {
+        objectName: "splitHandle"
         implicitWidth: split.handleSize
         implicitHeight: split.handleSize
 
-        // The item stays 1 px, so does the gap; the mask only widens the area
-        // that takes a press (SplitView finds the divider with contains()).
+        Rectangle {
+            visible: split.stacked
+            anchors.fill: parent
+            color: Roost.theme.line
+        }
+
+        // SplitView finds the divider with contains(). The mask widens the
+        // area that takes a press by `handleGrab` to either side of the item.
         containmentMask: QtObject {
             function contains(point: point): bool {
                 const along = split.horizontal ? point.x : point.y;
@@ -180,6 +196,7 @@ SplitView {
             required property var modelData
 
             parent: split.contentItem
+            stacked: split.stacked
 
             // Set when the Instantiator drops this node.
             property bool gone: false
