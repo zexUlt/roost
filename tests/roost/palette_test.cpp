@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QQuickItemGrabResult>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTest>
@@ -340,6 +341,27 @@ private:
                        "paletteList");
         QVERIFY(list != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(list->height() > 0, TIMEOUT_MS);
+    }
+
+    // Saves a picture of the window as <case>-<step>.png when asked to
+    // (ROOST_TEST_SNAPSHOTS), as layout_tabs_menu_test does.
+    void Snapshot(const QString& step) {
+        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
+        if (directory.isEmpty()) {
+            return;
+        }
+        QVERIFY(QDir().mkpath(directory));
+        const QString name =
+            QStringLiteral("%1-%2.png")
+                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
+        // The content item, not the window: grabWindow distorts the terminal
+        // in the offscreen platform.
+        QSharedPointer<QQuickItemGrabResult> result =
+            Window()->contentItem()->grabToImage();
+        QVERIFY(!result.isNull());
+        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
+        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
+        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
     }
 
     void Type(const QString& text) {
@@ -760,6 +782,12 @@ private slots:
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
         Press(Qt::Key_Up);
         QCOMPARE(Palette()->property("currentRow").toInt(), 0);
+        Press(Qt::Key_Down);
+        QCOMPARE(Palette()->property("currentRow").toInt(), 1);
+        Snapshot("typed-row-selected");
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         Press(Qt::Key_Escape);
         QTRY_VERIFY_WITH_TIMEOUT(!IsOpen(), TIMEOUT_MS);
     }
