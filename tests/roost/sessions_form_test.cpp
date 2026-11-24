@@ -11,10 +11,12 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QQuickWindow>
 #include <QSaveFile>
 #include <QTest>
 
@@ -42,9 +44,10 @@ const QString STARTED = "bg-4e5f6071";
 
 // A fake `claude`, steered by the files next to it: `agents` prints
 // agents.json with the cwds of /work moved into this directory, which it
-// makes; `attach` runs fake_tui; `--bg` writes the directory it runs in and
-// its arguments, each whole in brackets, to bg.ran, puts bg.agents in place of
-// agents.json when it is there and prints bg.stdout.
+// makes, and adds a line to agents.polls; `attach` runs fake_tui; `--bg` writes
+// the directory it runs in and its arguments, each whole in brackets, to
+// bg.ran, puts bg.agents in place of agents.json when it is there and prints
+// bg.stdout.
 constexpr const char* FORM_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 verb=$1
@@ -52,6 +55,7 @@ argv=; for a in "$@"; do argv="$argv[$a]"; done
 if [ "$verb" = --bg ]; then verb=bg; fi
 case "$verb" in
 agents)
+  echo poll >> "$dir/agents.polls"
   mkdir -p "$dir/work/alpha" "$dir/work/beta" "$dir/work/gamma" "$dir/work/delta" "$dir/work/other"
   sed 's|"/work/|"'"$dir"'/work/|g' "$dir/agents.json"
   ;;
@@ -74,6 +78,7 @@ class SessionsFormTest : public SessionsWindow {
 
 private:
     std::optional<ScopedEnv> Home_;
+    QFont AppFont_;
 
     QString BinPath(const QString& name) const {
         return Dir_->filePath("bin/" + name);
@@ -93,6 +98,22 @@ private:
 
     static QString Canonical(const QString& path) {
         return QFileInfo(path).canonicalFilePath();
+    }
+
+    // How many times the fake claude was asked for the list of the agents.
+    int Polls() const {
+        return static_cast<int>(
+            QString::fromUtf8(ReadFile(BinPath("agents.polls")))
+                .split('\n', Qt::SkipEmptyParts)
+                .size());
+    }
+
+    // The font of the application, which the theme takes as its base, is a
+    // state of the process: a case that changes it puts it back in cleanup().
+    void ScaleAppFont(qreal factor) {
+        QFont font = QGuiApplication::font();
+        font.setPointSizeF(font.pointSizeF() * factor);
+        QGuiApplication::setFont(font);
     }
 
     // What `claude agents` lists once STARTED is there.
@@ -132,11 +153,12 @@ private:
 
     // `withParts`: the panel must have the head and the form that the cases
     // drive; a case about what was there before the form goes without.
-    void Start(const QJsonObject& sections = {}, bool withParts = true) {
+    void Start(const QJsonObject& sections = {}, bool withParts = true,
+               int rows = 4, const char* claude = FORM_CLAUDE) {
         if (!sections.isEmpty()) {
             QVERIFY(Seed(sections));
         }
-        Boot(4, FORM_CLAUDE);
+        Boot(rows, claude);
         if (QTest::currentTestFailed() || !withParts) {
             return;
         }
@@ -187,10 +209,13 @@ private:
     void BackTab() { Press(Qt::Key_Backtab, Qt::ShiftModifier); }
 
     void Click(QQuickItem* item) {
-        QTest::mouseClick(
-            Window(), Qt::LeftButton, Qt::NoModifier,
-            item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
-                .toPoint());
+        ClickAt(item, item->width() / 2, item->height() / 2);
+    }
+
+    // A click at a point of the item, in its own coordinates.
+    void ClickAt(QQuickItem* item, qreal x, qreal y) {
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          item->mapToScene(QPointF(x, y)).toPoint());
     }
 
     // "+ New", then waits until the task has the keyboard.
@@ -206,6 +231,79 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
     }
 
+    QObject* CategoryPopup() {
+        return qvariant_cast<QObject*>(CategoryBox()->property("popup"));
+    }
+
+    // Opens the list of the category box with Space, walks it with Down to
+    // the entry at `index` and takes it with Enter: an explicit choice, unlike
+    // a Down on the closed box.
+    void PickCategoryWithKeys(int index) {
+        Press(Qt::Key_Space);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryPopup()->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        for (int step = 0;
+             step < 8 &&
+             CategoryBox()->property("highlightedIndex").toInt() != index;
+             ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(CategoryBox()->property("highlightedIndex").toInt(), index);
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!CategoryPopup()->property("visible").toBool(),
+                                 TIMEOUT_MS);
+    }
+
+    // "New category…" (the last entry) chosen in the list, the keyboard in
+    // the box: the keyboard goes to the field of the name.
+    void ChooseNewCategory() {
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        PickCategoryWithKeys(CategoryBox()->property("count").toInt() - 1);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    // The place of a control inside the form, in the coordinates of the form.
+    QRectF InForm(QQuickItem* item) {
+        return QRectF(item->mapToItem(Form(), QPointF(0, 0)),
+                      QSizeF(item->width(), item->height()));
+    }
+
+    // The control has the keyboard and lies inside what the form shows: below
+    // its top and above the hint.
+    void VerifyShown(QQuickItem* item, const char* what) {
+        QTRY_VERIFY2_WITH_TIMEOUT(item->hasActiveFocus(), what, TIMEOUT_MS);
+        const qreal hint = Part("sessionsNewHint")->y();
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            InForm(item).top() >= 0 && InForm(item).bottom() <= hint, what,
+            TIMEOUT_MS);
+    }
+
+    // Every control of the form, as Tab reaches it, is inside the form when it
+    // has the keyboard; Create and the link back included.
+    void VerifyTabShowsEveryControl() {
+        OpenForm();
+        Type("Ship it");
+        VerifyShown(TaskField(), "task");
+        Tab();
+        VerifyShown(NameField(), "name");
+        Tab();
+        VerifyShown(CategoryBox(), "category");
+        Tab();
+        VerifyShown(CreateButton(), "create");
+        Snap("scrolled-to-create");
+        Tab();
+        VerifyShown(BackLink(), "back");
+        Tab();
+        VerifyShown(TaskField(), "task again");
+        BackTab();
+        VerifyShown(BackLink(), "back again");
+        BackTab();
+        VerifyShown(CreateButton(), "create again");
+        // The hint does not cover a control, and nothing is cut off.
+        QVERIFY(InForm(CreateButton()).bottom() <=
+                Part("sessionsNewHint")->y());
+    }
+
     void VerifyListShown() {
         QVERIFY(!FormOpen());
         QVERIFY(!Form()->isVisible());
@@ -218,6 +316,7 @@ private:
 
 private slots:
     void init() {
+        AppFont_ = QGuiApplication::font();
         Prepare();
         QVERIFY(QDir().mkpath(Dir_->filePath("home")));
         Home_.emplace("HOME", Dir_->filePath("home").toUtf8());
@@ -226,6 +325,7 @@ private slots:
     void cleanup() {
         Teardown();
         Home_.reset();
+        QGuiApplication::setFont(AppFont_);
     }
 
     void TheSearchFieldIsVisibleAndSlashMovesTheKeyboardToIt() {
@@ -278,15 +378,19 @@ private slots:
             return;
         }
         Press(Qt::Key_Slash);
-        Type("flaky");
-        QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA}), TIMEOUT_MS);
+        // Two sessions match, so that a Down that the list took would move
+        // the cursor to the second one.
+        Type("the");
+        QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA, BETA}),
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CursorId(), ALPHA, TIMEOUT_MS);
 
         Press(Qt::Key_Down);
 
         QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
-        QCOMPARE(Query(), QString("flaky"));
-        QCOMPARE(TextOf("sessionsSearchInput"), QString("flaky"));
-        QCOMPARE(Ids(), (QStringList{ALPHA}));
+        QCOMPARE(Query(), QString("the"));
+        QCOMPARE(TextOf("sessionsSearchInput"), QString("the"));
+        QCOMPARE(Ids(), (QStringList{ALPHA, BETA}));
         // Down was the key that left the field; the list did not take it.
         QCOMPARE(CursorId(), ALPHA);
     }
@@ -380,10 +484,14 @@ private slots:
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
 
-        // Down on the closed box takes the next entry: "New category…".
+        // Down on the closed box takes the next entry, "New category…", and
+        // the field of its name appears; the keyboard stays on the box, which
+        // is only being walked through.
         Press(Qt::Key_Down);
 
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->isVisible(), TIMEOUT_MS);
+        QVERIFY(CategoryBox()->hasActiveFocus());
+        Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
         Type("Ops");
         BackTab();
@@ -462,8 +570,7 @@ private slots:
         ToName();
         Type("Shipping");
         Tab();
-        Press(Qt::Key_Down);
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+        ChooseNewCategory();
         Type("Ops");
 
         // The keyboard goes to the terminal's panel and back to the list's.
@@ -522,7 +629,8 @@ private slots:
         // nothing is opened.
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
         const int row = ViewRow(static_cast<int>(Ids().indexOf(STARTED)));
-        QCOMPARE(Role(row, "category").toString(), QString("Ops"));
+        QTRY_COMPARE_WITH_TIMEOUT(Role(row, "category").toString(),
+                                  QString("Ops"), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Role(row, "title").toString(),
                                   QString("Shipped"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Agent's own name"),
@@ -546,8 +654,7 @@ private slots:
         Type("Ship it");
         ToName();
         Tab();
-        Press(Qt::Key_Down);
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+        ChooseNewCategory();
         Type("Brand new");
 
         Press(Qt::Key_Return);
@@ -578,8 +685,7 @@ private slots:
         // A blank name is no name.
         Type("  ");
         Tab();
-        Press(Qt::Key_Down);
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+        ChooseNewCategory();
         Type("Brand new");
 
         Press(Qt::Key_Return);
@@ -627,13 +733,282 @@ private slots:
         Press(Qt::Key_Return);
         Click(CreateButton());
 
-        // Barrier: the form is still open, and what the list says is as it
-        // was, after a round trip of the window.
+        // A start says "Starting…" at once, in the panel; the form is still
+        // open and the button is as it was.
         QVERIFY(FormOpen());
         QVERIFY(!CreateButton()->property("enabled").toBool());
         QCOMPARE(TextOf("sessionsNewName"), QString("Shipping"));
+        QVERIFY(Notice().isEmpty());
+        // Barrier: two more polls of the agents, one of which started after
+        // the last key. A command of the agent that the keys had started would
+        // have been run, and listed, by then.
+        const int polls = Polls();
+        QTRY_VERIFY_WITH_TIMEOUT(Polls() >= polls + 2, TIMEOUT_MS);
         QVERIFY(BgRan().isEmpty());
         QVERIFY(!Ids().contains(STARTED));
+        QVERIFY(Notice().isEmpty());
+    }
+
+    void NewWhileThePromptIsOpenTypesIntoTheTask() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_N);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Type("half");
+
+        Click(Part("sessionsNewButton"));
+
+        QTRY_VERIFY_WITH_TIMEOUT(FormOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
+        // The prompt is gone with what was typed into it.
+        QVERIFY(PanelOf(LIST)->property("promptKind").toString().isEmpty());
+        QVERIFY(!Part("sessionsPrompt")->isVisible());
+        Type("abc");
+        // The letters are the task's: no key of the list took them (a would
+        // switch the tab, c would open the prompt).
+        QCOMPARE(TextOf("sessionsNewTask"), QString("abc"));
+        QCOMPARE(List()->property("tab").toString(), QString("all"));
+        QVERIFY(PanelOf(LIST)->property("promptKind").toString().isEmpty());
+        QVERIFY(TaskField()->hasActiveFocus());
+
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        QVERIFY(!Part("sessionsPrompt")->isVisible());
+        QVERIFY(BgRan().isEmpty());
+    }
+
+    void NewWhileAConfirmationWaitsDropsItAndTypesIntoTheTask() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        for (int step = 0; step < 8 && Cursor() < 0; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QVERIFY(Cursor() >= 0);
+        Press(Qt::Key_D);
+        QVERIFY(Part("sessionsConfirm")->isVisible());
+
+        Click(Part("sessionsNewButton"));
+
+        QTRY_VERIFY_WITH_TIMEOUT(FormOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
+        // The question is not kept for the list that is hidden: a y in the
+        // task would otherwise be the answer to it.
+        QVERIFY(!Part("sessionsConfirm")->isVisible());
+        Type("yes abc");
+        QCOMPARE(TextOf("sessionsNewTask"), QString("yes abc"));
+        QCOMPARE(List()->property("tab").toString(), QString("all"));
+        QVERIFY(!Part("sessionsConfirm")->isVisible());
+
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        QVERIFY(!Part("sessionsConfirm")->isVisible());
+        QCOMPARE(Ids(), ORDER);
+    }
+
+    void AStartThatCannotBeAskedForKeepsTheUnavailableAgentsInView() {
+        FailOnWarnings();
+        Start({}, true, 0, BROKEN_CLAUDE);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!UnavailableNow().isEmpty(), TIMEOUT_MS);
+
+        OpenForm();
+
+        // The form is in place of the list; the reason that no agent lists
+        // is not hidden by it, and the form ends above it.
+        auto* unavailable = Part("sessionsUnavailable");
+        QVERIFY(unavailable->isVisible());
+        QVERIFY(unavailable->property("text").toString().contains(
+            "claude is broken"));
+        QVERIFY(Form()->y() + Form()->height() <= unavailable->y());
+        QVERIFY(Form()->isVisible());
+        Snap("1-unavailable");
+    }
+
+    void TheCategoryBoxShowsTheCategoryThatCreateApplies() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        // The cursor starts on the header "Ops": the form takes its category.
+        QCOMPARE(List()->property("cursorCategory").toString(), QString("Ops"));
+        OpenForm();
+        QCOMPARE(CategoryBox()->property("currentText").toString(),
+                 QString("Ops"));
+        Type("Ship it");
+
+        // The only session of "Ops" leaves with the next list of the agent.
+        QVERIFY(ListWithout({BETA}));
+        QTRY_VERIFY_WITH_TIMEOUT(!Ids().contains(BETA), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !List()->property("knownCategories").toStringList().contains("Ops"),
+            TIMEOUT_MS);
+
+        // The box still says what Create applies.
+        QCOMPARE(CategoryBox()->property("currentText").toString(),
+                 QString("Ops"));
+        Click(CreateButton());
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().value(1),
+                                  QString("[--bg][--][Ship it]"), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("categories")
+                                      .toObject()
+                                      .value(KeyOf(STARTED)),
+                                  QJsonValue("Ops"), TIMEOUT_MS);
+    }
+
+    void AClickOnTheFrameOfTheSearchFieldAwayFromTheTextFocusesIt() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QQuickItem* frame = Part("sessionsSearch");
+        QQuickItem* icon = Part("sessionsSearchIcon");
+        QVERIFY(ListView()->hasActiveFocus());
+
+        // On the icon.
+        ClickAt(icon, icon->width() / 2, icon->height() / 2);
+        QTRY_VERIFY_WITH_TIMEOUT(Search()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+
+        // Over the line of the text, in the margin of the frame.
+        ClickAt(frame, frame->width() / 2, 2);
+        QTRY_VERIFY_WITH_TIMEOUT(Search()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(ListView()->hasActiveFocus(), TIMEOUT_MS);
+
+        // At the right end, past the text.
+        ClickAt(frame, frame->width() - 4, frame->height() / 2);
+        QTRY_VERIFY_WITH_TIMEOUT(Search()->hasActiveFocus(), TIMEOUT_MS);
+        Type("flaky");
+        QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{ALPHA}), TIMEOUT_MS);
+    }
+
+    void ALowPanelScrollsTheFormToTheControlThatHasTheKeyboard() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Window()->setHeight(300);
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->height() <= 300, TIMEOUT_MS);
+
+        VerifyTabShowsEveryControl();
+        // The case means something only if the form does not fit: it was
+        // scrolled to reach Create, and the hint is below the scrolled part.
+        QQuickItem* scroll = Part("sessionsNewScroll");
+        QVERIFY(scroll != nullptr);
+        QVERIFY(scroll->property("contentHeight").toReal() > scroll->height());
+        QVERIFY(scroll->property("contentY").toReal() > 0);
+        QVERIFY(Part("sessionsNewHint")->isVisible());
+        QVERIFY(scroll->y() + scroll->height() <= Part("sessionsNewHint")->y());
+    }
+
+    void TheFormGrowsWithALargeInterfaceFont() {
+        FailOnWarnings();
+        ScaleAppFont(2.5);
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenForm();
+
+        // The controls are not lower than their text, and not lower than the
+        // style says.
+        for (QQuickItem* field : {TaskField(), NameField()}) {
+            QVERIFY(field->height() >= 38);
+            QVERIFY(field->height() >=
+                    field->property("contentHeight").toReal() +
+                        field->property("topPadding").toReal() +
+                        field->property("bottomPadding").toReal());
+        }
+        QVERIFY(CategoryBox()->height() > 38);
+        QVERIFY(CreateButton()->height() > 34);
+        QVERIFY(CreateButton()->height() >=
+                CreateButton()->property("implicitContentHeight").toReal() +
+                    CreateButton()->property("topPadding").toReal() +
+                    CreateButton()->property("bottomPadding").toReal());
+        Snap("1-large-font");
+
+        VerifyTabShowsEveryControl();
+    }
+
+    void ANewCategoryIsChosenInTheListAndTheKeyboardMovesToItsField() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenForm();
+        Type("Ship it");
+        ToName();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        // Arrows on the closed box walk the entries and keep the keyboard.
+        Press(Qt::Key_Down);
+        Press(Qt::Key_Down);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->isVisible(), TIMEOUT_MS);
+        QVERIFY(CategoryBox()->hasActiveFocus());
+        QVERIFY(!CreateButton()->property("enabled").toBool());
+        // Back to a known category: no field, Create is usable again.
+        Press(Qt::Key_Up);
+        QTRY_VERIFY_WITH_TIMEOUT(!CategoryName()->isVisible(), TIMEOUT_MS);
+        QVERIFY(CategoryBox()->hasActiveFocus());
+        QCOMPARE(CategoryBox()->property("currentText").toString(),
+                 QString("Ops"));
+        QVERIFY(CreateButton()->property("enabled").toBool());
+
+        // Chosen in the list that the box opens, with Enter on the entry.
+        PickCategoryWithKeys(CategoryBox()->property("count").toInt() - 1);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(CategoryName()->isVisible());
+    }
+
+    void AClickOnTheNewCategoryEntryMovesTheKeyboardToItsField() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenForm();
+        ToName();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+
+        Click(CategoryBox());
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryPopup()->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        const int last = CategoryBox()->property("count").toInt() - 1;
+        QQuickItem* entry = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (entry =
+                 [&] {
+                     QQuickItem* content = qvariant_cast<QQuickItem*>(
+                         CategoryPopup()->property("contentItem"));
+                     QQuickItem* item = nullptr;
+                     QMetaObject::invokeMethod(content, "itemAtIndex",
+                                               Q_RETURN_ARG(QQuickItem*, item),
+                                               Q_ARG(int, last));
+                     return item;
+                 }()) != nullptr,
+            TIMEOUT_MS);
+        Click(entry);
+
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
     }
 
     void NStillStartsASessionFromThePrompt() {

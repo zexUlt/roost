@@ -294,8 +294,14 @@ FocusScope {
     property var draftTarget: null
 
     // The entries of the category list of the form: none, the known ones, a
-    // new one.
-    readonly property var categoryChoices: ["Uncategorized"].concat(sessionsList.knownCategories, ["New category…"])
+    // new one. The category of the draft stays among them while the form holds
+    // it, even when no session has it any more (the list was replaced, or its
+    // last session left): the box shows what Create applies.
+    readonly property var categoryChoices: {
+        const known = sessionsList.knownCategories;
+        const kept = draftCategory !== "" && !draftNewCategory && known.indexOf(draftCategory) < 0 ? [draftCategory] : [];
+        return ["Uncategorized"].concat(known, kept, ["New category…"]);
+    }
 
     // The keyboard goes to the search field, with its query to edit.
     function focusSearch() {
@@ -311,6 +317,12 @@ FocusScope {
 
     function openNewForm() {
         if (!newOpen) {
+            // A question or a prompt of the list is dropped, not left for the
+            // list that is hidden: the prompt would hand the keyboard to it
+            // when the task takes it, and the question would wait for a key
+            // that never comes.
+            confirm = null;
+            resetPrompt();
             const base = newSessionBase();
             draftTask = "";
             draftName = "";
@@ -362,11 +374,16 @@ FocusScope {
         promptInput.forceActiveFocus();
     }
 
-    function closePrompt() {
+    // The prompt ends; the keyboard stays where it is.
+    function resetPrompt() {
         promptKind = "";
         promptRef = null;
         promptNew = null;
         promptInput.text = "";
+    }
+
+    function closePrompt() {
+        resetPrompt();
         list.forceActiveFocus();
     }
 
@@ -1019,7 +1036,8 @@ FocusScope {
         // The main button: the accepting one.
         property bool primary: false
 
-        implicitHeight: 34
+        // At least 34, higher with the font.
+        implicitHeight: Math.max(34, implicitContentHeight + topPadding + bottomPadding)
         leftPadding: 12
         rightPadding: 12
         font: Roost.theme.rowFont
@@ -1068,7 +1086,7 @@ FocusScope {
     component PanelLink: Button {
         id: link
 
-        implicitHeight: 28
+        implicitHeight: Math.max(28, implicitContentHeight + topPadding + bottomPadding)
         leftPadding: 4
         rightPadding: 4
         font: Roost.theme.rowFont
@@ -1092,7 +1110,7 @@ FocusScope {
     }
 
     component PanelField: TextField {
-        implicitHeight: 38
+        implicitHeight: Math.max(38, contentHeight + topPadding + bottomPadding)
         leftPadding: 12
         rightPadding: 12
         font: Roost.theme.uiFont
@@ -1112,7 +1130,7 @@ FocusScope {
     component PanelComboBox: ComboBox {
         id: combo
 
-        implicitHeight: 38
+        implicitHeight: Math.max(38, implicitContentHeight + topPadding + bottomPadding)
         leftPadding: 12
         font: Roost.theme.uiFont
 
@@ -1120,7 +1138,7 @@ FocusScope {
             required property int index
 
             width: ListView.view ? ListView.view.width : combo.width
-            implicitHeight: 34
+            implicitHeight: Math.max(34, implicitContentHeight + topPadding + bottomPadding)
             leftPadding: 12
             highlighted: combo.highlightedIndex === index
             font: Roost.theme.rowFont
@@ -1240,6 +1258,16 @@ FocusScope {
                 color: Roost.theme.controlBackground
                 border.width: searchInput.activeFocus ? Roost.theme.cursorRingWidth : 1
                 border.color: searchInput.activeFocus ? Roost.theme.focus : Roost.theme.line
+
+                // A tap anywhere on the frame, the icon and the margins
+                // included, gives the keyboard to the field. It lies under the
+                // field, whose own line of text takes its taps itself (the
+                // cursor goes where the tap is).
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.IBeamCursor
+                    onClicked: root.focusSearch()
+                }
 
                 Label {
                     objectName: "sessionsSearchIcon"
@@ -1669,143 +1697,206 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.bottom: footer.top
+        // The form ends above the list of unavailable agents, as the list does.
+        anchors.bottom: unavailable.visible ? unavailable.top : footer.top
         visible: root.newOpen
         clip: true
 
         Keys.onEscapePressed: root.closeNewForm()
 
-        PanelLink {
-            id: newBack
+        // The content scrolls when the panel is low or the font large, so that
+        // Create is never cut off or covered by the hint; the control that
+        // gets the keyboard is brought into view.
+        Flickable {
+            id: newScroll
 
-            objectName: "sessionsNewBack"
-            x: 16
-            y: 18
-            text: "← Sessions"
-            KeyNavigation.tab: newTaskField
-            KeyNavigation.backtab: newCreate
-            onClicked: root.closeNewForm()
-        }
+            objectName: "sessionsNewScroll"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: newRule.top
+            contentWidth: width
+            contentHeight: newContent.height
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            clip: true
 
-        Label {
-            id: newTitle
-
-            objectName: "sessionsNewTitle"
-            x: 20
-            anchors.top: newBack.bottom
-            anchors.topMargin: 16
-            color: root.textColor
-            font: Roost.theme.titleFont
-            text: "New session"
-        }
-
-        Column {
-            id: newFields
-
-            x: 20
-            anchors.top: newTitle.bottom
-            anchors.topMargin: 20
-            width: parent.width - 40
-            spacing: 8
-
-            Label {
-                color: Roost.theme.textSecondary
-                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
-                text: "Task"
-            }
-
-            PanelField {
-                id: newTaskField
-
-                objectName: "sessionsNewTask"
-                width: parent.width
-                text: root.draftTask
-                onTextEdited: root.draftTask = text
-                onAccepted: root.createFromForm()
-                KeyNavigation.tab: newNameField
-                KeyNavigation.backtab: newBack
-            }
-
-            Label {
-                topPadding: 8
-                color: Roost.theme.textSecondary
-                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
-                text: "Name"
-            }
-
-            PanelField {
-                id: newNameField
-
-                objectName: "sessionsNewName"
-                width: parent.width
-                placeholderText: "Named by the agent"
-                text: root.draftName
-                onTextEdited: root.draftName = text
-                onAccepted: root.createFromForm()
-                KeyNavigation.tab: newCategoryBox
-                KeyNavigation.backtab: newTaskField
-            }
-
-            Label {
-                topPadding: 8
-                color: Roost.theme.textSecondary
-                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
-                text: "Category"
-            }
-
-            PanelComboBox {
-                id: newCategoryBox
-
-                objectName: "sessionsNewCategory"
-                width: parent.width
-                model: root.categoryChoices
-                currentIndex: root.draftNewCategory ? root.categoryChoices.length - 1 : Math.max(0, root.categoryChoices.indexOf(root.draftCategory))
-                onActivated: index => {
-                    if (index === root.categoryChoices.length - 1) {
-                        root.draftNewCategory = true;
-                        newCategoryName.forceActiveFocus();
-                    } else {
-                        root.draftNewCategory = false;
-                        root.draftCategory = index === 0 ? "" : root.categoryChoices[index];
-                    }
+            // Scrolls by the least that puts the control inside the view, with
+            // room for the ring of its focus. A control outside the content
+            // (another panel's) is left alone.
+            function reveal(item) {
+                let owner = item;
+                while (owner && owner !== newContent) {
+                    owner = owner.parent;
                 }
-                KeyNavigation.tab: newCategoryName.visible ? newCategoryName : newCreate
-                KeyNavigation.backtab: newNameField
-            }
-
-            PanelField {
-                id: newCategoryName
-
-                objectName: "sessionsNewCategoryName"
-                width: parent.width
-                visible: root.draftNewCategory
-                placeholderText: "Name of the category"
-                text: root.draftNewName
-                onTextEdited: root.draftNewName = text
-                onAccepted: root.createFromForm()
-                KeyNavigation.tab: newCreate
-                KeyNavigation.backtab: newCategoryBox
+                if (!owner) {
+                    return;
+                }
+                const margin = 6;
+                const top = item.mapToItem(newContent, 0, 0).y - margin;
+                const bottom = top + item.height + 2 * margin;
+                if (top < contentY) {
+                    contentY = Math.max(0, top);
+                } else if (bottom > contentY + height) {
+                    contentY = Math.max(0, Math.min(contentHeight - height, bottom - height));
+                }
             }
 
             Item {
-                width: 1
-                height: 12
+                id: newContent
+
+                width: newScroll.width
+                height: newFields.y + newFields.height + 20
+
+                PanelLink {
+                    id: newBack
+
+                    objectName: "sessionsNewBack"
+                    x: 16
+                    y: 18
+                    text: "← Sessions"
+                    KeyNavigation.tab: newTaskField
+                    KeyNavigation.backtab: newCreate
+                    onClicked: root.closeNewForm()
+                }
+
+                Label {
+                    id: newTitle
+
+                    objectName: "sessionsNewTitle"
+                    x: 20
+                    anchors.top: newBack.bottom
+                    anchors.topMargin: 16
+                    color: root.textColor
+                    font: Roost.theme.titleFont
+                    text: "New session"
+                }
+
+                Column {
+                    id: newFields
+
+                    x: 20
+                    anchors.top: newTitle.bottom
+                    anchors.topMargin: 20
+                    width: parent.width - 40
+                    spacing: 8
+
+                    Label {
+                        color: Roost.theme.textSecondary
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        text: "Task"
+                    }
+
+                    PanelField {
+                        id: newTaskField
+
+                        objectName: "sessionsNewTask"
+                        width: parent.width
+                        text: root.draftTask
+                        onTextEdited: root.draftTask = text
+                        onAccepted: root.createFromForm()
+                        KeyNavigation.tab: newNameField
+                        KeyNavigation.backtab: newBack
+                    }
+
+                    Label {
+                        topPadding: 8
+                        color: Roost.theme.textSecondary
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        text: "Name"
+                    }
+
+                    PanelField {
+                        id: newNameField
+
+                        objectName: "sessionsNewName"
+                        width: parent.width
+                        placeholderText: "Named by the agent"
+                        text: root.draftName
+                        onTextEdited: root.draftName = text
+                        onAccepted: root.createFromForm()
+                        KeyNavigation.tab: newCategoryBox
+                        KeyNavigation.backtab: newTaskField
+                    }
+
+                    Label {
+                        topPadding: 8
+                        color: Roost.theme.textSecondary
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        text: "Category"
+                    }
+
+                    PanelComboBox {
+                        id: newCategoryBox
+
+                        objectName: "sessionsNewCategory"
+                        width: parent.width
+                        model: root.categoryChoices
+                        currentIndex: root.draftNewCategory ? root.categoryChoices.length - 1 : Math.max(0, root.categoryChoices.indexOf(root.draftCategory))
+                        // An arrow on the closed box walks the entries and keeps the
+                        // keyboard; the keyboard goes to the field of the name only
+                        // when the entry is chosen in the list that the box opens
+                        // (Enter on it, or a click).
+                        onActivated: index => {
+                            if (index === root.categoryChoices.length - 1) {
+                                root.draftNewCategory = true;
+                                if (popup.visible) {
+                                    newCategoryName.forceActiveFocus();
+                                }
+                            } else {
+                                root.draftNewCategory = false;
+                                root.draftCategory = index === 0 ? "" : root.categoryChoices[index];
+                            }
+                        }
+                        KeyNavigation.tab: newCategoryName.visible ? newCategoryName : newCreate
+                        KeyNavigation.backtab: newNameField
+                    }
+
+                    PanelField {
+                        id: newCategoryName
+
+                        objectName: "sessionsNewCategoryName"
+                        width: parent.width
+                        visible: root.draftNewCategory
+                        placeholderText: "Name of the category"
+                        text: root.draftNewName
+                        onTextEdited: root.draftNewName = text
+                        onAccepted: root.createFromForm()
+                        KeyNavigation.tab: newCreate
+                        KeyNavigation.backtab: newCategoryBox
+                    }
+
+                    Item {
+                        width: 1
+                        height: 12
+                    }
+
+                    PanelButton {
+                        id: newCreate
+
+                        objectName: "sessionsNewCreate"
+                        primary: true
+                        enabled: root.canCreate()
+                        text: "Create session"
+                        onClicked: root.createFromForm()
+                        KeyNavigation.tab: newBack
+                        KeyNavigation.backtab: newCategoryName.visible ? newCategoryName : newCategoryBox
+                    }
+                }
             }
+        }
 
-            PanelButton {
-                id: newCreate
+        Connections {
+            target: root.Window.window
 
-                objectName: "sessionsNewCreate"
-                primary: true
-                enabled: root.canCreate()
-                text: "Create session"
-                onClicked: root.createFromForm()
-                KeyNavigation.tab: newBack
-                KeyNavigation.backtab: newCategoryName.visible ? newCategoryName : newCategoryBox
+            function onActiveFocusItemChanged() {
+                newScroll.reveal(root.Window.window.activeFocusItem);
             }
         }
 
         Rectangle {
+            id: newRule
+
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: newHint.top
@@ -1861,7 +1952,7 @@ FocusScope {
         anchors.right: parent.right
         anchors.bottom: footer.top
         anchors.margins: Roost.theme.panelPadding
-        visible: text !== "" && !root.newOpen
+        visible: text !== ""
         color: Roost.theme.warning
         font: Roost.theme.metaFont
         wrapMode: Text.Wrap
