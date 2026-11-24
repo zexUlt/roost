@@ -265,6 +265,43 @@ private slots:
         QCOMPARE(theme.smallFont().pointSizeF(), 21.0);
     }
 
+    // `withWeight` changes the weight and nothing else: the size stays in
+    // pixels or in points, fractions too, and the other attributes stay.
+    void WithWeightKeepsTheRestOfTheFont() {
+        FailOnWarnings();
+        QFont points;
+        points.setFamily(QStringLiteral("Helvetica"));
+        points.setPointSizeF(10.5);
+        points.setItalic(true);
+        points.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
+        const QFont bold = Theme::withWeight(points, QFont::DemiBold);
+        QCOMPARE(bold.weight(), QFont::DemiBold);
+        QCOMPARE(bold.pointSizeF(), 10.5);
+        QCOMPARE(bold.pixelSize(), -1);
+        QCOMPARE(bold.family(), points.family());
+        QVERIFY(bold.italic());
+        QCOMPARE(bold.letterSpacing(), 0.5);
+
+        QFont pixels;
+        pixels.setPixelSize(14);
+        const QFont heavy = Theme::withWeight(pixels, QFont::Bold);
+        QCOMPARE(heavy.pixelSize(), 14);
+        QCOMPARE(heavy.pointSizeF(), -1.0);
+        QCOMPARE(heavy.weight(), QFont::Bold);
+
+        // Digits of one width, on request only.
+        QVERIFY(!Theme::withWeight(pixels, QFont::Normal)
+                     .featureTags()
+                     .contains(QFont::Tag("tnum")));
+        const QFont tabular = Theme::withWeight(pixels, QFont::Normal, true);
+        QCOMPARE(tabular.featureValue(QFont::Tag("tnum")), 1U);
+        QCOMPARE(tabular.pixelSize(), 14);
+
+        // A weight out of range is the nearest one that exists.
+        QCOMPARE(Theme::withWeight(pixels, 5000).weight(), 1000);
+        QCOMPARE(Theme::withWeight(pixels, -3).weight(), 1);
+    }
+
     // Text is 4.5:1 against what it lies on, a ring is 3:1 against the surface
     // and the canvas (18-style.md).
     void TheDefaultThemeHasTheContrastOfTheStyleGuide() {
@@ -324,7 +361,8 @@ private slots:
             {"focus", "surface", 4.5},
             {"focus", "canvas", 3.0},
             {"focus", "cursorFocused", 3.0},
-            {"focus", "selectedBackground", 3.0},
+            // Text too: the label of the current filter chip.
+            {"focus", "selectedBackground", 4.5},
         };
         for (const Pair& pair : pairs) {
             const double ratio = Contrast(color(pair.Front), color(pair.Back));
@@ -422,27 +460,28 @@ private slots:
             return ColorOf(InRow(ViewRow(static_cast<int>(Ids().indexOf(id))),
                                  "sessionTitle"));
         };
-        const auto stateColor = [panel](const char* state) {
-            QVariant color;
-            QMetaObject::invokeMethod(panel, "stateColor", qReturnArg(color),
-                                      QVariant(QString(state)));
-            return color.value<QColor>();
+        const auto detailColor = [this](const QString& id) {
+            return ColorOf(InRow(ViewRow(static_cast<int>(Ids().indexOf(id))),
+                                 "sessionDetail"));
         };
         // The header of the sessions with no category.
         const int none = ViewRow(0) - 1;
-        // The row under the cursor (ALPHA) is in the strong text colour.
+        // The state does not colour the title; a session that waits (BETA)
+        // has its second line in the colour of attention.
         QCOMPARE(titleColor(ALPHA), QColor("#18232e"));
-        QCOMPARE(titleColor(BETA), QColor("#8b500b"));
+        QCOMPARE(titleColor(BETA), QColor("#18232e"));
         QCOMPARE(titleColor(GAMMA), QColor("#18232e"));
-        QCOMPARE(stateColor("failed"), QColor("#c0262d"));
+        QCOMPARE(detailColor(BETA), QColor("#8b500b"));
+        QCOMPARE(detailColor(GAMMA), QColor("#5a6a7a"));
         QCOMPARE(ColorOf(InRow(none, "headerTitle")), QColor("#5a6a7a"));
 
         QVERIFY(Singleton_->theme()->load(TestTheme()));
 
-        QCOMPARE(titleColor(ALPHA), Given("textStrong"));
-        QCOMPARE(titleColor(BETA), Given("stateBlocked"));
+        QCOMPARE(titleColor(ALPHA), Given("text"));
+        QCOMPARE(titleColor(BETA), Given("text"));
         QCOMPARE(titleColor(GAMMA), Given("text"));
-        QCOMPARE(stateColor("failed"), Given("stateFailed"));
+        QCOMPARE(detailColor(BETA), Given("attention"));
+        QCOMPARE(detailColor(GAMMA), Given("textSecondary"));
         QCOMPARE(ColorOf(InRow(none, "headerTitle")), Given("textSecondary"));
         QCOMPARE(ColorOf(panel->findChild<QQuickItem*>("sessionsTitle")),
                  Given("text"));
@@ -452,14 +491,15 @@ private slots:
         for (int i = 0; i < 8; ++i) {
             QCOMPARE(categories.at(i).value<QColor>(), TestColor(100 + i));
         }
-        // The current tab is emphasised, the others are muted.
+        // The current chip is in the colour of the focus, the others are
+        // secondary.
         QList<QQuickItem*> tabs;
         Collect(panel, "sessionsTab", tabs);
         QCOMPARE(tabs.size(), 3);
         for (const QQuickItem* tab : tabs) {
             QCOMPARE(ColorOf(tab), tab->property("current").toBool()
-                                       ? Given("textStrong")
-                                       : Given("textMuted"));
+                                       ? Given("focus")
+                                       : Given("textSecondary"));
         }
     }
 };

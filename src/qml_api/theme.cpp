@@ -37,6 +37,15 @@ QFont scaled(const QFont& base, double ratio, QFont::Weight weight) {
 
 }  // namespace
 
+QFont Theme::withWeight(const QFont& font, int weight, bool tabularDigits) {
+    QFont result = font;
+    result.setWeight(static_cast<QFont::Weight>(std::clamp(weight, 1, 1000)));
+    if (tabularDigits) {
+        result.setFeature(QFont::Tag("tnum"), 1);
+    }
+    return result;
+}
+
 Theme::Theme(QObject* parent)
     : QObject(parent),
       DefaultTerminalFont_(DefaultTerminalFont()),

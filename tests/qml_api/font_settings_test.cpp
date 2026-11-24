@@ -350,7 +350,7 @@ private slots:
             Slot(LIST)->findChild<QQuickItem*>("placeholderText");
         auto* const panelText =
             PanelOf(LIST)->findChild<QQuickItem*>("sessionsTitle");
-        // The tabs of the strip, the prompt input beside its label (a
+        // The chips of the strip, the prompt input beside its label (a
         // TextInput takes no font from the window) and the text of the bug
         // report dialog (a TextEdit) are not Controls: each is bound.
         auto* const tab = VisualChild(PanelOf(LIST), "sessionsTab");
@@ -365,17 +365,27 @@ private slots:
         const auto sizeOf = [](const QQuickItem* item) {
             return item->property("font").value<QFont>().pointSizeF();
         };
+        const auto fontOf = [](const QQuickItem* item) {
+            return item->property("font").value<QFont>();
+        };
         const qreal before = sizeOf(button);
         QCOMPARE(sizeOf(text), before);
+        // The chip and the prompt input as they are before the change: the
+        // reset has to bring them back to these, not to what the theme says.
+        const qreal chipBefore = sizeOf(tab);
+        const QFont promptBefore = fontOf(prompt);
         const qreal bigger = before + 9;
 
         WriteSettings({{"uiFontSize", bigger}});
 
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), bigger, TIMEOUT_MS);
         QCOMPARE(sizeOf(text), bigger);
-        QCOMPARE(sizeOf(panelText), bigger);
-        QCOMPARE(sizeOf(tab), bigger);
-        QCOMPARE(sizeOf(prompt), bigger);
+        // The title and the chips are on the type scale: the font of the
+        // theme, a share of the size of the window.
+        QCOMPARE(fontOf(panelText), Singleton_->theme()->titleFont());
+        // The current chip is DemiBold: the size is the share, not the weight.
+        QCOMPARE(sizeOf(tab), Singleton_->theme()->metaFont().pointSizeF());
+        QCOMPARE(fontOf(prompt), Singleton_->theme()->rowFont());
         QCOMPARE(sizeOf(report), bigger);
         QCOMPARE(Singleton_->theme()->uiFont().pointSizeF(), bigger);
         QCOMPARE(QGuiApplication::font().pointSizeF(), before);
@@ -386,8 +396,8 @@ private slots:
         WriteSettings({});
         QTRY_COMPARE_WITH_TIMEOUT(sizeOf(button), before, TIMEOUT_MS);
         QCOMPARE(sizeOf(text), before);
-        QCOMPARE(sizeOf(tab), before);
-        QCOMPARE(sizeOf(prompt), before);
+        QCOMPARE(sizeOf(tab), chipBefore);
+        QCOMPARE(fontOf(prompt), promptBefore);
         QCOMPARE(sizeOf(report), before);
     }
 
