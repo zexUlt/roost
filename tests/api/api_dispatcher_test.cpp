@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 #include "api/api.hpp"
 #include "api_test_support.hpp"
@@ -123,6 +124,14 @@ private slots:
             QVERIFY2(answer, qPrintable(method + ": " + Why(answer)));
             QCOMPARE(finishedIn, QThread::currentThread());
         }
+        // The cache of the store follows the daemon's own change events, not
+        // the answer to a write: wait for the last write to reach it.
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            Api_->Store().Cached("fixture") == std::optional(document),
+            qPrintable(QJsonDocument(Api_->Store().Cached("fixture").value_or(
+                                         QJsonObject{{"cached", false}}))
+                           .toJson(QJsonDocument::Compact)),
+            TIMEOUT_MS);
         // And what they answered.
         QCOMPARE(*Call("commands.run", params["commands.run"]),
                  QJsonValue(QJsonArray{1, "two"}));
@@ -275,27 +284,6 @@ private slots:
         QCOMPARE(answer.error().Code, STORE_FAILED);
     }
 
-    void PluginsListWaitsForTheFirstFetch() {
-        QVERIFY(StartDaemon());
-        Api_ = std::make_unique<api::Api>();
-        QSignalSpy changed(&Api_->Plugins(), &api::PluginService::Changed);
-        bool loadedAtConnect = true;
-        QFuture<rpc::Result> early;
-        connect(Api_.get(), &api::Api::Connected, this, [&] {
-            loadedAtConnect = Api_->Plugins().IsLoaded();
-            early = Api_->Dispatch().Call("plugins.list", {}, this);
-        });
-        Api_->Connect(Daemon_->SocketPath());
-        QTRY_VERIFY_WITH_TIMEOUT(early.isValid(), TIMEOUT_MS);
-        QVERIFY(WaitFor(early));
-        QVERIFY(!loadedAtConnect);
-        QVERIFY2(early.result(), qPrintable(Why(early.result())));
-        QCOMPARE(changed.size(), 1);
-        QVERIFY(Api_->Plugins().IsLoaded());
-        QCOMPARE(QJsonValue(Api_->Plugins().Plugins()), *early.result());
-        QVERIFY(early.result()->toObject().contains("problems"));
-    }
-
     void PluginsListIsServedFromTheCache() {
         QVERIFY(StartDaemon());
         QVERIFY(ConnectApi());
@@ -308,6 +296,7 @@ private slots:
         QVERIFY2(plugins, qPrintable(Why(plugins)));
         QCOMPARE(plugins->toObject().value("plugins")[0].toObject().value("id"),
                  QJsonValue("fixture"));
+        QVERIFY(plugins->toObject().contains("problems"));
         // What is not cached fails.
         const rpc::Result sessions = Call("sessions.list", {});
         QVERIFY(!sessions);

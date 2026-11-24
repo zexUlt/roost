@@ -1,9 +1,10 @@
 // What the window's API does when calls and connections overlap: a Refresh of
 // the sessions in flight when the connection is lost, two Refreshes out at
 // once, two Gets of one document at once, an event that overtakes the answer
-// naming its subscription, and the reconnect wait that a successful hello
-// takes back to its first value. All against a scripted daemon of the test's
-// own, which answers when the test says so.
+// naming its subscription, a plugins.list that waits for the first fetch, and
+// the reconnect wait that a successful hello takes back to its first value.
+// All against a scripted daemon of the test's own, which answers when the test
+// says so.
 
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -81,6 +82,7 @@ public:
             Decoder_ = FrameDecoder();
             Lists_.clear();
             Gets_.clear();
+            Plugins_.clear();
             HeldSubscription_ = 0;
             connect(Socket_, &QLocalSocket::readyRead, this, [this] {
                 Decoder_.Feed(Socket_->readAll());
@@ -149,6 +151,14 @@ public:
               {{"document", document}});
     }
 
+    // The plugins.list requests of the present connection, in the order they
+    // came; AnswerPlugins answers the index-th with these plugins.
+    int PluginsLists() const { return static_cast<int>(Plugins_.size()); }
+    void AnswerPlugins(int index, const QJsonArray& plugins) {
+        Reply(Plugins_.at(static_cast<std::size_t>(index)),
+              {{"plugins", plugins}, {"problems", QJsonArray{}}});
+    }
+
     // When each connection came, and when the last was dropped, in ms since
     // Listen.
     const std::vector<qint64>& Arrived() const { return Arrived_; }
@@ -189,6 +199,8 @@ private:
             Lists_.push_back(id);
         } else if (method == "store.get") {
             Gets_.push_back(id);
+        } else if (method == "plugins.list") {
+            Plugins_.push_back(id);
         }
     }
 
@@ -200,6 +212,7 @@ private:
     qint64 DroppedAt_ = 0;
     std::vector<QJsonValue> Lists_;
     std::vector<QJsonValue> Gets_;
+    std::vector<QJsonValue> Plugins_;
     QString HeldPattern_;
     QJsonValue HeldId_;
     int HeldSubscription_ = 0;
@@ -436,6 +449,38 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(heard.size(), 2, TIMEOUT_MS);
         QCOMPARE(heard.at(0).second, QJsonValue("early"));
         QCOMPARE(heard.at(1).second, QJsonValue("later"));
+    }
+
+    // A plugins.list asked for before the first fetch has answered waits for
+    // it. The daemon holds the fetch's answer, so that the cache is not loaded
+    // when Connected is said, whatever the speed of the IO thread.
+    void PluginsListWaitsForTheFirstFetch() {
+        QVERIFY(Dir_->isValid());
+        QVERIFY(Daemon_->Listen(Dir_->filePath("fake.sock")));
+        Api_ = std::make_unique<api::Api>(Quick());
+        QSignalSpy changed(&Api_->Plugins(), &api::PluginService::Changed);
+        bool loadedAtConnect = true;
+        bool asked = false;
+        QFuture<rpc::Result> early;
+        connect(Api_.get(), &api::Api::Connected, this, [&] {
+            loadedAtConnect = Api_->Plugins().IsLoaded();
+            early = Api_->Dispatch().Call("plugins.list", {}, this);
+            asked = true;
+        });
+        Api_->Connect(Dir_->filePath("fake.sock"));
+        QTRY_VERIFY_WITH_TIMEOUT(asked, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Daemon_->PluginsLists(), 1, TIMEOUT_MS);
+        QVERIFY(!loadedAtConnect);
+        QVERIFY(!early.isFinished());
+        QVERIFY(!Api_->Plugins().IsLoaded());
+
+        Daemon_->AnswerPlugins(0, {QJsonObject{{"id", "fixture"}}});
+        QVERIFY(WaitFor(early));
+        QVERIFY2(early.result(), qPrintable(Why(early.result())));
+        QCOMPARE(changed.size(), 1);
+        QVERIFY(Api_->Plugins().IsLoaded());
+        QCOMPARE(QJsonValue(Api_->Plugins().Plugins()), *early.result());
+        QCOMPARE(Daemon_->PluginsLists(), 1);
     }
 
     // Failed attempts grow the wait to its cap. A hello that is answered
