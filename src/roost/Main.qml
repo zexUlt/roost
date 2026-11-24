@@ -46,6 +46,9 @@ ApplicationWindow {
     // The panel types that are lists of sessions (an output `selected` of type
     // SessionRef), written by C++.
     property var listPanelTypes: []
+    // The lists of sessions are hidden (collapsed, not closed): the state for
+    // a button "Hide list" / "Show list"; the command is `layout.toggleLists`.
+    readonly property bool listsHidden: layoutView.listsHidden
 
     // A slot of the layout view is built; C++ hands it its panel.
     signal slotCreated(var slot)
@@ -74,7 +77,7 @@ ApplicationWindow {
     height: 600
     visible: true
     title: "roost"
-    color: Roost.theme.windowBackground
+    color: Roost.theme.canvas
     // The font of every Qt Quick Controls item below and of the Labels of the
     // panels: they inherit the font of the window, as they do its palette.
     // (A plain Text does not; the panels use Label.)
@@ -260,6 +263,8 @@ ApplicationWindow {
             id: layoutView
 
             objectName: "layoutView"
+            // The margin of the window: the room of the cards and of the ring.
+            Layout.margins: Roost.theme.windowMargin
             Layout.fillWidth: true
             Layout.fillHeight: true
             tree: root.layoutTree

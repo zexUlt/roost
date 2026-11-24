@@ -6,13 +6,21 @@ import Roost.Api
 // comes from "Move into tabs" or from a saved layout. A tab the user clicks is
 // reported to the shell (`tabChosen`) and takes the keyboard. The bar itself
 // never holds the keyboard, so the tab changes only by a click or by the layout.
-Item {
+PanelCard {
     id: stack
+
+    objectName: "tabsCard"
 
     // Set by the LayoutNode that loads this by file name.
     property var node: null
     property var view: null
     property var path: []
+    // The stack is on a page of another one: it has no card of its own.
+    property bool stacked: false
+    bare: stack.stacked
+
+    // The card of the stack: the tabs on top, the shown panel under them.
+    focused: stack.view !== null && stack.view.holdsLastFocused(stack.node)
 
     // The bar goes to the first tab when it gets one; the tab of the document
     // is set after the buttons are there (delayed), and the user's own choice
@@ -28,9 +36,11 @@ Item {
     TabBar {
         id: bar
 
+        // The bar is square: off the rounded corners of the card, if there is one.
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
+        anchors.margins: stack.bare ? 0 : Roost.theme.cornerInset
         focusPolicy: Qt.NoFocus
         Repeater {
             model: stack.node !== null ? stack.node.children : []
@@ -40,6 +50,12 @@ Item {
                 required property int index
 
                 focusPolicy: Qt.NoFocus
+                // A tab with nothing to show (a hidden list) has no button.
+                // The bar still puts its spacing after it, so it is as wide
+                // as minus the spacing: the tabs beside it keep the space
+                // they have between two tabs.
+                visible: modelData.hidden !== true
+                width: visible ? implicitWidth : -bar.spacing
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
                 onClicked: stack.choose(index)
             }
@@ -87,9 +103,10 @@ Item {
                 required property var modelData
 
                 parent: pages
+                stacked: true
                 width: pages.width
                 height: pages.height
-                visible: index === bar.currentIndex
+                visible: index === bar.currentIndex && modelData.hidden !== true
                 node: modelData
                 view: stack.view
                 path: stack.path.concat([index])

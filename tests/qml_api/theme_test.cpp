@@ -217,10 +217,10 @@ private slots:
         FailOnWarnings();
         const Theme theme;
         const QHash<QByteArray, int> sizes{
-            {"radiusCard", 12},     {"radiusControl", 6}, {"radiusSmall", 5},
-            {"windowMargin", 16},   {"panelGap", 12},     {"panelPadding", 16},
-            {"rowHeight", 56},      {"rowGap", 3},        {"focusRingWidth", 3},
-            {"cursorRingWidth", 2},
+            {"radiusCard", 12},    {"cornerInset", 5},     {"radiusControl", 6},
+            {"radiusSmall", 5},    {"windowMargin", 16},   {"panelGap", 12},
+            {"panelPadding", 16},  {"rowHeight", 56},      {"rowGap", 3},
+            {"focusRingWidth", 3}, {"cursorRingWidth", 2},
         };
         int found = 0;
         const QMetaObject& meta = Theme::staticMetaObject;
@@ -297,6 +297,7 @@ private slots:
             {"textMuted", "canvas", 4.5},
             {"textMuted", "selectedBackground", 4.5},
             {"textMuted", "hoverBackground", 4.5},
+            {"textMuted", "controlBackground", 4.5},
             {"textSecondary", "cursorUnfocused", 4.5},
             {"stateWorking", "surface", 4.5},
             {"stateWorking", "cursorFocused", 4.5},
@@ -398,8 +399,8 @@ private slots:
 
         QVERIFY(theme->load(TestTheme()));
 
-        QCOMPARE(Root()->property("color").value<QColor>(),
-                 Given("windowBackground"));
+        // The window is the canvas the cards lie on.
+        QCOMPARE(Root()->property("color").value<QColor>(), Given("canvas"));
         QCOMPARE(ColorOf(banner), Given("bannerBackground"));
         QCOMPARE(ColorOf(bannerText), Given("bannerText"));
         QCOMPARE(ColorOf(strip), Given("problemsBackground"));

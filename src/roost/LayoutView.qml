@@ -12,6 +12,9 @@ Item {
     // active, children} or {kind: "leaf", instance, panel}. A size is a
     // number of pixels, 0 for the rest. null: nothing is built.
     property var tree: null
+    // The lists of sessions are hidden: collapsed, not closed. Read-only; the
+    // command `layout.toggleLists` hides them and shows them again.
+    readonly property bool listsHidden: view.tree !== null && view.tree.listsHidden === true
     // The panel types that are lists of sessions, as Shell works them out.
     property var listTypes: []
     // Instance id -> its PanelSlot; replaced as a whole when a slot comes or
@@ -28,7 +31,7 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, close, editLinks, setLink) and its
+    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -42,6 +45,45 @@ Item {
     property string pendingFocus: ""
     // The first leaf that waits to take the keyboard at start, "" if none.
     property string startFocus: ""
+
+    // A new layout may have no panel of `lastFocused`. A close of the shell
+    // names the neighbour that takes the keyboard (`pendingFocus`), and the ring
+    // goes with it. A layout that is replaced names none: the ring goes to its
+    // first panel, as the keyboard does at start, and the keyboard follows when
+    // the slot that had it is deleted and left it nowhere.
+    onTreeChanged: Qt.callLater(view.keepRing)
+
+    function keepRing() {
+        if (view.lastFocused === "" || view.pendingFocus !== "" || view.holdsLastFocused(view.tree)) {
+            return;
+        }
+        let leaf = view.tree;
+        while (leaf !== null && leaf.kind !== "leaf") {
+            leaf = leaf.children[leaf.kind === "tabs" ? Math.min(leaf.active ?? 0, leaf.children.length - 1) : 0] ?? null;
+        }
+        view.lastFocused = leaf !== null ? leaf.instance : "";
+        Qt.callLater(view.returnKeyboard);
+    }
+
+    // The keyboard is nowhere (no item, the window itself, or an item of the
+    // layout above the slots: the node that held the focus scope of a slot
+    // that is gone) and the ring is on a panel of the layout: the panel takes
+    // the keyboard. A popup that holds it keeps it.
+    function returnKeyboard() {
+        if (view.lastFocused === "" || view.pendingFocus !== "" || !view.holdsLastFocused(view.tree)) {
+            return;
+        }
+        const focused = view.Window.activeFocusItem;
+        let inView = false;
+        let inSlot = false;
+        for (let item = focused; item !== null && !inView; item = item.parent) {
+            inSlot = inSlot || item.objectName === "panelSlot";
+            inView = item === view;
+        }
+        if (focused === null || focused === view.Window.contentItem || (inView && !inSlot)) {
+            view.focusInstance(view.lastFocused);
+        }
+    }
 
     function slotOf(instance) {
         return view.slots[instance] ?? null;
@@ -63,6 +105,7 @@ Item {
         const copy = Object.assign({}, view.slots);
         delete copy[slot.instanceId];
         view.slots = copy;
+        Qt.callLater(view.returnKeyboard);
     }
 
     // The panel the layout commands act on: the one that has the keyboard,
@@ -206,6 +249,18 @@ Item {
         }
     }
 
+    // Whether the panel that had the keyboard last (`lastFocused`) is in
+    // `node`: the ring of the focus is on the card of that node.
+    function holdsLastFocused(node) {
+        if (node === null || view.lastFocused === "") {
+            return false;
+        }
+        if (node.kind === "leaf") {
+            return node.instance === view.lastFocused;
+        }
+        return node.children.some(child => view.holdsLastFocused(child));
+    }
+
     // The first leaf of one of the types (any type for null) whose slot is
     // shown: a leaf on a tab that is not shown cannot take the keyboard.
     function firstLeaf(node, types) {
@@ -268,6 +323,7 @@ Item {
             "layout.intoTabs": "intoTabs",
             "layout.outOfTabs": "outOfTabs",
             "layout.close": "close",
+            "layout.toggleLists": "toggleLists",
             "layout.editLinks": "editLinks"
         };
         for (const id of Object.keys(actions)) {

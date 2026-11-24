@@ -14,6 +14,11 @@ import Roost.Api
 // of them are "fill" again, so that a drag of a fixed divider does not turn
 // the shares into pixels; if one is, every "fill" child but the filling one is
 // reported in pixels, so that the ones the user did not touch stay as they are.
+//
+// A child with nothing to show (`hidden`: the lists the user hid) is not shown
+// and takes no room, and the others share its place. Its size stays in the
+// document: it is reported as it was. When no child that is shown is of size
+// "fill", the last one that is shown takes the room.
 SplitView {
     id: split
 
@@ -21,20 +26,36 @@ SplitView {
     property var node: null
     property var view: null
     property var path: []
+    // The split is in a stack of tabs: no card under it shows the gap, so the
+    // divider is the line it was before the cards.
+    property bool stacked: false
 
     orientation: split.node !== null && !split.node.horizontal ? Qt.Vertical : Qt.Horizontal
 
-    readonly property int handleSize: 1
-    // How far from the line a press still takes the divider.
+    // The handle lies in the gap between two cards and draws nothing; in a
+    // stack it is a line of 1 px.
+    readonly property int handleSize: split.stacked ? 1 : Roost.theme.panelGap
+    // How far from the handle a press still takes the divider. The #224 catch
+    // is 2 px to either side of the line the divider was; the edge of a card
+    // is that line now, so the zone reaches 2 px into each card, where lie
+    // the outline and a pixel of the surface, under the content (the terminal
+    // keeps `cornerInset` off the edge).
     readonly property int handleGrab: 2
     readonly property bool horizontal: split.node !== null && split.node.horizontal
 
     handle: Item {
+        objectName: "splitHandle"
         implicitWidth: split.handleSize
         implicitHeight: split.handleSize
 
-        // The item stays 1 px, so does the gap; the mask only widens the area
-        // that takes a press (SplitView finds the divider with contains()).
+        Rectangle {
+            visible: split.stacked
+            anchors.fill: parent
+            color: Roost.theme.line
+        }
+
+        // SplitView finds the divider with contains(). The mask widens the
+        // area that takes a press by `handleGrab` to either side of the item.
         containmentMask: QtObject {
             function contains(point: point): bool {
                 const along = split.horizontal ? point.x : point.y;
@@ -45,12 +66,30 @@ SplitView {
         }
     }
 
-    // The children of size "fill": how many, and which one fills the rest.
+    // The children that are shown (not hidden), by index of the node. The
+    // Instantiator may count more children than the node has for a moment
+    // when the model is replaced: such an index is not hidden.
+    function shownAt(i) {
+        return split.node !== null && split.node.children[i]?.hidden !== true;
+    }
+    readonly property int shownCount: {
+        let count = 0;
+        const total = split.node !== null ? split.node.children.length : 0;
+        for (let i = 0; i < total; ++i) {
+            if (split.shownAt(i)) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    // The children of size "fill" that are shown: how many, and which one
+    // fills the rest (the last one that is shown if none is of size "fill").
     readonly property int fillCount: {
         let count = 0;
         const total = split.node !== null ? split.node.children.length : 0;
         for (let i = 0; i < total; ++i) {
-            if ((split.node.sizes[i] ?? 0) <= 0) {
+            if (split.shownAt(i) && (split.node.sizes[i] ?? 0) <= 0) {
                 ++count;
             }
         }
@@ -59,7 +98,12 @@ SplitView {
     readonly property int lastFill: {
         const total = split.node !== null ? split.node.children.length : 0;
         for (let i = total - 1; i >= 0; --i) {
-            if ((split.node.sizes[i] ?? 0) <= 0) {
+            if (split.shownAt(i) && (split.node.sizes[i] ?? 0) <= 0) {
+                return i;
+            }
+        }
+        for (let i = total - 1; i >= 0; --i) {
+            if (split.shownAt(i)) {
                 return i;
             }
         }
@@ -70,10 +114,10 @@ SplitView {
     // the share of each "fill" child in what is left.
     property real fixedTotal: 0
     readonly property real fillShare: {
-        if (split.fillCount < 2 || children.count < 1) {
+        if (split.fillCount < 2 || split.shownCount < 1) {
             return -1;
         }
-        const room = (split.horizontal ? split.width : split.height) - split.fixedTotal - (children.count - 1) * split.handleSize;
+        const room = (split.horizontal ? split.width : split.height) - split.fixedTotal - (split.shownCount - 1) * split.handleSize;
         return Math.max(40, Math.floor(room / split.fillCount));
     }
 
@@ -83,7 +127,7 @@ SplitView {
             const child = children.objectAt(i);
             // Not created yet (the Instantiator builds several delegates), or
             // removed and waiting to be deleted.
-            if (child === null || child.gone) {
+            if (child === null || child.gone || child.collapsed) {
                 continue;
             }
             total += child.fixedPx;
@@ -97,16 +141,24 @@ SplitView {
             const child = children.objectAt(i);
             return Math.round(split.horizontal ? child.width : child.height);
         };
+        // What the document has: for a child that is not shown, and for the
+        // one that takes the room only because no other child of size "fill"
+        // is shown.
+        const keptAt = i => !split.shownAt(i) || (i === split.lastFill && !children.objectAt(i).fills);
         // A "fill" child other than the filling one is off its share: the
         // user dragged a divider between "fill" children.
         let moved = false;
         for (let i = 0; i < children.count; ++i) {
-            if (children.objectAt(i).fills && i !== split.lastFill && Math.abs(pixelsOf(i) - split.fillShare) > 1) {
+            if (split.shownAt(i) && children.objectAt(i).fills && i !== split.lastFill && Math.abs(pixelsOf(i) - split.fillShare) > 1) {
                 moved = true;
             }
         }
         const sizes = [];
         for (let i = 0; i < children.count; ++i) {
+            if (keptAt(i)) {
+                sizes.push(split.node.sizes[i] ?? 0);
+                continue;
+            }
             const fillsAsBefore = children.objectAt(i).fills && (i === split.lastFill || !moved);
             sizes.push(fillsAsBefore ? 0 : pixelsOf(i));
         }
@@ -144,16 +196,21 @@ SplitView {
             required property var modelData
 
             parent: split.contentItem
+            stacked: split.stacked
 
             // Set when the Instantiator drops this node.
             property bool gone: false
 
             readonly property int size: split.node.sizes[index] ?? 0
             readonly property bool fills: size <= 0
-            // The one "fill" child that the SplitView lets fill; the others
-            // of its kind have a share.
-            readonly property bool filler: fills && index === split.lastFill
-            readonly property real fixedPx: fills ? 0 : (stepped > 0 ? stepped : size)
+            // Nothing of the node is shown: it takes no room.
+            readonly property bool collapsed: modelData.hidden === true
+            visible: !collapsed
+            // The one child that the SplitView lets fill (a "fill" one, or the
+            // last one shown if none is); the "fill" ones of its kind have a
+            // share.
+            readonly property bool filler: !collapsed && index === split.lastFill
+            readonly property real fixedPx: fills || collapsed ? 0 : (stepped > 0 ? stepped : size)
             onFixedPxChanged: split.recount()
 
             node: modelData
