@@ -466,6 +466,10 @@ private slots:
                                      PanelByInstance("list2") != nullptr,
                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Shown("list") && Shown("list2"), TIMEOUT_MS);
+        // The write of the layout set above has landed, so that the check at
+        // the end compares with it and not with a write still on its way.
+        QTRY_COMPARE_WITH_TIMEOUT(StoredLayout(), LayoutToJson(lists),
+                                  TIMEOUT_MS);
         Focus("list");
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         Api_->Commands().Run("layout.toggleLists");
