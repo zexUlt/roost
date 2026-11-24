@@ -27,6 +27,24 @@ using namespace roost::testing;
 Q_IMPORT_QML_PLUGIN(Roost_ApiPlugin)
 Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
 
+// The waits of the head are void functions with QTRY_* inside: a failure ends
+// the function only. These end the case (or the boot) at the first failure,
+// so that it does not go on to more FAILs of the same cause.
+#define WAIT_FOR_TITLE(terminal, title)   \
+    do {                                  \
+        WaitForTitle(terminal, title);    \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+#define WAIT_FOR_META(terminal, meta)     \
+    do {                                  \
+        WaitForMeta(terminal, meta);      \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+
 class TerminalHeadTest : public LayoutWindow {
     Q_OBJECT
 
@@ -80,7 +98,11 @@ private:
 
     // `claude agents` lists the sessions of the fixture with `changes[id]`
     // laid over the entry of each session, and without those in `gone`; the
-    // file is replaced whole.
+    // file is replaced whole. The adapter tells roostd of a new session, of a
+    // changed `state` and of a removed one, not of a changed name or cwd
+    // alone (docs/design/07-agent-adapters.md): an entry changed here carries
+    // a `state` that differs from the one listed before, and its whole row
+    // reaches the model with it.
     bool List(const QMap<QString, QJsonObject>& changes,
               const QStringList& gone = {}) const {
         QJsonArray listed;
@@ -172,8 +194,8 @@ private:
                                      PanelByInstance("terminal2") != nullptr &&
                                      PanelByInstance("list") == nullptr,
                                  TIMEOUT_MS);
-        WaitForTitle("terminal", "No session");
-        WaitForTitle("terminal2", "No session");
+        WAIT_FOR_TITLE("terminal", "No session");
+        WAIT_FOR_TITLE("terminal2", "No session");
         TerminalOf("terminal")->forceActiveFocus();
         QTRY_VERIFY_WITH_TIMEOUT(TerminalOf("terminal")->hasActiveFocus(),
                                  TIMEOUT_MS);
@@ -217,22 +239,22 @@ private slots:
             return;
         }
         // Without a session: the placeholder and no meta.
-        WaitForTitle("terminal", "No session");
-        WaitForMeta("terminal", QString());
+        WAIT_FOR_TITLE("terminal", "No session");
+        WAIT_FOR_META("terminal", QString());
         QVERIFY(SaveSnapshot(Window(), "without-session"));
 
         OpenIdIn("list", "terminal", ALPHA);
-        WaitForTitle("terminal", "Fix the flaky test");
-        WaitForMeta("terminal", "working · /work/alpha");
+        WAIT_FOR_TITLE("terminal", "Fix the flaky test");
+        WAIT_FOR_META("terminal", "working · /work/alpha");
         // The other terminal shows nothing yet.
-        WaitForTitle("terminal2", "No session");
+        WAIT_FOR_TITLE("terminal2", "No session");
         QVERIFY(SaveSnapshot(Window(), "with-session"));
 
         // A session that waits is called so, as in the list.
         OpenIdIn("list", "terminal", BETA);
-        WaitForTitle("terminal", "Review the PR");
-        WaitForMeta("terminal", "waiting · /work/beta");
-        WaitForTitle("terminal2", "No session");
+        WAIT_FOR_TITLE("terminal", "Review the PR");
+        WAIT_FOR_META("terminal", "waiting · /work/beta");
+        WAIT_FOR_TITLE("terminal2", "No session");
     }
 
     // The head reads the real model: a rename, a change of state, a change
@@ -247,51 +269,56 @@ private slots:
         OpenIdIn("list2", "terminal2", ALPHA);
         const QStringList terminals = {"terminal", "terminal2"};
         for (const QString& terminal : terminals) {
-            WaitForTitle(terminal, "Fix the flaky test");
-            WaitForMeta(terminal, "working · /work/alpha");
+            WAIT_FOR_TITLE(terminal, "Fix the flaky test");
+            WAIT_FOR_META(terminal, "working · /work/alpha");
         }
 
-        // A rename and a new cwd: a change of one row.
-        QJsonObject renamed{{"name", "Renamed"}, {"cwd", "/work/moved"}};
+        // A rename, a new cwd and a change of state: one row, and the word
+        // the list says for the state.
+        QJsonObject renamed{
+            {"name", "Renamed"}, {"cwd", "/work/moved"}, {"state", "blocked"}};
         QVERIFY(List({{ALPHA, renamed}}));
         for (const QString& terminal : terminals) {
-            WaitForTitle(terminal, "Renamed");
-            WaitForMeta(terminal, "working · /work/moved");
+            WAIT_FOR_TITLE(terminal, "Renamed");
+            WAIT_FOR_META(terminal, "waiting · /work/moved");
         }
 
-        // A change of state, and the word the list says for it.
-        QJsonObject blocked = renamed;
-        blocked.insert("state", "blocked");
-        QVERIFY(List({{ALPHA, blocked}}));
+        // A change of state alone.
+        QJsonObject working = renamed;
+        working.insert("state", "working");
+        QVERIFY(List({{ALPHA, working}}));
         for (const QString& terminal : terminals) {
-            WaitForMeta(terminal, "waiting · /work/moved");
+            WAIT_FOR_META(terminal, "working · /work/moved");
         }
 
         // A change of another session: the list has it, and the panel does
         // not take its `info` anew (the signal of a `var` comes at every
         // assignment, equal or not).
+        const QJsonObject another{{"name", "Another"}, {"state", "idle"}};
         QSignalSpy infoChanged(PanelByInstance("terminal"),
                                SIGNAL(infoChanged()));
-        QVERIFY(List({{ALPHA, blocked}, {BETA, {{"name", "Another"}}}}));
+        QVERIFY(List({{ALPHA, working}, {BETA, another}}));
         QTRY_COMPARE_WITH_TIMEOUT(ListedTitle("list", BETA), QString("Another"),
                                   TIMEOUT_MS);
         QCOMPARE(infoChanged.count(), 0);
         for (const QString& terminal : terminals) {
             QCOMPARE(TitleOf(terminal), QString("Renamed"));
-            QCOMPARE(MetaOf(terminal), QString("waiting · /work/moved"));
+            QCOMPARE(MetaOf(terminal), QString("working · /work/moved"));
         }
         // A change of the shown session is taken once.
-        QVERIFY(List(
-            {{ALPHA, {{"name", "Again"}}}, {BETA, {{"name", "Another"}}}}));
-        WaitForTitle("terminal", "Again");
+        QJsonObject again = working;
+        again.insert("name", "Again");
+        again.insert("state", "blocked");
+        QVERIFY(List({{ALPHA, again}, {BETA, another}}));
+        WAIT_FOR_TITLE("terminal", "Again");
         QCOMPARE(infoChanged.count(), 1);
 
         // The session leaves the list: the list drops its choice and the
         // panels have no session.
         QVERIFY(List({}, {ALPHA}));
         for (const QString& terminal : terminals) {
-            WaitForTitle(terminal, "No session");
-            WaitForMeta(terminal, QString());
+            WAIT_FOR_TITLE(terminal, "No session");
+            WAIT_FOR_META(terminal, QString());
         }
     }
 
@@ -304,16 +331,16 @@ private slots:
             return;
         }
         OpenIdIn("list", "terminal", ALPHA);
-        WaitForTitle("terminal", "Fix the flaky test");
-        WaitForMeta("terminal", "working · /work/alpha");
+        WAIT_FOR_TITLE("terminal", "Fix the flaky test");
+        WAIT_FOR_META("terminal", "working · /work/alpha");
 
         StopDaemon();
-        WaitForTitle("terminal", ALPHA);
-        WaitForMeta("terminal", QString());
+        WAIT_FOR_TITLE("terminal", ALPHA);
+        WAIT_FOR_META("terminal", QString());
 
         QVERIFY(StartDaemon());
-        WaitForTitle("terminal", "Fix the flaky test");
-        WaitForMeta("terminal", "working · /work/alpha");
+        WAIT_FOR_TITLE("terminal", "Fix the flaky test");
+        WAIT_FOR_META("terminal", "working · /work/alpha");
     }
 
     void ListsHidesAndShowsEveryListThroughTheCommand() {
@@ -472,11 +499,12 @@ private slots:
             return;
         }
         OpenIdIn("list", "terminal", ALPHA);
-        QVERIFY(List(
-            {{ALPHA,
-              {{"name", "a <b>x</b>\nb"}, {"cwd", "/work/<i>c</i>\nd"}}}}));
-        WaitForTitle("terminal", "a <b>x</b> b");
-        WaitForMeta("terminal", "working · /work/<i>c</i> d");
+        QVERIFY(List({{ALPHA,
+                       {{"name", "a <b>x</b>\nb"},
+                        {"cwd", "/work/<i>c</i>\nd"},
+                        {"state", "blocked"}}}}));
+        WAIT_FOR_TITLE("terminal", "a <b>x</b> b");
+        WAIT_FOR_META("terminal", "waiting · /work/<i>c</i> d");
         for (const char* name : {"terminalTitle", "terminalMeta"}) {
             const QQuickItem* text = HeadItem("terminal", name);
             QCOMPARE(text->property("textFormat").toInt(),
@@ -497,9 +525,11 @@ private slots:
         }
         QVERIFY(List({{ALPHA,
                        {{"name", "A title that is much too long for the head"},
-                        {"cwd", "/work/some/very/deep/path/ending-here"}}}}));
+                        {"cwd", "/work/some/very/deep/path/ending-here"},
+                        {"state", "blocked"}}}}));
         OpenIdIn("list", "terminal", ALPHA);
-        WaitForTitle("terminal", "A title that is much too long for the head");
+        WAIT_FOR_TITLE("terminal",
+                       "A title that is much too long for the head");
         // Wide: both buttons.
         QVERIFY(Visible("terminal", "listsButton"));
         QVERIFY(Visible("terminal", "commandsButton"));
@@ -541,7 +571,7 @@ private slots:
             return;
         }
         OpenIdIn("list", "terminal", ALPHA);
-        WaitForMeta("terminal", "working · /work/alpha");
+        WAIT_FOR_META("terminal", "working · /work/alpha");
         const QQuickItem* head = HeadItem("terminal", "terminalHead");
         const QQuickItem* heading = HeadItem("terminal", "terminalHeading");
         QVERIFY(head != nullptr && heading != nullptr);
