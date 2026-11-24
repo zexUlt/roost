@@ -18,7 +18,7 @@ import RoostSessions
 // keeps it and returns to the list). The keys c and e open the prompt in the
 // footer: the category and the name of the session under the cursor; n opens
 // it for the task and the category of a new session. "+ New" opens the form of
-// a new session in place of the list: a name and a category; its draft lives
+// a new session in place of the list: a task, a name and a category; its draft lives
 // in the panel. The keys d, x, r and R run the commands of the agent of the
 // session (`<agent>.<verb>`, Roost.commands); the footer asks for a
 // confirmation (y) and shows the outcome as a notice.
@@ -281,6 +281,8 @@ FocusScope {
     // draft is kept here, in the panel, while the form is open, whatever
     // takes the keyboard: Cancel, Esc and Create end it.
     property bool newOpen: false
+    // The task, the first message to the agent; the name is optional.
+    property string draftTask: ""
     property string draftName: ""
     // The category of the draft: a known one, "" for none, or a new one typed
     // in `draftNewName` when `draftNewCategory` is set.
@@ -310,6 +312,7 @@ FocusScope {
     function openNewForm() {
         if (!newOpen) {
             const base = newSessionBase();
+            draftTask = "";
             draftName = "";
             draftCategory = base.category;
             draftNewCategory = false;
@@ -320,7 +323,7 @@ FocusScope {
             };
             newOpen = true;
         }
-        newNameField.forceActiveFocus();
+        newTaskField.forceActiveFocus();
     }
 
     // Cancel and Esc: the draft goes, the list has the keyboard.
@@ -331,20 +334,22 @@ FocusScope {
     }
 
     function canCreate() {
-        return draftName.trim() !== "" && (!draftNewCategory || draftNewName.trim() !== "");
+        return draftTask.trim() !== "" && (!draftNewCategory || draftNewName.trim() !== "");
     }
 
-    // Create: the session starts as n starts it, and takes the name of the form
-    // as its title.
+    // Create: the session starts as n starts it, with the task as its first
+    // message. A name, when there is one, becomes its title; without one the
+    // title stays the agent's.
     function createFromForm() {
         if (!newOpen || !canCreate()) {
             return;
         }
         const target = draftTarget;
+        const task = draftTask.trim();
         const name = draftName.trim();
         const category = draftNewCategory ? draftNewName.trim() : draftCategory;
         closeNewForm();
-        startSession(target.agent, target.cwd, name, category, name);
+        startSession(target.agent, target.cwd, task, category, name);
     }
 
     // Opens the prompt of the footer with its text. The keys then go to the
@@ -1677,7 +1682,7 @@ FocusScope {
             x: 16
             y: 18
             text: "← Sessions"
-            KeyNavigation.tab: newNameField
+            KeyNavigation.tab: newTaskField
             KeyNavigation.backtab: newCreate
             onClicked: root.closeNewForm()
         }
@@ -1706,6 +1711,25 @@ FocusScope {
             Label {
                 color: Roost.theme.textSecondary
                 font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                text: "Task"
+            }
+
+            PanelField {
+                id: newTaskField
+
+                objectName: "sessionsNewTask"
+                width: parent.width
+                text: root.draftTask
+                onTextEdited: root.draftTask = text
+                onAccepted: root.createFromForm()
+                KeyNavigation.tab: newNameField
+                KeyNavigation.backtab: newBack
+            }
+
+            Label {
+                topPadding: 8
+                color: Roost.theme.textSecondary
+                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
                 text: "Name"
             }
 
@@ -1714,11 +1738,12 @@ FocusScope {
 
                 objectName: "sessionsNewName"
                 width: parent.width
+                placeholderText: "Named by the agent"
                 text: root.draftName
                 onTextEdited: root.draftName = text
                 onAccepted: root.createFromForm()
                 KeyNavigation.tab: newCategoryBox
-                KeyNavigation.backtab: newBack
+                KeyNavigation.backtab: newTaskField
             }
 
             Label {

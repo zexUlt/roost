@@ -143,8 +143,8 @@ private:
         // A panel without the parts fails here, not on a null pointer.
         for (const char* name :
              {"sessionsSearch", "sessionsSearchInput", "sessionsNewButton",
-              "sessionsNewForm", "sessionsNewName", "sessionsNewCategory",
-              "sessionsNewCreate", "sessionsNewBack"}) {
+              "sessionsNewForm", "sessionsNewTask", "sessionsNewName",
+              "sessionsNewCategory", "sessionsNewCreate", "sessionsNewBack"}) {
             QVERIFY2(Part(name) != nullptr, name);
         }
     }
@@ -159,6 +159,7 @@ private:
 
     QQuickItem* Search() { return Part("sessionsSearchInput"); }
     QQuickItem* Form() { return Part("sessionsNewForm"); }
+    QQuickItem* TaskField() { return Part("sessionsNewTask"); }
     QQuickItem* NameField() { return Part("sessionsNewName"); }
     QQuickItem* CategoryBox() { return Part("sessionsNewCategory"); }
     QQuickItem* CategoryName() { return Part("sessionsNewCategoryName"); }
@@ -192,10 +193,16 @@ private:
                 .toPoint());
     }
 
-    // "+ New", then waits until the name has the keyboard.
+    // "+ New", then waits until the task has the keyboard.
     void OpenForm() {
         Click(Part("sessionsNewButton"));
         QTRY_VERIFY_WITH_TIMEOUT(FormOpen(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    // Moves the keyboard to the name and waits for it.
+    void ToName() {
+        Tab();
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
     }
 
@@ -317,7 +324,12 @@ private slots:
         QCOMPARE(TextOf("sessionsNewBack"), QString("← Sessions"));
         QCOMPARE(TextOf("sessionsNewTitle"), QString("New session"));
         QCOMPARE(TextOf("sessionsNewCreate"), QString("Create session"));
+        QCOMPARE(TaskField()->height(), 38.0);
         QCOMPARE(NameField()->height(), 38.0);
+        QCOMPARE(NameField()->property("placeholderText").toString(),
+                 QString("Named by the agent"));
+        QVERIFY(TaskField()->y() < NameField()->y());
+        QVERIFY(NameField()->y() < CategoryBox()->y());
         QVERIFY(!CreateButton()->property("enabled").toBool());
         Snap("1-empty");
     }
@@ -332,14 +344,16 @@ private slots:
         Type("Ship it");
 
         Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
+        Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
-        // A name makes the button usable, so that Tab reaches it.
+        // A task makes the button usable, so that Tab reaches it.
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(BackLink()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
 
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(BackLink()->hasActiveFocus(), TIMEOUT_MS);
@@ -347,7 +361,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
-        QCOMPARE(TextOf("sessionsNewName"), QString("Ship it"));
+        BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
+        BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
     }
 
     void ANewCategoryAddsItsFieldToTheTabOrder() {
@@ -358,6 +376,7 @@ private slots:
         }
         OpenForm();
         QVERIFY(!CategoryName()->isVisible());
+        ToName();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
 
@@ -389,6 +408,7 @@ private slots:
         QVERIFY(BgRan().isEmpty());
         // A form opened again starts empty.
         OpenForm();
+        QCOMPARE(TextOf("sessionsNewTask"), QString());
         QCOMPARE(TextOf("sessionsNewName"), QString());
     }
 
@@ -400,6 +420,7 @@ private slots:
         }
         OpenForm();
         Type("x");
+        ToName();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Press(Qt::Key_Escape);
@@ -407,6 +428,7 @@ private slots:
 
         OpenForm();
         Type("x");
+        ToName();
         Tab();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
@@ -437,6 +459,8 @@ private slots:
         }
         OpenForm();
         Type("Ship it");
+        ToName();
+        Type("Shipping");
         Tab();
         Press(Qt::Key_Down);
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
@@ -446,12 +470,14 @@ private slots:
         Terminal()->forceActiveFocus();
         QTRY_VERIFY_WITH_TIMEOUT(!CategoryName()->hasActiveFocus(), TIMEOUT_MS);
         QVERIFY(FormOpen());
-        QCOMPARE(TextOf("sessionsNewName"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewName"), QString("Shipping"));
         PanelOf(LIST)->forceActiveFocus();
 
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
         QVERIFY(FormOpen());
-        QCOMPARE(TextOf("sessionsNewName"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewName"), QString("Shipping"));
         QCOMPARE(TextOf("sessionsNewCategoryName"), QString("Ops"));
         QVERIFY(CreateButton()->property("enabled").toBool());
         Snap("1-draft");
@@ -472,6 +498,8 @@ private slots:
         QCOMPARE(CursorId(), ALPHA);
         OpenForm();
         Type("Ship it");
+        ToName();
+        Type("Shipped");
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         // The known category after "Uncategorized".
@@ -485,22 +513,23 @@ private slots:
         // The form is gone and the keyboard is back in the list.
         VerifyListShown();
         // The command of the agent ran in the directory of the session under
-        // the cursor, with the name as its prompt.
+        // the cursor, with the task as its prompt.
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/alpha")));
         QCOMPARE(BgRan().value(1), QString("[--bg][--][Ship it]"));
         // The session is listed with the next list of the agent, under the
-        // category, with the name of the form as its title; nothing is opened.
+        // category, with the name of the form as its title, not the task;
+        // nothing is opened.
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
         const int row = ViewRow(static_cast<int>(Ids().indexOf(STARTED)));
         QCOMPARE(Role(row, "category").toString(), QString("Ops"));
         QTRY_COMPARE_WITH_TIMEOUT(Role(row, "title").toString(),
-                                  QString("Ship it"), TIMEOUT_MS);
+                                  QString("Shipped"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Agent's own name"),
                                  TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(
             StoredDocument().value("names").toObject().value(KeyOf(STARTED)),
-            QJsonValue("Ship it"), TIMEOUT_MS);
+            QJsonValue("Shipped"), TIMEOUT_MS);
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(activated.count(), 0);
         Snap("1-after-create");
@@ -515,6 +544,7 @@ private slots:
         ArmStart();
         OpenForm();
         Type("Ship it");
+        ToName();
         Tab();
         Press(Qt::Key_Down);
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
@@ -531,7 +561,49 @@ private slots:
                                   QString("Brand new"), TIMEOUT_MS);
     }
 
-    void NothingStartsWithoutAName() {
+    void CreateWithATaskAndNoNameLeavesTheTitleToTheAgent() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        OpenForm();
+        Type("Ship it");
+        // A task alone is enough.
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        Snap("2-task-only");
+        ToName();
+        // A blank name is no name.
+        Type("  ");
+        Tab();
+        Press(Qt::Key_Down);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+        Type("Brand new");
+
+        Press(Qt::Key_Return);
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().value(1),
+                                  QString("[--bg][--][Ship it]"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        const int row = ViewRow(static_cast<int>(Ids().indexOf(STARTED)));
+        // The category is set before the rename would be asked for: once it
+        // is in the document, the answer of the command was handled whole.
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("categories")
+                                      .toObject()
+                                      .value(KeyOf(STARTED)),
+                                  QJsonValue("Brand new"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Agent's own name"),
+                                 TIMEOUT_MS);
+        QCOMPARE(Role(row, "title").toString(), QString("Agent's own name"));
+        QVERIFY(!StoredDocument().value("names").toObject().contains(
+            KeyOf(STARTED)));
+    }
+
+    void NothingStartsWithoutATask() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -541,8 +613,15 @@ private slots:
         OpenForm();
         QVERIFY(!CreateButton()->property("enabled").toBool());
 
-        // Enter in an empty name and in a blank one starts nothing; the
-        // command that would answer is armed.
+        // A name is not enough.
+        ToName();
+        Type("Shipping");
+        QVERIFY(!CreateButton()->property("enabled").toBool());
+        // Enter in the name, in an empty task and in a blank one starts
+        // nothing; the command that would answer is armed.
+        Press(Qt::Key_Return);
+        BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
         Press(Qt::Key_Return);
         Type("  ");
         Press(Qt::Key_Return);
@@ -551,6 +630,8 @@ private slots:
         // Barrier: the form is still open, and what the list says is as it
         // was, after a round trip of the window.
         QVERIFY(FormOpen());
+        QVERIFY(!CreateButton()->property("enabled").toBool());
+        QCOMPARE(TextOf("sessionsNewName"), QString("Shipping"));
         QVERIFY(BgRan().isEmpty());
         QVERIFY(!Ids().contains(STARTED));
     }
