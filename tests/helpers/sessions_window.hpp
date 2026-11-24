@@ -241,6 +241,17 @@ public:
     void PressNative(int key, const QString& text, quint32 mac, quint32 xkb,
                      Qt::KeyboardModifiers modifiers = Qt::NoModifier);
 
+    // Waits until the list panel is not replacing its list (`resetting`): it
+    // drops Enter then, and a relist or a reconnect may start one at any time.
+    // The checks and the press that follow in the same turn of the event loop
+    // meet no reset.
+    void WaitUntilSettled();
+
+    // Press, once the list is not being replaced; for the Enter that the list
+    // must take. Keys that a field or a confirmation takes need no wait.
+    void PressWhenSettled(Qt::Key key,
+                          Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+
     // Moves the cursor to the row and opens it with Return; waits until the
     // session is open in the terminal.
     void OpenRow(int row);

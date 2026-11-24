@@ -485,6 +485,26 @@ void SessionsWindow::PressNative(int key, const QString& text, quint32 mac,
     QCoreApplication::sendEvent(Window(), &event);
 }
 
+// The panel drops Enter while its list is being replaced. The wait ends in a
+// turn of the event loop in which no reset is under way; what the caller does
+// next in that turn (the checks, the press) cannot meet one, as a reset starts
+// from an event of its own.
+void SessionsWindow::WaitUntilSettled() {
+    const QQuickItem* panel = PanelOf(LIST);
+    QVERIFY(panel != nullptr && panel->property("resetting").isValid());
+    QTRY_VERIFY_WITH_TIMEOUT(!panel->property("resetting").toBool(),
+                             TIMEOUT_MS);
+}
+
+void SessionsWindow::PressWhenSettled(Qt::Key key,
+                                      Qt::KeyboardModifiers modifiers) {
+    WaitUntilSettled();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    Press(key, modifiers);
+}
+
 // Moves the cursor to the row and opens it with Return; waits until the
 // session is open in the terminal.
 void SessionsWindow::OpenRow(int row) {
@@ -495,13 +515,7 @@ void SessionsWindow::OpenRow(int row) {
         Press(Qt::Key_Up);
     }
     QTRY_COMPARE_WITH_TIMEOUT(Cursor(), row, TIMEOUT_MS);
-    // The panel drops Enter while its list is being replaced; the checks and
-    // the press come in one turn of the event loop, so no reset starts
-    // between them.
-    const QQuickItem* panel = PanelOf(LIST);
-    QVERIFY(panel != nullptr && panel->property("resetting").isValid());
-    QTRY_VERIFY_WITH_TIMEOUT(!panel->property("resetting").toBool(),
-                             TIMEOUT_MS);
+    WaitUntilSettled();
     QCOMPARE(Cursor(), row);
     Press(Qt::Key_Return);
     QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
