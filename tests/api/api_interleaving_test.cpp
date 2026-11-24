@@ -480,7 +480,6 @@ private slots:
         QCOMPARE(changed.size(), 1);
         QVERIFY(Api_->Plugins().IsLoaded());
         QCOMPARE(QJsonValue(Api_->Plugins().Plugins()), *early.result());
-        QVERIFY(early.result()->toObject().contains("problems"));
         QCOMPARE(Daemon_->PluginsLists(), 1);
     }
 

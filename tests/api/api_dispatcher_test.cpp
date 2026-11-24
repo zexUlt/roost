@@ -126,8 +126,11 @@ private slots:
         }
         // The cache of the store follows the daemon's own change events, not
         // the answer to a write: wait for the last write to reach it.
-        QTRY_VERIFY_WITH_TIMEOUT(
+        QTRY_VERIFY2_WITH_TIMEOUT(
             Api_->Store().Cached("fixture") == std::optional(document),
+            qPrintable(QJsonDocument(Api_->Store().Cached("fixture").value_or(
+                                         QJsonObject{{"cached", false}}))
+                           .toJson(QJsonDocument::Compact)),
             TIMEOUT_MS);
         // And what they answered.
         QCOMPARE(*Call("commands.run", params["commands.run"]),
@@ -293,6 +296,7 @@ private slots:
         QVERIFY2(plugins, qPrintable(Why(plugins)));
         QCOMPARE(plugins->toObject().value("plugins")[0].toObject().value("id"),
                  QJsonValue("fixture"));
+        QVERIFY(plugins->toObject().contains("problems"));
         // What is not cached fails.
         const rpc::Result sessions = Call("sessions.list", {});
         QVERIFY(!sessions);
