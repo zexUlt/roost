@@ -116,7 +116,8 @@ class Theme : public QObject {
     Q_PROPERTY(QStringList fontProblems READ fontProblems NOTIFY changed)
     // The colours of the categories, eight, indexed by the model's colorIndex.
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
-    // The connection banner: normal, refused, and its text.
+    // The connection banner: normal, refused, and the text of the normal one
+    // (a refusal and a failed start are in `error`).
     Q_PROPERTY(QColor bannerBackground READ bannerBackground NOTIFY changed)
     Q_PROPERTY(QColor bannerRefusedBackground READ bannerRefusedBackground
                    NOTIFY changed)

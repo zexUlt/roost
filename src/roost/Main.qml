@@ -179,6 +179,13 @@ ApplicationWindow {
             objectName: "toolBar"
             visible: Qt.platform.os !== "osx"
             Layout.fillWidth: true
+            // The room of the focus ring of a button, which lies outside it
+            // with a gap of 2 px: the edge of the window and the next item of
+            // the column must not cut it. The bottom has the hairline too.
+            leftPadding: 2 + Roost.theme.cursorRingWidth
+            rightPadding: 2 + Roost.theme.cursorRingWidth
+            topPadding: 2 + Roost.theme.cursorRingWidth
+            bottomPadding: 3 + Roost.theme.cursorRingWidth
             background: Item {
                 Rectangle {
                     anchors.fill: parent
@@ -242,8 +249,9 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     // A failure is in the colour of the error, the rest waits
-                    // for the user: `attention` (derived, no mockup).
-                    color: root.connection === "refused" || root.connection === "startFailed" ? Roost.theme.error : Roost.theme.attention
+                    // for the user: `bannerText`, `attention` by default
+                    // (derived, no mockup).
+                    color: root.connection === "refused" || root.connection === "startFailed" ? Roost.theme.error : Roost.theme.bannerText
                     text: {
                         switch (root.connection) {
                         case "connecting":

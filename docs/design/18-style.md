@@ -14,8 +14,8 @@
 | `surface`, `panelBackground` | карточка | `#ffffff` |
 | `line` | линия вокруг карточки, разделитель, рамка поля | `#dde4ea` |
 | `text`, `textStrong`, `windowText` | основной текст | `#18232e` |
-| `textSecondary` | второстепенный текст (мета-строка, заголовок группы) | `#5a6a7a` |
-| `textMuted` | заглушка, неактивная вкладка | `#5f6e80` |
+| `textSecondary` | второстепенный текст (мета-строка, заголовок группы, неактивная вкладка) | `#5a6a7a` |
+| `textMuted` | заглушка | `#5f6e80` |
 | `accent` | открытая сессия, непрочитанное, ссылка | `#225fc2` |
 | `selectedBackground`, `accentTint` | выбранная строка, включённый фильтр | `#e9f1ff` |
 | `hoverBackground` | строка и кнопка под мышью | `#f5f8fb` |
@@ -26,7 +26,7 @@
 | `primary`, `primaryHover`, `primaryText` | главная кнопка, под мышью, её текст | `#2e66ce`, `#2658b5`, `#ffffff` |
 | `stateWorking`, `stateBlocked`, `stateFailed` | состояния сессии: работает (зелёный), ждёт (как `attention`), упала | `#2b7a3b`, `#8b500b`, `#c0262d` |
 | `warning`, `error`, `windowError` | предупреждение и ошибка | `#8b500b`, `#c0262d`, `#b00020` |
-| `bannerBackground`, `bannerRefusedBackground`, `bannerText` | фон баннера соединения; текст баннера берёт `attention` и `error`, `bannerText` остаётся для плагинов | `#fff4e0`, `#fde8e8`, `#18232e` |
+| `bannerBackground`, `bannerRefusedBackground`, `bannerText` | фон баннера соединения; текст баннера — `bannerText`, у отказа и ошибки старта — `error` | `#fff4e0`, `#fde8e8`, `#8b500b` |
 | `problemsBackground`, `problemsText` | полоса проблем | `#fff4e0`, `#8b500b` |
 | `selection` | выделение текста | `#cfe0fb` |
 | `controlBackground` | фон поля поиска, кнопки Controls и недоступной кнопки формы | `#f8fafc` |
@@ -96,6 +96,10 @@
 | высота шапки панели (заголовок) | 76 |
 | высота полосы чипов под шапкой | 32 |
 | высота заголовка группы (наименьшая) | 34 |
+| отступ плиты вкладки слева и справа от текста | 12 |
+| отступ плиты вкладки сверху и снизу от текста | 6 |
+| кольцо фокуса `Switch` | вокруг дорожки с зазором 2 |
+| запас панели инструментов под кольцо кнопки | `2 + cursorRingWidth` сверху и по бокам, на 1 больше снизу (линия) |
 | ширина карточки палитры | 304 |
 | отступ заголовка палитры сверху | 17 |
 | высота подвала палитры | 56 |
@@ -126,7 +130,7 @@
 
 | что | вид |
 |---|---|
-| баннер соединения | фон `bannerBackground` (отказ — `bannerRefusedBackground`); текст `attention`, у ошибки старта и отказа — `error` |
+| баннер соединения | фон `bannerBackground` (отказ — `bannerRefusedBackground`); текст `bannerText` (по умолчанию `attention`), у ошибки старта и отказа — `error` |
 | полоса обновления | фон `controlBackground`; текст `attention`, у ошибки установки — `error` |
 | полоса проблем | фон `problemsBackground`, текст `problemsText` |
 | вкладки (`TabNode.qml`) | полоса на `canvas`; текущая вкладка — плита `surface` с `radiusControl`, текст `focus`; остальные — `textSecondary`, под мышью `hoverBackground`; шрифт `rowFont`; скрытая вкладка по-прежнему шириной `-spacing` |

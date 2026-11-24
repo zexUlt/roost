@@ -1568,32 +1568,6 @@ private slots:
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
     }
 
-    // The text of a failed install is in the colour of the error.
-    void TheTextOfAFailedInstallIsInError() {
-        ServeRelease();
-        BootToInstall();
-        if (QTest::currentTestFailed()) {
-            return;
-        }
-        RelaunchResult_ = std::unexpected(QString("no way"));
-        QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
-        QTest::ignoreMessage(
-            QtWarningMsg,
-            QRegularExpression(
-                "roost: roost 9.9.9 is installed, but this window "
-                "cannot start it: no way"));
-        ClickItem(InstallButton());
-        // The install copies a bundle: under a loaded machine it takes
-        // longer than the usual bound.
-        QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
-                                  6 * TIMEOUT_MS);
-        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
-        QVERIFY(text != nullptr);
-        QCOMPARE(text->property("color").value<QColor>(),
-                 Singleton_->theme()->error());
-        QVERIFY(testing::SaveSnapshot(Window(), "install-failed"));
-    }
-
     // A new version that is installed but cannot be started is said so, with
     // what to do; the window stays.
     void ANewVersionThatCannotBeStartedIsShown() {
@@ -1616,6 +1590,12 @@ private slots:
         QCOMPARE(Quits_, 0);
         QVERIFY(StripText().contains("roost 9.9.9 is installed"));
         QVERIFY(StripText().contains("no way"));
+        // The text of a failed install is in the colour of the error.
+        const auto* text = Strip()->findChild<QQuickItem*>("updateText");
+        QVERIFY(text != nullptr);
+        QCOMPARE(text->property("color").value<QColor>(),
+                 Singleton_->theme()->error());
+        QVERIFY(testing::SaveSnapshot(Window(), "install-failed"));
         // The way out: the new version is in place, a start finds it.
         QVERIFY(
             StripText().contains("Close this window and start roost again."));

@@ -374,6 +374,19 @@ ApplicationWindow {
                         radius: height / 2
                         color: updatesCheckSwitch.checked ? Roost.theme.primary : Roost.theme.textMuted
 
+                        // The ring of the focus around the track, outside with
+                        // a gap of 2 px, as at FormButton.
+                        Rectangle {
+                            objectName: "switchRing"
+                            anchors.fill: parent
+                            anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                            visible: updatesCheckSwitch.visualFocus
+                            radius: height / 2
+                            color: "transparent"
+                            border.width: Roost.theme.cursorRingWidth
+                            border.color: Roost.theme.focus
+                        }
+
                         Rectangle {
                             objectName: "switchKnob"
                             x: updatesCheckSwitch.checked ? parent.width - width - 2 : 2
@@ -384,18 +397,7 @@ ApplicationWindow {
                             color: Roost.theme.surface
                         }
                     }
-                    background: Item {
-                        // The ring of the focus, outside with a gap of 2 px.
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -(2 + Roost.theme.cursorRingWidth)
-                            visible: updatesCheckSwitch.visualFocus
-                            radius: Roost.theme.radiusControl + 2 + Roost.theme.cursorRingWidth
-                            color: "transparent"
-                            border.width: Roost.theme.cursorRingWidth
-                            border.color: Roost.theme.focus
-                        }
-                    }
+                    background: null
                     onToggled: root.patchSettings({
                         "updates": {
                             "check": checked

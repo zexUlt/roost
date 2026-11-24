@@ -68,6 +68,10 @@ PanelCard {
                 width: visible ? implicitWidth : -bar.spacing
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
                 font: Roost.theme.rowFont
+                // The plate has room around the text (18-style.md, sizes
+                // without tokens).
+                horizontalPadding: 12
+                verticalPadding: 6
                 onClicked: stack.choose(index)
 
                 // The Fusion bevel is replaced: the current tab is a `surface`

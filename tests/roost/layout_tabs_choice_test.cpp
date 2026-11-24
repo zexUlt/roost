@@ -393,6 +393,31 @@ private slots:
         expectCurrent(2);
         QVERIFY(SaveSnapshot(Window(), "terminal-2-current"));
     }
+
+    // A tab is a plate with room around its text, not the text with a hair of
+    // padding: at least as high as the text and both vertical paddings, and
+    // at least as wide as the text and both horizontal ones (18-style.md).
+    void ATabIsAPlateWithRoomAroundItsText() {
+        StackOfThree();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(TabButtons().size(), 3, TIMEOUT_MS);
+        for (QQuickItem* tab : TabButtons()) {
+            QQuickItem* text = InButton(tab, "tabText");
+            QVERIFY(text != nullptr);
+            const double vertical = tab->property("verticalPadding").toDouble();
+            const double horizontal =
+                tab->property("horizontalPadding").toDouble();
+            QCOMPARE(vertical, 6.0);
+            QCOMPARE(horizontal, 12.0);
+            QTRY_VERIFY_WITH_TIMEOUT(tab->height() > 0, TIMEOUT_MS);
+            QVERIFY2(tab->height() >= text->implicitHeight() + 2 * vertical,
+                     qPrintable(QString::number(tab->height())));
+            QVERIFY2(tab->width() >= text->implicitWidth() + 2 * horizontal,
+                     qPrintable(QString::number(tab->width())));
+        }
+    }
 };
 
 QTEST_MAIN(LayoutTabsChoiceTest)

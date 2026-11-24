@@ -680,6 +680,29 @@ private slots:
         QVERIFY(testing::SaveSnapshot(window->Window(), "switch-off"));
     }
 
+    // The ring of the keyboard focus is around the track, outside with a gap
+    // of 2 px, not around the whole control with its padding.
+    void TheFocusRingOfTheSwitchIsAroundTheTrack() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QQuickItem* track = window->Find("switchTrack");
+        QQuickItem* ring = window->Find("switchRing");
+        QVERIFY(check != nullptr && track != nullptr && ring != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(track->width() > 0, TIMEOUT_MS);
+        QVERIFY(!ring->isVisible());
+        check->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(ring->isVisible(), TIMEOUT_MS);
+        const double grow = 2 + window->Singleton->theme()->cursorRingWidth();
+        const QRectF expected =
+            track->mapRectToScene(QRectF(0, 0, track->width(), track->height()))
+                .adjusted(-grow, -grow, grow, grow);
+        QCOMPARE(
+            ring->mapRectToScene(QRectF(0, 0, ring->width(), ring->height())),
+            expected);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "switch-focused"));
+    }
+
     void TheUpdateSwitchShowsTheStoredKey() {
         QVERIFY(Daemon_->Stop());
         QVERIFY(WriteFile(Daemon_->ConfigPath() + "/settings.json",

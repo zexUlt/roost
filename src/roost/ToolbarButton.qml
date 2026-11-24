@@ -30,6 +30,7 @@ ToolButton {
         color: control.hovered || control.down ? Roost.theme.hoverBackground : "transparent"
 
         Rectangle {
+            objectName: "focusRing"
             anchors.fill: parent
             anchors.margins: -(2 + Roost.theme.cursorRingWidth)
             visible: control.visualFocus
