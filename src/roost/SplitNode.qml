@@ -50,9 +50,11 @@ SplitView {
         }
     }
 
-    // The children that are shown (not hidden), by index of the node.
+    // The children that are shown (not hidden), by index of the node. The
+    // Instantiator may count more children than the node has for a moment
+    // when the model is replaced: such an index is not hidden.
     function shownAt(i) {
-        return split.node !== null && split.node.children[i].hidden !== true;
+        return split.node !== null && split.node.children[i]?.hidden !== true;
     }
     readonly property int shownCount: {
         let count = 0;

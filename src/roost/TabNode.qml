@@ -41,8 +41,11 @@ Item {
 
                 focusPolicy: Qt.NoFocus
                 // A tab with nothing to show (a hidden list) has no button.
+                // The bar still puts its spacing after it, so it is as wide
+                // as minus the spacing: the tabs beside it keep the space
+                // they have between two tabs.
                 visible: modelData.hidden !== true
-                width: visible ? implicitWidth : 0
+                width: visible ? implicitWidth : -bar.spacing
                 text: modelData.kind === "leaf" ? modelData.instance : "Tab " + (index + 1)
                 onClicked: stack.choose(index)
             }

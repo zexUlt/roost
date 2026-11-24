@@ -817,14 +817,18 @@ void Shell::ApplyLayout(Layout layout) {
         }
         Slots_.removeAt(i);
     }
-    // The lists are hidden only while something else is shown: the last panel
-    // that is not a list going (a close, a stored document) brings them back.
+    // The lists are hidden only while there is a list to hide and something
+    // else is shown: the last panel that is not a list going (a close, a
+    // stored document) brings them back, and so does the last list going, so
+    // that a list added later does not start collapsed.
     if (layout.ListsHidden) {
         const QStringList lists =
             ListPanelTypes(Loader_.PanelTypes(), KnownPanels());
-        if (std::ranges::all_of(leaves, [&lists](const auto& leaf) {
-                return lists.contains(leaf.second);
-            })) {
+        const auto isList = [&lists](const auto& leaf) {
+            return lists.contains(leaf.second);
+        };
+        if (std::ranges::all_of(leaves, isList) ||
+            std::ranges::none_of(leaves, isList)) {
             layout.ListsHidden = false;
         }
     }

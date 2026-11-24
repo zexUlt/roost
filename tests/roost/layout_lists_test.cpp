@@ -10,9 +10,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlExtensionPlugin>
+#include <QQuickItemGrabResult>
+#include <QSaveFile>
 #include <QSignalSpy>
 #include <QTest>
 
+#include <algorithm>
 #include <optional>
 
 #include "helpers/layout_window.hpp"
@@ -84,6 +87,26 @@ Layout WithState(Layout layout, bool hidden) {
     return layout;
 }
 
+// Two terminals between two lists, the terminals sharing the room.
+Layout TerminalsBetweenLists() {
+    return {.Root =
+                Split(true,
+                      {ListLeaf("list"), TerminalLeaf("terminal", "list"),
+                       TerminalLeaf("terminal-2", "list"), ListLeaf("list2")},
+                      {LayoutSize::Px(320), LayoutSize::Rest(),
+                       LayoutSize::Rest(), LayoutSize::Px(240)})};
+}
+
+// The same, the first list taking the room and the terminals in pixels.
+Layout FillListFirst() {
+    return {.Root =
+                Split(true,
+                      {ListLeaf("list"), TerminalLeaf("terminal", "list"),
+                       TerminalLeaf("terminal-2", "list"), ListLeaf("list2")},
+                      {LayoutSize::Rest(), LayoutSize::Px(300),
+                       LayoutSize::Px(200), LayoutSize::Px(240)})};
+}
+
 }  // namespace
 
 class LayoutListsTest : public LayoutWindow {
@@ -144,7 +167,11 @@ private:
     }
 
     // Runs the command with the keyboard in `instance`; roostd writes the new
-    // layout once, and what it keeps is the layout the window shows.
+    // layout once, and what it keeps is the layout the window shows. Every
+    // `store.patch` is announced with the document it made, also when it
+    // changed nothing (StoreService), so a second write of the same state
+    // would be a second event with that document, and the count of one is
+    // the count of the requests.
     void Toggle(const QString& instance) {
         Focus(instance);
         QVERIFY(Api_->Commands().HasLocal("layout.toggleLists"));
@@ -192,6 +219,143 @@ private:
         WaitForLayout({{"list", "terminal"}}, false);
         QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list2") != nullptr,
                                  TIMEOUT_MS);
+    }
+
+    // The window with `layout` of the four panels of the cases below; the
+    // terminals are not settled (a narrow one is narrower than the greeting).
+    void BootWith(const Layout& layout) {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Shell_->SetLayout(layout);
+        WaitForLayout({{"list", "terminal"}}, false);
+        for (const char* instance : {"list2", "terminal-2"}) {
+            QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance(instance) != nullptr,
+                                     TIMEOUT_MS);
+        }
+    }
+
+    double Wide(const QString& instance) {
+        return SlotByInstance(instance)->width();
+    }
+
+    // The split that holds the slot.
+    QQuickItem* SplitOf(const QString& instance) {
+        for (QQuickItem* item = SlotByInstance(instance)->parentItem();
+             item != nullptr; item = item->parentItem()) {
+            if (item->property("handleSize").isValid()) {
+                return item;
+            }
+        }
+        return nullptr;
+    }
+
+    // The two terminals fill the room the lists left, with one divider
+    // between them and none beside a list that is collapsed.
+    bool TerminalsFillTheSplit() {
+        QQuickItem* split = SplitOf("terminal");
+        if (split == nullptr || !Shown("terminal") || !Shown("terminal-2")) {
+            return false;
+        }
+        const QQuickItem* first = SlotByInstance("terminal");
+        const QQuickItem* second = SlotByInstance("terminal-2");
+        const qreal left = first->mapToItem(split, QPointF(0, 0)).x();
+        const qreal right =
+            second->mapToItem(split, QPointF(second->width(), 0)).x();
+        const qreal between =
+            second->mapToItem(split, QPointF(0, 0)).x() -
+            first->mapToItem(split, QPointF(first->width(), 0)).x();
+        return qAbs(left) < 0.5 && qAbs(right - split->width()) < 0.5 &&
+               qAbs(between - split->property("handleSize").toReal()) < 0.5;
+    }
+
+    // A drag with the mouse from `from` by `dx`, in steps, after a frame that
+    // has laid out what the window has now: the dividers are where the slots
+    // are, and a press on one finds it.
+    void Drag(QPoint from, int dx) {
+        QSignalSpy frame(Window(), &QQuickWindow::frameSwapped);
+        Window()->update();
+        QVERIFY(frame.wait(TIMEOUT_MS) || !frame.isEmpty());
+        QTest::mousePress(Window(), Qt::LeftButton, Qt::NoModifier, from);
+        for (int step = 1; step <= 8; ++step) {
+            QTest::mouseMove(Window(), from + QPoint(dx * step / 8, 0));
+        }
+        QTest::mouseRelease(Window(), Qt::LeftButton, Qt::NoModifier,
+                            from + QPoint(dx, 0));
+    }
+
+    // The point on the divider to the right of the slot.
+    QPoint DividerRightOf(const QString& instance) {
+        QQuickItem* slot = SlotByInstance(instance);
+        return slot->mapToScene(QPointF(slot->width(), 60)).toPoint();
+    }
+
+    std::vector<LayoutSize> RootSizes() {
+        return Shell_->CurrentLayout().Root.Sizes;
+    }
+
+    // The document the window shows is the one roostd keeps.
+    void WaitForStoredLayout() {
+        QTRY_COMPARE_WITH_TIMEOUT(Json(StoredLayout()),
+                                  Json(LayoutToJson(Shell_->CurrentLayout())),
+                                  TIMEOUT_MS);
+    }
+
+    // A layout document written before roostd starts.
+    void SeedLayout(const Layout& layout) {
+        QVERIFY(QDir().mkpath(Dir_->filePath("config")));
+        QSaveFile file(Dir_->filePath("config/layout.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(Json(LayoutToJson(layout))) > 0);
+        QVERIFY(file.commit());
+    }
+
+    // The tab buttons that are shown, left to right.
+    QList<QQuickItem*> ShownTabButtons() {
+        QList<QQuickItem*> buttons;
+        CollectByClass(Window()->contentItem(), "TabButton", buttons);
+        buttons.removeIf([](const QQuickItem* tab) {
+            return !tab->isVisible() || tab->width() < 1;
+        });
+        std::ranges::sort(buttons, {}, [](const QQuickItem* tab) {
+            return tab->mapToScene(QPointF(0, 0)).x();
+        });
+        return buttons;
+    }
+
+    static void CollectByClass(QQuickItem* item, const char* name,
+                               QList<QQuickItem*>& out) {
+        for (QQuickItem* child : item->childItems()) {
+            const QString cls = child->metaObject()->className();
+            const auto length = static_cast<qsizetype>(qstrlen(name));
+            if (cls.startsWith(name) &&
+                (cls.size() == length || cls.at(length) == '_')) {
+                out.append(child);
+            }
+            CollectByClass(child, name, out);
+        }
+    }
+
+    // Saves a picture of the window as <case>-<step>.png when asked to.
+    void Snapshot(const QString& step) {
+        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
+        if (directory.isEmpty()) {
+            return;
+        }
+        QVERIFY(QDir().mkpath(directory));
+        const QString name =
+            QStringLiteral("%1-%2.png")
+                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
+        // The content item, not the window: grabWindow distorts the terminal
+        // in the offscreen platform.
+        QSharedPointer<QQuickItemGrabResult> result =
+            Window()->contentItem()->grabToImage();
+        QVERIFY(!result.isNull());
+        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
+        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
+        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
     }
 
 private slots:
@@ -559,6 +723,208 @@ private slots:
                                   TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(!StoredLayout().contains("listsHidden"),
                                  TIMEOUT_MS);
+    }
+
+    void ADragOfTheShownSiblingsKeepsTheSizesOfTheHiddenLists() {
+        BootWith(TerminalsBetweenLists());
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list"), 320.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
+        const std::vector<LayoutSize> sizes = RootSizes();
+
+        Toggle("terminal");
+        QTRY_VERIFY_WITH_TIMEOUT(!SlotByInstance("list")->isVisible() &&
+                                     !SlotByInstance("list2")->isVisible(),
+                                 TIMEOUT_MS);
+        // No room for the lists, and no divider beside them.
+        QTRY_VERIFY_WITH_TIMEOUT(TerminalsFillTheSplit(), TIMEOUT_MS);
+        Snapshot("1-hidden");
+        const double beforeDrag = Wide("terminal");
+        // Narrower, so that the room is enough for the lists to come back.
+        Drag(DividerRightOf("terminal"), -150);
+        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") < beforeDrag - 100,
+                                 TIMEOUT_MS);
+        const int dragged = qRound(Wide("terminal"));
+        // The terminals are as the user left them, the lists as they were.
+        const std::vector<LayoutSize> moved = {
+            sizes[0], LayoutSize::Px(dragged), LayoutSize::Rest(), sizes[3]};
+        QTRY_COMPARE_WITH_TIMEOUT(RootSizes(), moved, TIMEOUT_MS);
+        WaitForStoredLayout();
+        QVERIFY(Shell_->CurrentLayout().ListsHidden);
+        QCOMPARE(StoredLayout().value("root").toObject().value("sizes"),
+                 LayoutToJson(Shell_->CurrentLayout())
+                     .value("root")
+                     .toObject()
+                     .value("sizes"));
+        QVERIFY(TerminalsFillTheSplit());
+
+        Toggle("terminal");
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("list") && Shown("list2"), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list"), 320.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal") - dragged) <= 1,
+                                 TIMEOUT_MS);
+        QVERIFY(Wide("terminal-2") >= 40);
+        Snapshot("2-shown");
+        QCOMPARE(RootSizes(), moved);
+        WaitForStoredLayout();
+        QVERIFY(!StoredLayout().contains("listsHidden"));
+    }
+
+    void ADragWhenNoShownChildFillsKeepsTheSizeOfTheOneThatTakesTheRoom() {
+        BootWith(FillListFirst());
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal"), 300.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 200.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
+        const std::vector<LayoutSize> sizes = RootSizes();
+
+        // The last terminal is the one that is shown and takes the room.
+        Toggle("terminal");
+        QTRY_VERIFY_WITH_TIMEOUT(!SlotByInstance("list")->isVisible() &&
+                                     !SlotByInstance("list2")->isVisible(),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TerminalsFillTheSplit(), TIMEOUT_MS);
+        QCOMPARE(Wide("terminal"), 300.0);
+        Drag(DividerRightOf("terminal"), -60);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            Wide("terminal") < 260,
+            qPrintable(QStringLiteral("t %1 t2 %2 press at %3")
+                           .arg(Wide("terminal"))
+                           .arg(Wide("terminal-2"))
+                           .arg(DividerRightOf("terminal").x())),
+            TIMEOUT_MS);
+        const int dragged = qRound(Wide("terminal"));
+        // The terminal that took the room stays as stored.
+        const std::vector<LayoutSize> moved = {
+            LayoutSize::Rest(), LayoutSize::Px(dragged), sizes[2], sizes[3]};
+        QTRY_COMPARE_WITH_TIMEOUT(RootSizes(), moved, TIMEOUT_MS);
+        WaitForStoredLayout();
+
+        Toggle("terminal");
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("list") && Shown("list2"), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 200.0, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal") - dragged) <= 1,
+                                 TIMEOUT_MS);
+        QVERIFY(Wide("list") > 100);
+        QCOMPARE(RootSizes(), moved);
+        WaitForStoredLayout();
+    }
+
+    void TheLastListGoingWhileHiddenBringsTheStateBackAndANewListIsShown() {
+        BootWithTwoLists();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Toggle("terminal");
+        QTRY_VERIFY_WITH_TIMEOUT(!SlotByInstance("list")->isVisible(),
+                                 TIMEOUT_MS);
+        // A document with no list left, as another edit of the file or an
+        // older roost writes it, still has the state.
+        LayoutNode terminal;
+        terminal.Instance = "terminal";
+        terminal.Panel = "terminal.view";
+        Shell_->SetLayout(WithState(Layout{.Root = terminal}, true));
+        QVERIFY(!Shell_->CurrentLayout().ListsHidden);
+        QTRY_VERIFY_WITH_TIMEOUT(!ListsHiddenOfWindow(), TIMEOUT_MS);
+        WaitForStoredLayout();
+        QVERIFY(!StoredLayout().contains("listsHidden"));
+
+        // A list split in later is not collapsed.
+        Focus("terminal");
+        Api_->Commands().Run("layout.splitDown",
+                             QJsonObject{{"panel", "sessions.list"}});
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("sessions.list-2") != nullptr,
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("sessions.list-2"), TIMEOUT_MS);
+        QVERIFY(!Shell_->CurrentLayout().ListsHidden);
+        QVERIFY(!ListsHiddenOfWindow());
+        WaitForStoredLayout();
+        QVERIFY(!StoredLayout().contains("listsHidden"));
+    }
+
+    void AStoredStateOfAWindowWithOnlyListsShowsThemAndGoesWithTheNextEdit() {
+        // No terminal in the window: the document has only lists.
+        WithoutTerminal_ = true;
+        const Layout lists = {
+            .Root = Split(true, {ListLeaf("list"), ListLeaf("list2")},
+                          {LayoutSize::Px(320), LayoutSize::Rest()})};
+        SeedLayout(WithState(lists, true));
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("list") && Shown("list2"), TIMEOUT_MS);
+        QCOMPARE(Shell_->CurrentLayout(), lists);
+        QVERIFY(!ListsHiddenOfWindow());
+        QVERIFY(Problems().isEmpty());
+        // Reading does not write: the state is cleared in the window, and
+        // goes from the document with the next edit.
+        Barrier();
+        QCOMPARE(StoredLayout().value("listsHidden"), QJsonValue(true));
+
+        Focus("list");
+        Api_->Commands().Run("layout.splitDown");
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list-2") != nullptr,
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("list-2"), TIMEOUT_MS);
+        WaitForStoredLayout();
+        QVERIFY(!StoredLayout().contains("listsHidden"));
+        QVERIFY(Shown("list") && Shown("list2"));
+    }
+
+    void AHiddenTabHasNoGapInTheBar() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const Layout stack = {
+            .Root =
+                Tabs({TerminalLeaf("terminal", "list"), ListLeaf("list"),
+                      TerminalLeaf("terminal-2", "list"), ListLeaf("list2")},
+                     0)};
+        Shell_->SetLayout(stack);
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list") != nullptr &&
+                                     PanelByInstance("list2") != nullptr &&
+                                     PanelByInstance("terminal") != nullptr &&
+                                     PanelByInstance("terminal-2") != nullptr,
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(static_cast<int>(ShownTabButtons().size()), 4,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Shown("terminal"), TIMEOUT_MS);
+        // The space between two buttons of the bar as it is.
+        const auto gapAfter = [](const QList<QQuickItem*>& buttons, int i) {
+            return buttons.at(i + 1)->mapToScene(QPointF(0, 0)).x() -
+                   buttons.at(i)
+                       ->mapToScene(QPointF(buttons.at(i)->width(), 0))
+                       .x();
+        };
+        const double spacing = gapAfter(ShownTabButtons(), 0);
+        Snapshot("1-shown");
+
+        Toggle("terminal");
+        QTRY_COMPARE_WITH_TIMEOUT(static_cast<int>(ShownTabButtons().size()), 2,
+                                  TIMEOUT_MS);
+        const QList<QQuickItem*> buttons = ShownTabButtons();
+        QCOMPARE(buttons.at(0)->property("text").toString(),
+                 QString("terminal"));
+        QCOMPARE(buttons.at(1)->property("text").toString(),
+                 QString("terminal-2"));
+        // The same space as between any two tabs, not one more for each tab
+        // that is not shown.
+        QVERIFY2(qAbs(gapAfter(buttons, 0) - spacing) < 0.5,
+                 qPrintable(QStringLiteral("gap %1, spacing %2")
+                                .arg(gapAfter(buttons, 0))
+                                .arg(spacing)));
+        Snapshot("2-hidden");
     }
 };
 
