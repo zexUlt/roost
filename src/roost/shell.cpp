@@ -111,12 +111,14 @@ void CollectLeaves(const LayoutNode& node,
 }
 
 // The tree as the layout view takes it (LayoutView.qml): a size is a number of
-// pixels, 0 for the rest.
-QVariant NodeToVariant(const LayoutNode& node) {
+// pixels, 0 for the rest. A node of which nothing is shown (its leaves are all
+// of the `hidden` types) has `hidden: true`, and a stack shows the tab
+// ShownTab names.
+QVariant NodeToVariant(const LayoutNode& node, const QSet<QString>& hidden) {
     QVariantMap map;
     QVariantList children;
     for (const LayoutNode& child : node.Children) {
-        children.append(NodeToVariant(child));
+        children.append(NodeToVariant(child, hidden));
     }
     switch (node.Kind) {
         case ELayoutNodeKind::Split: {
@@ -132,7 +134,8 @@ QVariant NodeToVariant(const LayoutNode& node) {
         }
         case ELayoutNodeKind::Tabs:
             map = {{"kind", "tabs"},
-                   {"active", node.Active},
+                   {"active",
+                    hidden.isEmpty() ? node.Active : ShownTab(node, hidden)},
                    {"children", children}};
             break;
         case ELayoutNodeKind::Leaf:
@@ -140,6 +143,9 @@ QVariant NodeToVariant(const LayoutNode& node) {
                    {"instance", node.Instance},
                    {"panel", node.Panel}};
             break;
+    }
+    if (IsCollapsed(node, hidden)) {
+        map.insert("hidden", true);
     }
     return map;
 }
@@ -179,6 +185,10 @@ QJsonObject LayoutPatch(const Layout& layout) {
         }
     }
     patch.insert("root", root);
+    // The optional state of the window, removed when it is off.
+    if (!patch.contains(QLatin1String("listsHidden"))) {
+        patch.insert(QLatin1String("listsHidden"), QJsonValue::Null);
+    }
     return patch;
 }
 
@@ -445,6 +455,11 @@ void Shell::UpdateListTypes() {
 
 void Shell::OnPanelTypesChanged() {
     UpdateListTypes();
+    // The panels that count as lists changed: so did what is hidden.
+    if (LayoutPublished_ &&
+        HiddenTypes(Layout_, KnownPanels()) != HiddenPublished_) {
+        PublishLayout();
+    }
     PublishPanelTypes();
     TrySettle();
     Refill();
@@ -802,6 +817,21 @@ void Shell::ApplyLayout(Layout layout) {
         }
         Slots_.removeAt(i);
     }
+    // The lists are hidden only while there is a list to hide and something
+    // else is shown: the last panel that is not a list going (a close, a
+    // stored document) brings them back, and so does the last list going, so
+    // that a list added later does not start collapsed.
+    if (layout.ListsHidden) {
+        const QStringList lists =
+            ListPanelTypes(Loader_.PanelTypes(), KnownPanels());
+        const auto isList = [&lists](const auto& leaf) {
+            return lists.contains(leaf.second);
+        };
+        if (std::ranges::all_of(leaves, isList) ||
+            std::ranges::none_of(leaves, isList)) {
+            layout.ListsHidden = false;
+        }
+    }
     const bool changed = !LayoutPublished_ || Layout_ != layout;
     Layout_ = std::move(layout);
     for (const auto& [instance, type] : leaves) {
@@ -825,7 +855,18 @@ void Shell::ApplyLayout(Layout layout) {
 
 void Shell::PublishLayout() {
     LayoutPublished_ = true;
-    Root_.setProperty("layoutTree", NodeToVariant(Layout_.Root));
+    const QSet<QString> hidden = HiddenTypes(Layout_, KnownPanels());
+    HiddenPublished_ = hidden;
+    QVariantMap tree = NodeToVariant(Layout_.Root, hidden).toMap();
+    // The state as the window shows it: a leaf is hidden. A state with no list
+    // to hide shows nothing.
+    QList<std::pair<QString, QString>> leaves;
+    CollectLeaves(Layout_.Root, leaves);
+    tree.insert("listsHidden",
+                std::ranges::any_of(leaves, [&hidden](const auto& leaf) {
+                    return hidden.contains(leaf.second);
+                }));
+    Root_.setProperty("layoutTree", tree);
 }
 
 void Shell::SaveLayout() {
@@ -932,6 +973,8 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
         edit = MoveOutOfTabs(Layout_, instance);
     } else if (action == QLatin1String("close")) {
         edit = ClosePanel(Layout_, instance);
+    } else if (action == QLatin1String("toggleLists")) {
+        edit = ToggleLists(Layout_, instance, known);
     } else if (action == QLatin1String("setLink")) {
         edit = text("from").isEmpty()
                    ? RemoveLink(Layout_, instance, text("input"))

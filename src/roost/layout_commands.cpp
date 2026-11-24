@@ -156,7 +156,151 @@ QString InputType(const LayoutKnownPanels& known, const QString& panel,
                                      : found->Inputs.value(input).toString();
 }
 
+// The leaf that is shown when the node is looked at, the hidden ones left
+// out; null when the node is collapsed.
+const LayoutNode* ShownVisibleLeaf(const LayoutNode& node,
+                                   const QSet<QString>& hidden) {
+    if (node.Kind == ELayoutNodeKind::Leaf) {
+        return hidden.contains(node.Panel) ? nullptr : &node;
+    }
+    if (node.Children.empty()) {
+        return nullptr;
+    }
+    if (node.Kind == ELayoutNodeKind::Tabs) {
+        return ShownVisibleLeaf(
+            node.Children[static_cast<size_t>(ShownTab(node, hidden))], hidden);
+    }
+    for (const LayoutNode& child : node.Children) {
+        if (const LayoutNode* found = ShownVisibleLeaf(child, hidden)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+// The panel that takes the keyboard from `instance` once `hidden` types are
+// collapsed: the neighbours in each split above it, nearest first and the one
+// before it first, then the shown tab of each stack above it.
+QString FocusAfterHide(const LayoutNode& root, const QString& instance,
+                       const QSet<QString>& hidden) {
+    Path path;
+    if (!PathTo(root, instance, path)) {
+        return {};
+    }
+    for (size_t depth = path.size(); depth-- > 0;) {
+        const LayoutNode& parent = [&]() -> const LayoutNode& {
+            const LayoutNode* node = &root;
+            for (size_t i = 0; i < depth; ++i) {
+                node = &node->Children[path[i]];
+            }
+            return *node;
+        }();
+        const auto own = static_cast<std::ptrdiff_t>(path[depth]);
+        std::vector<std::ptrdiff_t> order;
+        for (std::ptrdiff_t at = 0;
+             at < static_cast<std::ptrdiff_t>(parent.Children.size()); ++at) {
+            if (at != own) {
+                order.push_back(at);
+            }
+        }
+        std::ranges::stable_sort(order, [own](auto a, auto b) {
+            const auto da = a > own ? a - own : own - a;
+            const auto db = b > own ? b - own : own - b;
+            return da != db ? da < db : a < b;
+        });
+        if (parent.Kind == ELayoutNodeKind::Tabs) {
+            order = {ShownTab(parent, hidden)};
+        }
+        for (const std::ptrdiff_t at : order) {
+            if (const LayoutNode* leaf = ShownVisibleLeaf(
+                    parent.Children[static_cast<size_t>(at)], hidden)) {
+                return leaf->Instance;
+            }
+        }
+    }
+    return {};
+}
+
 }  // namespace
+
+bool IsCollapsed(const LayoutNode& node, const QSet<QString>& hidden) {
+    if (hidden.isEmpty()) {
+        return false;
+    }
+    if (node.Kind == ELayoutNodeKind::Leaf) {
+        return hidden.contains(node.Panel);
+    }
+    return std::ranges::all_of(node.Children, [&hidden](const LayoutNode& c) {
+        return IsCollapsed(c, hidden);
+    });
+}
+
+int ShownTab(const LayoutNode& tabs, const QSet<QString>& hidden) {
+    const int count = static_cast<int>(tabs.Children.size());
+    const int active = std::clamp(tabs.Active, 0, std::max(count - 1, 0));
+    if (count == 0 ||
+        !IsCollapsed(tabs.Children[static_cast<size_t>(active)], hidden)) {
+        return active;
+    }
+    for (int i = active + 1; i < count; ++i) {
+        if (!IsCollapsed(tabs.Children[static_cast<size_t>(i)], hidden)) {
+            return i;
+        }
+    }
+    for (int i = active - 1; i >= 0; --i) {
+        if (!IsCollapsed(tabs.Children[static_cast<size_t>(i)], hidden)) {
+            return i;
+        }
+    }
+    return active;
+}
+
+QSet<QString> HiddenTypes(const Layout& layout,
+                          const LayoutKnownPanels& known) {
+    if (!layout.ListsHidden) {
+        return {};
+    }
+    const QStringList lists = ListPanelTypes(known.keys(), known);
+    return {lists.begin(), lists.end()};
+}
+
+LayoutEdit ToggleLists(const Layout& layout, const QString& instance,
+                       const LayoutKnownPanels& known) {
+    const QStringList listTypes = ListPanelTypes(known.keys(), known);
+    const QSet<QString> lists(listTypes.begin(), listTypes.end());
+    std::vector<const LayoutNode*> leaves;
+    CollectLeaves(layout.Root, leaves);
+    const auto isList = [&lists](const LayoutNode* leaf) {
+        return lists.contains(leaf->Panel);
+    };
+    const bool anyList = std::ranges::any_of(leaves, isList);
+    Layout tree = layout;
+    if (layout.ListsHidden || !anyList) {
+        // Showing: the state goes. With no list to show it only goes.
+        if (!layout.ListsHidden) {
+            return Refuse(layout, QStringLiteral("there is no list of sessions "
+                                                 "to hide"));
+        }
+        tree.ListsHidden = false;
+        return Done(
+            std::move(tree), layout,
+            FindLeaf(layout.Root, instance) != nullptr ? instance : QString());
+    }
+    if (std::ranges::all_of(leaves, isList)) {
+        return Refuse(layout, QStringLiteral("the window has only lists: "
+                                             "hiding them would leave "
+                                             "nothing to show"));
+    }
+    tree.ListsHidden = true;
+    // The edit rebuilds the view, and the keyboard stays where it was unless
+    // that panel goes.
+    const LayoutNode* own = FindLeaf(tree.Root, instance);
+    QString focus = own != nullptr ? instance : QString();
+    if (own != nullptr && lists.contains(own->Panel)) {
+        focus = FocusAfterHide(tree.Root, instance, lists);
+    }
+    return Done(std::move(tree), layout, std::move(focus));
+}
 
 const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance) {
     if (node.Kind == ELayoutNodeKind::Leaf) {

@@ -46,6 +46,9 @@ ApplicationWindow {
     // The panel types that are lists of sessions (an output `selected` of type
     // SessionRef), written by C++.
     property var listPanelTypes: []
+    // The lists of sessions are hidden (collapsed, not closed): the state for
+    // a button "Hide list" / "Show list"; the command is `layout.toggleLists`.
+    readonly property bool listsHidden: layoutView.listsHidden
 
     // A slot of the layout view is built; C++ hands it its panel.
     signal slotCreated(var slot)

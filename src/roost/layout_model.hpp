@@ -82,6 +82,10 @@ struct LayoutNode {
 
 struct Layout {
     LayoutNode Root;
+    // The lists of sessions (the panels of the types ListPanelTypes names) are
+    // collapsed: kept as panels, not shown. A state of the window, not of a
+    // node. Stored as an optional `listsHidden: true` of the document.
+    bool ListsHidden = false;
 
     bool operator==(const Layout&) const = default;
 };
