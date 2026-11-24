@@ -667,7 +667,7 @@ private slots:
         // again as well.
         BackToList();
         MoveTo(GAMMA);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), (QStringList{ALPHA, ALPHA, GAMMA}),
                                   TIMEOUT_MS);
         BackToList();
@@ -981,7 +981,7 @@ private slots:
         QVERIFY(SelectedId().isEmpty());
 
         MoveTo(STARTED);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), STARTED, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{STARTED}, TIMEOUT_MS);

@@ -21,5 +21,6 @@
 | 15 | ADR | [design/15-adr.md](design/15-adr.md) |
 | 16 | Хоткеи | [design/16-keymap.md](design/16-keymap.md) |
 | 17 | Обновления | [design/17-updates.md](design/17-updates.md) |
+| 18 | Стиль | [design/18-style.md](design/18-style.md) |
 
 ADR с развёрнутым разбором — в [design/adr/](design/adr/), список всех — §15.

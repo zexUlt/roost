@@ -39,15 +39,15 @@ class ThemeTerminalTest : public QObject {
 private slots:
     void cleanup() { qunsetenv("ROOST_TEST_THEME_FILE"); }
 
-    void DefaultsAreWhiteOnBlackAndThePaletteOfTheLibrary() {
+    void DefaultsAreTheLightTomorrow() {
         const Theme theme;
         const TerminalColors& colors = theme.terminalColors();
-        QCOMPARE(colors.Foreground, (Rgb{.R = 255, .G = 255, .B = 255}));
-        QCOMPARE(colors.Background, (Rgb{.R = 0, .G = 0, .B = 0}));
-        QCOMPARE(colors.Cursor, (Rgb{.R = 255, .G = 255, .B = 255}));
-        QCOMPARE(colors.Selection, (Rgb{.R = 255, .G = 255, .B = 255}));
-        QCOMPARE(colors.Palette[1], (Rgb{.R = 0xcc, .G = 0x66, .B = 0x66}));
-        QCOMPARE(colors.Palette[15], (Rgb{.R = 0xea, .G = 0xea, .B = 0xea}));
+        QCOMPARE(colors.Foreground, (Rgb{.R = 0x4d, .G = 0x4d, .B = 0x4c}));
+        QCOMPARE(colors.Background, (Rgb{.R = 255, .G = 255, .B = 255}));
+        QCOMPARE(colors.Cursor, (Rgb{.R = 0x4d, .G = 0x4d, .B = 0x4c}));
+        QCOMPARE(colors.Selection, (Rgb{.R = 0xd6, .G = 0xd6, .B = 0xd6}));
+        QCOMPARE(colors.Palette[1], (Rgb{.R = 0xc8, .G = 0x28, .B = 0x29}));
+        QCOMPARE(colors.Palette[15], (Rgb{.R = 0xef, .G = 0xef, .B = 0xef}));
         QCOMPARE(colors.Palette[16], (Rgb{.R = 0, .G = 0, .B = 0}));
         QCOMPARE(colors.Palette[231], (Rgb{.R = 255, .G = 255, .B = 255}));
     }
@@ -63,7 +63,7 @@ private slots:
                  (Rgb{.R = 0x10, .G = 0x20, .B = 0x30}));
         // What the theme does not give is the default's.
         QCOMPARE(theme.terminalColors().Foreground,
-                 (Rgb{.R = 255, .G = 255, .B = 255}));
+                 (Rgb{.R = 0x4d, .G = 0x4d, .B = 0x4c}));
     }
 
     void FollowingTheSameThemeAgainSaysNothing() {
@@ -89,7 +89,7 @@ private slots:
                  QStringLiteral("default"));
         QCOMPARE(spy.count(), 1);
         QCOMPARE(theme.terminalColors().Background,
-                 (Rgb{.R = 0, .G = 0, .B = 0}));
+                 (Rgb{.R = 255, .G = 255, .B = 255}));
     }
 
     void ThemeWithoutAnIdIsTheDefault() {
@@ -114,7 +114,7 @@ private slots:
                              {"terminalForeground", "red"}}));
         QCOMPARE(spy.count(), 0);
         QCOMPARE(theme.terminalColors().Background,
-                 (Rgb{.R = 0, .G = 0, .B = 0}));
+                 (Rgb{.R = 255, .G = 255, .B = 255}));
     }
 
     // The terminal tokens are not properties: QML cannot see them, and the

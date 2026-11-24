@@ -22,6 +22,19 @@ struct Token {
     QColor Theme::* Member;
 };
 
+// uiFont at `ratio` of its size (the prototype's base is 13 px) and `weight`.
+QFont scaled(const QFont& base, double ratio, QFont::Weight weight) {
+    QFont font = base;
+    if (base.pointSizeF() > 0) {
+        font.setPointSizeF(base.pointSizeF() * ratio);
+    } else if (base.pixelSize() > 0) {
+        font.setPixelSize(
+            std::max(1, static_cast<int>(base.pixelSize() * ratio + 0.5)));
+    }
+    font.setWeight(weight);
+    return font;
+}
+
 }  // namespace
 
 Theme::Theme(QObject* parent)
@@ -101,6 +114,26 @@ void Theme::followFonts(const QJsonObject& settings) {
     }
 }
 
+QFont Theme::titleFont() const {
+    return scaled(UiFont_, 20.0 / 13.0, QFont::DemiBold);
+}
+
+QFont Theme::headingFont() const {
+    return scaled(UiFont_, 16.0 / 13.0, QFont::DemiBold);
+}
+
+QFont Theme::rowFont() const {
+    return scaled(UiFont_, 12.0 / 13.0, QFont::Medium);
+}
+
+QFont Theme::metaFont() const {
+    return scaled(UiFont_, 11.0 / 13.0, UiFont_.weight());
+}
+
+QFont Theme::smallFont() const {
+    return scaled(UiFont_, 10.5 / 13.0, UiFont_.weight());
+}
+
 bool Theme::load(const QJsonObject& tokens) {
     static const std::array TOKENS = {
         Token{"windowBackground", &Theme::WindowBackground_},
@@ -129,6 +162,16 @@ bool Theme::load(const QJsonObject& tokens) {
         Token{"warning", &Theme::Warning_},
         Token{"error", &Theme::Error_},
         Token{"windowError", &Theme::WindowError_},
+        Token{"canvas", &Theme::Canvas_},
+        Token{"surface", &Theme::Surface_},
+        Token{"line", &Theme::Line_},
+        Token{"selectedBackground", &Theme::SelectedBackground_},
+        Token{"hoverBackground", &Theme::HoverBackground_},
+        Token{"focus", &Theme::Focus_},
+        Token{"attention", &Theme::Attention_},
+        Token{"primary", &Theme::Primary_},
+        Token{"primaryHover", &Theme::PrimaryHover_},
+        Token{"primaryText", &Theme::PrimaryText_},
     };
 
     bool taken = true;
