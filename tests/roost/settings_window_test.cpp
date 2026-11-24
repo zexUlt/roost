@@ -26,8 +26,10 @@
 
 #include "api/api.hpp"
 #include "api/api_test_support.hpp"
+#include "helpers/combo_popup.hpp"
 #include "helpers/roostd_process.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/controls_style.hpp"
 #include "roost/plugin_loader.hpp"
@@ -317,6 +319,69 @@ private slots:
         QVERIFY(field->parentItem()->parentItem() != nullptr);
         QVERIFY(section->height() > field->height());
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
+    }
+
+    // The list of a combo box has a row with the name of each entry: the
+    // theme combo takes plain strings, which have no role to read.
+    void TheListOfThemesShowsTheirNames() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* box = window->Find("themeBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        QCOMPARE(testing::OpenedRowTexts(window->Window(), box, 1, TIMEOUT_MS),
+                 QStringList{"default"});
+        QVERIFY(testing::SaveSnapshot(window->Window(), "theme-list"));
+    }
+
+    // The ring of the focus is drawn 4 px outside of a control; the scroll
+    // area of the window must not cut it, at the first control and at the
+    // last one of the form. The pictures are for a person to look at.
+    void TheRingOfTheFirstAndTheLastControlIsNotCut() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
+                                 TIMEOUT_MS);
+        QQuickItem* scroll = window->Find("settingsScroll");
+        QVERIFY(scroll != nullptr);
+        // Low enough for the form to scroll, as on a small screen.
+        window->Window()->setHeight(300);
+        QTRY_VERIFY_WITH_TIMEOUT(scroll->height() < 260, TIMEOUT_MS);
+        const auto ringIsInside = [&](QQuickItem* control) {
+            constexpr qreal ring = 4;
+            const QRectF outer =
+                control
+                    ->mapRectToScene(
+                        QRectF(0, 0, control->width(), control->height()))
+                    .adjusted(-ring, -ring, ring, ring);
+            const QRectF view = scroll->mapRectToScene(
+                QRectF(0, 0, scroll->width(), scroll->height()));
+            return view.contains(outer);
+        };
+
+        QQuickItem* first = window->Find("themeBox");
+        QVERIFY(first != nullptr);
+        first->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(first->property("visualFocus").toBool(),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ringIsInside(first), TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "ring-top"));
+
+        // The last control of the form, scrolled into view to the very end.
+        QQuickItem* last = window->Find("openKeymapButton");
+        QVERIFY(last != nullptr);
+        auto* flickable = scroll->property("contentItem").value<QQuickItem*>();
+        QVERIFY(flickable != nullptr);
+        QVERIFY(flickable->setProperty(
+            "contentY",
+            qMax(0.0, flickable->property("contentHeight").toReal() -
+                          flickable->height())));
+        last->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(last->property("visualFocus").toBool(),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ringIsInside(last), TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "ring-bottom"));
     }
 
     void APluginWithoutAPageHasNoSection() {

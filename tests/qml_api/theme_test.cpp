@@ -297,6 +297,7 @@ private slots:
             {"textMuted", "canvas", 4.5},
             {"textMuted", "selectedBackground", 4.5},
             {"textMuted", "hoverBackground", 4.5},
+            {"textMuted", "controlBackground", 4.5},
             {"textSecondary", "cursorUnfocused", 4.5},
             {"stateWorking", "surface", 4.5},
             {"stateWorking", "cursorFocused", 4.5},

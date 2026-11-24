@@ -5,7 +5,8 @@ import Roost.Api
 
 // "Report a Bug…": the user describes the problem, roost writes a zip with
 // the logs and the description. Nothing leaves the machine: Show and Open
-// work on a click only. The look is plain on purpose.
+// work on a click only. The look is the one of the other dialogs (a card, the
+// accepting button primary), derived from the style guide: no mockup.
 Dialog {
     id: root
 
@@ -39,6 +40,22 @@ Dialog {
     width: 520
     anchors.centerIn: Overlay.overlay
     closePolicy: Popup.CloseOnEscape
+    padding: Roost.theme.panelPadding
+
+    background: Rectangle {
+        radius: Roost.theme.radiusCard
+        color: Roost.theme.surface
+        border.width: 1
+        border.color: Roost.theme.line
+    }
+
+    header: Label {
+        text: root.title
+        font: Roost.theme.headingFont
+        elide: Text.ElideRight
+        padding: Roost.theme.panelPadding
+        bottomPadding: 0
+    }
 
     onAboutToShow: {
         done = false;
@@ -76,11 +93,23 @@ Dialog {
             Layout.preferredHeight: 140
             visible: !root.done
 
+            background: Rectangle {
+                radius: Roost.theme.radiusControl
+                color: Roost.theme.inputBackground
+                border.width: descriptionField.activeFocus ? Roost.theme.cursorRingWidth : 1
+                border.color: descriptionField.activeFocus ? Roost.theme.focus : Roost.theme.line
+            }
+
             TextArea {
                 id: descriptionField
 
                 objectName: "descriptionField"
                 wrapMode: TextEdit.Wrap
+                leftPadding: 10
+                rightPadding: 10
+                selectionColor: Roost.theme.selection
+                selectedTextColor: Roost.theme.textStrong
+                background: null
                 placeholderText: "Describe the problem and how to reproduce it"
             }
         }
@@ -143,13 +172,13 @@ Dialog {
         RowLayout {
             visible: root.done
 
-            Button {
+            FormButton {
                 objectName: "showButton"
                 text: Qt.platform.os === "osx" ? "Show in Finder" : "Show in Folder"
                 onClicked: bugReport.showInFolder()
             }
 
-            Button {
+            FormButton {
                 objectName: "issueButton"
                 text: "Open GitHub Issue"
                 onClicked: bugReport.openIssue(descriptionField.text)
@@ -158,15 +187,21 @@ Dialog {
     }
 
     footer: DialogButtonBox {
-        Button {
+        padding: Roost.theme.panelPadding
+        topPadding: 0
+        spacing: 8
+        background: null
+
+        FormButton {
             objectName: "createButton"
             text: "Create"
+            primary: true
             visible: !root.done
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
             onClicked: root.create()
         }
 
-        Button {
+        FormButton {
             objectName: "cancelButton"
             text: root.done ? "Close" : "Cancel"
             DialogButtonBox.buttonRole: DialogButtonBox.RejectRole

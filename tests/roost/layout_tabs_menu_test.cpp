@@ -6,14 +6,13 @@
 // With ROOST_TEST_SNAPSHOTS set to a directory, each step saves a picture of
 // the window there, for a person to look at.
 
-#include <QDir>
-#include <QQuickItemGrabResult>
 #include <QSignalSpy>
 #include <QTest>
 #include <optional>
 
 #include "helpers/layout_window.hpp"
 #include "helpers/scoped_env.hpp"
+#include "helpers/snapshot.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -53,22 +52,7 @@ private:
 
     // Saves a picture of the window as <case>-<step>.png when asked to.
     void Snapshot(const QString& step) {
-        const QString directory = qEnvironmentVariable("ROOST_TEST_SNAPSHOTS");
-        if (directory.isEmpty()) {
-            return;
-        }
-        QVERIFY(QDir().mkpath(directory));
-        const QString name =
-            QStringLiteral("%1-%2.png")
-                .arg(QString::fromLatin1(QTest::currentTestFunction()), step);
-        // The content item, not the window: grabWindow distorts the terminal
-        // in the offscreen platform.
-        QSharedPointer<QQuickItemGrabResult> result =
-            Window()->contentItem()->grabToImage();
-        QVERIFY(!result.isNull());
-        QSignalSpy ready(result.data(), &QQuickItemGrabResult::ready);
-        QVERIFY(ready.wait(TIMEOUT_MS) || !ready.isEmpty());
-        QVERIFY(result->saveToFile(QDir(directory).filePath(name)));
+        QVERIFY(SaveSnapshot(Window(), step));
     }
 
     // A right click in the middle of the panel opens its menu; a left click
@@ -89,6 +73,7 @@ private:
         QQuickItem* entry = Root()->findChild<QQuickItem*>(item);
         QVERIFY(entry != nullptr);
         QVERIFY(entry->isEnabled());
+        QVERIFY(SaveSnapshot(Window(), QString("menu-") + item));
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         QTest::mouseClick(
             Window(), Qt::LeftButton, Qt::NoModifier,
