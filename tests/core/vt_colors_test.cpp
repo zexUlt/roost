@@ -1,7 +1,7 @@
-// The colours of a terminal (design.md §5): the default theme gives the colours
-// libghostty-vt has by itself, a theme's colours are what the cells are drawn
-// in and what the program is told when it asks, a restored terminal takes them
-// too, and the terminal part of a theme is read strictly.
+// The colours of a terminal (design.md §5): the colours of the default theme
+// (the light Tomorrow, 18-style.md) are what the cells are drawn in and what
+// the program is told when it asks, a restored terminal takes them too, and the
+// terminal part of a theme is read strictly.
 
 #include "core/terminal_theme.hpp"
 #include "core/theme_source.hpp"
@@ -106,12 +106,14 @@ class VtColorsTest : public QObject {
     Q_OBJECT
 
 private slots:
-    // The point of the default theme: the colours a terminal has without any
-    // theme are the colours of the default theme, so that moving them into a
-    // theme changed no pixel.
-    void DefaultThemeIsWhatTheLibraryHas() {
+    // Set to the default theme, as the terminal panel does, the terminal draws
+    // its colours and answers a query with them for all 256 entries, the cube
+    // and the greys the theme derives included. The theme is not what
+    // libghostty has built in; the terminal shows it only once it is set.
+    void TheDefaultThemeReachesTheWholePalette() {
         auto terminal = NewTerminal();
         Replies replies(terminal);
+        QVERIFY(terminal.SetColors(DefaultColors()));
         VtRenderState state;
         Update(state, terminal);
         const TerminalColors theme = DefaultColors();
@@ -201,13 +203,18 @@ private slots:
     void ColourSchemeReportFollowsTheBackground() {
         auto terminal = NewTerminal();
         Replies replies(terminal);
+        // The default theme has a light background, as OtherColors does.
         QVERIFY(terminal.SetColors(DefaultColors()));
         terminal.Write("\x1b[?996n");
-        QCOMPARE(replies.Take(), QByteArray("\x1b[?997;1n"));
-        // OtherColors has a light background.
+        QCOMPARE(replies.Take(), QByteArray("\x1b[?997;2n"));
         QVERIFY(terminal.SetColors(OtherColors()));
         terminal.Write("\x1b[?996n");
         QCOMPARE(replies.Take(), QByteArray("\x1b[?997;2n"));
+        TerminalColors dark = OtherColors();
+        dark.Background = {.R = 0x10, .G = 0x20, .B = 0x30};
+        QVERIFY(terminal.SetColors(dark));
+        terminal.Write("\x1b[?996n");
+        QCOMPARE(replies.Take(), QByteArray("\x1b[?997;1n"));
     }
 
     // The next colours replace the first: no answer is from the old ones.

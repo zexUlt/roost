@@ -51,7 +51,7 @@ const QRegularExpression ANSWERED_ONCE(
 // The background of the default theme and of the test theme, and the OSC 11
 // answer to each, as fake_tui shows it (escaped).
 const QString TEST_BACKGROUND = "#102030";
-const QString ASKED_DEFAULT = R"(reply \x1b]11;rgb:0000/0000/0000\x07)";
+const QString ASKED_DEFAULT = R"(reply \x1b]11;rgb:ffff/ffff/ffff\x07)";
 const QString ASKED_TEST = R"(reply \x1b]11;rgb:1010/2020/3030\x07)";
 
 constexpr const char* FAKE_CLAUDE = R"sh(#!/bin/sh
@@ -259,13 +259,13 @@ private slots:
     }
 
     // Without settings the colours are the default theme's: the background is
-    // black, and roostd, which did not answer at all before, says so.
+    // white, and roostd, which did not answer at all before, says so.
     void DefaultThemeIsAnswered() {
         QVERIFY(OpenAndSettle());
         Ask("\x1b]11;?\x07");
         QTRY_VERIFY_WITH_TIMEOUT(Screen(Opened_).contains(ASKED_DEFAULT),
                                  TIMEOUT_MS);
-        QCOMPARE(WindowBackground(), QStringLiteral("#000000"));
+        QCOMPARE(WindowBackground(), QStringLiteral("#ffffff"));
     }
 
     // The next answer, and the window's own default background, change with
@@ -293,7 +293,7 @@ private slots:
         Ask("\x1b]4;1;?\x07");
         QTRY_VERIFY_WITH_TIMEOUT(
             Screen(Opened_).contains(
-                R"(reply \x1b]4;1;rgb:cccc/6666/6666\x07)"),
+                R"(reply \x1b]4;1;rgb:c8c8/2828/2929\x07)"),
             TIMEOUT_MS);
     }
 
@@ -315,7 +315,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), TEST_BACKGROUND,
                                   TIMEOUT_MS);
         QVERIFY(WriteSettings({{"theme", "nonesuch"}}));
-        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#000000"),
+        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#ffffff"),
                                   TIMEOUT_MS);
         AskUntilAnswered("\x1b]11;?\x07", ASKED_DEFAULT);
         QCOMPARE(Daemon_->state(), QProcess::Running);
@@ -335,7 +335,7 @@ private slots:
         // both processes read it again.
         QVERIFY(WriteThemeFile(Dir_->filePath("theme.json"), true));
         QVERIFY(WriteSettings({{"theme", "test"}, {"again", 1}}));
-        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#000000"),
+        QTRY_COMPARE_WITH_TIMEOUT(WindowBackground(), QStringLiteral("#ffffff"),
                                   TIMEOUT_MS);
         QVERIFY(AskUntilAnswered("\x1b]11;?\x07", ASKED_DEFAULT));
     }

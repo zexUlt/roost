@@ -590,9 +590,9 @@ private slots:
                 .value<QColor>();
         };
         QCOMPARE(CursorId(), BETA);
-        QCOMPARE(titleColor(ALPHA), QColor("#d78700"));
-        QCOMPARE(titleColor(BETA), QColor("#ffffff"));
-        QCOMPARE(titleColor(GAMMA), QColor("#e0e0e0"));
+        QCOMPARE(titleColor(ALPHA), QColor("#2b7a3b"));
+        QCOMPARE(titleColor(BETA), QColor("#18232e"));
+        QCOMPARE(titleColor(GAMMA), QColor("#18232e"));
         // A blocked session says it waits.
         QCOMPARE(InRow(ViewRowOf(BETA), "sessionDetail")
                      ->property("text")
@@ -636,7 +636,7 @@ private slots:
         const int none = ViewRowOf(ALPHA) - 1;
         QCOMPARE(Role(none, "category").toString(), QString());
         QCOMPARE(InRow(none, "headerTitle")->property("color").value<QColor>(),
-                 QColor("#a0a0a0"));
+                 QColor("#5a6a7a"));
     }
 
     void AListThatCannotBeWrittenShowsItsProblem() {
