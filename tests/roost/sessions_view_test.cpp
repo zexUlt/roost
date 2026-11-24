@@ -754,7 +754,7 @@ private slots:
             return;
         }
         // A window with room for three rows at most (the list is under 180
-        // px).
+        // px, below the head of the panel and the margins of the window).
         Window()->setHeight(300);
         QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 180, TIMEOUT_MS);
 

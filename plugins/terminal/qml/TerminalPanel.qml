@@ -50,6 +50,9 @@ FocusScope {
 
         objectName: "terminal"
         anchors.fill: parent
+        // The cells are square: off the rounded corners of the card, where
+        // the square lies inside the arc of radiusCard (and its line).
+        anchors.margins: Roost.theme.cornerInset
         focus: true
         session: root.session
         // The family and size of settings.terminalFont, in every window.

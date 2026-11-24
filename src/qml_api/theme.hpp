@@ -82,6 +82,10 @@ class Theme : public QObject {
     // Sizes in logical pixels: the radii, the spaces of the window and of a
     // list, the rings of the focus. Constants of the style, not of a theme.
     Q_PROPERTY(int radiusCard READ radiusCard CONSTANT)
+    // How far a square background or a square of cells must stay from the edge
+    // of a card, so that its corner lies inside the arc of radiusCard and the
+    // line.
+    Q_PROPERTY(int cornerInset READ cornerInset CONSTANT)
     Q_PROPERTY(int radiusControl READ radiusControl CONSTANT)
     Q_PROPERTY(int radiusSmall READ radiusSmall CONSTANT)
     Q_PROPERTY(int windowMargin READ windowMargin CONSTANT)
@@ -184,6 +188,13 @@ public:
     QColor primaryHover() const { return PrimaryHover_; }
     QColor primaryText() const { return PrimaryText_; }
     static constexpr int radiusCard() { return 12; }
+    // The corner of the arc is radiusCard * (1 - 1/sqrt(2)) off each edge,
+    // rounded up, and a pixel for the line.
+    static constexpr int cornerInset() {
+        constexpr double off = radiusCard() * (1.0 - 0.70710678118654752440);
+        constexpr int whole = static_cast<int>(off);
+        return whole + (off > whole ? 1 : 0) + 1;
+    }
     static constexpr int radiusControl() { return 6; }
     static constexpr int radiusSmall() { return 5; }
     static constexpr int windowMargin() { return 16; }
