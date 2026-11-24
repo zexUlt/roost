@@ -422,7 +422,7 @@ private slots:
         }
 
         Press(Qt::Key_Down);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), BETA, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
@@ -432,7 +432,7 @@ private slots:
 
         // Enter of the keypad does the same, for the row above.
         Press(Qt::Key_Up);
-        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
 
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains(Greeting(ALPHA)),
@@ -467,8 +467,8 @@ private slots:
         }
         QVERIFY(ListView()->hasActiveFocus());
 
-        Press(Qt::Key_Return);
-        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        PressWhenSettled(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
         QTest::qWait(200);
 
         QVERIFY(ListView()->hasActiveFocus());
@@ -491,7 +491,7 @@ private slots:
         QVERIFY(ListView()->hasActiveFocus());
         QVERIFY(!Terminal()->hasActiveFocus());
         // The same key pressed once opens the row.
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
     }
@@ -505,7 +505,7 @@ private slots:
         }
         QVERIFY(PanelOf(TERMINAL) == nullptr);
 
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
         QTest::qWait(200);
@@ -526,8 +526,8 @@ private slots:
         Watch();
         QSignalSpy changed(PanelOf(LIST), SIGNAL(selectedChanged()));
 
-        Press(Qt::Key_Return);
-        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        PressWhenSettled(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
         QTest::qWait(300);
 
         QCOMPARE(changed.count(), 0);
@@ -609,8 +609,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("none"), TIMEOUT_MS);
 
         // A TypeError would be a warning, which fails the test.
-        Press(Qt::Key_Return);
-        Press(Qt::Key_Enter, Qt::KeypadModifier);
+        PressWhenSettled(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
         Press(Qt::Key_Down);
         Press(Qt::Key_J);
         QTest::qWait(100);
@@ -770,7 +770,7 @@ private slots:
         QCOMPARE(Status(), QString("none"));
         // The cursor is where the user left it, and Return works again.
         QCOMPARE(CursorId(), BETA);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), BETA, TIMEOUT_MS);
     }
 
@@ -816,7 +816,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
         QVERIFY(ListStatusNow().isEmpty());
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
         // The first session of the list: those that came in a state but
         // `working` are unread, so they are listed before ALPHA.
         const QString first = IdAt(0);
@@ -884,7 +884,7 @@ private slots:
         QVERIFY(ListView()->hasActiveFocus());
 
         Press(Qt::Key_Down);
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("open"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
@@ -946,7 +946,7 @@ private slots:
         Watch();
         QSignalSpy changed(PanelOf(LIST), SIGNAL(selectedChanged()));
 
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
         QVERIFY(!ListView()->hasActiveFocus());
@@ -1283,7 +1283,7 @@ private slots:
         QSignalSpy activated(PanelOf(LIST), SIGNAL(activated()));
         QSignalSpy selected(PanelOf(LIST), SIGNAL(selectedChanged()));
 
-        Press(Qt::Key_Return);
+        PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
         QVERIFY(!Role(0, "folded").toBool());
