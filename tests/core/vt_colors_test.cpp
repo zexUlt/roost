@@ -106,9 +106,11 @@ class VtColorsTest : public QObject {
     Q_OBJECT
 
 private slots:
-    // The colours of the default theme are what the terminal draws and what it
-    // answers to a query, for the whole palette.
-    void DefaultThemeIsWhatTheTerminalShows() {
+    // Set to the default theme, as the terminal panel does, the terminal draws
+    // its colours and answers a query with them for all 256 entries, the cube
+    // and the greys the theme derives included. The theme is not what
+    // libghostty has built in; the terminal shows it only once it is set.
+    void TheDefaultThemeReachesTheWholePalette() {
         auto terminal = NewTerminal();
         Replies replies(terminal);
         QVERIFY(terminal.SetColors(DefaultColors()));

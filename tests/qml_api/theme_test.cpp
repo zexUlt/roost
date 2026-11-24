@@ -52,7 +52,7 @@ constexpr DefaultColor DEFAULT_COLORS[] = {
     {"text", "#18232e"},
     {"textStrong", "#18232e"},
     {"textSecondary", "#5a6a7a"},
-    {"textMuted", "#647385"},
+    {"textMuted", "#5f6e80"},
     // The accent, the rows, the focus.
     {"accent", "#225fc2"},
     {"accentTint", "#e9f1ff"},
@@ -68,7 +68,7 @@ constexpr DefaultColor DEFAULT_COLORS[] = {
     {"primaryHover", "#2658b5"},
     {"primaryText", "#ffffff"},
     // The states of a session.
-    {"stateWorking", "#a35f00"},
+    {"stateWorking", "#2b7a3b"},
     {"stateBlocked", "#8b500b"},
     {"stateFailed", "#c0262d"},
     // The banner and the strip of problems of the window.
@@ -293,8 +293,15 @@ private slots:
             {"textSecondary", "hoverBackground", 4.5},
             {"textMuted", "surface", 4.5},
             {"textMuted", "cursorFocused", 4.5},
+            {"textMuted", "cursorUnfocused", 4.5},
+            {"textMuted", "canvas", 4.5},
+            {"textMuted", "selectedBackground", 4.5},
+            {"textMuted", "hoverBackground", 4.5},
+            {"textSecondary", "cursorUnfocused", 4.5},
             {"stateWorking", "surface", 4.5},
             {"stateWorking", "cursorFocused", 4.5},
+            {"stateWorking", "selectedBackground", 4.5},
+            {"stateWorking", "canvas", 4.5},
             {"stateBlocked", "surface", 4.5},
             {"stateBlocked", "selectedBackground", 4.5},
             {"stateFailed", "surface", 4.5},
@@ -303,6 +310,7 @@ private slots:
             {"accent", "selectedBackground", 4.5},
             {"attention", "surface", 4.5},
             {"attention", "selectedBackground", 4.5},
+            {"attention", "canvas", 4.5},
             {"problemsText", "problemsBackground", 4.5},
             {"bannerText", "bannerBackground", 4.5},
             {"bannerText", "bannerRefusedBackground", 4.5},
@@ -385,7 +393,7 @@ private slots:
         QCOMPARE(ColorOf(bannerText), QColor("#18232e"));
         QCOMPARE(ColorOf(strip), QColor("#fff4e0"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
-                 QColor("#647385"));
+                 QColor("#5f6e80"));
 
         QVERIFY(theme->load(TestTheme()));
 

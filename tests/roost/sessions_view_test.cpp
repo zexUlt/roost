@@ -590,7 +590,7 @@ private slots:
                 .value<QColor>();
         };
         QCOMPARE(CursorId(), BETA);
-        QCOMPARE(titleColor(ALPHA), QColor("#a35f00"));
+        QCOMPARE(titleColor(ALPHA), QColor("#2b7a3b"));
         QCOMPARE(titleColor(BETA), QColor("#18232e"));
         QCOMPARE(titleColor(GAMMA), QColor("#18232e"));
         // A blocked session says it waits.

@@ -154,13 +154,13 @@ QML-модуль плагина, без библиотеки на C ABI:
   | `text` | основной текст на панели | `#18232e` |
   | `textStrong` | выделенный текст (текущая вкладка, вопрос) | `#18232e` |
   | `textSecondary` | второстепенный текст | `#5a6a7a` |
-  | `textMuted` | приглушённый текст (подсказки, заглушки) | `#647385` |
+  | `textMuted` | приглушённый текст (подсказки, заглушки) | `#5f6e80` |
   | `accent` | акцент (открытая сессия, непрочитанное) | `#225fc2` |
   | `accentTint` | подкраска строки открытой сессии | `#e9f1ff` |
   | `selection` | выделение текста | `#cfe0fb` |
   | `cursorFocused` | курсор списка с фокусом | `#f8fbff` |
   | `cursorUnfocused` | курсор списка без фокуса | `#f2f5f8` |
-  | `stateWorking` | сессия работает | `#a35f00` |
+  | `stateWorking` | сессия работает | `#2b7a3b` |
   | `stateBlocked` | сессия ждёт пользователя | `#8b500b` |
   | `stateFailed` | сессия упала | `#c0262d` |
   | `categories` | восемь цветов категорий | `#0087d7 #d70000 #008700 #d75f00 #8700d7 #008787 #d700af #875f00` |
@@ -216,7 +216,7 @@ QML-модуль плагина, без библиотеки на C ABI:
 
   Значения по умолчанию — светлая палитра Tomorrow (18-style.md). Текст выделенной ячейки не токен: это тот из `terminalForeground` и `terminalBackground`, у кого выше контраст (WCAG) с `terminalSelection`. С дефолтом выделение — серый фон `#d6d6d6` и тёмный текст `#4d4d4c`.
 
-  `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: на фоне окна (белом) они читаются, на тёмном фоне панели (`panelBackground`) плагин задаёт свой `palette` из токенов, иначе текст Controls будет чёрным на тёмном. Диалог берёт палитру окна, пока открыт. Цвета терминала задаёт та же тема (токены ниже).
+  `palette` окна (`Main.qml`) собирается из токенов: `window` = `windowBackground`, `windowText` и `text` = `windowText`, `base` = `inputBackground`, `button` = `controlBackground`, `buttonText` = `windowText`, `highlight` = `selection`, `highlightedText` = `textStrong`, `placeholderText` = `textMuted`, `accent` = `accent`. Стиль Controls — Fusion на macOS и Linux (11-build.md), поэтому палитра красит элементы одинаково. Элементы Controls в панелях плагинов наследуют `palette` окна: фон окна (`windowBackground`) и фон панели (`panelBackground`) светлые, текст Controls на них читается. Плагин, который рисует свой тёмный фон, задаёт свой `palette` из токенов. Диалог берёт палитру окна, пока открыт. Цвета терминала задаёт та же тема (токены ниже).
 
 Роли `Roost.sessions` — поля строки `sessions.list`, фиксированный список `api::SessionService::FIELDS`: `agent`, `id`, `title`, `cwd`, `state`, `startedAt`. Поле, которого в строке нет (`startedAt` бывает не у всех), читается как `undefined`. Новое поле строки `sessions.list` добавляют в `FIELDS`, иначе QML его не увидит. В делегате роль читают как `model.<имя>`. Для двух ролей это обязательно: `required property string id` не допускается, `id` в QML зарезервировано; голое `state` в делегате — свойство `Item.state`, а не роль, и даёт пустую строку. Строку по ключу `(agent, id)` плагин находит перебором: `Roost.sessions.data(Roost.sessions.index(i, 0), Qt.UserRole + n)`, где `n` — позиция поля в `FIELDS` (`agent` — 0, `id` — 1); поиска по ключу у модели нет.
 
