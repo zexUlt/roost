@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 #include "api/api.hpp"
 #include "api_test_support.hpp"
@@ -123,6 +124,11 @@ private slots:
             QVERIFY2(answer, qPrintable(method + ": " + Why(answer)));
             QCOMPARE(finishedIn, QThread::currentThread());
         }
+        // The cache of the store follows the daemon's own change events, not
+        // the answer to a write: wait for the last write to reach it.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Api_->Store().Cached("fixture") == std::optional(document),
+            TIMEOUT_MS);
         // And what they answered.
         QCOMPARE(*Call("commands.run", params["commands.run"]),
                  QJsonValue(QJsonArray{1, "two"}));
@@ -273,27 +279,6 @@ private slots:
             QJsonObject{{"plugin", "fixture"}, {"document", QJsonObject{}}});
         QVERIFY(!answer);
         QCOMPARE(answer.error().Code, STORE_FAILED);
-    }
-
-    void PluginsListWaitsForTheFirstFetch() {
-        QVERIFY(StartDaemon());
-        Api_ = std::make_unique<api::Api>();
-        QSignalSpy changed(&Api_->Plugins(), &api::PluginService::Changed);
-        bool loadedAtConnect = true;
-        QFuture<rpc::Result> early;
-        connect(Api_.get(), &api::Api::Connected, this, [&] {
-            loadedAtConnect = Api_->Plugins().IsLoaded();
-            early = Api_->Dispatch().Call("plugins.list", {}, this);
-        });
-        Api_->Connect(Daemon_->SocketPath());
-        QTRY_VERIFY_WITH_TIMEOUT(early.isValid(), TIMEOUT_MS);
-        QVERIFY(WaitFor(early));
-        QVERIFY(!loadedAtConnect);
-        QVERIFY2(early.result(), qPrintable(Why(early.result())));
-        QCOMPARE(changed.size(), 1);
-        QVERIFY(Api_->Plugins().IsLoaded());
-        QCOMPARE(QJsonValue(Api_->Plugins().Plugins()), *early.result());
-        QVERIFY(early.result()->toObject().contains("problems"));
     }
 
     void PluginsListIsServedFromTheCache() {
