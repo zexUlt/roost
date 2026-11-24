@@ -14,6 +14,9 @@ Item {
 
     // The node is the first leaf of the layout: it takes the keyboard at start.
     readonly property bool first: root.path.every(index => index === 0)
+    // The node is a page of a stack of tabs: the card is the stack's, and the
+    // panel on the page has none of its own.
+    property bool stacked: false
 
     // A split or a stack of tabs is loaded by file name: SplitNode and TabNode
     // use this type for their children, and a type that used them back would
@@ -74,60 +77,68 @@ Item {
     Component {
         id: leafComponent
 
-        PanelSlot {
-            id: slot
+        PanelCard {
+            id: card
 
-            anchors.fill: parent
-            objectName: "panelSlot"
-            instanceId: root.node.instance
-            panelType: root.node.panel
-            resolveSource: instance => root.view.slotOf(instance)
+            objectName: "panelCard"
+            bare: root.stacked
+            focused: root.view.holdsLastFocused(root.node)
 
-            // The keyboard is where the layout commands act, and the menu
-            // takes it first: a right click chooses the panel.
-            onActiveFocusChanged: {
-                if (slot.activeFocus) {
-                    root.view.lastFocused = slot.instanceId;
+            PanelSlot {
+                id: slot
+
+                anchors.fill: parent
+                objectName: "panelSlot"
+                instanceId: root.node.instance
+                panelType: root.node.panel
+                resolveSource: instance => root.view.slotOf(instance)
+
+                // The keyboard is where the layout commands act, and the menu
+                // takes it first: a right click chooses the panel.
+                onActiveFocusChanged: {
+                    if (slot.activeFocus) {
+                        root.view.lastFocused = slot.instanceId;
+                    }
                 }
-            }
-            onMenuRequested: (x, y) => {
-                slot.forceActiveFocus();
-                root.view.openMenu(slot, x, y);
-            }
-
-            Component.onCompleted: {
-                root.view.slotCreated(slot);
-                root.view.registerSlot(slot);
-                // Late, and by the view: the layout may be replaced before it
-                // runs, and the slot and `root` with it.
-                if (root.first) {
-                    root.view.takeKeyboardAtStart(slot.instanceId);
-                }
-            }
-            Component.onDestruction: root.view.unregisterSlot(slot)
-
-            // The list panel's optional signals. `activated()`: the user chose
-            // a row, so the keyboard goes to the panel the list feeds.
-            // `widthStepRequested(step)`: `<` or `>`, a narrower (-1) or a
-            // wider (+1) list, within bounds. `respawned(session)`: the agent
-            // respawned a session of the list; a panel it feeds that shows it
-            // and has the optional function `reopenWhenEnded(session)` opens
-            // it again once the old attach has ended. A panel without them is
-            // fine.
-            Connections {
-                target: slot.panel
-                ignoreUnknownSignals: true
-
-                function onActivated() {
-                    root.view.focusFed(slot.instanceId);
+                onMenuRequested: (x, y) => {
+                    slot.forceActiveFocus();
+                    root.view.openMenu(slot, x, y);
                 }
 
-                function onRespawned(session) {
-                    root.view.reopenFed(slot.instanceId, session);
+                Component.onCompleted: {
+                    root.view.slotCreated(slot);
+                    root.view.registerSlot(slot);
+                    // Late, and by the view: the layout may be replaced before it
+                    // runs, and the slot and `root` with it.
+                    if (root.first) {
+                        root.view.takeKeyboardAtStart(slot.instanceId);
+                    }
                 }
+                Component.onDestruction: root.view.unregisterSlot(slot)
 
-                function onWidthStepRequested(step) {
-                    root.stepWidth(step);
+                // The list panel's optional signals. `activated()`: the user chose
+                // a row, so the keyboard goes to the panel the list feeds.
+                // `widthStepRequested(step)`: `<` or `>`, a narrower (-1) or a
+                // wider (+1) list, within bounds. `respawned(session)`: the agent
+                // respawned a session of the list; a panel it feeds that shows it
+                // and has the optional function `reopenWhenEnded(session)` opens
+                // it again once the old attach has ended. A panel without them is
+                // fine.
+                Connections {
+                    target: slot.panel
+                    ignoreUnknownSignals: true
+
+                    function onActivated() {
+                        root.view.focusFed(slot.instanceId);
+                    }
+
+                    function onRespawned(session) {
+                        root.view.reopenFed(slot.instanceId, session);
+                    }
+
+                    function onWidthStepRequested(step) {
+                        root.stepWidth(step);
+                    }
                 }
             }
         }

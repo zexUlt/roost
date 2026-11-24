@@ -6,13 +6,18 @@ import Roost.Api
 // comes from "Move into tabs" or from a saved layout. A tab the user clicks is
 // reported to the shell (`tabChosen`) and takes the keyboard. The bar itself
 // never holds the keyboard, so the tab changes only by a click or by the layout.
-Item {
+PanelCard {
     id: stack
+
+    objectName: "tabsCard"
 
     // Set by the LayoutNode that loads this by file name.
     property var node: null
     property var view: null
     property var path: []
+
+    // The card of the stack: the tabs on top, the shown panel under them.
+    focused: stack.view !== null && stack.view.holdsLastFocused(stack.node)
 
     // The bar goes to the first tab when it gets one; the tab of the document
     // is set after the buttons are there (delayed), and the user's own choice
@@ -28,9 +33,11 @@ Item {
     TabBar {
         id: bar
 
+        // The bar is square: off the rounded corners of the card.
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
+        anchors.margins: Math.ceil(Roost.theme.radiusCard * (1 - Math.SQRT1_2)) + 1
         focusPolicy: Qt.NoFocus
         Repeater {
             model: stack.node !== null ? stack.node.children : []
@@ -87,6 +94,7 @@ Item {
                 required property var modelData
 
                 parent: pages
+                stacked: true
                 width: pages.width
                 height: pages.height
                 visible: index === bar.currentIndex

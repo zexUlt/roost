@@ -393,17 +393,17 @@ private slots:
         QCOMPARE(ColorOf(bannerText), QColor("#18232e"));
         QCOMPARE(ColorOf(strip), QColor("#fff4e0"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
-                 QColor("#5f6e80"));
+                 QColor("#5a6a7a"));
 
         QVERIFY(theme->load(TestTheme()));
 
-        QCOMPARE(Root()->property("color").value<QColor>(),
-                 Given("windowBackground"));
+        // The window is the canvas the cards lie on.
+        QCOMPARE(Root()->property("color").value<QColor>(), Given("canvas"));
         QCOMPARE(ColorOf(banner), Given("bannerBackground"));
         QCOMPARE(ColorOf(bannerText), Given("bannerText"));
         QCOMPARE(ColorOf(strip), Given("problemsBackground"));
         QCOMPARE(ColorOf(Slot(LIST)->findChild<QQuickItem*>("placeholderText")),
-                 Given("textMuted"));
+                 Given("textSecondary"));
         // The banner of a refusal has a colour of its own.
         Root()->setProperty("connection", "refused");
         QCOMPARE(ColorOf(banner), Given("bannerRefusedBackground"));

@@ -905,6 +905,8 @@ FocusScope {
     Rectangle {
         objectName: "sessionsBackground"
         anchors.fill: parent
+        // The corners of the card the panel sits in.
+        radius: Roost.theme.radiusCard
         color: Roost.theme.panelBackground
     }
 

@@ -57,8 +57,8 @@ qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
     QML_FILES BugReportDialog.qml CommandPalette.qml LayoutNode.qml LayoutView.qml
-        LinkEditor.qml Main.qml PanelMenu.qml PanelSlot.qml SessionMain.qml SettingsWindow.qml
-        SplitNode.qml TabNode.qml
+        LinkEditor.qml Main.qml PanelCard.qml PanelMenu.qml PanelSlot.qml SessionMain.qml
+        SettingsWindow.qml SplitNode.qml TabNode.qml
     SOURCES bug_report_controller.cpp bug_report_controller.hpp
             palette_model.cpp palette_model.hpp
     NO_CACHEGEN

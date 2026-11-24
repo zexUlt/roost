@@ -663,8 +663,9 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        // A window that shows about two rows.
-        Window()->setHeight(130);
+        // A window that shows about two rows (the margin of the window, 2 x 16
+        // px, is on top of what the list had before the cards).
+        Window()->setHeight(162);
         QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 100, TIMEOUT_MS);
 
         for (int i = 0; i < 3; ++i) {

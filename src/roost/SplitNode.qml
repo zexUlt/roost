@@ -24,7 +24,8 @@ SplitView {
 
     orientation: split.node !== null && !split.node.horizontal ? Qt.Vertical : Qt.Horizontal
 
-    readonly property int handleSize: 1
+    // The handle lies in the gap between two cards and draws nothing.
+    readonly property int handleSize: Roost.theme.panelGap
     // How far from the line a press still takes the divider.
     readonly property int handleGrab: 2
     readonly property bool horizontal: split.node !== null && split.node.horizontal
@@ -33,8 +34,8 @@ SplitView {
         implicitWidth: split.handleSize
         implicitHeight: split.handleSize
 
-        // The item stays 1 px, so does the gap; the mask only widens the area
-        // that takes a press (SplitView finds the divider with contains()).
+        // The item is as wide as the gap; the mask widens the area that takes
+        // a press by `handleGrab` to either side (5 px or more, as before) (SplitView finds the divider with contains()).
         containmentMask: QtObject {
             function contains(point: point): bool {
                 const along = split.horizontal ? point.x : point.y;

@@ -206,6 +206,18 @@ Item {
         }
     }
 
+    // Whether the panel that had the keyboard last (`lastFocused`) is in
+    // `node`: the ring of the focus is on the card of that node.
+    function holdsLastFocused(node) {
+        if (node === null || view.lastFocused === "") {
+            return false;
+        }
+        if (node.kind === "leaf") {
+            return node.instance === view.lastFocused;
+        }
+        return node.children.some(child => view.holdsLastFocused(child));
+    }
+
     // The first leaf of one of the types (any type for null) whose slot is
     // shown: a leaf on a tab that is not shown cannot take the keyboard.
     function firstLeaf(node, types) {
