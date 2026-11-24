@@ -4,7 +4,6 @@
 // callback(error, result) in the GUI thread, and every method of the
 // dispatcher is reachable by name.
 
-#include <QtCore/qscopeguard.h>
 #include <QJSEngine>
 #include <QJSValue>
 #include <QJSValueList>
@@ -16,6 +15,7 @@
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 #include <QThread>
@@ -423,55 +423,66 @@ private slots:
         // taken the future of the read: a continuation of a future that is
         // already finished runs at once, not through the event loop, and the
         // event would then come after the callback was queued.
-        constexpr char gateName[] = "gate";
-        std::promise<void> reached;
-        std::future<void> inGate = reached.get_future();
-        std::promise<void> open;
-        std::shared_future<void> opened = open.get_future().share();
-        std::promise<void> queued;
-        std::future<void> eventQueued = queued.get_future();
-        std::atomic_flag gated;
-        std::atomic_flag told;
+        static constexpr char GATE_NAME[] = "gate";
+        // Shared with the slot: a call of it that is under way in the IO
+        // thread can outlive this function when the case fails.
+        struct Gate {
+            std::promise<void> Reached;
+            std::promise<void> Open;
+            std::shared_future<void> Opened = Open.get_future().share();
+            std::promise<void> Queued;
+            std::atomic_flag Gated;
+            std::atomic_flag Told;
+            std::atomic_bool HeldTooLong{false};
+        };
+        const auto gate = std::make_shared<Gate>();
+        std::future<void> inGate = gate->Reached.get_future();
+        std::future<void> eventQueued = gate->Queued.get_future();
         // Direct, and made after the connection of BusService: the slot runs in
         // the IO thread, right after the event has been queued for the bus.
         const QMetaObject::Connection heard = connect(
             &Api_->Io(), &IoThread::Notified, this,
-            [&](const QString& method, const QJsonValue& params) {
-                const QJsonObject object = params.toObject();
+            [gate](const QString& method, const QJsonValue& params) {
                 if (method != "bus.event") {
                     return;
                 }
+                const QJsonObject object = params.toObject();
                 const QString name = object.value("name").toString();
-                if (name == gateName && !gated.test_and_set()) {
-                    reached.set_value();
-                    opened.wait_for(std::chrono::milliseconds(TIMEOUT_MS));
-                } else if (name == "store.changed" && !told.test_and_set()) {
-                    queued.set_value();
+                if (name == GATE_NAME && !gate->Gated.test_and_set()) {
+                    gate->Reached.set_value();
+                    if (gate->Opened.wait_for(std::chrono::milliseconds(
+                            TIMEOUT_MS)) != std::future_status::ready) {
+                        gate->HeldTooLong = true;
+                    }
+                } else if (name == "store.changed" &&
+                           object.value("payload")
+                                   .toObject()
+                                   .value("plugin")
+                                   .toString() == "fixture" &&
+                           !gate->Told.test_and_set()) {
+                    gate->Queued.set_value();
                 }
             },
             Qt::DirectConnection);
         QVERIFY(heard);
-        // Whatever happens, the IO thread is let go and the slot is gone
-        // before the promises are.
-        const auto release = qScopeGuard([&] {
+        // Whatever happens, the IO thread is let go, and a gate that comes
+        // later is not held. Only this thread opens the gate.
+        const auto release = qScopeGuard([gate, heard] {
             disconnect(heard);
-            if (!gated.test_and_set()) {
-                return;
-            }
-            try {
-                open.set_value();
-            } catch (const std::future_error&) {
-                // Already opened.
+            if (gate->Gated.test_and_set() &&
+                gate->Opened.wait_for(std::chrono::milliseconds(0)) !=
+                    std::future_status::ready) {
+                gate->Open.set_value();
             }
         });
 
-        QVERIFY(Api_->Bus().Subscribe(gateName, this, [](auto&&, auto&&) {}));
+        QVERIFY(Api_->Bus().Subscribe(GATE_NAME, this, [](auto&&, auto&&) {}));
         // The answer to a request on the same socket comes after the one to
         // the subscription: roostd has it now.
         QVERIFY(Wait(Api_->Bus().Publish("flush", 1)));
         const auto second = ConnectApi();
         QVERIFY(second);
-        QVERIFY(Wait(second->Bus().Publish(gateName, 1)));
+        QVERIFY(Wait(second->Bus().Publish(GATE_NAME, 1)));
         QVERIFY2(inGate.wait_for(std::chrono::milliseconds(TIMEOUT_MS)) ==
                      std::future_status::ready,
                  "the IO thread never heard the gate event");
@@ -482,10 +493,12 @@ private slots:
         // Let the IO thread go. The GUI thread does not run the event loop
         // until the event of the patch is queued for it behind the answer of
         // the read: the event is handled before the callback.
-        open.set_value();
+        gate->Open.set_value();
         QVERIFY2(eventQueued.wait_for(std::chrono::milliseconds(TIMEOUT_MS)) ==
                      std::future_status::ready,
                  "the event of the patch never reached the GUI thread's queue");
+        QVERIFY2(!gate->HeldTooLong,
+                 "the IO thread was let go before the read and the patch");
         QVERIFY(Wait(patched));
         const QJsonObject got = WaitForTag("get");
         QVERIFY2(!got.contains("timedOut"), "no answer");
