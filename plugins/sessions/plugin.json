@@ -4,6 +4,12 @@
   "api": "0",
   "native": { "qt": "6.8", "qmlImportPath": "qml" },
   "contributes": {
+    "commands": [
+      { "id": "sessions.newSession", "title": "New session" }
+    ],
+    "keybindings": [
+      { "command": "sessions.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }
+    ],
     "panels": [
       {
         "id": "list",

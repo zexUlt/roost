@@ -27,7 +27,7 @@ plugins/claude/
                  { "id": "claude.remove", "title": "Remove Claude session" },
                  { "id": "claude.respawn", "title": "Respawn Claude session" },
                  { "id": "claude.respawnAll", "title": "Respawn all Claude sessions" }],
-    "keybindings": [{ "command": "claude.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }],
+    "keybindings": [{ "command": "claude.newSession", "key": "Ctrl+Alt+N", "mac": "Cmd+Alt+N" }],
     "settings": "qml/Settings.qml"
   }
 }
