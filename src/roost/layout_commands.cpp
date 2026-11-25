@@ -314,6 +314,13 @@ const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance) {
     return nullptr;
 }
 
+QString FocusAfterWholeEdit(const Layout& layout, const QString& instance) {
+    if (!instance.isEmpty() && FindLeaf(layout.Root, instance) != nullptr) {
+        return instance;
+    }
+    return ShownLeaf(layout.Root).Instance;
+}
+
 int CountLeaves(const LayoutNode& node) {
     std::vector<const LayoutNode*> leaves;
     CollectLeaves(node, leaves);

@@ -957,9 +957,11 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
             }
             ApplyLayout(std::move(whole.Tree));
             SaveLayout();
+            whole.Focus = FocusAfterWholeEdit(Layout_, instance);
         }
         PublishCanUndo();
         UpdateProblems();
+        FocusInstance(whole.Focus);
         return;
     }
     if (instance.isEmpty()) {
@@ -1021,10 +1023,16 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
     if (action == QLatin1String("setLink")) {
         OpenLinkEditor(instance);
     }
-    if (!edit.Focus.isEmpty() && edit.Refused.isEmpty() &&
+    if (edit.Refused.isEmpty()) {
+        FocusInstance(edit.Focus);
+    }
+}
+
+void Shell::FocusInstance(const QString& instance) {
+    if (!instance.isEmpty() &&
         Root_.metaObject()->indexOfMethod("focusInstance(QVariant)") >= 0) {
         QMetaObject::invokeMethod(&Root_, "focusInstance",
-                                  Q_ARG(QVariant, edit.Focus));
+                                  Q_ARG(QVariant, instance));
     }
 }
 

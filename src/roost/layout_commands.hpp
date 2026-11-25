@@ -37,6 +37,11 @@ struct LayoutEdit {
 // A leaf of the tree by instance id, or null.
 const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance);
 
+// The leaf that takes the keyboard after an edit of the whole layout (reset,
+// undo): `instance` if the tree still has it, else the leaf that shows first.
+// Empty for a tree with no leaf.
+QString FocusAfterWholeEdit(const Layout& layout, const QString& instance);
+
 // The number of leaves in the tree.
 int CountLeaves(const LayoutNode& node);
 
