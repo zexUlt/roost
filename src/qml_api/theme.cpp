@@ -66,9 +66,60 @@ QString Theme::follow(const QJsonObject& settings) {
     if (!theme.Problem.isEmpty()) {
         qWarning("roost: %s", qUtf8Printable(theme.Problem));
     }
-    load(theme.Tokens);
+    QJsonObject tokens = theme.Tokens;
+    const bool focusProblemsDiffer = followFocus(settings, tokens);
+    load(tokens);
     followFonts(settings);
+    if (focusProblemsDiffer) {
+        emit changed();
+    }
     return theme.Id;
+}
+
+bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
+    const FocusSettings wanted = ResolveFocusSettings(settings);
+    QStringList problems = wanted.Problems;
+    // A colour that is refused is the one the token has now.
+    bool kept = wanted.Refused;
+    if (wanted.Custom) {
+        const auto rgb = [](const QColor& color) {
+            return TerminalColors::Rgb{.R = static_cast<quint8>(color.red()),
+                                       .G = static_cast<quint8>(color.green()),
+                                       .B = static_cast<quint8>(color.blue())};
+        };
+        const QColor custom = QColor::fromString(wanted.Color);
+        const QColor surface =
+            QColor::fromString(tokens.value("surface").toString());
+        const QColor canvas =
+            QColor::fromString(tokens.value("canvas").toString());
+        const double ratio = std::min(Contrast(rgb(custom), rgb(surface)),
+                                      Contrast(rgb(custom), rgb(canvas)));
+        if (ratio < MIN_FOCUS_CONTRAST) {
+            kept = true;
+            problems.append(
+                QStringLiteral("settings.focusColor.custom %1 has a contrast "
+                               "of %2:1 against the surface or the canvas, "
+                               "less than %3:1; the focus colour is kept")
+                    .arg(wanted.Color)
+                    .arg(ratio, 0, 'f', 2)
+                    .arg(MIN_FOCUS_CONTRAST));
+        } else {
+            tokens.insert(QStringLiteral("focus"), wanted.Color);
+        }
+    } else if (!wanted.Color.isEmpty()) {
+        tokens.insert(QStringLiteral("focus"), wanted.Color);
+    }
+    if (kept && Focus_.isValid()) {
+        tokens.insert(QStringLiteral("focus"), Focus_.name());
+    }
+    const bool differ = problems != FocusProblems_;
+    if (differ) {
+        for (const QString& problem : problems) {
+            qWarning("roost: %s", qUtf8Printable(problem));
+        }
+    }
+    FocusProblems_ = problems;
+    return differ;
 }
 
 void Theme::followFonts(const QJsonObject& settings) {

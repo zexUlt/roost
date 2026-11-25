@@ -170,7 +170,7 @@ FocusScope {
 
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: buttons.left
+            anchors.right: inputLabel.visible ? inputLabel.left : buttons.left
             anchors.rightMargin: Roost.theme.panelPadding
             anchors.verticalCenter: parent.verticalCenter
 
@@ -194,6 +194,39 @@ FocusScope {
                 color: Roost.theme.textSecondary
                 // The end of a path is the part that tells.
                 elide: Text.ElideMiddle
+            }
+        }
+
+        // "Input in terminal": a dot of `focus` and the words, 11 semibold, left
+        // of the buttons, only while the panel has the keyboard (its active
+        // focus is what draws the ring around its card, LayoutNode.qml). It
+        // goes first when the head is too narrow: the title keeps `titleMin`.
+        Row {
+            id: inputLabel
+
+            objectName: "terminalFocusLabel"
+            readonly property real gap: 28
+
+            anchors.right: buttons.left
+            anchors.rightMargin: gap
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.activeFocus && implicitWidth + gap <= head.width - 20 - 2 * Roost.theme.panelPadding - buttons.width - buttons.titleMin
+            spacing: 6
+
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 8
+                height: 8
+                radius: 4
+                color: Roost.theme.focus
+            }
+
+            Text {
+                objectName: "terminalFocusLabelText"
+                textFormat: Text.PlainText
+                font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                color: Roost.theme.focus
+                text: "Input in terminal"
             }
         }
 

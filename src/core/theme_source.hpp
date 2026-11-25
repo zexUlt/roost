@@ -71,4 +71,32 @@ inline constexpr double MAX_FONT_SIZE = 72;
 
 FontSettings ResolveFontSettings(const QJsonObject& settings);
 
+// The colour of the focus ring that the settings ask for (design.md §5):
+// `settings.focusColor` {preset, custom}. `preset` is "base" (the `focus` of
+// the theme), "contrast" or "custom"; `custom` is "#rrggbb" and counts only
+// for the preset "custom", where it is the colour. Without the key, or with
+// the preset "base", Color stays empty: the theme's own `focus`. The same
+// reader for every window; whether a custom colour is readable on the cards
+// is for the GUI to say (Theme), this only checks what the document says. A
+// key that is not what it should be is a problem and leaves the colour
+// empty, so that the window keeps the one it has.
+struct FocusSettings {
+    // "#rrggbb" to take, or empty for the theme's own.
+    QString Color;
+    // Whether Color is the custom colour: the window checks its contrast.
+    bool Custom = false;
+    // Whether the settings ask for a colour that cannot be read: the window
+    // keeps the colour it has, and does not fall back to the theme's.
+    bool Refused = false;
+    // One line for each key that could not be used, to show to the user.
+    QStringList Problems;
+};
+
+inline const QString FOCUS_CONTRAST_COLOR = QStringLiteral("#1b2430");
+// The least contrast of the focus ring against the surface and the canvas
+// (docs/design/18-style.md).
+inline constexpr double MIN_FOCUS_CONTRAST = 3;
+
+FocusSettings ResolveFocusSettings(const QJsonObject& settings);
+
 }  // namespace roost

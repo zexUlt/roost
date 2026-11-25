@@ -1215,18 +1215,51 @@ FocusScope {
             width: parent.width
             height: 76
 
-            Label {
-                id: title
-
-                objectName: "sessionsTitle"
+            // The title, and under it the label of the keyboard while the
+            // panel has it.
+            Column {
                 x: 20
                 anchors.verticalCenter: parent.verticalCenter
                 // The title takes what the button leaves.
-                width: Math.min(implicitWidth, Math.max(0, newButton.x - 8 - x))
-                elide: Text.ElideRight
-                color: root.textColor
-                font: Roost.theme.titleFont
-                text: sessionsList.viewArchive ? "Archive" : "Sessions"
+                width: Math.min(Math.max(title.implicitWidth, inputLabel.implicitWidth), Math.max(0, newButton.x - 8 - x))
+                spacing: 3
+
+                Label {
+                    id: title
+
+                    objectName: "sessionsTitle"
+                    width: parent.width
+                    elide: Text.ElideRight
+                    color: root.textColor
+                    font: Roost.theme.titleFont
+                    text: sessionsList.viewArchive ? "Archive" : "Sessions"
+                }
+
+                // "Input in list": a dot of `focus` and the words, 11 semibold,
+                // only while the panel has the keyboard (its active focus is
+                // what draws the ring around its card, LayoutNode.qml).
+                Row {
+                    id: inputLabel
+
+                    objectName: "sessionsFocusLabel"
+                    visible: root.activeFocus
+                    spacing: 6
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 8
+                        height: 8
+                        radius: 4
+                        color: Roost.theme.focus
+                    }
+
+                    Label {
+                        objectName: "sessionsFocusLabelText"
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        color: Roost.theme.focus
+                        text: "Input in list"
+                    }
+                }
             }
 
             PanelButton {

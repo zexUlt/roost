@@ -31,6 +31,12 @@ namespace roost {
 // {family, size} and settings.uiFontSize; what they leave out is the system
 // monospace font at its size of today and the application's default font. The
 // type scale (titleFont, ... smallFont) is uiFont at a ratio of its size.
+//
+// The `focus` token is the one colour that a setting may change: follow() takes
+// settings.focusColor {preset, custom} over the theme's own `focus`. A custom
+// colour with less than MIN_FOCUS_CONTRAST against `surface` or `canvas`, and
+// a key that is not what it should be, are refused with a line in
+// fontProblems: the colour the token has stays.
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -111,8 +117,9 @@ class Theme : public QObject {
     // its `font`, which the Controls and the Labels below it inherit; a plain
     // Text does not, so the panels use Label.
     Q_PROPERTY(QFont uiFont READ uiFont NOTIFY changed)
-    // What is wrong with the font settings, one line each; empty when
-    // nothing is. The window shows them in the strip of problems.
+    // What is wrong with the font settings and with settings.focusColor, one
+    // line each; empty when nothing is. The window shows them in the strip of
+    // problems.
     Q_PROPERTY(QStringList fontProblems READ fontProblems NOTIFY changed)
     // The colours of the categories, eight, indexed by the model's colorIndex.
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
@@ -219,7 +226,7 @@ public:
     QFont smallFont() const;
     QFont terminalFont() const { return TerminalFont_; }
     QFont uiFont() const { return UiFont_; }
-    QStringList fontProblems() const { return FontProblems_; }
+    QStringList fontProblems() const { return FontProblems_ + FocusProblems_; }
     QVariantList categories() const { return Categories_; }
     QColor bannerBackground() const { return BannerBackground_; }
     QColor bannerRefusedBackground() const { return BannerRefusedBackground_; }
@@ -236,6 +243,11 @@ signals:
     void terminalColorsChanged();
 
 private:
+    // Puts the focus colour of settings.focusColor into `tokens` (the theme's
+    // tokens, with `surface` and `canvas`) and keeps the problems of it.
+    // Returns whether they are others than before.
+    bool followFocus(const QJsonObject& settings, QJsonObject& tokens);
+
     QColor WindowBackground_;
     QColor WindowText_;
     QColor ControlBackground_;
@@ -283,6 +295,7 @@ private:
     QFont TerminalFont_;
     QFont UiFont_;
     QStringList FontProblems_;
+    QStringList FocusProblems_;
 };
 
 }  // namespace roost

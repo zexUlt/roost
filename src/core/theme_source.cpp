@@ -3,6 +3,8 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <optional>
 
@@ -40,6 +42,17 @@ double ReadFontSize(const QJsonValue& value, const QString& key,
             .arg(MIN_FONT_SIZE)
             .arg(MAX_FONT_SIZE));
     return 0;
+}
+
+// Whether the text is "#rrggbb"; toUInt would take a sign or a space, so the
+// digits are looked at one by one.
+bool IsHexColor(const QString& text) {
+    if (text.size() != 7 || text[0] != u'#') {
+        return false;
+    }
+    return std::ranges::all_of(QStringView(text).mid(1), [](QChar c) {
+        return c.unicode() < 128 && std::isxdigit(c.unicode()) != 0;
+    });
 }
 
 }  // namespace
@@ -125,6 +138,48 @@ FontSettings ResolveFontSettings(const QJsonObject& settings) {
                                     fonts.Problems);
     }
     return fonts;
+}
+
+FocusSettings ResolveFocusSettings(const QJsonObject& settings) {
+    FocusSettings focus;
+    const QJsonValue wanted = settings.value(QStringLiteral("focusColor"));
+    if (wanted.isUndefined()) {
+        return focus;
+    }
+    if (!wanted.isObject()) {
+        focus.Refused = true;
+        focus.Problems.append(
+            QStringLiteral("settings.focusColor must be an object with preset "
+                           "and custom; the focus colour is kept"));
+        return focus;
+    }
+    const QJsonObject object = wanted.toObject();
+    const QJsonValue preset = object.value(QStringLiteral("preset"));
+    if (preset.isUndefined() || preset.toString() == QLatin1String("base")) {
+        return focus;
+    }
+    if (preset.toString() == QLatin1String("contrast")) {
+        focus.Color = FOCUS_CONTRAST_COLOR;
+        return focus;
+    }
+    if (preset.toString() == QLatin1String("custom")) {
+        const QJsonValue custom = object.value(QStringLiteral("custom"));
+        if (custom.isString() && IsHexColor(custom.toString())) {
+            focus.Color = custom.toString().toLower();
+            focus.Custom = true;
+            return focus;
+        }
+        focus.Refused = true;
+        focus.Problems.append(
+            QStringLiteral("settings.focusColor.custom must be a colour "
+                           "#rrggbb; the focus colour is kept"));
+        return focus;
+    }
+    focus.Refused = true;
+    focus.Problems.append(
+        QStringLiteral("settings.focusColor.preset must be base, contrast or "
+                       "custom; the focus colour is kept"));
+    return focus;
 }
 
 }  // namespace roost

@@ -35,6 +35,10 @@ ApplicationWindow {
     property string readError
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
+    // settings.focusColor {preset, custom}, and the presets in the order of
+    // the box.
+    readonly property var focusColor: settingsDocument.focusColor ?? ({})
+    readonly property var focusPresets: ["base", "contrast", "custom"]
     // settings.updates.check as stored; on when the key is not a bool.
     readonly property bool updatesCheck: settingsDocument.updates?.check !== false
     readonly property string platformName: Qt.platform.os === "osx" ? "mac" : "linux"
@@ -85,14 +89,26 @@ ApplicationWindow {
         });
     }
 
+    // Writes one key of the focus colour, as patchTerminalFont does.
+    function patchFocusColor(key, value) {
+        const stored = focusColor;
+        const others = (typeof stored === "object" && !Array.isArray(stored)) ? Object.keys(stored).filter(k => k !== key) : [];
+        patchSettings({
+            "focusColor": (value === null && others.length === 0) ? null : {
+                [key]: value
+            }
+        });
+    }
+
     // The fields show the document. What the user is typing in is not
     // replaced, unless `force`.
     function showDocument(force) {
-        for (const field of [terminalFamilyField, terminalSizeField, uiSizeField]) {
+        for (const field of [terminalFamilyField, terminalSizeField, uiSizeField, focusCustomField]) {
             if (force || !field.activeFocus) {
                 field.text = field.shown();
             }
         }
+        focusPresetBox.currentIndex = focusPresets.indexOf(focusColor.preset ?? "base");
         updatesCheckSwitch.checked = updatesCheck;
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
     }
@@ -346,6 +362,51 @@ ApplicationWindow {
                             root.patchSettings({
                                 "uiFontSize": size
                             });
+                        }
+                    }
+                }
+            }
+
+            FieldRow {
+                label: "Focus ring color"
+
+                FormComboBox {
+                    id: focusPresetBox
+
+                    objectName: "focusPresetBox"
+                    Layout.fillWidth: true
+                    model: ["Base", "Contrast", "Custom"]
+                    onActivated: index => {
+                        const preset = root.focusPresets[index];
+                        // Custom starts from the colour the ring has now.
+                        root.patchSettings({
+                            "focusColor": preset === "custom" && root.focusColor.custom === undefined ? {
+                                "preset": preset,
+                                "custom": String(Roost.theme.focus)
+                            } : {
+                                "preset": preset
+                            }
+                        });
+                    }
+                }
+
+                // The project has no colour picker: a hex field. A colour that
+                // is too light is refused by the theme, the reason is below.
+                FormField {
+                    id: focusCustomField
+
+                    function shown() {
+                        return root.focusColor.custom ?? "";
+                    }
+
+                    objectName: "focusCustomField"
+                    visible: root.focusColor.preset === "custom"
+                    Layout.preferredWidth: 110
+                    placeholderText: "#rrggbb"
+                    onEditingFinished: {
+                        const color = text.trim() === "" ? null : text.trim();
+                        if ((color ?? "") !== shown()) {
+                            root.patchFocusColor("custom", color);
                         }
                     }
                 }

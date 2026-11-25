@@ -608,6 +608,18 @@ target_compile_definitions(layout_card_focus_test PRIVATE
 add_dependencies(layout_card_focus_test roostd fake_tui claude-adapter
     sessions_qml)
 
+# The label of the keyboard in the head of the list and of the terminal: only
+# the panel that has the keyboard shows it.
+roost_add_qt_test(focus_label_test roost/focus_label_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(focus_label_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(focus_label_test roostd fake_tui claude-adapter sessions_qml)
+
 # The edges of the window against the light design: the gap between cards
 # shows the canvas, and the menu bar row takes no room where the bar is native.
 roost_add_qt_test(window_edges_test roost/window_edges_test.cpp
@@ -935,6 +947,16 @@ roost_add_qt_test(settings_window_test roost/settings_window_test.cpp
 target_compile_definitions(settings_window_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(settings_window_test roostd)
+
+# The setting of the focus ring colour: Base, Contrast and Custom change the
+# `focus` token of every window, a colour that is too light is refused, and the
+# choice survives a restart; the settings window and the real roostd.
+roost_add_qt_test(focus_color_settings_test roost/focus_color_settings_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(focus_color_settings_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>")
+add_dependencies(focus_color_settings_test roostd)
 
 # The keymap table against key presses in a real window: the matcher, with the
 # real roostd and the fixture backend behind the commands.
