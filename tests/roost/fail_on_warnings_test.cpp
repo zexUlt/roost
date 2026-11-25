@@ -8,11 +8,13 @@
 #include <QObject>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QRegularExpression>
 #include <QTest>
 
 #include <memory>
 
 #include "helpers/sessions_window.hpp"
+#include "helpers/warning_filter.hpp"
 
 namespace {
 
@@ -83,6 +85,34 @@ class FailOnWarningsTest : public QObject {
 
 private slots:
     void cleanup() { Engine_.reset(); }
+
+    void WarningFilterMatchesWhatFailsTheTest_data() {
+        QTest::addColumn<QString>("message");
+        QTest::addColumn<bool>("fails");
+        QTest::newRow("font database with its tail")
+            << "Populating font family aliases took 12 ms." << false;
+        QTest::newRow("animation driver, the whole message")
+            << "QUnifiedTimer::stopAnimationDriver: driver is not running"
+            << false;
+        QTest::newRow("animation driver with a tail")
+            << "QUnifiedTimer::stopAnimationDriver: driver is not running "
+               "(id=1)"
+            << true;
+        QTest::newRow("another animation driver message")
+            << "QUnifiedTimer::stopAnimationDriver: driver is already running"
+            << true;
+        QTest::newRow("anything else") << "qml: something" << true;
+        QTest::newRow("allowed message on the second line")
+            << "qml: something\n"
+               "QUnifiedTimer::stopAnimationDriver: driver is not running"
+            << true;
+    }
+
+    void WarningFilterMatchesWhatFailsTheTest() {
+        QFETCH(QString, message);
+        QFETCH(bool, fails);
+        QCOMPARE(message.contains(roost::testing::WarningFilter()), fails);
+    }
 
     // Qt does warn: when a Qt release stops it, the filter can go.
     void QtWarnsOnTheSequence() {

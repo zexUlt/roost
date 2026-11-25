@@ -17,6 +17,7 @@
 #include <mutex>
 
 #include "core/rpc_client.hpp"
+#include "helpers/warning_filter.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "roost/controls_style.hpp"
@@ -48,24 +49,8 @@ QString Screen(const std::shared_ptr<TerminalSession>& session) {
     return QString::fromUtf8(session->Dump(lock).value_or("dump failed"));
 }
 
-// Every warning fails the test but two of Qt's own:
-// - the font database, which the first text of a process draws with and which
-//   depends on the machine's fonts;
-// - "QUnifiedTimer::stopAnimationDriver: driver is not running". Every
-//   ListView makes a pause animation (QQuickItemViewPrivate::bufferPause) and
-//   Qt stops the animation driver while only pauses run. If the timer of the
-//   QML animations is emptied and gets a new pause before the stop of the
-//   driver that this queued, the driver is already stopped and Qt warns. The
-//   queued events of a case that has torn its window down are delivered in the
-//   next one, so the warning lands in whichever case runs. Nothing in roost
-//   can order Qt's own events (the sequence is in fail_on_warnings_test).
-void FailOnWarnings() {
-    QTest::failOnWarning(QRegularExpression(
-        QStringLiteral(R"(^(?!Populating font family aliases|)"
-                       R"(QUnifiedTimer::stopAnimationDriver: )"
-                       R"(driver is not running))"),
-        QRegularExpression::DotMatchesEverythingOption));
-}
+// Every warning fails the test but the ones that WarningFilter lets through.
+void FailOnWarnings() { QTest::failOnWarning(WarningFilter()); }
 
 QString Greeting(const QString& id) { return "greeting=" + id; }
 
