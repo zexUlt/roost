@@ -51,7 +51,7 @@ inline Layout Stacked(std::vector<LayoutNode> pairs) {
 class LayoutWindow : public SessionsWindow {
 public:
     QQuickItem* SlotByInstance(const QString& instance) {
-        for (auto* item : Root()->findChildren<QQuickItem*>("panelSlot")) {
+        for (auto* item : LiveSlots()) {
             if (item->property("instanceId").toString() == instance) {
                 return item;
             }
@@ -65,10 +65,7 @@ public:
                                : slot->property("panel").value<QQuickItem*>();
     }
 
-    int SlotCount() {
-        return static_cast<int>(
-            Root()->findChildren<QQuickItem*>("panelSlot").size());
-    }
+    int SlotCount() { return static_cast<int>(LiveSlots().size()); }
 
     QQuickItem* ListViewOf(const QString& list) {
         QQuickItem* panel = PanelByInstance(list);
