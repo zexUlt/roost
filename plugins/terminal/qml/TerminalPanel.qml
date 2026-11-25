@@ -199,8 +199,10 @@ FocusScope {
 
         // "Input in terminal": a dot of `focus` and the words, 11 semibold, left
         // of the buttons, only while the panel has the keyboard (its active
-        // focus is what draws the ring around its card, LayoutNode.qml). It
-        // goes first when the head is too narrow: the title keeps `titleMin`.
+        // focus: where the keys go now; the ring of the card follows
+        // `lastFocused` of the layout and stays while a popup has the
+        // keyboard). It goes first when the head is too narrow: the title keeps
+        // `titleMin`.
         Row {
             id: inputLabel
 

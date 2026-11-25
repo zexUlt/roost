@@ -1236,8 +1236,9 @@ FocusScope {
                 }
 
                 // "Input in list": a dot of `focus` and the words, 11 semibold,
-                // only while the panel has the keyboard (its active focus is
-                // what draws the ring around its card, LayoutNode.qml).
+                // only while the panel has the keyboard (its active focus: where
+                // the keys go now; the ring of the card follows `lastFocused`
+                // of the layout and stays while a popup has the keyboard).
                 Row {
                     id: inputLabel
 
