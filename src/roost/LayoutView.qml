@@ -317,13 +317,14 @@ Item {
 
     // Opens the form of a new session in the list of the keyboard (the same one
     // as focusList): the keyboard goes to its Task field. The lists hidden:
-    // nothing happens, as with focusList there is no list to open it in.
+    // nothing happens, as with focusList there is no list to open it in. A list
+    // panel without openNewForm (another plugin's list type) is skipped.
     function newSession() {
         if (view.listsHidden) {
             return;
         }
         const slot = view.listOfKeyboard();
-        if (slot !== null && slot.panel !== null) {
+        if (slot !== null && slot.panel !== null && typeof slot.panel.openNewForm === "function") {
             slot.panel.openNewForm();
         }
     }
