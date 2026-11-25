@@ -954,6 +954,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->height() <= 300, TIMEOUT_MS);
 
         VerifyTabShowsEveryControl();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         // The case means something only if the form does not fit: it was
         // scrolled to reach Create, and the hint is below the scrolled part.
         QQuickItem* scroll = Part("sessionsNewScroll");
