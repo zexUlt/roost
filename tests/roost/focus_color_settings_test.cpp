@@ -91,8 +91,12 @@ struct FocusWindow {
     RoostSingleton* Singleton = nullptr;
     std::unique_ptr<PluginLoader> Loader;
     std::unique_ptr<QObject> Object;
+    // Counts the documents that the settings window has taken (the property
+    // settingsDocument is set anew by each one).
+    std::unique_ptr<QSignalSpy> Read;
 
     ~FocusWindow() {
+        Read.reset();
         Object.reset();
         Loader.reset();
         Engine.reset();
@@ -173,21 +177,30 @@ private:
             qWarning("%s", qPrintable(component.errorString()));
             return nullptr;
         }
-        // No file of the user's is opened by a test.
+        // No file of the user's is opened by a test. The spy is there before
+        // open(), so the answer of roostd cannot come ahead of it.
         window->Object->setProperty("opensFiles", false);
+        window->Read = std::make_unique<QSignalSpy>(
+            window->Object.get(), SIGNAL(settingsDocumentChanged()));
+        if (!window->Read->isValid()) {
+            return nullptr;
+        }
         QMetaObject::invokeMethod(window->Object.get(), "open");
         return window;
     }
 
-    // A window that has read the document: its controls are what is stored.
+    // A window that has read the document: the settings window has taken the
+    // answer of its settings read (settingsDocument is set by it, and by
+    // nothing else before), so its controls are what is stored. The theme has
+    // its own read of the document, which this does not wait for: what the
+    // theme shows is awaited by the case.
     std::unique_ptr<FocusWindow> OpenReadWindow() {
         auto window = OpenWindow();
         if (window == nullptr) {
             return nullptr;
         }
-        return QTest::qWaitFor(
-                   [&] { return window->Find("focusPresetBox") != nullptr; },
-                   TIMEOUT_MS)
+        return QTest::qWaitFor([&] { return !window->Read->isEmpty(); },
+                               TIMEOUT_MS)
                    ? std::move(window)
                    : nullptr;
     }
@@ -297,8 +310,8 @@ private slots:
         QTest::newRow("white")
             << "#ffffff"
             << "focus colour #ffffff is 1.0:1 on surface, below 4.5:1";
-        // 3.03:1 on the surface, below 3:1 on the canvas, and the text is
-        // 4.5:1.
+        // 3.03:1 on the surface, below 3:1 on the canvas, 2.67:1 on the
+        // selected background.
         QTest::newRow("passes the ring on the surface only")
             << "#949494"
             << "focus colour #949494 is 2.6:1 on selectedBackground, below "
@@ -602,6 +615,44 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(!label->isVisible(), TIMEOUT_MS);
         }
         QVERIFY(window->Problems().isEmpty());
+    }
+
+    // Only the problems of the focus colour change (the token stays Base, the
+    // fonts stay): the theme still says so, so that the line under the field
+    // goes.
+    void AFixedFocusColourTakesItsProblemAwayAlone() {
+        QVERIFY(WriteSettings(
+            QJsonObject{{"focusColor", QJsonObject{{"preset", "neon"}}}}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto window = OpenReadWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(window->Problems().size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Focus(), BASE);
+        QQuickItem* label = window->Find("focusColorProblems");
+        QVERIFY(label != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(label->isVisible(), TIMEOUT_MS);
+
+        QSignalSpy changed(window->Singleton->theme(), &Theme::changed);
+        QSignalSpy colors(window->Singleton->theme(),
+                          &Theme::terminalColorsChanged);
+        api::Api other;
+        QSignalSpy connected(&other, &api::Api::Connected);
+        other.Connect(Daemon_->SocketPath());
+        QVERIFY(connected.wait(TIMEOUT_MS) || !connected.isEmpty());
+        const QFuture<rpc::Result> writing = other.Store().Set(
+            "settings",
+            QJsonObject{{"focusColor", QJsonObject{{"preset", "base"}}}});
+        QVERIFY(WaitFor(writing));
+        QVERIFY(writing.result());
+
+        // What QML sees goes with the problems of C++.
+        QTRY_VERIFY_WITH_TIMEOUT(!label->isVisible(), TIMEOUT_MS);
+        QVERIFY(window->Problems().isEmpty());
+        QCOMPARE(window->Focus(), BASE);
+        // The one emit of the write is the one of the problems: the token,
+        // the colours of the terminal and the fonts did not change.
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(colors.count(), 0);
     }
 };
 

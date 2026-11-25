@@ -251,7 +251,8 @@ signals:
 
 private:
     // Puts the focus colour of settings.focusColor into `tokens` (the theme's
-    // tokens, with `surface` and `canvas`) and keeps the problems of it.
+    // tokens, which the colours of the FOCUS_PAIRS table are read from) and
+    // keeps the problems of it, with the contrast warning of the worst pair.
     // Returns whether they are others than before.
     bool followFocus(const QJsonObject& settings, QJsonObject& tokens);
     // Takes `fresh` for the problems of the focus colour (or, if not `focus`,
