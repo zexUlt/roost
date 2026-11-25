@@ -72,6 +72,8 @@
 | `terminal.copy` | `Ctrl+Shift+C`, `mac`: `Cmd+C`, `when` `terminal.view` | `TerminalPanel.qml`: копирует выделение терминала |
 | `layout.splitRight`, `layout.splitDown` | нет | `LayoutView.qml`: делит панель (аргумент `panel` — тип новой) |
 | `layout.intoTabs`, `layout.outOfTabs` | нет | `LayoutView.qml`: панель в стопку вкладок и обратно |
+| `layout.moveLeft`, `layout.moveRight`, `layout.moveUp`, `layout.moveDown` | нет | `LayoutView.qml`: сдвигает панель на шаг в своём сплите или выводит её в родительский (`06-panels.md`, «Правка раскладки»); нельзя — отказ в полосе проблем |
+| `layout.rotate` | нет | `LayoutView.qml`: сплит над панелью меняет направление, размеры сохраняются |
 | `layout.close` | нет | `LayoutView.qml`: закрывает панель; последнюю не закрывает |
 | `layout.toggleLists` | нет | `LayoutView.qml`: скрывает все списки сессий окна и показывает снова (`06-panels.md`, «Скрыть и показать списки») |
 | `layout.editLinks` | нет | `LayoutView.qml`: диалог связей панели |

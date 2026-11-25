@@ -19,6 +19,11 @@ RoostMenu {
             inTabs: false,
             canIntoTabs: false,
             canClose: false,
+            canMoveLeft: false,
+            canMoveRight: false,
+            canMoveUp: false,
+            canMoveDown: false,
+            canRotate: false,
             hasInputs: false
         })
 
@@ -89,6 +94,45 @@ RoostMenu {
         enabled: root.info.inTabs
         onTriggered: root.run("outOfTabs", {})
     }
+
+    MenuSeparatorRow {}
+
+    MenuRow {
+        objectName: "menuMoveLeft"
+        text: "Move left"
+        enabled: root.info.canMoveLeft
+        onTriggered: root.run("moveLeft", {})
+    }
+
+    MenuRow {
+        objectName: "menuMoveRight"
+        text: "Move right"
+        enabled: root.info.canMoveRight
+        onTriggered: root.run("moveRight", {})
+    }
+
+    MenuRow {
+        objectName: "menuMoveUp"
+        text: "Move up"
+        enabled: root.info.canMoveUp
+        onTriggered: root.run("moveUp", {})
+    }
+
+    MenuRow {
+        objectName: "menuMoveDown"
+        text: "Move down"
+        enabled: root.info.canMoveDown
+        onTriggered: root.run("moveDown", {})
+    }
+
+    MenuRow {
+        objectName: "menuRotate"
+        text: "Turn split"
+        enabled: root.info.canRotate
+        onTriggered: root.run("rotate", {})
+    }
+
+    MenuSeparatorRow {}
 
     MenuRow {
         objectName: "menuEditLinks"
