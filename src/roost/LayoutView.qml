@@ -31,8 +31,8 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink,
-    // undo, reset) and its
+    // splitDown, intoTabs, outOfTabs, swap, tabLeft, tabRight, close,
+    // toggleLists, editLinks, setLink, undo, reset) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -132,8 +132,11 @@ Item {
         const info = {
             inTabs: false,
             canIntoTabs: false,
+            canTabLeft: false,
+            canTabRight: false,
             canClose: false,
-            hasInputs: false
+            hasInputs: false,
+            others: []
         };
         let leaves = 0;
         const walk = (node, parent) => {
@@ -144,7 +147,17 @@ Item {
                     if (parent !== null) {
                         info.inTabs = parent.kind === "tabs";
                         info.canIntoTabs = parent.kind === "split" && parent.children.length > 1;
+                        if (info.inTabs) {
+                            const at = parent.children.findIndex(child => child.instance === instance);
+                            info.canTabLeft = at > 0;
+                            info.canTabRight = at < parent.children.length - 1;
+                        }
                     }
+                } else {
+                    info.others.push({
+                        instance: node.instance,
+                        panel: node.panel
+                    });
                 }
                 return;
             }
@@ -353,6 +366,9 @@ Item {
             "layout.splitDown": "splitDown",
             "layout.intoTabs": "intoTabs",
             "layout.outOfTabs": "outOfTabs",
+            "layout.swap": "swap",
+            "layout.tabLeft": "tabLeft",
+            "layout.tabRight": "tabRight",
             "layout.close": "close",
             "layout.toggleLists": "toggleLists",
             "layout.editLinks": "editLinks",

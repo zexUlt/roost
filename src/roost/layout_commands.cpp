@@ -496,6 +496,88 @@ LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance) {
     return Done(std::move(tree), layout, instance);
 }
 
+LayoutEdit SwapPanels(const Layout& layout, const QString& instance,
+                      const QString& with) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to swap").arg(instance));
+    }
+    if (with.isEmpty()) {
+        return Refuse(
+            layout,
+            QStringLiteral("choose the panel to swap %1 with").arg(instance));
+    }
+    if (with == instance) {
+        return Refuse(
+            layout,
+            QStringLiteral("%1 cannot be swapped with itself").arg(instance));
+    }
+    Path otherPath;
+    if (!PathTo(layout.Root, with, otherPath)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to swap with").arg(with));
+    }
+    Layout tree = layout;
+    // A leaf is never an ancestor of another, so both parents exist.
+    LayoutNode& parent = At(tree.Root, path, path.size() - 1);
+    LayoutNode& otherParent = At(tree.Root, otherPath, otherPath.size() - 1);
+    const size_t own = path.back();
+    const size_t other = otherPath.back();
+    // Whether each leaf is looked at before the swap: a leaf of a split
+    // always is, a tab when it is the shown one.
+    const auto shown = [](const LayoutNode& node, size_t index) {
+        return node.Kind != ELayoutNodeKind::Tabs ||
+               static_cast<size_t>(node.Active) == index;
+    };
+    const bool ownShown = shown(parent, own);
+    const bool otherShown = shown(otherParent, other);
+
+    std::swap(parent.Children[own], otherParent.Children[other]);
+    if (&parent == &otherParent && parent.Kind == ELayoutNodeKind::Split) {
+        std::swap(parent.Sizes[own], parent.Sizes[other]);
+    }
+    if (otherParent.Kind == ELayoutNodeKind::Tabs && ownShown) {
+        otherParent.Active = static_cast<int>(other);
+    }
+    if (parent.Kind == ELayoutNodeKind::Tabs && otherShown) {
+        parent.Active = static_cast<int>(own);
+    }
+    return Done(std::move(tree), layout, instance);
+}
+
+LayoutEdit MoveTab(const Layout& layout, const QString& instance, bool right) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to move").arg(instance));
+    }
+    Layout tree = layout;
+    if (path.empty() ||
+        At(tree.Root, path, path.size() - 1).Kind != ELayoutNodeKind::Tabs) {
+        return Refuse(layout,
+                      QStringLiteral("%1 is not in tabs").arg(instance));
+    }
+    LayoutNode& stack = At(tree.Root, path, path.size() - 1);
+    const size_t index = path.back();
+    if (right ? index + 1 == stack.Children.size() : index == 0) {
+        return Refuse(layout, QStringLiteral("%1 is already the %2 tab")
+                                  .arg(instance, right ? "last" : "first"));
+    }
+    const size_t next = right ? index + 1 : index - 1;
+    std::swap(stack.Children[index], stack.Children[next]);
+    // The shown tab is the same panel after the move.
+    if (static_cast<size_t>(stack.Active) == index) {
+        stack.Active = static_cast<int>(next);
+    } else if (static_cast<size_t>(stack.Active) == next) {
+        stack.Active = static_cast<int>(index);
+    }
+    return Done(std::move(tree), layout, instance);
+}
+
 LayoutEdit ClosePanel(const Layout& layout, const QString& instance) {
     Path path;
     if (!PathTo(layout.Root, instance, path)) {

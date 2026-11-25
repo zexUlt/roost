@@ -62,6 +62,22 @@ LayoutEdit MoveIntoTabs(const Layout& layout, const QString& instance);
 // sibling in a split: before the stack if it was the first tab, else after.
 LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance);
 
+// Exchanges the places of two leaves, anywhere in the tree. Each leaf keeps
+// its instance id, panel type and links, so its state and what feeds it stay.
+// The sizes: two leaves of one split take their sizes along (the list stays
+// 320 pixels wide on the other side); in different parents the sizes stay with
+// the places, since a width of one split is not the height of another. A leaf
+// that was the shown tab of its stack is the shown tab of the stack it goes
+// to. Refused for a panel that is not there, for `with` empty or the leaf
+// itself.
+LayoutEdit SwapPanels(const Layout& layout, const QString& instance,
+                      const QString& with);
+
+// Moves the tab of the leaf one place to the left or to the right in its
+// stack; the shown tab stays the same panel. Refused outside a stack and at the
+// first (left) or the last (right) tab.
+LayoutEdit MoveTab(const Layout& layout, const QString& instance, bool right);
+
 // Removes the leaf. The last leaf of the tree cannot be closed. The links that
 // came from it are removed from the leaves they fed. There is no undo.
 LayoutEdit ClosePanel(const Layout& layout, const QString& instance);
