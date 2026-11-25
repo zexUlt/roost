@@ -31,8 +31,8 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink,
-    // undo, reset) and its
+    // splitDown, intoTabs, outOfTabs, swap, tabLeft, tabRight, close,
+    // toggleLists, editLinks, setLink, undo, reset) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -126,14 +126,20 @@ Item {
         return leaf !== null ? leaf.instance : "";
     }
 
-    // What can be done with the panel: it is in a stack of tabs, it has a
-    // sibling in a split to be put in tabs with, and it is not the last panel.
+    // What can be done with the panel: it is in a stack of tabs (inTabs), it has
+    // a sibling in a split to be put in tabs with (canIntoTabs), a tab with a
+    // button on its left or right in the stack (canTabLeft, canTabRight), it is
+    // not the last panel (canClose), it takes inputs (hasInputs); `others` are
+    // the other panels of the window, for "Swap with…".
     function describe(instance) {
         const info = {
             inTabs: false,
             canIntoTabs: false,
+            canTabLeft: false,
+            canTabRight: false,
             canClose: false,
-            hasInputs: false
+            hasInputs: false,
+            others: []
         };
         let leaves = 0;
         const walk = (node, parent) => {
@@ -144,7 +150,19 @@ Item {
                     if (parent !== null) {
                         info.inTabs = parent.kind === "tabs";
                         info.canIntoTabs = parent.kind === "split" && parent.children.length > 1;
+                        if (info.inTabs) {
+                            const at = parent.children.findIndex(child => child.instance === instance);
+                            // The tabs of hidden lists have no button: MoveTab steps over them.
+                            const hasButton = child => child.hidden !== true;
+                            info.canTabLeft = parent.children.slice(0, at).some(hasButton);
+                            info.canTabRight = parent.children.slice(at + 1).some(hasButton);
+                        }
                     }
+                } else {
+                    info.others.push({
+                        instance: node.instance,
+                        panel: node.panel
+                    });
                 }
                 return;
             }
@@ -353,6 +371,9 @@ Item {
             "layout.splitDown": "splitDown",
             "layout.intoTabs": "intoTabs",
             "layout.outOfTabs": "outOfTabs",
+            "layout.swap": "swap",
+            "layout.tabLeft": "tabLeft",
+            "layout.tabRight": "tabRight",
             "layout.close": "close",
             "layout.toggleLists": "toggleLists",
             "layout.editLinks": "editLinks",

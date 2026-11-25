@@ -221,6 +221,32 @@ QString FocusAfterHide(const LayoutNode& root, const QString& instance,
     return {};
 }
 
+// Whether the leaf at `path` is looked at: every stack above it shows the
+// branch it is in.
+bool IsShownAt(const LayoutNode& root, const Path& path,
+               const QSet<QString>& hidden) {
+    const LayoutNode* node = &root;
+    for (const size_t index : path) {
+        if (node->Kind == ELayoutNodeKind::Tabs &&
+            static_cast<size_t>(ShownTab(*node, hidden)) != index) {
+            return false;
+        }
+        node = &node->Children[index];
+    }
+    return true;
+}
+
+// Makes every stack above the leaf at `path` show the branch it is in.
+void ShowAlong(LayoutNode& root, const Path& path) {
+    LayoutNode* node = &root;
+    for (const size_t index : path) {
+        if (node->Kind == ELayoutNodeKind::Tabs) {
+            node->Active = static_cast<int>(index);
+        }
+        node = &node->Children[index];
+    }
+}
+
 }  // namespace
 
 bool IsCollapsed(const LayoutNode& node, const QSet<QString>& hidden) {
@@ -500,6 +526,101 @@ LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance) {
     split.Children.push_back(std::move(before ? left : leaf));
     split.Sizes = {LayoutSize::Rest(), LayoutSize::Rest()};
     left = std::move(split);
+    return Done(std::move(tree), layout, instance);
+}
+
+LayoutEdit SwapPanels(const Layout& layout, const QString& instance,
+                      const QString& with, const LayoutKnownPanels& known) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to swap").arg(instance));
+    }
+    if (with.isEmpty()) {
+        return Refuse(
+            layout,
+            QStringLiteral("choose the panel to swap %1 with: use \"Swap "
+                           "with…\" in the panel menu")
+                .arg(instance));
+    }
+    if (with == instance) {
+        return Refuse(
+            layout,
+            QStringLiteral("%1 cannot be swapped with itself").arg(instance));
+    }
+    Path otherPath;
+    if (!PathTo(layout.Root, with, otherPath)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to swap with").arg(with));
+    }
+    Layout tree = layout;
+    const QSet<QString> hidden = HiddenTypes(layout, known);
+    // Whether each leaf is looked at before the swap: every stack above it
+    // shows the branch it is in (the tab ShownTab names).
+    const bool ownShown = IsShownAt(layout.Root, path, hidden);
+    const bool otherShown = IsShownAt(layout.Root, otherPath, hidden);
+
+    // A leaf is never an ancestor of another, so both parents exist.
+    LayoutNode& parent = At(tree.Root, path, path.size() - 1);
+    LayoutNode& otherParent = At(tree.Root, otherPath, otherPath.size() - 1);
+    const size_t own = path.back();
+    const size_t other = otherPath.back();
+    std::swap(parent.Children[own], otherParent.Children[other]);
+    if (&parent == &otherParent && parent.Kind == ELayoutNodeKind::Split) {
+        std::swap(parent.Sizes[own], parent.Sizes[other]);
+    }
+    // A leaf that was shown is shown at its new place: each stack above it
+    // shows its branch. The panel the command ran on goes last, so it wins a
+    // stack both want.
+    if (otherShown) {
+        ShowAlong(tree.Root, path);
+    }
+    if (ownShown) {
+        ShowAlong(tree.Root, otherPath);
+    }
+    return Done(std::move(tree), layout, instance);
+}
+
+LayoutEdit MoveTab(const Layout& layout, const QString& instance, bool right,
+                   const LayoutKnownPanels& known) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to move").arg(instance));
+    }
+    Layout tree = layout;
+    if (path.empty() ||
+        At(tree.Root, path, path.size() - 1).Kind != ELayoutNodeKind::Tabs) {
+        return Refuse(layout,
+                      QStringLiteral("%1 is not in tabs").arg(instance));
+    }
+    LayoutNode& stack = At(tree.Root, path, path.size() - 1);
+    const size_t index = path.back();
+    // The tabs that have a button: the ones of the hidden lists have none, so
+    // the move steps over them (the menu agrees: LayoutView.qml describe()).
+    const QSet<QString> hidden = HiddenTypes(layout, known);
+    const auto count = static_cast<std::ptrdiff_t>(stack.Children.size());
+    const std::ptrdiff_t step = right ? 1 : -1;
+    std::ptrdiff_t at = static_cast<std::ptrdiff_t>(index) + step;
+    while (at >= 0 && at < count &&
+           IsCollapsed(stack.Children[static_cast<size_t>(at)], hidden)) {
+        at += step;
+    }
+    if (at < 0 || at >= count) {
+        return Refuse(layout, QStringLiteral("%1 is already the %2 tab")
+                                  .arg(instance, right ? "last" : "first"));
+    }
+    const auto next = static_cast<size_t>(at);
+    std::swap(stack.Children[index], stack.Children[next]);
+    // The shown tab is the same panel after the move.
+    if (static_cast<size_t>(stack.Active) == index) {
+        stack.Active = static_cast<int>(next);
+    } else if (static_cast<size_t>(stack.Active) == next) {
+        stack.Active = static_cast<int>(index);
+    }
     return Done(std::move(tree), layout, instance);
 }
 

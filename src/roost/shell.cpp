@@ -998,6 +998,12 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
         edit = MoveIntoTabs(Layout_, instance);
     } else if (action == QLatin1String("outOfTabs")) {
         edit = MoveOutOfTabs(Layout_, instance);
+    } else if (action == QLatin1String("swap")) {
+        edit = SwapPanels(Layout_, instance, text("with"), known);
+    } else if (action == QLatin1String("tabLeft") ||
+               action == QLatin1String("tabRight")) {
+        edit = MoveTab(Layout_, instance, action == QLatin1String("tabRight"),
+                       known);
     } else if (action == QLatin1String("close")) {
         edit = ClosePanel(Layout_, instance);
     } else if (action == QLatin1String("toggleLists")) {
