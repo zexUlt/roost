@@ -557,6 +557,12 @@ target_compile_definitions(layout_lists_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_lists_test roostd fake_tui claude-adapter sessions_qml)
 
+# The warning filter of the window tests: Qt's own animation timer warns about
+# its driver when a pause animation follows an emptied timer (every ListView).
+roost_add_qt_test(fail_on_warnings_test roost/fail_on_warnings_test.cpp
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+add_dependencies(fail_on_warnings_test roostd fake_tui claude-adapter sessions_qml)
+
 # Into tabs and out of tabs from the panel menu, by mouse in the real window:
 # the list and the terminal keep their places.
 roost_add_qt_test(layout_tabs_menu_test roost/layout_tabs_menu_test.cpp

@@ -48,11 +48,22 @@ QString Screen(const std::shared_ptr<TerminalSession>& session) {
     return QString::fromUtf8(session->Dump(lock).value_or("dump failed"));
 }
 
-// Every warning fails the test but one of Qt's font database, which the first
-// text of a process draws with and which depends on the machine's fonts.
+// Every warning fails the test but two of Qt's own:
+// - the font database, which the first text of a process draws with and which
+//   depends on the machine's fonts;
+// - "QUnifiedTimer::stopAnimationDriver: driver is not running". Every
+//   ListView makes a pause animation (QQuickItemViewPrivate::bufferPause) and
+//   Qt stops the animation driver while only pauses run. If the timer of the
+//   QML animations is emptied and gets a new pause before the stop of the
+//   driver that this queued, the driver is already stopped and Qt warns. The
+//   queued events of a case that has torn its window down are delivered in the
+//   next one, so the warning lands in whichever case runs. Nothing in roost
+//   can order Qt's own events (the sequence is in fail_on_warnings_test).
 void FailOnWarnings() {
     QTest::failOnWarning(QRegularExpression(
-        QStringLiteral(R"(^(?!Populating font family aliases))"),
+        QStringLiteral(R"(^(?!Populating font family aliases|)"
+                       R"(QUnifiedTimer::stopAnimationDriver: )"
+                       R"(driver is not running))"),
         QRegularExpression::DotMatchesEverythingOption));
 }
 
