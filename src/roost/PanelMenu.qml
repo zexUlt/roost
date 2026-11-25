@@ -105,4 +105,19 @@ RoostMenu {
         enabled: root.info.canClose
         onTriggered: root.run("close", {})
     }
+
+    MenuSeparatorRow {}
+
+    MenuRow {
+        objectName: "menuUndo"
+        text: "Undo layout edit"
+        enabled: root.view.canUndo
+        onTriggered: root.run("undo", {})
+    }
+
+    MenuRow {
+        objectName: "menuReset"
+        text: "Reset layout…"
+        onTriggered: root.view.askReset()
+    }
 }

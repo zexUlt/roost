@@ -15,7 +15,9 @@
       { "id": "layout.outOfTabs", "title": "Move the panel out of tabs" },
       { "id": "layout.close", "title": "Close the panel" },
       { "id": "layout.toggleLists", "title": "Hide or show the lists of sessions" },
-      { "id": "layout.editLinks", "title": "Edit the links of the panel" }
+      { "id": "layout.editLinks", "title": "Edit the links of the panel" },
+      { "id": "layout.reset", "title": "Reset the layout to the default" },
+      { "id": "layout.undo", "title": "Undo the last layout edit" }
     ],
     "keybindings": [
       { "command": "shell.focusList", "key": "Ctrl+\\" },
