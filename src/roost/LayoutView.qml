@@ -126,8 +126,11 @@ Item {
         return leaf !== null ? leaf.instance : "";
     }
 
-    // What can be done with the panel: it is in a stack of tabs, it has a
-    // sibling in a split to be put in tabs with, and it is not the last panel.
+    // What can be done with the panel: it is in a stack of tabs (inTabs), it has
+    // a sibling in a split to be put in tabs with (canIntoTabs), a tab with a
+    // button on its left or right in the stack (canTabLeft, canTabRight), it is
+    // not the last panel (canClose), it takes inputs (hasInputs); `others` are
+    // the other panels of the window, for "Swap with…".
     function describe(instance) {
         const info = {
             inTabs: false,
@@ -149,8 +152,10 @@ Item {
                         info.canIntoTabs = parent.kind === "split" && parent.children.length > 1;
                         if (info.inTabs) {
                             const at = parent.children.findIndex(child => child.instance === instance);
-                            info.canTabLeft = at > 0;
-                            info.canTabRight = at < parent.children.length - 1;
+                            // The tabs of hidden lists have no button: MoveTab steps over them.
+                            const hasButton = child => child.hidden !== true;
+                            info.canTabLeft = parent.children.slice(0, at).some(hasButton);
+                            info.canTabRight = parent.children.slice(at + 1).some(hasButton);
                         }
                     }
                 } else {

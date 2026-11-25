@@ -28,6 +28,15 @@ Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
 
 namespace {
 
+LayoutKnownPanels Known() {
+    return {
+        {"sessions.list",
+         {.Inputs = {}, .Outputs = {{"selected", "SessionRef"}}}},
+        {"terminal.view",
+         {.Inputs = {{"session", "SessionRef"}}, .Outputs = {}}},
+    };
+}
+
 LayoutNode Leaf(const QString& instance, const QString& panel,
                 const QMap<QString, LayoutLink>& links = {}) {
     LayoutNode node;
@@ -90,6 +99,18 @@ QStringList Instances(const LayoutNode& node) {
         all.append(Instances(child));
     }
     return all;
+}
+
+// The leaf that is looked at when the node is: the first of a split, the shown
+// tab of a stack (with the lists of `hidden` types out of the count).
+QString ShownLeafOf(const LayoutNode& node, const QSet<QString>& hidden) {
+    if (node.Kind == ELayoutNodeKind::Leaf) {
+        return node.Instance;
+    }
+    const size_t at = node.Kind == ELayoutNodeKind::Tabs
+                          ? static_cast<size_t>(ShownTab(node, hidden))
+                          : 0;
+    return ShownLeafOf(node.Children[at], hidden);
 }
 
 // The tree is canonical: no split or stack with one child, a split has a child
@@ -166,7 +187,11 @@ private:
         QCOMPARE(Writes(spy), 1);
     }
 
-    // The command is refused: the strip says why, and nothing is written.
+    // The command is refused: the strip says why, and nothing is written. A
+    // write that was not going to come is not waited for: the barrier is an
+    // edit that works, made after the refusal and written by the same daemon
+    // after any write the refusal would have made; it is the only write the
+    // spy sees. The edit is undone, so the layout is what it was.
     void RunRefused(const QString& instance, const QString& command,
                     const QJsonValue& args, const QString& reason) {
         Focus(instance);
@@ -174,8 +199,14 @@ private:
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         Api_->Commands().Run(command, args);
         QTRY_VERIFY_WITH_TIMEOUT(HasProblem(reason), TIMEOUT_MS);
-        QTest::qWait(200);
-        QCOMPARE(Writes(spy), 0);
+        QCOMPARE(Shell_->CurrentLayout(), before);
+        const QStringList all = Instances(before.Root);
+        const QString with = all.first() != instance ? all.first() : all.last();
+        Api_->Commands().Run("layout.swap", QJsonObject{{"with", with}});
+        QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Shell_->CurrentLayout() != before, TIMEOUT_MS);
+        QCOMPARE(Writes(spy), 1);
+        RunWritesOnce(instance, "layout.undo");
         QCOMPARE(Shell_->CurrentLayout(), before);
     }
 
@@ -336,7 +367,7 @@ private slots:
             .Root =
                 Split(true, {Leaf("list", "sessions.list"), Term("terminal")},
                       {LayoutSize::Px(320), LayoutSize::Rest()})};
-        const LayoutEdit edit = SwapPanels(layout, "list", "terminal");
+        const LayoutEdit edit = SwapPanels(layout, "list", "terminal", Known());
         QVERIFY(edit.Refused.isEmpty());
         QVERIFY(edit.Changed);
         QCOMPARE(Instances(edit.Tree.Root), (QStringList{"terminal", "list"}));
@@ -351,7 +382,7 @@ private slots:
     // tree moves; the leaves keep their instance, type and links.
     void SwapAcrossSplitsKeepsTheSizesOfThePlacesAndTheLeaves() {
         const Layout layout = ListAndTwoTerminals();
-        const LayoutEdit edit = SwapPanels(layout, "list", "t2");
+        const LayoutEdit edit = SwapPanels(layout, "list", "t2", Known());
         QVERIFY(edit.Refused.isEmpty());
         QVERIFY(edit.Changed);
         QCOMPARE(Instances(edit.Tree.Root),
@@ -374,16 +405,18 @@ private slots:
 
     void SwapTwiceGivesTheTreeBack() {
         for (const Layout& layout : {ListAndTwoTerminals(), ListAndTabs(1)}) {
-            const LayoutEdit once = SwapPanels(layout, "list", "t2");
+            const LayoutEdit once = SwapPanels(layout, "list", "t2", Known());
             QVERIFY(once.Changed);
-            const LayoutEdit twice = SwapPanels(once.Tree, "list", "t2");
+            const LayoutEdit twice =
+                SwapPanels(once.Tree, "list", "t2", Known());
             QCOMPARE(twice.Tree, layout);
         }
     }
 
     // A leaf that was shown is the shown tab of the stack it goes to.
     void SwapIntoAStackShowsTheLeavesThatWereShown() {
-        const LayoutEdit edit = SwapPanels(ListAndTabs(1), "list", "t2");
+        const LayoutEdit edit =
+            SwapPanels(ListAndTabs(1), "list", "t2", Known());
         QVERIFY(edit.Refused.isEmpty());
         const LayoutNode& stack = edit.Tree.Root.Children[1];
         QCOMPARE(Instances(stack), (QStringList{"terminal", "list", "t3"}));
@@ -393,7 +426,8 @@ private slots:
         QVERIFY(IsCanonical(edit.Tree.Root));
         // A hidden tab and the list: the list was shown, so it is the shown
         // tab of the stack it goes to.
-        const LayoutEdit hidden = SwapPanels(ListAndTabs(0), "t3", "list");
+        const LayoutEdit hidden =
+            SwapPanels(ListAndTabs(0), "t3", "list", Known());
         QCOMPARE(Instances(hidden.Tree.Root.Children[1]),
                  (QStringList{"terminal", "t2", "list"}));
         QCOMPARE(hidden.Tree.Root.Children[1].Active, 2);
@@ -403,28 +437,103 @@ private slots:
     void SwapInOneStackKeepsWhichPanelIsShown() {
         const Layout layout = {.Root =
                                    Tabs({Term("a"), Term("b"), Term("c")}, 0)};
-        const LayoutEdit edit = SwapPanels(layout, "a", "c");
+        const LayoutEdit edit = SwapPanels(layout, "a", "c", Known());
         QCOMPARE(Instances(edit.Tree.Root), (QStringList{"c", "b", "a"}));
         QCOMPARE(edit.Tree.Root.Active, 2);
         // Neither of the two is shown: the shown one stays where it is.
-        const LayoutEdit others = SwapPanels(layout, "b", "c");
+        const LayoutEdit others = SwapPanels(layout, "b", "c", Known());
         QCOMPARE(Instances(others.Tree.Root), (QStringList{"a", "c", "b"}));
         QCOMPARE(others.Tree.Root.Active, 0);
         QVERIFY(IsCanonical(edit.Tree.Root));
     }
 
+    // The shown leaf is looked at through every stack above it: x goes into
+    // the hidden branch of the stack, so the branch is shown, and y takes the
+    // place of x.
+    void SwapIntoAHiddenBranchOfANestedStackKeepsTheLeafShown() {
+        const Layout layout = {
+            .Root =
+                Split(true,
+                      {Term("x"),
+                       Tabs({Split(false, {Term("y"), Term("z")},
+                                   {LayoutSize::Px(100), LayoutSize::Rest()}),
+                             Term("w")},
+                            1)},
+                      {LayoutSize::Px(200), LayoutSize::Rest()})};
+        for (const auto& [instance, with] :
+             {std::pair<QString, QString>{"x", "y"}, {"y", "x"}}) {
+            const LayoutEdit edit = SwapPanels(layout, instance, with, Known());
+            QVERIFY(edit.Refused.isEmpty());
+            QCOMPARE(Instances(edit.Tree.Root),
+                     (QStringList{"y", "x", "z", "w"}));
+            const LayoutNode& stack = edit.Tree.Root.Children[1];
+            QCOMPARE(stack.Active, 0);
+            QCOMPARE(ShownLeafOf(edit.Tree.Root, {}), QString("y"));
+            QCOMPARE(ShownLeafOf(stack, {}), QString("x"));
+            QVERIFY(IsCanonical(edit.Tree.Root));
+        }
+    }
+
+    // With the lists hidden the terminal of [list, terminal] is the shown tab
+    // although the stack says tab 0: it stays shown in the other stack.
+    void SwapOfTheTabThatIsShownBecauseTheListsAreHidden() {
+        Layout layout = {
+            .Root = Split(
+                true,
+                {Tabs({Leaf("list", "sessions.list"), Term("terminal")}, 0),
+                 Tabs({Term("u"), Term("v")}, 0)},
+                {LayoutSize::Px(300), LayoutSize::Rest()})};
+        layout.ListsHidden = true;
+        QCOMPARE(
+            ShownLeafOf(layout.Root.Children[0], HiddenTypes(layout, Known())),
+            QString("terminal"));
+        const LayoutEdit edit = SwapPanels(layout, "terminal", "v", Known());
+        QVERIFY(edit.Refused.isEmpty());
+        QCOMPARE(Instances(edit.Tree.Root),
+                 (QStringList{"list", "v", "u", "terminal"}));
+        QCOMPARE(edit.Tree.Root.Children[1].Active, 1);
+        QCOMPARE(ShownLeafOf(edit.Tree.Root.Children[1],
+                             HiddenTypes(edit.Tree, Known())),
+                 QString("terminal"));
+    }
+
+    // Two different stacks: both leaves were shown and both still are.
+    void SwapBetweenTwoStacksKeepsBothShown() {
+        const Layout layout = {
+            .Root = Split(true,
+                          {Tabs({Term("a"), Term("b")}, 0),
+                           Tabs({Term("c"), Term("d")}, 1)},
+                          {LayoutSize::Px(300), LayoutSize::Rest()})};
+        const LayoutEdit both = SwapPanels(layout, "a", "d", Known());
+        QCOMPARE(Instances(both.Tree.Root), (QStringList{"d", "b", "c", "a"}));
+        QCOMPARE(both.Tree.Root.Children[0].Active, 0);
+        QCOMPARE(both.Tree.Root.Children[1].Active, 1);
+        // Only the leaf that was shown has to stay shown.
+        const LayoutEdit one = SwapPanels(layout, "b", "d", Known());
+        QCOMPARE(Instances(one.Tree.Root), (QStringList{"a", "d", "c", "b"}));
+        QCOMPARE(one.Tree.Root.Children[0].Active, 1);
+    }
+
     void SwapIsRefusedForNoPanelItselfAndNoChoice() {
         const Layout layout = ListAndTwoTerminals();
-        ExpectRefused(layout, SwapPanels(layout, "nope", "list"),
-                      "there is no panel nope");
-        ExpectRefused(layout, SwapPanels(layout, "list", "nope"),
-                      "there is no panel nope");
-        ExpectRefused(layout, SwapPanels(layout, "list", "list"),
+        // The two texts differ: the one that is not there is named.
+        const LayoutEdit noInstance =
+            SwapPanels(layout, "nope", "list", Known());
+        ExpectRefused(layout, noInstance, "there is no panel nope");
+        QCOMPARE(noInstance.Refused, QString("there is no panel nope to swap"));
+        const LayoutEdit noWith = SwapPanels(layout, "list", "nope", Known());
+        ExpectRefused(layout, noWith, "there is no panel nope");
+        QCOMPARE(noWith.Refused,
+                 QString("there is no panel nope to swap with"));
+        ExpectRefused(layout, SwapPanels(layout, "list", "list", Known()),
                       "list cannot be swapped with itself");
-        ExpectRefused(layout, SwapPanels(layout, "list", ""),
-                      "choose the panel to swap list with");
+        const LayoutEdit noChoice = SwapPanels(layout, "list", "", Known());
+        ExpectRefused(layout, noChoice, "choose the panel to swap list with");
+        QCOMPARE(noChoice.Refused,
+                 QString("choose the panel to swap list with: use \"Swap "
+                         "with…\" in the panel menu"));
         const Layout alone = {.Root = Leaf("list", "sessions.list")};
-        ExpectRefused(alone, SwapPanels(alone, "list", "terminal"),
+        ExpectRefused(alone, SwapPanels(alone, "list", "terminal", Known()),
                       "there is no panel terminal");
     }
 
@@ -432,7 +541,7 @@ private slots:
 
     void TabMovesOnePlaceAndTheShownTabIsTheSamePanel() {
         // The shown tab moves with its panel.
-        const LayoutEdit right = MoveTab(ListAndTabs(1), "t2", true);
+        const LayoutEdit right = MoveTab(ListAndTabs(1), "t2", true, Known());
         QVERIFY(right.Refused.isEmpty());
         QVERIFY(right.Changed);
         QCOMPARE(Instances(right.Tree.Root.Children[1]),
@@ -444,28 +553,50 @@ private slots:
         QCOMPARE(right.Tree.Root.Sizes, ListAndTabs(1).Root.Sizes);
         QVERIFY(IsCanonical(right.Tree.Root));
 
-        const LayoutEdit left = MoveTab(ListAndTabs(1), "t2", false);
+        const LayoutEdit left = MoveTab(ListAndTabs(1), "t2", false, Known());
         QCOMPARE(Instances(left.Tree.Root.Children[1]),
                  (QStringList{"t2", "terminal", "t3"}));
         QCOMPARE(left.Tree.Root.Children[1].Active, 0);
 
         // A hidden tab that passes the shown one: the shown one steps aside.
-        const LayoutEdit passes = MoveTab(ListAndTabs(1), "t3", false);
+        const LayoutEdit passes = MoveTab(ListAndTabs(1), "t3", false, Known());
         QCOMPARE(Instances(passes.Tree.Root.Children[1]),
                  (QStringList{"terminal", "t3", "t2"}));
         QCOMPARE(passes.Tree.Root.Children[1].Active, 2);
         // A hidden tab elsewhere: the shown one stays.
-        const LayoutEdit apart = MoveTab(ListAndTabs(0), "t3", false);
+        const LayoutEdit apart = MoveTab(ListAndTabs(0), "t3", false, Known());
         QCOMPARE(Instances(apart.Tree.Root.Children[1]),
                  (QStringList{"terminal", "t3", "t2"}));
         QCOMPARE(apart.Tree.Root.Children[1].Active, 0);
         // Right then left is the tree as it was.
-        QCOMPARE(MoveTab(right.Tree, "t2", false).Tree, ListAndTabs(1));
+        QCOMPARE(MoveTab(right.Tree, "t2", false, Known()).Tree,
+                 ListAndTabs(1));
+    }
+
+    // The tab of a hidden list has no button: the move steps over it, and the
+    // first tab with a button is the first tab.
+    void TabMoveStepsOverTheTabsOfHiddenLists() {
+        Layout layout = {
+            .Root =
+                Tabs({Term("a"), Leaf("list", "sessions.list"), Term("b")}, 2)};
+        layout.ListsHidden = true;
+        const LayoutEdit left = MoveTab(layout, "b", false, Known());
+        QVERIFY(left.Refused.isEmpty());
+        QCOMPARE(Instances(left.Tree.Root), (QStringList{"b", "list", "a"}));
+        QCOMPARE(left.Tree.Root.Active, 0);
+        ExpectRefused(layout, MoveTab(layout, "a", false, Known()),
+                      "a is already the first tab");
+        ExpectRefused(layout, MoveTab(layout, "b", true, Known()),
+                      "b is already the last tab");
+        // The lists shown again: the list is a tab like any other.
+        layout.ListsHidden = false;
+        QCOMPARE(Instances(MoveTab(layout, "b", false, Known()).Tree.Root),
+                 (QStringList{"a", "b", "list"}));
     }
 
     void TabMoveKeepsLinksAndInstances() {
         const Layout layout = ListAndTabs(0);
-        const LayoutEdit edit = MoveTab(layout, "terminal", true);
+        const LayoutEdit edit = MoveTab(layout, "terminal", true, Known());
         QVERIFY(edit.Changed);
         QCOMPARE(*FindLeaf(edit.Tree.Root, "terminal"),
                  *FindLeaf(layout.Root, "terminal"));
@@ -476,16 +607,16 @@ private slots:
 
     void TabMoveIsRefusedAtTheEndsAndOutsideAStack() {
         const Layout layout = ListAndTabs(0);
-        ExpectRefused(layout, MoveTab(layout, "terminal", false),
+        ExpectRefused(layout, MoveTab(layout, "terminal", false, Known()),
                       "terminal is already the first tab");
-        ExpectRefused(layout, MoveTab(layout, "t3", true),
+        ExpectRefused(layout, MoveTab(layout, "t3", true, Known()),
                       "t3 is already the last tab");
-        ExpectRefused(layout, MoveTab(layout, "list", true),
+        ExpectRefused(layout, MoveTab(layout, "list", true, Known()),
                       "list is not in tabs");
-        ExpectRefused(layout, MoveTab(layout, "nope", true),
+        ExpectRefused(layout, MoveTab(layout, "nope", true, Known()),
                       "there is no panel nope");
         const Layout alone = {.Root = Leaf("list", "sessions.list")};
-        ExpectRefused(alone, MoveTab(alone, "list", false),
+        ExpectRefused(alone, MoveTab(alone, "list", false, Known()),
                       "list is not in tabs");
     }
 
@@ -498,7 +629,7 @@ private slots:
         }
         const Layout before = Shell_->CurrentLayout();
         RunWritesOnce("list", "layout.swap", QJsonObject{{"with", "t2"}});
-        const Layout expected = SwapPanels(before, "list", "t2").Tree;
+        const Layout expected = SwapPanels(before, "list", "t2", Known()).Tree;
         QCOMPARE(Shell_->CurrentLayout(), expected);
         QCOMPARE(StoredLayout(), LayoutToJson(expected));
         // The panels are on their new places in the window, the sizes of the
@@ -516,6 +647,25 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list")->hasActiveFocus(),
                                  TIMEOUT_MS);
         QVERIFY(Problems().isEmpty());
+    }
+
+    // The list keeps its 320 pixels on the other side of the terminal.
+    void TheListKeepsItsSizeOnTheOtherSideOfTheTerminal() {
+        BootWith({.Root = Split(
+                      true, {Leaf("list", "sessions.list"), Term("terminal")},
+                      {LayoutSize::Px(320), LayoutSize::Rest()})});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        RunWritesOnce("list", "layout.swap", QJsonObject{{"with", "terminal"}});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            SlotByInstance("list") != nullptr &&
+                SlotByInstance("terminal") != nullptr &&
+                SlotByInstance("list")->mapToScene(QPointF(0, 0)).x() >
+                    SlotByInstance("terminal")->mapToScene(QPointF(0, 0)).x() &&
+                qAbs(SlotByInstance("list")->width() - 320) < 8,
+            TIMEOUT_MS);
+        QVERIFY(SlotByInstance("terminal")->width() > 320);
     }
 
     void TheSwapMenuListsTheOtherPanelsAndSwaps() {
@@ -538,7 +688,7 @@ private slots:
         ClickSwapWith("list");
         QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 1, TIMEOUT_MS);
         QCOMPARE(Shell_->CurrentLayout(),
-                 SwapPanels(before, "terminal", "list").Tree);
+                 SwapPanels(before, "terminal", "list", Known()).Tree);
         QCOMPARE(StoredLayout(), LayoutToJson(Shell_->CurrentLayout()));
     }
 
@@ -562,7 +712,8 @@ private slots:
         }
         const Layout before = Shell_->CurrentLayout();
         RunWritesOnce("list", "layout.swap", QJsonObject{{"with", "terminal"}});
-        const Layout expected = SwapPanels(before, "list", "terminal").Tree;
+        const Layout expected =
+            SwapPanels(before, "list", "terminal", Known()).Tree;
 
         Restart();
         if (QTest::currentTestFailed()) {
@@ -657,6 +808,33 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!Item("menuTabLeft")->isEnabled() &&
                                      !Item("menuTabRight")->isEnabled(),
                                  TIMEOUT_MS);
+    }
+
+    void TheTabMenuItemIsOffOnTheLastTab() {
+        BootWith(ListAndTabs(2));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenMenuOn("t3");
+        QTRY_VERIFY_WITH_TIMEOUT(!Item("menuTabRight")->isEnabled(),
+                                 TIMEOUT_MS);
+        QVERIFY(Item("menuTabLeft")->isEnabled());
+    }
+
+    // The tab of a hidden list has no button: next to it nothing can move.
+    void TheTabMenuIgnoresTheTabsOfHiddenLists() {
+        Layout layout = ListAndTabs(0);
+        layout.Root.Children[1] =
+            Tabs({Leaf("list2", "sessions.list"), Term("terminal")}, 0);
+        layout.ListsHidden = true;
+        BootWith(layout);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenMenuOn("terminal");
+        QVERIFY(Item("menuTabLeft") != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(!Item("menuTabLeft")->isEnabled(), TIMEOUT_MS);
+        QVERIFY(!Item("menuTabRight")->isEnabled());
     }
 
     void ATabThatCannotMoveShowsInTheStripAndWritesNothing() {
