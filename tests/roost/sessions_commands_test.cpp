@@ -351,7 +351,7 @@ private slots:
                                           {"state", "done"},
                                           {"status", "idle"}})));
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QVERIFY(Ids().contains(GAMMA));
         QVERIFY(StoredHas(GAMMA));
         QCOMPARE(Role(ViewRow(static_cast<int>(Ids().indexOf(GAMMA))), "title")
@@ -428,7 +428,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Ids(), (QStringList{BETA, GAMMA, DELTA}),
                                   TIMEOUT_MS);
         // Not opened again by anything.
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
         QCOMPARE(Calls(), QStringList{ALPHA});
     }
@@ -624,18 +624,20 @@ private slots:
         QVERIFY(Put("respawn.nokill", ""));
         OpenAndBack(1);
         QVERIFY(PanelOf(TERMINAL)->setProperty("reopenWaitMs", 100));
+        QSignalSpy wanted(PanelOf(TERMINAL), SIGNAL(reopenWantedChanged()));
 
         AskAndConfirm(Qt::Key_R);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("respawned"), TIMEOUT_MS);
-        // The attach has to end later than the terminal's reopenWaitMs (100 ms)
-        // after the respawn, which no signal tells: a lower bound, so a slow
-        // runner only makes it later.
-        QTest::qWait(400);
+        // The attach has to end after the terminal's wish to reopen has lapsed
+        // (reopenWaitMs, 100 ms after the respawn): reopenWanted went true
+        // and then false.
+        QTRY_COMPARE_WITH_TIMEOUT(wanted.count(), 2, TIMEOUT_MS);
+        QVERIFY(!PanelOf(TERMINAL)->property("reopenWanted").toBool());
         Watch();
         QCOMPARE(::kill(static_cast<pid_t>(AttachPid(BETA)), SIGTERM), 0);
 
         QTRY_COMPARE_WITH_TIMEOUT(Status(), QString("ended"), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
         QCOMPARE(Status(), QString("ended"));
         QTRY_COMPARE_WITH_TIMEOUT(Calls(), QStringList{BETA}, TIMEOUT_MS);
@@ -656,7 +658,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Commands(), QStringList{"respawn " + BETA},
                                   TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("respawned"), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QCOMPARE(respawned.count(), 0);
         QCOMPARE(Calls(), QStringList{ALPHA});
         QCOMPARE(Status(), QString("open"));
@@ -821,7 +823,8 @@ private slots:
                                       .value(KeyOf(STARTED)),
                                   QJsonValue("Ops"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
-        WaitForEffects();
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        WAIT_FOR_EFFECTS();
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(activated.count(), 0);
     }
@@ -847,7 +850,7 @@ private slots:
         // The session is in the list of the panel itself, not only in
         // Roost.sessions.
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
@@ -878,7 +881,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
         // The session reached Roost.sessions; the view does not list it.
         QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
@@ -911,7 +914,7 @@ private slots:
         StartNewSession("do it");
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(!Ids().contains(STARTED));
         QVERIFY(SelectedId().isEmpty());
@@ -933,7 +936,7 @@ private slots:
                                           {"state", "done"},
                                           {"status", "idle"}})));
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(Calls().isEmpty());
@@ -969,7 +972,7 @@ private slots:
 
         QVERIFY(Put("agents.json", AgentsWithStarted()));
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QCOMPARE(TextOf("sessionsSearchInput"), QString("do"));
         QVERIFY(Part("sessionsSearchInput")->hasActiveFocus());
@@ -992,7 +995,7 @@ private slots:
 
         StartNewSession("do it");
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QVERIFY(SelectedId().isEmpty());
 
         MoveTo(STARTED);
@@ -1039,7 +1042,10 @@ private slots:
                                       .value(KeyOf(STARTED)),
                                   QJsonValue("Ops"), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
-        WaitForEffects();
+        // The header is folded: the list does not show the session, the
+        // model has it.
+        QTRY_COMPARE_WITH_TIMEOUT(SessionsCount(), 5, TIMEOUT_MS);
+        WAIT_FOR_EFFECTS();
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(activated.count(), 0);
         QCOMPARE(Cursor(), ON_HEADER);

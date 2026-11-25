@@ -511,6 +511,13 @@ void SessionsWindow::FlushDeferredCalls() {
 // after the answers delivered before it.
 void SessionsWindow::WaitForEffects() {
     const auto answered = std::make_shared<bool>(false);
+    // What the deferred calls send (a sync after scheduleSync, a callback in
+    // the second hop of an answer) must be on the connection before the
+    // barrier request, and what the answers defer must run after it.
+    FlushDeferredCalls();
+    if (QTest::currentTestFailed()) {
+        return;
+    }
     Api_->Store()
         .Get(QStringLiteral("barrier"))
         .then(this, [answered](const rpc::Result&) { *answered = true; });

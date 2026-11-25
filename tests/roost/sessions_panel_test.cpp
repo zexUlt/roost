@@ -469,7 +469,7 @@ private slots:
 
         PressWhenSettled(Qt::Key_Return);
         PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(ListView()->hasActiveFocus());
         QVERIFY(!Terminal()->hasActiveFocus());
@@ -484,7 +484,7 @@ private slots:
         Watch();
 
         PressRepeated(Qt::Key_Return);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(SelectedId().isEmpty());
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
@@ -508,7 +508,7 @@ private slots:
         PressWhenSettled(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(SelectedId(), ALPHA, TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QVERIFY(ListView()->hasActiveFocus());
     }
 
@@ -528,7 +528,7 @@ private slots:
 
         PressWhenSettled(Qt::Key_Return);
         PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QCOMPARE(changed.count(), 0);
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
@@ -582,7 +582,7 @@ private slots:
         // by it either.
         QVERIFY(ListWithout({ALPHA, DELTA}));
         QTRY_COMPARE_WITH_TIMEOUT(Count(), 2, TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QCOMPARE(SelectedId(), BETA);
         QCOMPARE(Status(), QString("open"));
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
@@ -616,7 +616,7 @@ private slots:
         PressWhenSettled(Qt::Key_Enter, Qt::KeypadModifier);
         Press(Qt::Key_Down);
         Press(Qt::Key_J);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QCOMPARE(Cursor(), NO_CURSOR);
         // `selected` is still null, not a ref of nothing.
         QVERIFY(PanelOf(LIST)->property("selected").isNull());
@@ -680,7 +680,7 @@ private slots:
         // The reset of the disconnect has settled, so the panel's reconcile has
         // run, and a wrong one has cleared the selection.
         WaitUntilSettled();
-        FlushDeferredCalls();
+        FLUSH_DEFERRED_CALLS();
         QCOMPARE(SelectedId(), BETA);
 
         QVERIFY(StartDaemon());
@@ -771,7 +771,7 @@ private slots:
         QVERIFY2(!refresh.hasError(), qPrintable(refresh.error().toString()));
         QTRY_COMPARE_WITH_TIMEOUT(pressed, 1, TIMEOUT_MS);
         WaitUntilSettled();
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(Status(), QString("none"));
@@ -805,7 +805,7 @@ private slots:
         QVERIFY2(!refresh.hasError(), qPrintable(refresh.error().toString()));
         QTRY_COMPARE_WITH_TIMEOUT(reset.count(), 1, TIMEOUT_MS);
         WaitUntilSettled();
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QCOMPARE(Cursor(), 2);
         QCOMPARE(CursorId(), DELTA);
@@ -947,9 +947,10 @@ private slots:
         PressWhenSettled(Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
         QTest::keyClick(Window(), 'w');
-        QTRY_VERIFY_WITH_TIMEOUT(
-            !ScreenNow().contains(QRegularExpression("total=1(?!\\d)")),
-            TIMEOUT_MS);
+        // The positive sign: a read can split the erase of the line and its
+        // text, so the absence of total=1 is not the sign of total=2.
+        QTRY_VERIFY_WITH_TIMEOUT(ScreenNow().contains("input w total=2"),
+                                 TIMEOUT_MS);
         const QString screen = ScreenNow();
         QVERIFY2(screen.contains("input w total=2"), qPrintable(screen));
         QVERIFY2(!screen.contains("x1c"), qPrintable(screen));
@@ -974,7 +975,7 @@ private slots:
 
         QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
         QVERIFY(!ListView()->hasActiveFocus());
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QCOMPARE(changed.count(), 0);
         QVERIFY2(!Opened(), qPrintable(Changes_.join(", ")));
         QCOMPARE(SelectedId(), BETA);
@@ -993,7 +994,7 @@ private slots:
         // After each press: a toggle is back in the list after the second.
         for (int i = 0; i < 2; ++i) {
             Press(Qt::Key_Backslash, CONTROL_KEY);
-            WaitForEffects();
+            WAIT_FOR_EFFECTS();
             QVERIFY(ListView()->hasActiveFocus());
             QVERIFY(!Terminal()->hasActiveFocus());
         }
@@ -1182,7 +1183,7 @@ private slots:
         // the session that is gone, it has done.
         WaitForThePanelToStopWriting();
         WaitUntilSettled();
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         // `selected` never held the session that is gone, not for a moment.
         QVERIFY(SelectedSpy_ != nullptr);
         QCOMPARE(SelectedSpy_->count(), 0);
@@ -1225,7 +1226,7 @@ private slots:
             return;
         }
         Invoke("toggleFold", QString());
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
 
         QCOMPARE(ReadFile(Dir_->filePath("config/sessions.json")), broken);
     }
@@ -1273,7 +1274,7 @@ private slots:
                                   QString("disconnected"), TIMEOUT_MS);
         // Nowhere to write: the fold waits (the list shows nothing meanwhile).
         Invoke("toggleFold", QString());
-        FlushDeferredCalls();
+        FLUSH_DEFERRED_CALLS();
         // The document meanwhile: a category for BETA, written by someone else.
         QVERIFY(WriteStoreFile(
             QStringLiteral(
@@ -1317,7 +1318,7 @@ private slots:
         QVERIFY(!Role(0, "folded").toBool());
         // The cursor went in, to the first session of the category.
         QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
-        WaitForEffects();
+        WAIT_FOR_EFFECTS();
         QCOMPARE(activated.count(), 0);
         QCOMPARE(selected.count(), 0);
         QVERIFY(SelectedId().isEmpty());
