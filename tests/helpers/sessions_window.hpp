@@ -103,6 +103,24 @@ QString Greeting(const QString& id);
 
 QByteArray ReadFile(const QString& path);
 
+// The waits of the window are void functions with QTRY_* inside: a failure
+// ends the function only. These end the case at the first failure, so that it
+// does not go on to the checks that follow and fail again for the same cause.
+#define WAIT_FOR_EFFECTS()                \
+    do {                                  \
+        WaitForEffects();                 \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+#define FLUSH_DEFERRED_CALLS()            \
+    do {                                  \
+        FlushDeferredCalls();             \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+
 class SessionsWindow : public QObject {
 public:
     // The start and the end of a test case: a new directory for the daemon, the
@@ -246,6 +264,23 @@ public:
     // The checks and the press that follow in the same turn of the event loop
     // meet no reset.
     void WaitUntilSettled();
+
+    // The barrier of a check that something did not happen: flushes the
+    // deferred calls (what they send goes out first), sends a request to
+    // roostd and waits for its answer, flushes again. roostd answers the
+    // `store.*` requests synchronously and in order on the one connection, so
+    // the answers to what the earlier events sent have been handled by then.
+    // Not covered: an effect that comes from an adapter poll (`commands.run`,
+    // `sessions.list`, opening a terminal); wait for that answer itself (the
+    // list with the session, the terminal) before the check.
+    // A failure leaves the case failed: call it through WAIT_FOR_EFFECTS.
+    void WaitForEffects();
+
+    // The deferred calls (Qt.callLater, queued signals) that are queued now
+    // and those they queue have run. For a check while roostd is away, where
+    // there is no answer to wait for.
+    // A failure leaves the case failed: FLUSH_DEFERRED_CALLS ends it.
+    void FlushDeferredCalls();
 
     // Press, once the list is not being replaced; for the Enter that the list
     // must take. Keys that a field or a confirmation takes need no wait.
