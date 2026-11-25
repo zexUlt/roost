@@ -17,6 +17,7 @@
 #include <mutex>
 
 #include "core/rpc_client.hpp"
+#include "helpers/warning_filter.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/sessions_model.hpp"
 #include "roost/controls_style.hpp"
@@ -48,13 +49,8 @@ QString Screen(const std::shared_ptr<TerminalSession>& session) {
     return QString::fromUtf8(session->Dump(lock).value_or("dump failed"));
 }
 
-// Every warning fails the test but one of Qt's font database, which the first
-// text of a process draws with and which depends on the machine's fonts.
-void FailOnWarnings() {
-    QTest::failOnWarning(QRegularExpression(
-        QStringLiteral(R"(^(?!Populating font family aliases))"),
-        QRegularExpression::DotMatchesEverythingOption));
-}
+// Every warning fails the test but the ones that WarningFilter lets through.
+void FailOnWarnings() { QTest::failOnWarning(WarningFilter()); }
 
 QString Greeting(const QString& id) { return "greeting=" + id; }
 

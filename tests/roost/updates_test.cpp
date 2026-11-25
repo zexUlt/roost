@@ -50,6 +50,17 @@ Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
 
 namespace {
 
+#ifdef Q_OS_MACOS
+// The limit for a wait that the macOS install has to end first. The install
+// runs the real hdiutil (attach, detach) of the system, and each of the two
+// takes from a fraction of a second to several seconds when the machine is
+// loaded (10.6 s together was seen at load 60; every other step is under 20
+// ms), so TIMEOUT_MS is too short for it. 60 s bounds a hang of these tool
+// steps together; the product gives the attach alone 120 s and a detach 30 s
+// (update_install_macos.cpp). Only the macOS install cases use it.
+constexpr int INSTALL_TIMEOUT_MS = 60000;
+#endif
+
 const QString RELEASE_PAGE =
     QStringLiteral("https://github.com/zexUlt/roost/releases/tag/test");
 const QRegularExpression FAILED_WARNING(
@@ -1475,7 +1486,7 @@ private slots:
         QVERIFY(Relaunched_.isEmpty());
 
         ClickItem(InstallButton());
-        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, INSTALL_TIMEOUT_MS);
         // The new bundle is in place, started, and this window quit once.
         QCOMPARE(InstalledMarker(), QByteArray("new"));
         QCOMPARE(Relaunched_, QStringList{Installed()});
@@ -1525,7 +1536,7 @@ private slots:
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
         Server_->Hold(false);
         Server_->ReleaseHeld();
-        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, INSTALL_TIMEOUT_MS);
         QCOMPARE(InstalledMarker(), QByteArray("new"));
     }
 
@@ -1563,7 +1574,7 @@ private slots:
         QVERIFY(QFile::setPermissions(
             directory, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         ClickItem(InstallButton());
-        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, INSTALL_TIMEOUT_MS);
         QCOMPARE(InstalledMarker(), QByteArray("new"));
         QCOMPARE(Server_->AskedFor(AssetPath("v9.9.9", PackageName())), 1);
     }
@@ -1585,7 +1596,7 @@ private slots:
                 "cannot start it: no way"));
         ClickItem(InstallButton());
         QTRY_COMPARE_WITH_TIMEOUT(InstallState(), QString("failed"),
-                                  TIMEOUT_MS);
+                                  INSTALL_TIMEOUT_MS);
         QCOMPARE(Relaunched_, QStringList{Installed()});
         QCOMPARE(Quits_, 0);
         QVERIFY(StripText().contains("roost 9.9.9 is installed"));
@@ -1679,7 +1690,7 @@ private slots:
         const auto gate = HoldTrash();
         QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
         ClickItem(InstallButton());
-        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), INSTALL_TIMEOUT_MS);
         QCOMPARE(InstallState(), QString("installing"));
 
         // The newer release is found by a check made now.
@@ -1742,7 +1753,7 @@ private slots:
         const auto gate = HoldTrash();
         QTRY_VERIFY_WITH_TIMEOUT(InstallButton()->isVisible(), TIMEOUT_MS);
         ClickItem(InstallButton());
-        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(gate->Reached.load(), INSTALL_TIMEOUT_MS);
         SetCheck(false);
         QTRY_VERIFY_WITH_TIMEOUT(!Singleton_->updates()->enabled(), TIMEOUT_MS);
         // The setting is off, and the install is still shown.
