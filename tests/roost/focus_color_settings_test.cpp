@@ -360,25 +360,30 @@ private slots:
     void ADocumentThatIsWrongIsRefusedWithAReason_data() {
         QTest::addColumn<QJsonValue>("focusColor");
         QTest::addColumn<QString>("reason");
+        // Whether the box has no preset to show, so that it shows Base.
+        QTest::addColumn<bool>("boxIsBase");
         QTest::newRow("not an object")
-            << QJsonValue("red") << "settings.focusColor must be an object";
+            << QJsonValue("red") << "settings.focusColor must be an object"
+            << true;
         QTest::newRow("unknown preset")
             << QJsonValue(QJsonObject{{"preset", "neon"}})
-            << "settings.focusColor.preset must be base, contrast or custom";
+            << "settings.focusColor.preset must be base, contrast or custom"
+            << true;
         QTest::newRow("custom without a colour")
             << QJsonValue(QJsonObject{{"preset", "custom"}})
-            << "settings.focusColor.custom must be a colour #rrggbb";
+            << "settings.focusColor.custom must be a colour #rrggbb" << false;
         QTest::newRow("custom not a colour")
             << QJsonValue(QJsonObject{{"preset", "custom"}, {"custom", "red"}})
-            << "settings.focusColor.custom must be a colour #rrggbb";
+            << "settings.focusColor.custom must be a colour #rrggbb" << false;
         QTest::newRow("custom not a string")
             << QJsonValue(QJsonObject{{"preset", "custom"}, {"custom", 7}})
-            << "settings.focusColor.custom must be a colour #rrggbb";
+            << "settings.focusColor.custom must be a colour #rrggbb" << false;
     }
 
     void ADocumentThatIsWrongIsRefusedWithAReason() {
         QFETCH(QJsonValue, focusColor);
         QFETCH(QString, reason);
+        QFETCH(bool, boxIsBase);
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         auto window = OpenReadWindow();
         QVERIFY(window);
@@ -400,6 +405,16 @@ private slots:
         QCOMPARE(window->Problems().size(), 1);
         QVERIFY2(window->Problems().first().contains(reason),
                  qPrintable(window->Problems().first()));
+        QCOMPARE(window->ProblemSettings(), QStringList{"focusColor"});
+        // A document with no preset the box knows shows Base, not nothing;
+        // the reason is under the box.
+        if (boxIsBase) {
+            QTRY_COMPARE_WITH_TIMEOUT(
+                window->Find("focusPresetBox")->property("currentIndex"),
+                QVariant(PRESET_BASE), TIMEOUT_MS);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(
+            window->Find("focusColorProblems")->isVisible(), TIMEOUT_MS);
 
         QVERIFY(window->Choose(PRESET_BASE));
         QTRY_COMPARE_WITH_TIMEOUT(window->Focus(), BASE, TIMEOUT_MS);

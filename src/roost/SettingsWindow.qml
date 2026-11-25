@@ -108,7 +108,9 @@ ApplicationWindow {
                 field.text = field.shown();
             }
         }
-        focusPresetBox.currentIndex = focusPresets.indexOf(focusColor.preset ?? "base");
+        // A preset that the box does not know shows Base, as the theme takes
+        // it (and says so in its problems), not an empty box.
+        focusPresetBox.currentIndex = Math.max(0, focusPresets.indexOf(focusColor.preset ?? "base"));
         updatesCheckSwitch.checked = updatesCheck;
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
     }
