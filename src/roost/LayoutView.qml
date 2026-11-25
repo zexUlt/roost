@@ -283,29 +283,48 @@ Item {
         return null;
     }
 
-    // Moves the keyboard to the list: the list that feeds the panel that has
-    // it, or the first list of the layout. In a list it does nothing.
-    function focusList() {
+    // The list the keyboard belongs to: the list that has it, the list that
+    // feeds the panel that has it, or the first list of the layout. null when
+    // there is none.
+    function listOfKeyboard() {
         for (const id of Object.keys(view.slots)) {
             const slot = view.slots[id];
             if (!slot.activeFocus) {
                 continue;
             }
             if (view.listTypes.includes(slot.panelType)) {
-                return;
+                return slot;
             }
             for (const link of slot.links) {
                 const source = view.slotOf(link.from);
                 if (source !== null && source.panel !== null) {
-                    source.forceActiveFocus();
-                    return;
+                    return source;
                 }
             }
         }
         const leaf = view.firstLeaf(view.tree, view.listTypes);
-        const slot = leaf === null ? null : view.slotOf(leaf.instance);
-        if (slot !== null) {
+        return leaf === null ? null : view.slotOf(leaf.instance);
+    }
+
+    // Moves the keyboard to the list: the list that feeds the panel that has
+    // it, or the first list of the layout. In a list it does nothing.
+    function focusList() {
+        const slot = view.listOfKeyboard();
+        if (slot !== null && !slot.activeFocus) {
             slot.forceActiveFocus();
+        }
+    }
+
+    // Opens the form of a new session in the list of the keyboard (the same one
+    // as focusList): the keyboard goes to its Task field. The lists hidden:
+    // nothing happens, as with focusList there is no list to open it in.
+    function newSession() {
+        if (view.listsHidden) {
+            return;
+        }
+        const slot = view.listOfKeyboard();
+        if (slot !== null && slot.panel !== null) {
+            slot.panel.openNewForm();
         }
     }
 
@@ -329,6 +348,10 @@ Item {
         for (const id of Object.keys(actions)) {
             Roost.commands.registerCommand(id, args => view.edit(actions[id], args ?? {}, ""));
         }
+        // sessions.newSession is declared by the manifest of the plugin
+        // `sessions`; the window runs it, as it runs the layout commands, because
+        // the list it names depends on the links of the panel that has the keyboard.
+        Roost.commands.registerCommand("sessions.newSession", () => view.newSession());
     }
 
     LayoutNode {
