@@ -247,6 +247,19 @@ public:
     // meet no reset.
     void WaitUntilSettled();
 
+    // The barrier of a check that something did not happen: returns once
+    // roostd has answered a request sent now, which comes after the answers to
+    // the requests that the earlier events sent (one connection, one order of
+    // delivery), and once the calls the panels deferred in those turns of the
+    // event loop have run. What a key or an answer could still start has
+    // started by then, so the check that follows sees it.
+    void WaitForEffects();
+
+    // The deferred calls (Qt.callLater, queued signals) that are queued now
+    // and those they queue have run. For a check while roostd is away, where
+    // there is no answer to wait for.
+    void FlushDeferredCalls();
+
     // Press, once the list is not being replaced; for the Enter that the list
     // must take. Keys that a field or a confirmation takes need no wait.
     void PressWhenSettled(Qt::Key key,

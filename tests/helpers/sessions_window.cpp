@@ -496,6 +496,32 @@ void SessionsWindow::WaitUntilSettled() {
                              TIMEOUT_MS);
 }
 
+// Each round is an event queued behind everything queued before it, so a
+// call a panel deferred runs before the round ends; the calls those make are
+// the next rounds'. The panels defer at most a few calls deep.
+void SessionsWindow::FlushDeferredCalls() {
+    constexpr int rounds = 5;
+    for (int round = 0; round < rounds; ++round) {
+        bool ran = false;
+        QMetaObject::invokeMethod(
+            this, [&ran] { ran = true; }, Qt::QueuedConnection);
+        QTRY_VERIFY_WITH_TIMEOUT(ran, TIMEOUT_MS);
+    }
+}
+
+// A document of a plugin that is not loaded is not cached, so that Get asks
+// roostd, which answers with an error: a round trip that changes nothing. The
+// future finishes in the IO thread; the continuation runs in this one, queued
+// after the answers delivered before it.
+void SessionsWindow::WaitForEffects() {
+    const auto answered = std::make_shared<bool>(false);
+    Api_->Store()
+        .Get(QStringLiteral("barrier"))
+        .then(this, [answered](const rpc::Result&) { *answered = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(*answered, TIMEOUT_MS);
+    FlushDeferredCalls();
+}
+
 void SessionsWindow::PressWhenSettled(Qt::Key key,
                                       Qt::KeyboardModifiers modifiers) {
     WaitUntilSettled();

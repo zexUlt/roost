@@ -582,14 +582,14 @@ private slots:
         }
         QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MIN, TIMEOUT_MS);
         Press(Qt::Key_Comma);
-        QTest::qWait(50);
+        WaitForEffects();
         QCOMPARE(ListWidth(), WIDTH_MIN);
         for (int i = 0; i < 30; ++i) {
             Press(Qt::Key_Period);
         }
         QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MAX, TIMEOUT_MS);
         Press(Qt::Key_Period);
-        QTest::qWait(50);
+        WaitForEffects();
         QCOMPARE(ListWidth(), WIDTH_MAX);
     }
 
@@ -618,7 +618,7 @@ private slots:
             }
         }
         // Control+Shift+/ also: the "?" of a layout with a modifier.
-        QTest::qWait(50);
+        WaitForEffects();
         QVERIFY(!HelpOpen());
         QCOMPARE(TabNow(), QString("all"));
         QCOMPARE(Kinds(), kinds);
@@ -830,7 +830,7 @@ private slots:
         Press(Qt::Key_Enter, Qt::KeypadModifier);
         Press(Qt::Key_Tab);
         Press(Qt::Key_Backtab, Qt::ShiftModifier);
-        QTest::qWait(50);
+        WaitForEffects();
 
         QVERIFY(HelpOpen());
         QVERIFY(SelectedId().isEmpty());
@@ -866,7 +866,7 @@ private slots:
         held(Qt::Key_P, "p");
         held(Qt::Key_Z, "z");
         held(Qt::Key_Question, "?", Qt::ShiftModifier);
-        QTest::qWait(100);
+        WaitForEffects();
 
         QVERIFY(!HelpOpen());
         QCOMPARE(TabNow(), QString("all"));
@@ -880,7 +880,7 @@ private slots:
         Press(Qt::Key_Z);
         QTRY_VERIFY_WITH_TIMEOUT(Role(0, "folded").toBool(), TIMEOUT_MS);
         held(Qt::Key_Z, "Z", Qt::ShiftModifier);
-        QTest::qWait(100);
+        WaitForEffects();
         QVERIFY(Role(0, "folded").toBool());
         Press(Qt::Key_Z, Qt::ShiftModifier);
         QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
@@ -888,7 +888,7 @@ private slots:
         QVERIFY(HelpOpen());
         held(Qt::Key_Question, "?", Qt::ShiftModifier);
         held(Qt::Key_Escape, QString());
-        QTest::qWait(50);
+        WaitForEffects();
         QVERIFY(HelpOpen());
         Press(Qt::Key_Escape);
         QVERIFY(!HelpOpen());
@@ -913,7 +913,7 @@ private slots:
         for (const Qt::Key key : {Qt::Key_A, Qt::Key_V, Qt::Key_M, Qt::Key_P}) {
             Press(key, Qt::ShiftModifier);
         }
-        QTest::qWait(100);
+        WaitForEffects();
 
         QCOMPARE(TabNow(), QString("all"));
         QCOMPARE(Title(), QString("Sessions"));
