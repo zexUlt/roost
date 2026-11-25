@@ -937,6 +937,31 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
         UpdateProblems();
         return;
     }
+    // These two act on the whole layout, not on a panel.
+    if (action == QLatin1String("reset") || action == QLatin1String("undo")) {
+        LayoutEdit whole;
+        if (action == QLatin1String("reset")) {
+            whole = ResetLayout(Layout_, Loader_.PanelTypes(), KnownPanels());
+        } else if (std::optional<Layout> before = PopLayoutHistory(History_)) {
+            whole = {.Tree = std::move(*before),
+                     .Refused = {},
+                     .Focus = {},
+                     .Changed = true};
+        } else {
+            whole.Refused = QStringLiteral("there is nothing to undo");
+        }
+        EditProblem_ = whole.Refused;
+        if (whole.Refused.isEmpty() && whole.Changed) {
+            if (action == QLatin1String("reset")) {
+                PushLayoutHistory(History_, Layout_);
+            }
+            ApplyLayout(std::move(whole.Tree));
+            SaveLayout();
+        }
+        PublishCanUndo();
+        UpdateProblems();
+        return;
+    }
     if (instance.isEmpty()) {
         EditProblem_ = QStringLiteral("no panel to edit");
         UpdateProblems();
@@ -987,8 +1012,10 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
     }
     EditProblem_ = edit.Refused;
     if (edit.Refused.isEmpty() && edit.Changed) {
+        PushLayoutHistory(History_, Layout_);
         ApplyLayout(edit.Tree);
         SaveLayout();
+        PublishCanUndo();
     }
     UpdateProblems();
     if (action == QLatin1String("setLink")) {
@@ -998,6 +1025,13 @@ void Shell::OnLayoutEdit(const QString& action, const QVariant& args) {
         Root_.metaObject()->indexOfMethod("focusInstance(QVariant)") >= 0) {
         QMetaObject::invokeMethod(&Root_, "focusInstance",
                                   Q_ARG(QVariant, edit.Focus));
+    }
+}
+
+void Shell::PublishCanUndo() {
+    const bool canUndo = !History_.empty();
+    if (Root_.property("canUndo").toBool() != canUndo) {
+        Root_.setProperty("canUndo", canUndo);
     }
 }
 

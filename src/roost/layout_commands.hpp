@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <cstddef>
+#include <deque>
 #include <optional>
 #include <vector>
 
@@ -74,6 +76,28 @@ LayoutEdit SetLink(const Layout& layout, const QString& instance,
 // Removes the link of the input; not a refusal when there is none.
 LayoutEdit RemoveLink(const Layout& layout, const QString& instance,
                       const QString& input);
+
+// Replaces the layout with the default one for the panel types of `order` (the
+// types in load order of their plugins), DefaultLayoutFor: the leaves of the
+// default keep their instance ids, the panels that are not in it go with their
+// links. Not a refusal when the layout is the default already (`Changed` is
+// false). The window asks the user first.
+LayoutEdit ResetLayout(const Layout& layout, const QStringList& order,
+                       const LayoutKnownPanels& known);
+
+// The documents of the recent edits, the newest last, for the undo: the window
+// keeps them in memory only.
+using LayoutHistory = std::deque<Layout>;
+
+// How many edits can be undone.
+inline constexpr std::size_t LAYOUT_HISTORY_DEPTH = 20;
+
+// Puts the document as it was before an edit in the history; the oldest goes
+// when there are `LAYOUT_HISTORY_DEPTH` of them.
+void PushLayoutHistory(LayoutHistory& history, Layout before);
+
+// Takes the newest document out of the history; none when it is empty.
+std::optional<Layout> PopLayoutHistory(LayoutHistory& history);
 
 // Hides every list of sessions of the window, or shows them again when they
 // are hidden: only the state `ListsHidden` of the layout changes, no node, so

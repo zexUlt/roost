@@ -605,6 +605,27 @@ LayoutEdit RemoveLink(const Layout& layout, const QString& instance,
     return Done(std::move(tree), layout, instance);
 }
 
+LayoutEdit ResetLayout(const Layout& layout, const QStringList& order,
+                       const LayoutKnownPanels& known) {
+    return Done(DefaultLayoutFor(order, known).Tree, layout, {});
+}
+
+void PushLayoutHistory(LayoutHistory& history, Layout before) {
+    history.push_back(std::move(before));
+    while (history.size() > LAYOUT_HISTORY_DEPTH) {
+        history.pop_front();
+    }
+}
+
+std::optional<Layout> PopLayoutHistory(LayoutHistory& history) {
+    if (history.empty()) {
+        return std::nullopt;
+    }
+    Layout last = std::move(history.back());
+    history.pop_back();
+    return last;
+}
+
 std::vector<LayoutInputChoices> LinkChoices(const Layout& layout,
                                             const QString& instance,
                                             const LayoutKnownPanels& known) {
