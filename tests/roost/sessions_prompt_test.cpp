@@ -337,7 +337,7 @@ private slots:
         QVERIFY(!HelpOpen());
         QCOMPARE(Kinds(), kinds);
         QCOMPARE(widthSteps.count(), 0);
-        QTest::qWait(100);
+        WAIT_FOR_EFFECTS();
         QCOMPARE(widthSteps.count(), 0);
         QCOMPARE(ListWidth(), LIST_WIDTH);
         QCOMPARE(PromptKind(), QString("category"));
@@ -638,7 +638,7 @@ private slots:
 
         QVERIFY(PressAccepted(Qt::Key_Tab));
         QVERIFY(PressAccepted(Qt::Key_Backtab, Qt::ShiftModifier));
-        QTest::qWait(100);
+        WAIT_FOR_EFFECTS();
 
         QCOMPARE(PromptKind(), QString("category"));
         QVERIFY(Field()->hasActiveFocus());
