@@ -34,6 +34,23 @@ using namespace roost::testing;
 Q_IMPORT_QML_PLUGIN(Roost_ApiPlugin)
 Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
 
+// OpenForm() and ToName() end the case where they fail, so that one miss does
+// not turn into a chain of failed checks that follow from it.
+#define OPEN_FORM()                       \
+    do {                                  \
+        OpenForm();                       \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+#define TO_NAME()                         \
+    do {                                  \
+        ToName();                         \
+        if (QTest::currentTestFailed()) { \
+            return;                       \
+        }                                 \
+    } while (false)
+
 namespace {
 
 // The keys of the sessions in the document `sessions`.
@@ -212,15 +229,44 @@ private:
         ClickAt(item, item->width() / 2, item->height() / 2);
     }
 
-    // A click at a point of the item, in its own coordinates.
+    // The item is shown, has a size and its centre lies inside the window. An
+    // item whose layout has not run yet sits at the origin of its parent with
+    // no size, and a click at its centre lands on something else.
+    bool Placed(const QQuickItem* item) {
+        const QRectF window(QPointF(0, 0), QSizeF(Window()->size()));
+        return item->isVisible() && item->width() > 0 && item->height() > 0 &&
+               window.contains(item->mapToScene(
+                   QPointF(item->width() / 2, item->height() / 2)));
+    }
+
+    // The layouts run in the polish of a frame, before it is drawn: when a
+    // frame that was asked for after the call has been swapped, every layout
+    // that was pending at the call has run.
+    void WaitForFrame() {
+        QSignalSpy swapped(Window(), &QQuickWindow::frameSwapped);
+        Window()->update();
+        QVERIFY(!swapped.isEmpty() || swapped.wait(TIMEOUT_MS));
+    }
+
+    // A click at a point of the item, in its own coordinates, once the item
+    // has its place.
     void ClickAt(QQuickItem* item, qreal x, qreal y) {
+        QTRY_VERIFY_WITH_TIMEOUT(Placed(item), TIMEOUT_MS);
+        WaitForFrame();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(Placed(item), TIMEOUT_MS);
         QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
                           item->mapToScene(QPointF(x, y)).toPoint());
     }
 
-    // "+ New", then waits until the task has the keyboard.
+    // "+ New", then waits until the task has the keyboard. With the form open
+    // already, the button is hidden and there is nothing to click.
     void OpenForm() {
-        Click(Part("sessionsNewButton"));
+        if (!FormOpen()) {
+            Click(Part("sessionsNewButton"));
+        }
         QTRY_VERIFY_WITH_TIMEOUT(FormOpen(), TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
     }
@@ -281,7 +327,7 @@ private:
     // Every control of the form, as Tab reaches it, is inside the form when it
     // has the keyboard; Create and the link back included.
     void VerifyTabShowsEveryControl() {
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
         VerifyShown(TaskField(), "task");
         Tab();
@@ -420,7 +466,7 @@ private slots:
         QVERIFY(!Form()->isVisible());
         QCOMPARE(TextOf("sessionsNewButton"), QString("+ New"));
 
-        OpenForm();
+        OPEN_FORM();
 
         QVERIFY(Form()->isVisible());
         QVERIFY(!Part("sessionsHead")->isVisible());
@@ -444,7 +490,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
 
         Tab();
@@ -478,9 +524,9 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         QVERIFY(!CategoryName()->isVisible());
-        ToName();
+        TO_NAME();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
 
@@ -507,7 +553,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("Half");
 
         Press(Qt::Key_Escape);
@@ -515,7 +561,7 @@ private slots:
         VerifyListShown();
         QVERIFY(BgRan().isEmpty());
         // A form opened again starts empty.
-        OpenForm();
+        OPEN_FORM();
         QCOMPARE(TextOf("sessionsNewTask"), QString());
         QCOMPARE(TextOf("sessionsNewName"), QString());
     }
@@ -526,17 +572,17 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("x");
-        ToName();
+        TO_NAME();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Press(Qt::Key_Escape);
         VerifyListShown();
 
-        OpenForm();
+        OPEN_FORM();
         Type("x");
-        ToName();
+        TO_NAME();
         Tab();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
@@ -550,7 +596,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("Half");
 
         Click(BackLink());
@@ -565,9 +611,9 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
-        ToName();
+        TO_NAME();
         Type("Shipping");
         Tab();
         ChooseNewCategory();
@@ -603,9 +649,9 @@ private slots:
             Press(Qt::Key_Down);
         }
         QCOMPARE(CursorId(), ALPHA);
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
-        ToName();
+        TO_NAME();
         Type("Shipped");
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
@@ -650,9 +696,9 @@ private slots:
             return;
         }
         ArmStart();
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
-        ToName();
+        TO_NAME();
         Tab();
         ChooseNewCategory();
         Type("Brand new");
@@ -675,13 +721,13 @@ private slots:
             return;
         }
         ArmStart();
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
         // A task alone is enough.
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
                                  TIMEOUT_MS);
         Snap("2-task-only");
-        ToName();
+        TO_NAME();
         // A blank name is no name.
         Type("  ");
         Tab();
@@ -716,11 +762,11 @@ private slots:
             return;
         }
         ArmStart();
-        OpenForm();
+        OPEN_FORM();
         QVERIFY(!CreateButton()->property("enabled").toBool());
 
         // A name is not enough.
-        ToName();
+        TO_NAME();
         Type("Shipping");
         QVERIFY(!CreateButton()->property("enabled").toBool());
         // Enter in the name, in an empty task and in a blank one starts
@@ -820,7 +866,7 @@ private slots:
         }
         QTRY_VERIFY_WITH_TIMEOUT(!UnavailableNow().isEmpty(), TIMEOUT_MS);
 
-        OpenForm();
+        OPEN_FORM();
 
         // The form is in place of the list; the reason that no agent lists
         // is not hidden by it, and the form ends above it.
@@ -842,7 +888,7 @@ private slots:
         ArmStart();
         // The cursor starts on the header "Ops": the form takes its category.
         QCOMPARE(List()->property("cursorCategory").toString(), QString("Ops"));
-        OpenForm();
+        OPEN_FORM();
         QCOMPARE(CategoryBox()->property("currentText").toString(),
                  QString("Ops"));
         Type("Ship it");
@@ -908,6 +954,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)->height() <= 300, TIMEOUT_MS);
 
         VerifyTabShowsEveryControl();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         // The case means something only if the form does not fit: it was
         // scrolled to reach Create, and the hint is below the scrolled part.
         QQuickItem* scroll = Part("sessionsNewScroll");
@@ -925,7 +974,7 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
 
         // The controls are not lower than their text, and not lower than the
         // style says.
@@ -953,9 +1002,9 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
+        OPEN_FORM();
         Type("Ship it");
-        ToName();
+        TO_NAME();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         // Arrows on the closed box walk the entries and keep the keyboard.
@@ -984,8 +1033,8 @@ private slots:
         if (QTest::currentTestFailed()) {
             return;
         }
-        OpenForm();
-        ToName();
+        OPEN_FORM();
+        TO_NAME();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
 
