@@ -42,9 +42,11 @@ constexpr Qt::KeyboardModifiers PALETTE_MODIFIERS =
 
 #ifdef Q_OS_MACOS
 const QString PALETTE_KEY = QStringLiteral("Cmd+Shift+P");
+const QString NEW_KEY = QStringLiteral("Cmd+N");
 constexpr bool IS_MAC = true;
 #else
 const QString PALETTE_KEY = QStringLiteral("Ctrl+Shift+P");
+const QString NEW_KEY = QStringLiteral("Ctrl+Shift+N");
 constexpr bool IS_MAC = false;
 #endif
 
@@ -594,6 +596,32 @@ private slots:
             CellOf("terminal.copy", "key").toString(),
             IS_MAC ? "Cmd+C (terminal.view)" : "Ctrl+Shift+C (terminal.view)");
         QCOMPARE(CellOf("terminal.copy", "capturesInput").toBool(), !IS_MAC);
+    }
+
+    // The command of the plugin `sessions` is a row with its title and its
+    // key: Cmd+N on macOS, Ctrl+Shift+N elsewhere, in any panel, and the key
+    // clashes with no other.
+    void TheNewSessionCommandShowsItsKey() {
+        FailOnWarnings();
+        BootWithPlugins();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(CellOf("sessions.newSession", "title").toString(),
+                 QString("New session"));
+        QCOMPARE(CellOf("sessions.newSession", "key").toString(), NEW_KEY);
+        QCOMPARE(CellOf("sessions.newSession", "conflict").toString(),
+                 QString());
+        QCOMPARE(CellOf("sessions.newSession", "capturesInput").toBool(),
+                 !IS_MAC);
+        OpenByKey();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Type("sessions.newS");
+        QCOMPARE(Shown(), QStringList{"sessions.newSession"});
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKeyLabel("sessions.newSession"), NEW_KEY,
+                                  TIMEOUT_MS);
     }
 
     // The row shows each key with the panel it is active in: the same key in

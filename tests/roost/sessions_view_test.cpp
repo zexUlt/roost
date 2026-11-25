@@ -244,7 +244,9 @@ private slots:
         QCOMPARE(Title(), QString("Sessions"));
         // Only GAMMA is done.
         QCOMPARE(Tabs(), (QStringList{"All 4", "Active 3", "Unread 0"}));
-        QVERIFY(!Part("sessionsQuery")->isVisible());
+        QCOMPARE(Part("sessionsSearchInput")->property("text").toString(),
+                 QString());
+        QVERIFY(Part("sessionsSearchPlaceholder")->isVisible());
         QVERIFY(!Part("sessionsProblem")->isVisible());
         QVERIFY(!HelpOpen());
     }
@@ -747,16 +749,30 @@ private slots:
                  List()->property("problem").toString());
     }
 
-    void TheCursorStaysInView() {
-        FailOnWarnings();
+    // The cursor row stays in the viewport of a list that holds fewer rows
+    // than there are sessions. The window is sized from the measured heights
+    // (the head, the search field, the row and the header depend on the font),
+    // not from a number: the list gets room for a header and two rows.
+    void CheckTheCursorStaysInView() {
         Boot();
         if (QTest::currentTestFailed()) {
             return;
         }
-        // A window with room for three rows at most (the list is under 180
-        // px, below the head of the panel and the margins of the window).
-        Window()->setHeight(300);
-        QTRY_VERIFY_WITH_TIMEOUT(ListView()->height() < 180, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ViewItem(0) != nullptr && ViewItem(1) != nullptr, TIMEOUT_MS);
+        const qreal header = ViewItem(0)->height();
+        const qreal row = ViewItem(1)->height();
+        // What the window has besides the list does not depend on its height.
+        const qreal chrome = Window()->height() - ListView()->height();
+        const qreal room = header + 2 * row;
+        Window()->setHeight(static_cast<int>(chrome + room));
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(ListView()->height() - room) <= 1,
+                                 TIMEOUT_MS);
+        // The case means something only if a row and a header fit in the list
+        // and the whole content does not.
+        QVERIFY(ListView()->height() >= header + row);
+        QVERIFY(ListView()->height() <
+                ListView()->property("contentHeight").toReal());
 
         for (int i = 0; i < 3; ++i) {
             Press(Qt::Key_J);
@@ -778,6 +794,18 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(
             ListView()->property("contentY").toReal() <= ViewItem(1)->y(),
             TIMEOUT_MS);
+    }
+
+    void TheCursorStaysInView() {
+        FailOnWarnings();
+        CheckTheCursorStaysInView();
+    }
+
+    void TheCursorStaysInViewWithALargeInterfaceFont() {
+        FailOnWarnings();
+        SetAppFont(
+            [](QFont& font) { font.setPointSizeF(font.pointSizeF() * 2.5); });
+        CheckTheCursorStaysInView();
     }
 
     void TheHelpTakesEnterAndTab() {
@@ -990,19 +1018,21 @@ private slots:
             Press(Qt::Key_Comma);
         }
         QTRY_COMPARE_WITH_TIMEOUT(ListWidth(), WIDTH_MIN, TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsQuery")->isVisible(),
-                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Part("sessionsSearchPlaceholder")->isVisible(), TIMEOUT_MS);
 
         // Whatever is drawn in the head stays inside the panel: the query is
-        // elided and the tabs fit.
+        // clipped by its field and the tabs fit.
         const qreal panel = PanelOf(LIST)->width();
         QCOMPARE(panel, static_cast<qreal>(WIDTH_MIN));
         const auto right = [&](QQuickItem* item) {
             return item->mapToItem(PanelOf(LIST), QPointF(item->width(), 0))
                 .x();
         };
-        QVERIFY(right(Part("sessionsQuery")) <= panel);
-        QVERIFY(Part("sessionsQuery")->property("truncated").toBool());
+        QVERIFY(right(Part("sessionsSearch")) <= panel);
+        QVERIFY(right(Part("sessionsSearchInput")) <=
+                right(Part("sessionsSearch")));
+        QVERIFY(right(Part("sessionsNewButton")) <= panel);
         QVERIFY(Part("sessionsHead")->clip());
         QVERIFY(right(Part("sessionsTitle")) <= panel);
         QCOMPARE(TabItems().size(), 3);
