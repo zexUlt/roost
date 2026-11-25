@@ -508,6 +508,31 @@ target_compile_definitions(sessions_prompt_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(sessions_prompt_test roostd fake_tui claude-adapter sessions_qml)
 
+# The search field and the form of a new session of the sessions panel: the
+# keys between the list, the field and the form, the draft, and the start of a
+# session through the command of the agent.
+roost_add_qt_test(sessions_form_test roost/sessions_form_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(sessions_form_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(sessions_form_test roostd fake_tui claude-adapter sessions_qml)
+
+# The key of a new session (Cmd+N, Ctrl+Shift+N): the form opens in the list of
+# the keyboard, from the terminal too, and the program gets nothing.
+roost_add_qt_test(sessions_new_key_test roost/sessions_new_key_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(sessions_new_key_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(sessions_new_key_test roostd fake_tui claude-adapter sessions_qml)
+
 # The layout view of the window with two pairs of a list and a terminal: each
 # list drives its own terminal, a pair leaves the other connected, a terminal
 # that lost its session says so.
@@ -739,6 +764,7 @@ set_tests_properties(
     plugin_reload_test
     command_local_test
     shell_commands_test
+    sessions_new_key_test
     palette_test
     shell_test
     terminal_panel_test

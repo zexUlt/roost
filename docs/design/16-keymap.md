@@ -6,7 +6,7 @@
 
 ```json
 [
-  { "key": "Ctrl+Shift+N", "mac": "Cmd+N", "command": "claude.newSession" },
+  { "key": "Ctrl+Alt+N", "mac": "Cmd+Alt+N", "command": "claude.newSession" },
   { "key": "Ctrl+Shift+M", "mac": "Cmd+Shift+N", "command": "claude.newSession", "args": { "category": "work" } },
   { "key": "J", "command": "sessions.next", "when": "sessions.list" },
   { "mac": "Cmd+W", "command": null }
@@ -50,7 +50,7 @@
 
 ## Вклады плагинов
 
-- Вклад — та же запись без `args`, с обязательной `command`: `{ "command": "claude.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }`. Ключ `mac` взят у `contributes.keybindings` VS Code (https://code.visualstudio.com/api/references/contribution-points).
+- Вклад — та же запись без `args`, с обязательной `command`: `{ "command": "claude.newSession", "key": "Ctrl+Alt+N", "mac": "Cmd+Alt+N" }`. Ключ `mac` взят у `contributes.keybindings` VS Code (https://code.visualstudio.com/api/references/contribution-points).
 - Неразборная клавиша во вкладе — проблема: вклад не действует, остальной манифест грузится. Текст проблемы: `keybinding <номер с 0 в массиве вкладов> of plugin <id> is ignored: "key": <сообщение разбора>` (или `"mac"`). Клавиши разбирает реестр при `Add`; `ParseKeybindings` отвергает манифест только за структуру: нет id команды, ни `key`, ни `mac`, не строка в `key`, `mac` или `when`, команда другого плагина. Вклад только с `mac` на Linux не действует и проблемой не считается.
 - Вклад без `Cmd`, `Ctrl` и `Alt` (кроме F1–F24) и без `when` — проблема, он не действует, как и такая запись файла (см. «Ввод текста»). Текст: `keybinding <номер> of plugin <id> is ignored: <клавиша> has no Cmd, Ctrl or Alt: without "when" it would take the text typed into any panel`. Такая клавиша с `when` панели допустима.
 
@@ -64,7 +64,8 @@
 
 | Команда | Клавиша | Обработчик |
 |---|---|---|
-| `shell.focusList` | `Ctrl+\` (Control на обеих платформах), без `when` | `LayoutView.qml`: фокус в список, связанный с терминалом в фокусе (иначе в первый); в списке ничего не делает |
+| `shell.focusList` | `Ctrl+\` (Control на обеих платформах), без `when` | `LayoutView.qml`: фокус в видимый список, связанный с терминалом в фокусе (скрытая вкладка и незагруженная панель пропускаются; иначе в первый видимый); в списке ничего не делает |
+| `sessions.newSession` | `Ctrl+Shift+N`, `mac`: `Cmd+N`, без `when` (вклад плагина `sessions`, не `shell`) | `LayoutView.qml`: открывает форму новой сессии в списке, у которого клавиатура, иначе в видимом списке, связанном с терминалом в фокусе (список на скрытой вкладке и список с незагруженной панелью пропускаются: клавиша ничего не делает, если не нашлось загруженного), иначе в первом видимом; при скрытых списках ничего не делает (`06-panels.md`) |
 | `shell.reportBug` | `Cmd+Shift+B`, только `mac` | `Main.qml`: диалог отчёта об ошибке |
 | `shell.palette` | `Ctrl+Shift+P`, `mac`: `Cmd+Shift+P`, без `when` | `Main.qml`: палитра команд (см. «Палитра») |
 | `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md) |
@@ -75,6 +76,7 @@
 | `layout.toggleLists` | нет | `LayoutView.qml`: скрывает все списки сессий окна и показывает снова (`06-panels.md`, «Скрыть и показать списки») |
 | `layout.editLinks` | нет | `LayoutView.qml`: диалог связей панели |
 
+- `sessions.newSession` (вклад плагина `sessions`) объявлен в его манифесте, а обработчик ставит окно рядом с `layout.*`: список, в котором открыть форму, зависит от связей панели с клавиатурой (как у `shell.focusList`), а обработчик панели `sessions` получил бы команду только от списка в фокусе или бывшего в фокусе последним, не от связанного с терминалом. `Cmd+N` нигде больше не занят; на Linux `Ctrl+N` остаётся программе в терминале, поэтому там `Ctrl+Shift+N`, и палитра помечает её «перехватывает ввод». Пользователь переносит или снимает клавишу в `keymap.json`.
 - `Ctrl+Shift+P` (на macOS `Cmd+Shift+P`) — клавиша палитры: среди вкладов встроенных плагинов она свободна. На Linux это `Ctrl` с буквой, поэтому палитра помечает её «перехватывает ввод»: программа в терминале, которой нужна эта клавиша, её не получит; пользователь переносит палитру записью в `keymap.json`. Палитра открывается ещё кнопкой панели инструментов (Linux) и пунктом меню View (macOS). `Shortcut` без таблицы у палитры нет: без `roostd` команд нет, и показывать нечего.
 - `Cmd+Shift+B` на Linux не занят: `Ctrl+Shift+B` принадлежит программе в терминале. Окно отчёта открывается ещё кнопкой панели инструментов (Linux) и пунктом меню Help (macOS). Окно настроек — кнопкой «Settings…» панели инструментов (Linux) и пунктом «Settings…» меню (macOS); клавиши на Linux у `shell.settings` нет.
 - Это записи таблицы, а не `Shortcut` окна: Qt проверяет `Shortcut` раньше, чем нажатие доходит до фильтра `KeyMatcher` (`QShortcutMap` отрабатывает на `ShortcutOverride`, до `KeyPress`), так что клавиша, занятая включённым `Shortcut`, в таблице не находилась бы и `keymap.json` её не переопределял. Исключение — два `Shortcut` в `Main.qml` (`Ctrl+\` и `Cmd+Shift+B` на macOS), включённые только пока в окне нет таблицы (`Roost.keymapLoaded` ложно: до первого ответа `keymap.get`, при упавшем или недоступном `roostd`, без манифеста `shell`): отчёт об ошибке должен открываться именно тогда, когда `roostd` сломан. Как только таблица загружена, они выключены и клавишу получает только `KeyMatcher`, двойного срабатывания нет. Другой `Shortcut` добавлять нельзя по той же причине.
