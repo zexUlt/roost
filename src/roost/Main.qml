@@ -127,13 +127,28 @@ ApplicationWindow {
     // of src/core/theme_source.hpp (a test holds the two in step).
     readonly property real minFontSize: 6
     readonly property real maxFontSize: 72
-    // Why the last font command did nothing, and the size the terminal font had
-    // then: the strip shows it only while the size is still that one, so a
-    // change from anywhere (the next key, the Settings field, another window)
-    // takes it away.
+    // Why the last font command did nothing, and the size it was about: the
+    // strip shows it until the size becomes another one, from anywhere (the
+    // next key, the Settings field, another window), and it does not come back
+    // when the size returns.
     property string fontProblem: ""
     property real fontProblemAt: 0
-    readonly property string shownFontProblem: fontProblem !== "" && Roost.theme.terminalFont.pointSize === fontProblemAt ? fontProblem : ""
+    readonly property string shownFontProblem: fontProblem
+    // The size the last font key wrote, until the theme shows it (-1: none).
+    // The theme follows a write through roostd and store.changed, so a second
+    // key within that round trip would step from the old size and write the
+    // same value; it steps from this one.
+    property real expectedFontSize: -1
+    readonly property real terminalFontSize: Roost.theme.terminalFont.pointSize
+
+    onTerminalFontSizeChanged: {
+        if (terminalFontSize === expectedFontSize) {
+            expectedFontSize = -1;
+        }
+        if (terminalFontSize !== fontProblemAt) {
+            fontProblem = "";
+        }
+    }
 
     // The commands terminal.fontBigger, terminal.fontSmaller (the manifest of
     // the plugin `terminal`): the size of the terminal font by `step` within
@@ -141,12 +156,13 @@ ApplicationWindow {
     // {terminalFont: {size}}; every window follows through store.changed. At a
     // limit nothing is written and the strip says why.
     function changeFontSize(step) {
-        const current = Roost.theme.terminalFont.pointSize;
+        const current = expectedFontSize >= 0 ? expectedFontSize : terminalFontSize;
         const next = Math.max(minFontSize, Math.min(maxFontSize, current + step));
         if (next === current) {
-            refuseFont(step > 0 ? "Terminal font size is already at its maximum, " + maxFontSize : "Terminal font size is already at its minimum, " + minFontSize);
+            refuseFont(step > 0 ? "Terminal font size is already at the maximum (" + maxFontSize + ")" : "Terminal font size is already at the minimum (" + minFontSize + ")", current);
             return;
         }
+        expectedFontSize = next;
         patchFontSize(next, false);
     }
 
@@ -167,6 +183,7 @@ ApplicationWindow {
                 return;
             }
             const others = Object.keys(font).filter(k => k !== "size");
+            expectedFontSize = -1;
             patchFontSize(null, others.length === 0);
         });
     }
@@ -183,16 +200,15 @@ ApplicationWindow {
         };
         Roost.store.patch("settings", patch, err => {
             if (err) {
+                expectedFontSize = -1;
                 refuseFont("Terminal font size was not saved: " + (err.message ?? err));
-            } else {
-                fontProblem = "";
             }
         });
     }
 
-    function refuseFont(text) {
+    function refuseFont(text, at = terminalFontSize) {
         fontProblem = text;
-        fontProblemAt = Roost.theme.terminalFont.pointSize;
+        fontProblemAt = at;
     }
 
     ColumnLayout {
