@@ -36,9 +36,11 @@ namespace roost {
 //
 // The `focus` token is the one colour that a setting may change: follow() takes
 // settings.focusColor {preset, custom} over the theme's own `focus`. A custom
-// colour with less than MIN_FOCUS_CONTRAST against `surface` or `canvas`, and
-// a key that is not what it should be, are refused with a line in
-// settingsProblems: the colour the token has stays.
+// colour is applied as it is; if it is below the contrast that 18-style.md asks
+// of `focus` on `surface`, `canvas`, `cursorFocused` or `selectedBackground`
+// (the worst pair of the current theme), settingsProblems has a line saying so.
+// Only a key that is not a colour is refused, with a line too: the token is the
+// theme's own.
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS

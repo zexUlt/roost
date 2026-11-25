@@ -88,18 +88,13 @@ FontSettings ResolveFontSettings(const QJsonObject& settings);
 // the theme), "contrast" or "custom"; `custom` is "#rrggbb" and counts only
 // for the preset "custom", where it is the colour. Without the key, or with
 // the preset "base", Color stays empty: the theme's own `focus`. The same
-// reader for every window; whether a custom colour is readable on the cards
-// is for the GUI to say (Theme), this only checks what the document says. A
-// key that is not what it should be is a problem and leaves the colour
-// empty, so that the window keeps the one it has.
+// reader for every window. Any "#rrggbb" is taken; how readable it is on the
+// cards is a warning of the GUI (Theme), not a refusal. Only what is not a
+// colour is refused: a key that is not what it should be is a problem and
+// leaves Color empty, the theme's own `focus`.
 struct FocusSettings {
     // "#rrggbb" to take, or empty for the theme's own.
     QString Color;
-    // Whether Color is the custom colour: the window checks its contrast.
-    bool Custom = false;
-    // Whether the settings ask for a colour that cannot be read: the window
-    // keeps the colour it has, and does not fall back to the theme's.
-    bool Refused = false;
     // One for each key that could not be used, to show to the user.
     QList<SettingProblem> Problems;
 };
@@ -107,9 +102,6 @@ struct FocusSettings {
 // The key of the focus colour in the settings document, and of its problems.
 inline const QString FOCUS_COLOR_KEY = QStringLiteral("focusColor");
 inline const QString FOCUS_CONTRAST_COLOR = QStringLiteral("#1b2430");
-// The least contrast of the focus ring against the surface and the canvas
-// (docs/design/18-style.md).
-inline constexpr double MIN_FOCUS_CONTRAST = 3;
 
 FocusSettings ResolveFocusSettings(const QJsonObject& settings);
 

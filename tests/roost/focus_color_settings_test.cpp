@@ -1,7 +1,8 @@
 // The colour of the focus ring (settings.focusColor, SettingsWindow.qml,
 // Theme::follow): Base, Contrast and Custom change the `focus` token of every
-// window, a custom colour with less than 3:1 against `surface` or `canvas` is
-// refused with its reason and the token keeps the colour it had, and the
+// window, any "#rrggbb" is applied, and a colour below the contrast of
+// 18-style.md only adds a warning to the problems of the theme; what is not a
+// colour is refused with its reason and the token is the theme's own. The
 // choice is still there after roostd restarts. Settings windows of several
 // engines against one real roostd; ROOST_CONFIG is the directory of roostd's
 // own temporary tree, so the settings of the user are never read.
@@ -17,6 +18,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <algorithm>
@@ -250,6 +252,10 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), CONTRAST, TIMEOUT_MS);
         QCOMPARE(Settings().value("focusColor").toObject(),
                  (QJsonObject{{"preset", "contrast"}}));
+        // Contrast holds every pair on the default theme: no warning (the
+        // line comes in the same step as the token).
+        QVERIFY(first->Problems().isEmpty());
+        QVERIFY(second->Problems().isEmpty());
 
         // Custom starts from the colour the ring has, and the field shows it.
         QVERIFY(second->Choose(PRESET_CUSTOM));
@@ -273,27 +279,45 @@ private slots:
         QVERIFY(first->Choose(PRESET_BASE));
         QTRY_COMPARE_WITH_TIMEOUT(first->Focus(), BASE, TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), BASE, TIMEOUT_MS);
+        QVERIFY(first->Problems().isEmpty());
+        QVERIFY(second->Problems().isEmpty());
         QCOMPARE(Settings().value("focusColor").toObject(),
                  (QJsonObject{{"preset", "base"}, {"custom", "#6A1B9A"}}));
     }
 
-    void ACustomColourTooLightForTheCardsIsRefused_data() {
+    void ACustomColourBelowTheContrastIsAppliedWithAWarning_data() {
         QTest::addColumn<QString>("custom");
-        QTest::addColumn<bool>("taken");
-        QTest::newRow("almost white") << "#f0f0f0" << false;
-        QTest::newRow("white") << "#ffffff" << false;
-        // 3.03:1 against the surface, below 3:1 against the canvas.
-        QTest::newRow("passes the surface, fails the canvas")
-            << "#949494" << false;
-        QTest::newRow("dark enough") << "#767676" << true;
+        // The worst pair of the colour on the default theme, as the warning
+        // names it; empty for a colour that holds every pair.
+        QTest::addColumn<QString>("warning");
+        QTest::newRow("almost white")
+            << "#f0f0f0"
+            << "focus colour #f0f0f0 is 1.0:1 on selectedBackground, below "
+               "4.5:1";
+        QTest::newRow("white")
+            << "#ffffff"
+            << "focus colour #ffffff is 1.0:1 on surface, below 4.5:1";
+        // 3.03:1 on the surface, below 3:1 on the canvas, and the text is
+        // 4.5:1.
+        QTest::newRow("passes the ring on the surface only")
+            << "#949494"
+            << "focus colour #949494 is 2.6:1 on selectedBackground, below "
+               "4.5:1";
+        // A ring, but not text on the filter chip: 3.99:1 is not 4.0.
+        QTest::newRow("a ring, not text")
+            << "#767676"
+            << "focus colour #767676 is 3.9:1 on selectedBackground, below "
+               "4.5:1";
+        QTest::newRow("dark enough") << "#5a5a5a" << "";
+        QTest::newRow("purple") << "#6a1b9a" << "";
     }
 
-    // Refused: the token keeps the colour it had, the reason is shown in the
-    // settings window and in the problems of the theme, in every window; the
-    // document keeps what the user wrote, and a new choice lifts the refusal.
-    void ACustomColourTooLightForTheCardsIsRefused() {
+    // Applied in every window, with the warning in the problems of the theme
+    // and under the field of the setting; the document keeps what the user
+    // wrote, and a colour that holds every pair clears the warning.
+    void ACustomColourBelowTheContrastIsAppliedWithAWarning() {
         QFETCH(QString, custom);
-        QFETCH(bool, taken);
+        QFETCH(QString, warning);
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         auto first = OpenReadWindow();
         auto second = OpenReadWindow();
@@ -306,42 +330,29 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(first->Find("focusCustomField")->isVisible(),
                                  TIMEOUT_MS);
         QVERIFY(first->Edit("focusCustomField", custom));
-        if (taken) {
-            QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor(custom),
-                                      TIMEOUT_MS);
-            QVERIFY(first->Problems().isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(first->Focus(), QColor(custom), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor(custom), TIMEOUT_MS);
+        // The line comes in the same step as the token.
+        const QStringList expected =
+            warning.isEmpty() ? QStringList{} : QStringList{warning};
+        QCOMPARE(first->Problems(), expected);
+        QCOMPARE(second->Problems(), expected);
+        QCOMPARE(Settings().value("focusColor").toObject().value("custom"),
+                 QJsonValue(custom));
+        if (warning.isEmpty()) {
             return;
         }
-        // The line comes in the same step as the token, so that when it is
-        // there the token has had its say.
-        QTRY_VERIFY_WITH_TIMEOUT(
-            !first->Problems().isEmpty() && !second->Problems().isEmpty(),
-            TIMEOUT_MS);
-        QCOMPARE(first->Focus(), CONTRAST);
-        QCOMPARE(second->Focus(), CONTRAST);
-        QCOMPARE(first->Problems().size(), 1);
-        QVERIFY2(first->Problems().first().contains(
-                     "settings.focusColor.custom " + custom),
-                 qPrintable(first->Problems().first()));
-        QVERIFY2(first->Problems().first().contains("less than 3:1"),
-                 qPrintable(first->Problems().first()));
-        QVERIFY2(first->Problems().first().contains("focus colour is kept"),
-                 qPrintable(first->Problems().first()));
-        // Where the window shows a refusal: under the field of the setting.
         QCOMPARE(first->ProblemSettings(), QStringList{"focusColor"});
         QQuickItem* shown = first->Find("focusColorProblems");
         QVERIFY(shown != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(shown->isVisible(), TIMEOUT_MS);
-        QCOMPARE(shown->property("text").toString(), first->Problems().first());
-        QCOMPARE(Settings().value("focusColor").toObject().value("custom"),
-                 QJsonValue(custom));
+        QCOMPARE(shown->property("text").toString(), warning);
 
-        // A colour that is readable lifts the refusal.
+        // A colour that holds every pair clears the warning.
         QVERIFY(first->Edit("focusCustomField", "#6a1b9a"));
         QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), PURPLE, TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(
-            first->Problems().isEmpty() && second->Problems().isEmpty(),
-            TIMEOUT_MS);
+        QVERIFY(first->Problems().isEmpty());
+        QVERIFY(second->Problems().isEmpty());
     }
 
     // The test's own numbers: the colours of the rows above are what the names
@@ -355,9 +366,9 @@ private slots:
     }
 
     // A document that is not what it should be, as a hand edit leaves it: the
-    // colour is the one the theme has, with a reason; the reason goes with the
-    // fix.
-    void ADocumentThatIsWrongIsRefusedWithAReason_data() {
+    // colour is the theme's own (Base), with a reason; the reason goes with
+    // the fix.
+    void ANonColourIsBaseWithAReason_data() {
         QTest::addColumn<QJsonValue>("focusColor");
         QTest::addColumn<QString>("reason");
         // Whether the box has no preset to show, so that it shows Base.
@@ -378,9 +389,15 @@ private slots:
         QTest::newRow("custom not a string")
             << QJsonValue(QJsonObject{{"preset", "custom"}, {"custom", 7}})
             << "settings.focusColor.custom must be a colour #rrggbb" << false;
+        QTest::newRow("custom a short colour")
+            << QJsonValue(QJsonObject{{"preset", "custom"}, {"custom", "#12g"}})
+            << "settings.focusColor.custom must be a colour #rrggbb" << false;
+        QTest::newRow("custom empty")
+            << QJsonValue(QJsonObject{{"preset", "custom"}, {"custom", ""}})
+            << "settings.focusColor.custom must be a colour #rrggbb" << false;
     }
 
-    void ADocumentThatIsWrongIsRefusedWithAReason() {
+    void ANonColourIsBaseWithAReason() {
         QFETCH(QJsonValue, focusColor);
         QFETCH(QString, reason);
         QFETCH(bool, boxIsBase);
@@ -401,7 +418,7 @@ private slots:
         QVERIFY(writing.result());
 
         QTRY_VERIFY_WITH_TIMEOUT(!window->Problems().isEmpty(), TIMEOUT_MS);
-        QCOMPARE(window->Focus(), CONTRAST);
+        QCOMPARE(window->Focus(), BASE);
         QCOMPARE(window->Problems().size(), 1);
         QVERIFY2(window->Problems().first().contains(reason),
                  qPrintable(window->Problems().first()));
@@ -450,18 +467,104 @@ private slots:
             QVariant("#6a1b9a"), TIMEOUT_MS);
     }
 
-    // A colour that was refused when it was written is refused at the start
-    // too: the ring has the colour of the theme, with the reason.
-    void ARefusedColourInTheDocumentIsBaseAtTheStart() {
+    // A colour below the contrast in the document is applied at the start, in
+    // every window and after the restart of roostd, with its warning.
+    void ALowContrastColourInTheDocumentIsAppliedAtTheStart() {
+        const QString warning =
+            "focus colour #f0f0f0 is 1.0:1 on selectedBackground, below 4.5:1";
         QVERIFY(WriteSettings(
             QJsonObject{{"focusColor", QJsonObject{{"preset", "custom"},
                                                    {"custom", "#f0f0f0"}}}}));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        {
+            auto first = OpenReadWindow();
+            auto second = OpenReadWindow();
+            QVERIFY(first);
+            QVERIFY(second);
+            QTRY_COMPARE_WITH_TIMEOUT(first->Focus(), QColor("#f0f0f0"),
+                                      TIMEOUT_MS);
+            QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor("#f0f0f0"),
+                                      TIMEOUT_MS);
+            QCOMPARE(first->Problems(), QStringList{warning});
+            QCOMPARE(second->Problems(), QStringList{warning});
+        }
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
         auto window = OpenReadWindow();
         QVERIFY(window);
-        QTRY_VERIFY_WITH_TIMEOUT(!window->Problems().isEmpty(), TIMEOUT_MS);
-        QCOMPARE(window->Focus(), BASE);
-        QVERIFY(window->Problems().first().contains("less than 3:1"));
+        QTRY_COMPARE_WITH_TIMEOUT(window->Focus(), QColor("#f0f0f0"),
+                                  TIMEOUT_MS);
+        QCOMPARE(window->Problems(), QStringList{warning});
+    }
+
+    // The warning is about the current theme: a theme with a dark surface
+    // makes Base a warning, and a light colour on it holds every pair. The
+    // theme "test" takes its tokens from ROOST_TEST_THEME_FILE.
+    void AThemeChangeReevaluatesTheWarning() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QFile file(dir.filePath("theme.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(QJsonDocument(
+                               QJsonObject{{"surface", "#10151b"},
+                                           {"canvas", "#0b0f14"},
+                                           {"cursorFocused", "#161c24"},
+                                           {"selectedBackground", "#1a2230"}})
+                               .toJson()) > 0);
+        file.close();
+        const testing::ScopedEnv themeFile("ROOST_TEST_THEME_FILE",
+                                           file.fileName().toUtf8());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto first = OpenReadWindow();
+        auto second = OpenReadWindow();
+        QVERIFY(first);
+        QVERIFY(second);
+        QCOMPARE(first->Focus(), BASE);
+        QVERIFY(first->Problems().isEmpty());
+
+        api::Api other;
+        QSignalSpy connected(&other, &api::Api::Connected);
+        other.Connect(Daemon_->SocketPath());
+        QVERIFY(connected.wait(TIMEOUT_MS) || !connected.isEmpty());
+        const auto write = [&](const QJsonObject& settings) {
+            const QFuture<rpc::Result> writing =
+                other.Store().Set("settings", settings);
+            return WaitFor(writing) && writing.result();
+        };
+
+        // Base on a dark surface: the same colour, a warning.
+        QVERIFY(write({{"theme", "test"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            first->Problems().size() == 1 && second->Problems().size() == 1,
+            TIMEOUT_MS);
+        QCOMPARE(first->Focus(), BASE);
+        QVERIFY2(
+            first->Problems().first().startsWith("focus colour #225fc2 is "),
+            qPrintable(first->Problems().first()));
+        QVERIFY2(first->Problems().first().contains(" below "),
+                 qPrintable(first->Problems().first()));
+        QCOMPARE(first->ProblemSettings(), QStringList{"focusColor"});
+
+        // A light custom colour holds every pair of the dark theme.
+        QVERIFY(write({{"theme", "test"},
+                       {"focusColor", QJsonObject{{"preset", "custom"},
+                                                  {"custom", "#ffffff"}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(first->Focus(), QColor("#ffffff"),
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor("#ffffff"),
+                                  TIMEOUT_MS);
+        QVERIFY(first->Problems().isEmpty());
+        QVERIFY(second->Problems().isEmpty());
+
+        // Back to the default theme: white is the warning there.
+        QVERIFY(write({{"focusColor", QJsonObject{{"preset", "custom"},
+                                                  {"custom", "#ffffff"}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            first->Problems(),
+            QStringList{"focus colour #ffffff is 1.0:1 on surface, below "
+                        "4.5:1"},
+            TIMEOUT_MS);
+        QCOMPARE(first->Focus(), QColor("#ffffff"));
     }
 
     // Each problem of the settings the theme reads is under the field of its

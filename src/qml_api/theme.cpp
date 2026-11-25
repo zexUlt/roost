@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <optional>
 
 #include "core/theme_source.hpp"
 #include "terminal/renderer.hpp"
@@ -21,6 +23,58 @@ struct Token {
     const char* Key;
     QColor Theme::* Member;
 };
+
+// What the `focus` token is read against (docs/design/18-style.md): the ring
+// is 3:1 on the surface and the canvas, and `focus` is text on `surface` (the
+// hint of the palette) and on `selectedBackground` (the current filter chip),
+// 4.5:1; the cursor of a list is another ring. The same pairs and numbers as
+// TheDefaultThemeHasTheContrastOfTheStyleGuide (theme_test).
+struct FocusPair {
+    const char* Back;
+    double Least;
+};
+constexpr std::array<FocusPair, 4> FOCUS_PAIRS{{
+    {.Back = "surface", .Least = 4.5},
+    {.Back = "canvas", .Least = 3.0},
+    {.Back = "cursorFocused", .Least = 3.0},
+    {.Back = "selectedBackground", .Least = 4.5},
+}};
+
+TerminalColors::Rgb rgbOf(const QColor& color) {
+    return {.R = static_cast<quint8>(color.red()),
+            .G = static_cast<quint8>(color.green()),
+            .B = static_cast<quint8>(color.blue())};
+}
+
+// The line for the worst pair of FOCUS_PAIRS (the one furthest below its
+// least, in proportion) that the `focus` of `tokens` does not hold, or nothing
+// if it holds them all. The ratio is cut, not rounded, to one decimal, so that
+// a ratio under the least never reads as the least.
+std::optional<QString> focusContrastWarning(const QJsonObject& tokens) {
+    const QColor focus = QColor::fromString(tokens.value("focus").toString());
+    if (!focus.isValid()) {
+        return std::nullopt;
+    }
+    std::optional<QString> worst;
+    double worstShare = 1;
+    for (const FocusPair& pair : FOCUS_PAIRS) {
+        const QColor back =
+            QColor::fromString(tokens.value(pair.Back).toString());
+        if (!back.isValid()) {
+            continue;
+        }
+        const double ratio = Contrast(rgbOf(focus), rgbOf(back));
+        if (ratio >= pair.Least || ratio / pair.Least >= worstShare) {
+            continue;
+        }
+        worstShare = ratio / pair.Least;
+        worst = QStringLiteral("focus colour %1 is %2:1 on %3, below %4:1")
+                    .arg(focus.name(),
+                         QString::number(std::floor(ratio * 10) / 10, 'f', 1),
+                         QLatin1String(pair.Back), QString::number(pair.Least));
+    }
+    return worst;
+}
 
 // uiFont at `ratio` of its size (the prototype's base is 13 px) and `weight`.
 QFont scaled(const QFont& base, double ratio, QFont::Weight weight) {
@@ -79,40 +133,11 @@ QString Theme::follow(const QJsonObject& settings) {
 bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
     const FocusSettings wanted = ResolveFocusSettings(settings);
     QList<SettingProblem> problems = wanted.Problems;
-    // A colour that is refused is the one the token has now.
-    bool kept = wanted.Refused;
-    if (wanted.Custom) {
-        const auto rgb = [](const QColor& color) {
-            return TerminalColors::Rgb{.R = static_cast<quint8>(color.red()),
-                                       .G = static_cast<quint8>(color.green()),
-                                       .B = static_cast<quint8>(color.blue())};
-        };
-        const QColor custom = QColor::fromString(wanted.Color);
-        const QColor surface =
-            QColor::fromString(tokens.value("surface").toString());
-        const QColor canvas =
-            QColor::fromString(tokens.value("canvas").toString());
-        const double ratio = std::min(Contrast(rgb(custom), rgb(surface)),
-                                      Contrast(rgb(custom), rgb(canvas)));
-        if (ratio < MIN_FOCUS_CONTRAST) {
-            kept = true;
-            problems.append(
-                {.Setting = FOCUS_COLOR_KEY,
-                 .Text = QStringLiteral(
-                             "settings.focusColor.custom %1 has a contrast "
-                             "of %2:1 against the surface or the canvas, "
-                             "less than %3:1; the focus colour is kept")
-                             .arg(wanted.Color)
-                             .arg(ratio, 0, 'f', 2)
-                             .arg(MIN_FOCUS_CONTRAST)});
-        } else {
-            tokens.insert(QStringLiteral("focus"), wanted.Color);
-        }
-    } else if (!wanted.Color.isEmpty()) {
+    if (!wanted.Color.isEmpty()) {
         tokens.insert(QStringLiteral("focus"), wanted.Color);
     }
-    if (kept && Focus_.isValid()) {
-        tokens.insert(QStringLiteral("focus"), Focus_.name());
+    if (const auto warning = focusContrastWarning(tokens)) {
+        problems.append({.Setting = FOCUS_COLOR_KEY, .Text = *warning});
     }
     return setProblems(problems, true);
 }

@@ -99,6 +99,11 @@ QStringList TokenNames() {
             property.metaType() != QMetaType::fromType<QVariantList>()) {
             continue;
         }
+        // The list of {setting, text} is not a token either.
+        if (QLatin1String(property.name()) ==
+            QLatin1String("settingsProblems")) {
+            continue;
+        }
         names << QString::fromLatin1(property.name());
     }
     return names;

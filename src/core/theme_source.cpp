@@ -149,18 +149,19 @@ FontSettings ResolveFontSettings(const QJsonObject& settings) {
 
 FocusSettings ResolveFocusSettings(const QJsonObject& settings) {
     FocusSettings focus;
-    const QJsonValue wanted = settings.value(QStringLiteral("focusColor"));
+    const QJsonValue wanted = settings.value(FOCUS_COLOR_KEY);
     if (wanted.isUndefined()) {
         return focus;
     }
-    if (!wanted.isObject()) {
-        focus.Refused = true;
-        focus.Problems.append(
-            {.Setting = FOCUS_COLOR_KEY,
-             .Text = QStringLiteral("settings.focusColor must be an object "
-                                    "with preset and custom; the focus colour "
-                                    "is kept")});
+    const auto refuse = [&focus](const QString& text) {
+        focus.Problems.append({.Setting = FOCUS_COLOR_KEY, .Text = text});
         return focus;
+    };
+    if (!wanted.isObject()) {
+        return refuse(
+            QStringLiteral("settings.focusColor must be an object "
+                           "with preset and custom; the focus "
+                           "colour of the theme is used"));
     }
     const QJsonObject object = wanted.toObject();
     const QJsonValue preset = object.value(QStringLiteral("preset"));
@@ -175,24 +176,17 @@ FocusSettings ResolveFocusSettings(const QJsonObject& settings) {
         const QJsonValue custom = object.value(QStringLiteral("custom"));
         if (custom.isString() && IsHexColor(custom.toString())) {
             focus.Color = custom.toString().toLower();
-            focus.Custom = true;
             return focus;
         }
-        focus.Refused = true;
-        focus.Problems.append(
-            {.Setting = FOCUS_COLOR_KEY,
-             .Text = QStringLiteral("settings.focusColor.custom must be a "
-                                    "colour #rrggbb; the focus colour is "
-                                    "kept")});
-        return focus;
+        return refuse(
+            QStringLiteral("settings.focusColor.custom must be a "
+                           "colour #rrggbb; the focus colour of "
+                           "the theme is used"));
     }
-    focus.Refused = true;
-    focus.Problems.append(
-        {.Setting = FOCUS_COLOR_KEY,
-         .Text = QStringLiteral("settings.focusColor.preset must be base, "
-                                "contrast or custom; the focus colour is "
-                                "kept")});
-    return focus;
+    return refuse(
+        QStringLiteral("settings.focusColor.preset must be base, "
+                       "contrast or custom; the focus colour of "
+                       "the theme is used"));
 }
 
 }  // namespace roost

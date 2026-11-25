@@ -416,8 +416,9 @@ ApplicationWindow {
                     }
                 }
 
-                // The project has no colour picker: a hex field. A colour that
-                // is too light is refused by the theme, the reason is below.
+                // The project has no colour picker: a hex field. What is typed
+                // is written; a colour that is hard to read is a warning of the
+                // theme below the field, and what is not a colour a reason.
                 FormField {
                     id: focusCustomField
 
