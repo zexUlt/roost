@@ -232,6 +232,35 @@ private:
             StoredLayout(), LayoutToJson(Shell_->CurrentLayout()), TIMEOUT_MS);
     }
 
+    // The panel has the keyboard, and keeps it: the window does not move it
+    // somewhere later.
+    void VerifyKeyboardIn(const QString& instance) {
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance(instance) != nullptr &&
+                                     SlotByInstance(instance)->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QTest::qWait(300);
+        QVERIFY(SlotByInstance(instance) != nullptr);
+        QVERIFY(SlotByInstance(instance)->hasActiveFocus());
+    }
+
+    // Runs the command (the keyboard is where the last step left it) and
+    // waits for the one write of the layout it makes.
+    void RunHere(const QString& command) {
+        QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
+        Api_->Commands().Run(command);
+        QTRY_COMPARE_WITH_TIMEOUT(Writes(spy), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredLayout(), LayoutToJson(Shell_->CurrentLayout()), TIMEOUT_MS);
+    }
+
+    // Accepts the question of the reset that is open; no write is expected.
+    void AcceptOpenQuestion() {
+        WaitForDialog();
+        ClickIn("confirmButton");
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogOpen(), TIMEOUT_MS);
+        QTest::qWait(200);
+    }
+
 private slots:
     void init() {
         Prepare();
@@ -617,6 +646,131 @@ private slots:
         // toggle, not the first one.
         QVERIFY(Shell_->CurrentLayout() != first);
         QVERIFY(Shell_->CurrentLayout().ListsHidden);
+        Api_->Commands().Run("layout.undo");
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("nothing to undo"), TIMEOUT_MS);
+    }
+
+    void TheKeyboardIsInTheTerminalAfterUndoOfTheHiddenLists() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        RunWritesOnce("terminal", "layout.toggleLists");
+        VerifyKeyboardIn("terminal");
+        RunHere("layout.undo");
+        QVERIFY(!Shell_->CurrentLayout().ListsHidden);
+        VerifyKeyboardIn("terminal");
+    }
+
+    void TheKeyboardIsInTheSplitPanelAfterUndoOfTheSplit() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        Focus("list");
+        const QVariant args = QVariantMap{{"instance", "terminal"}};
+        QVERIFY(QMetaObject::invokeMethod(Root(), "layoutEdit",
+                                          Q_ARG(QString, "splitRight"),
+                                          Q_ARG(QVariant, args)));
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal-2") != nullptr,
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            StoredLayout(), LayoutToJson(Shell_->CurrentLayout()), TIMEOUT_MS);
+        // The edit moved the keyboard from the list to the panel it split.
+        VerifyKeyboardIn("terminal");
+        RunHere("layout.undo");
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal-2") == nullptr,
+                                 TIMEOUT_MS);
+        VerifyKeyboardIn("terminal");
+    }
+
+    void TheKeyboardIsInAPanelAfterTheResetOfTheCommand() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        StartWith(WithAnExtraPanel());
+        // The panel that has the keyboard stays in the default: it keeps it.
+        ResetAccepted("terminal");
+        VerifyKeyboardIn("terminal");
+        StartWith(WithAnExtraPanel());
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal-2") != nullptr,
+                                 TIMEOUT_MS);
+        // The one that has it is not in the default: the first panel gets it.
+        ResetAccepted("terminal-2");
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal-2") == nullptr,
+                                 TIMEOUT_MS);
+        VerifyKeyboardIn("list");
+    }
+
+    void TheDialogOpensWithTheKeyboardOnCancelFromTheCommandAndTheMenu() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        StartWith(Reversed());
+        Focus("list");
+        Api_->Commands().Run("layout.reset");
+        WaitForDialog();
+        QTRY_VERIFY_WITH_TIMEOUT(Named("cancelButton")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        ClickIn("cancelButton");
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogOpen(), TIMEOUT_MS);
+
+        OpenMenuOn("terminal");
+        QQuickItem* reset = Named("menuReset");
+        QVERIFY(reset != nullptr);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(reset));
+        WaitForDialog();
+        QTRY_VERIFY_WITH_TIMEOUT(Named("cancelButton")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        ClickIn("cancelButton");
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogOpen(), TIMEOUT_MS);
+    }
+
+    void ResetOfTheDefaultLayoutLeavesNothingToUndo() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        QCOMPARE(Shell_->CurrentLayout(), DefaultLayout());
+        QVERIFY(!Root()->property("canUndo").toBool());
+        Focus("terminal");
+        Api_->Commands().Run("layout.reset");
+        AcceptOpenQuestion();
+        QVERIFY(!Root()->property("canUndo").toBool());
+        Api_->Commands().Run("layout.undo");
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("nothing to undo"), TIMEOUT_MS);
+        QCOMPARE(Shell_->CurrentLayout(), DefaultLayout());
+    }
+
+    void ResetOfTheDefaultAfterAnEditAndItsUndoAddsNoStep() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        RunWritesOnce("terminal", "layout.toggleLists");
+        RunWritesOnce("terminal", "layout.undo");
+        QCOMPARE(Shell_->CurrentLayout(), DefaultLayout());
+        QTRY_VERIFY_WITH_TIMEOUT(!Root()->property("canUndo").toBool(),
+                                 TIMEOUT_MS);
+        Focus("terminal");
+        Api_->Commands().Run("layout.reset");
+        AcceptOpenQuestion();
+        QVERIFY(!Root()->property("canUndo").toBool());
         Api_->Commands().Run("layout.undo");
         QTRY_VERIFY_WITH_TIMEOUT(HasProblem("nothing to undo"), TIMEOUT_MS);
     }

@@ -439,9 +439,9 @@ Item {
         id: confirmReset
 
         title: "Reset the layout to the default?"
-        text: "Panels that are not in the default layout are closed, and their links are lost."
+        text: "Panels that are not in the default layout are closed. The others get their default places, sizes and links."
         confirmText: "Reset"
-        onConfirmed: view.layoutEdit("reset", {})
+        onConfirmed: view.edit("reset", {})
     }
 
     // Opens the menu of the panel of `slot` at the point (x, y) of the slot.

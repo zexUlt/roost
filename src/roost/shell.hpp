@@ -163,6 +163,8 @@ private:
     void SaveLayout();
     // Tells the window whether there is an edit to undo.
     void PublishCanUndo();
+    // Gives the keyboard to the panel `instance` once its slot is there.
+    void FocusInstance(const QString& instance);
     // The panel types that can be created, with their ports.
     LayoutKnownPanels KnownPanels() const;
     // Writes the root's `panelTypes`.
