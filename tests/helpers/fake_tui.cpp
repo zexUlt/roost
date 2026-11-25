@@ -23,8 +23,9 @@
 // waits to be killed.
 
 #include <fcntl.h>
-#include <poll.h>
+#include <pthread.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -180,13 +181,26 @@ int main(int argc, char** argv) {
     Line(4, "answers da1=0 cpr=0");
     Ask();
 
+    // SIGWINCH stays blocked except inside pselect(): a resize that comes
+    // between the check below and the wait is held until the wait begins and
+    // wakes it, so the redraw is never lost.
+    sigset_t resize;
+    sigemptyset(&resize);
+    sigaddset(&resize, SIGWINCH);
+    sigset_t duringWait;
+    ::pthread_sigmask(SIG_BLOCK, &resize, &duringWait);
+    sigdelset(&duringWait, SIGWINCH);
+
     for (;;) {
         if (RESIZED != 0) {
             RESIZED = 0;
             DrawSize();
         }
-        pollfd input{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
-        if (::poll(&input, 1, -1) == -1) {
+        fd_set input;
+        FD_ZERO(&input);
+        FD_SET(STDIN_FILENO, &input);
+        if (::pselect(STDIN_FILENO + 1, &input, nullptr, nullptr, nullptr,
+                      &duringWait) == -1) {
             continue;  // EINTR: a resize
         }
         char buffer[4096];
