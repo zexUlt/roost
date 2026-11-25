@@ -102,6 +102,25 @@ QMap<QString, LayoutNode> Leaves(const LayoutNode& node) {
     return leaves;
 }
 
+// The panels a person can put the pointer on: the shown tab of each stack,
+// every leaf of a split.
+void ShownLeaves(const LayoutNode& node, QStringList& instances) {
+    switch (node.Kind) {
+        case ELayoutNodeKind::Leaf:
+            instances.append(node.Instance);
+            return;
+        case ELayoutNodeKind::Split:
+            for (const LayoutNode& child : node.Children) {
+                ShownLeaves(child, instances);
+            }
+            return;
+        case ELayoutNodeKind::Tabs:
+            ShownLeaves(node.Children.at(static_cast<size_t>(node.Active)),
+                        instances);
+            return;
+    }
+}
+
 // The tree reads back as itself with no problem: it is canonical.
 void VerifyCanonical(const Layout& tree) {
     const LayoutParseResult parsed = ParseLayout(LayoutToJson(tree), Known());
@@ -374,7 +393,7 @@ private slots:
         VerifyCanonical(right.Tree);
     }
 
-    void MoveOutOfASplitThatRunsTheSameWayAtItsEdge() {
+    void MoveOutOfASplitThatRunsTheOtherWayAtItsEdge() {
         // A row in a column: the left panel goes up and the right one down,
         // each next to the row, and the row is left with one panel.
         const Layout layout = {
@@ -398,6 +417,119 @@ private slots:
                                       TermOf("terminal-2")},
                                      {REST, Px(70), REST}));
         VerifyCanonical(up.Tree);
+    }
+
+    void MoveOutOfASplitThatRunsTheSameWayAtItsEdgeIntoTheGrandparent() {
+        // A row in a row: the right terminal is at the edge of the inner row
+        // and goes right, after it, in the outer row that runs the same way.
+        const Layout layout = {
+            .Root =
+                Split(true,
+                      {ListOf("list"),
+                       Split(true, {TermOf("terminal"), TermOf("terminal-2")},
+                             {Px(200), REST})},
+                      {Px(320), REST})};
+        VerifyCanonical(layout);
+        const LayoutEdit right =
+            MovePanel(layout, "terminal-2", EMoveDirection::Right);
+        QVERIFY(right.Refused.isEmpty());
+        QVERIFY(right.Changed);
+        QCOMPARE(right.Tree.Root, Split(true,
+                                        {ListOf("list"), TermOf("terminal"),
+                                         TermOf("terminal-2")},
+                                        {Px(320), REST, REST}));
+        QCOMPARE(right.Focus, QString("terminal-2"));
+        VerifyCanonical(right.Tree);
+        // The left one goes left, before the inner row, which is the one
+        // panel that is left of it.
+        const LayoutEdit left =
+            MovePanel(layout, "terminal", EMoveDirection::Left);
+        QVERIFY(left.Refused.isEmpty());
+        QCOMPARE(left.Tree.Root, Split(true,
+                                       {ListOf("list"), TermOf("terminal"),
+                                        TermOf("terminal-2")},
+                                       {Px(320), REST, REST}));
+        VerifyCanonical(left.Tree);
+    }
+
+    void MoveOutOfASplitThatKeepsThreePanelsLeavesTheOthersWhereTheyAre() {
+        const Layout layout = {
+            .Root = Split(true,
+                          {ListOf("list"),
+                           Split(false,
+                                 {TermOf("terminal"), TermOf("terminal-2"),
+                                  TermOf("terminal-3")},
+                                 {Px(100), Px(150), REST})},
+                          {Px(320), REST})};
+        VerifyCanonical(layout);
+        // The first goes left: the column keeps its two, with their sizes.
+        const LayoutEdit left =
+            MovePanel(layout, "terminal", EMoveDirection::Left);
+        QVERIFY(left.Refused.isEmpty());
+        QCOMPARE(
+            left.Tree.Root,
+            Split(true,
+                  {ListOf("list"), TermOf("terminal"),
+                   Split(false, {TermOf("terminal-2"), TermOf("terminal-3")},
+                         {Px(150), REST})},
+                  {Px(320), REST, REST}));
+        VerifyCanonical(left.Tree);
+        // The middle one goes right: after the column, which keeps the others.
+        const LayoutEdit right =
+            MovePanel(layout, "terminal-2", EMoveDirection::Right);
+        QVERIFY(right.Refused.isEmpty());
+        QCOMPARE(right.Tree.Root,
+                 Split(true,
+                       {ListOf("list"),
+                        Split(false, {TermOf("terminal"), TermOf("terminal-3")},
+                              {Px(100), REST}),
+                        TermOf("terminal-2")},
+                       {Px(320), REST, REST}));
+        VerifyCanonical(right.Tree);
+    }
+
+    void LeavingWithTheOnlyRestGivesTheRestToTheLastPanelThatIsLeft() {
+        // The last panel of the column has the rest and the others have
+        // pixels. When it goes, the split would have no rest: the last one
+        // that stays takes it (what Tidy does), and keeps no pixel size.
+        const Layout layout = {
+            .Root = Split(true,
+                          {ListOf("list"),
+                           Split(false,
+                                 {TermOf("terminal"), TermOf("terminal-2"),
+                                  TermOf("terminal-3")},
+                                 {Px(100), Px(150), REST})},
+                          {Px(320), REST})};
+        const LayoutEdit edit =
+            MovePanel(layout, "terminal-3", EMoveDirection::Right);
+        QVERIFY(edit.Refused.isEmpty());
+        QCOMPARE(edit.Tree.Root,
+                 Split(true,
+                       {ListOf("list"),
+                        Split(false, {TermOf("terminal"), TermOf("terminal-2")},
+                              {Px(100), REST}),
+                        TermOf("terminal-3")},
+                       {Px(320), REST, REST}));
+        VerifyCanonical(edit.Tree);
+    }
+
+    void MoveSwapsWithANeighbourThatIsAStackOfTabs() {
+        const Layout layout = {
+            .Root = Split(true,
+                          {Tabs({ListOf("list"), TermOf("terminal")}, 1),
+                           TermOf("terminal-2")},
+                          {Px(300), REST})};
+        const LayoutEdit edit =
+            MovePanel(layout, "terminal-2", EMoveDirection::Left);
+        QVERIFY(edit.Refused.isEmpty());
+        QCOMPARE(edit.Tree.Root,
+                 Split(true,
+                       {TermOf("terminal-2"),
+                        Tabs({ListOf("list"), TermOf("terminal")}, 1)},
+                       {REST, Px(300)}));
+        VerifyCanonical(edit.Tree);
+        QCOMPARE(MovePanel(edit.Tree, "terminal-2", EMoveDirection::Right).Tree,
+                 layout);
     }
 
     void MoveKeepsTheInstancesLinksStateAndTheOtherTabs() {
@@ -445,19 +577,20 @@ private slots:
         };
         const std::vector<Case> cases = {
             {&row, "terminal", EMoveDirection::Right,
-             "terminal cannot move right: it is at the right edge"},
+             "terminal cannot move right: no split around it has room to its "
+             "right"},
             {&row, "list", EMoveDirection::Left,
-             "list cannot move left: it is at the left edge"},
+             "list cannot move left: no split around it has room to its left"},
             {&row, "list", EMoveDirection::Up,
-             "list cannot move up: it is at the top edge"},
+             "list cannot move up: no split around it has room above it"},
             {&row, "list", EMoveDirection::Down,
-             "list cannot move down: it is at the bottom edge"},
+             "list cannot move down: no split around it has room below it"},
             {&single, "list", EMoveDirection::Right,
              "list is the only panel: there is nothing to move it past"},
             {&tabbed, "terminal", EMoveDirection::Left,
              "terminal is in tabs: take it out of tabs to move it"},
             {&column, "list", EMoveDirection::Left,
-             "list cannot move left: it is at the left edge"},
+             "list cannot move left: no split around it has room to its left"},
             {&row, "nothing", EMoveDirection::Left,
              "there is no panel nothing to move"},
         };
@@ -506,6 +639,35 @@ private slots:
                        {Px(320), REST}));
     }
 
+    void RotateThatLeavesASplitInASplitOfTheSameWayIsValid() {
+        const Layout layout = {
+            .Root = Split(
+                true,
+                {ListOf("list"),
+                 Split(
+                     false,
+                     {TermOf("terminal"),
+                      Split(true, {TermOf("terminal-2"), TermOf("terminal-3")},
+                            {Px(150), REST})},
+                     {Px(200), REST})},
+                {Px(320), REST})};
+        VerifyCanonical(layout);
+        // The inner row turns into a column in a column.
+        const LayoutEdit inner = RotateSplit(layout, "terminal-2");
+        QVERIFY(inner.Refused.isEmpty());
+        QCOMPARE(inner.Tree.Root.Children[1].Children[1],
+                 Split(false, {TermOf("terminal-2"), TermOf("terminal-3")},
+                       {Px(150), REST}));
+        VerifyCanonical(inner.Tree);
+        // The column turns into a row in a row.
+        const LayoutEdit middle = RotateSplit(layout, "terminal");
+        QVERIFY(middle.Refused.isEmpty());
+        QVERIFY(middle.Tree.Root.Children[1].Horizontal);
+        QVERIFY(middle.Tree.Root.Children[1].Children[1].Horizontal);
+        VerifyCanonical(middle.Tree);
+        QCOMPARE(RotateSplit(middle.Tree, "terminal").Tree, layout);
+    }
+
     void RotateOfAPanelInTabsTurnsTheSplitThatHoldsTheStack() {
         Layout layout = {
             .Root = Split(true,
@@ -547,7 +709,7 @@ private slots:
     // ---- the window -------------------------------------------------------
 
     // The items of the menu say what the edits do: an item is on exactly when
-    // the edit is not refused.
+    // the edit is not refused, for every panel of trees of several shapes.
     void TheMenuItemsAreOnWhereTheEditsWork() {
         BootWith(Nested());
         if (QTest::currentTestFailed()) {
@@ -560,30 +722,120 @@ private slots:
                      {"menuMoveRight", EMoveDirection::Right},
                      {"menuMoveUp", EMoveDirection::Up},
                      {"menuMoveDown", EMoveDirection::Down}};
-        for (const QString& instance : {"list", "terminal", "terminal-2"}) {
-            OpenMenuOn(instance);
-            for (const auto& move : moves) {
-                QQuickItem* row = Named(move.Item);
-                QVERIFY2(row != nullptr, move.Item);
-                const bool works = MovePanel(Nested(), instance, move.Direction)
-                                       .Refused.isEmpty();
-                QVERIFY2(row->isEnabled() == works,
-                         qPrintable(instance + " " + move.Item));
+        const std::vector<Layout> trees = {
+            Nested(),
+            // A row of two: the right one can only go left, and turn.
+            {.Root = Split(true, {ListOf("list"), TermOf("terminal")},
+                           {Px(320), REST})},
+            // Three levels deep.
+            {.Root = Split(
+                 true,
+                 {ListOf("list"),
+                  Split(
+                      false,
+                      {TermOf("terminal"),
+                       Split(true, {TermOf("terminal-2"), TermOf("terminal-3")},
+                             {Px(100), REST})},
+                      {Px(100), REST})},
+                 {Px(200), REST})},
+            // A row in a row, and a column in a row in a column.
+            {.Root =
+                 Split(true,
+                       {ListOf("list"),
+                        Split(true, {TermOf("terminal"), TermOf("terminal-2")},
+                              {Px(100), REST})},
+                       {Px(200), REST})},
+            {.Root = Split(false,
+                           {Split(true, {ListOf("list"), TermOf("terminal")},
+                                  {Px(100), REST}),
+                            TermOf("terminal-2")},
+                           {Px(100), REST})},
+            // The grandparent is a stack of tabs: the split is the shown tab.
+            {.Root = Tabs({Split(false, {ListOf("list"), TermOf("terminal")},
+                                 {Px(100), REST}),
+                           TermOf("terminal-2")},
+                          0)},
+            // The panels are in a stack of tabs next to a panel; the one
+            // tab is shown, and a leaf in the stack.
+            {.Root = Split(true,
+                           {Tabs({ListOf("list"), TermOf("terminal")}, 1),
+                            TermOf("terminal-2")},
+                           {Px(300), REST})},
+            // The only panel.
+            {.Root = ListOf("list")},
+        };
+        for (const Layout& tree : trees) {
+            StartWith(tree);
+            if (QTest::currentTestFailed()) {
+                return;
             }
-            QQuickItem* rotate = Named("menuRotate");
-            QVERIFY(rotate != nullptr);
-            QVERIFY(rotate->isEnabled());
-            CloseMenu();
+            QStringList shown;
+            ShownLeaves(tree.Root, shown);
+            for (const QString& instance : shown) {
+                OpenMenuOn(instance);
+                for (const auto& move : moves) {
+                    QQuickItem* row = Named(move.Item);
+                    QVERIFY2(row != nullptr, move.Item);
+                    const bool works = MovePanel(tree, instance, move.Direction)
+                                           .Refused.isEmpty();
+                    QVERIFY2(
+                        row->isEnabled() == works,
+                        qPrintable(
+                            QStringLiteral("%1 %2 in %3")
+                                .arg(
+                                    instance, move.Item,
+                                    QString::fromUtf8(
+                                        QJsonDocument(LayoutToJson(tree))
+                                            .toJson(QJsonDocument::Compact)))));
+                }
+                QQuickItem* rotate = Named("menuRotate");
+                QVERIFY(rotate != nullptr);
+                const bool turns =
+                    RotateSplit(tree, instance).Refused.isEmpty();
+                QVERIFY2(rotate->isEnabled() == turns,
+                         qPrintable(instance + " menuRotate"));
+                CloseMenu();
+            }
         }
-        // A row of two: the right one can only go left, and turn.
-        StartWith({.Root = Split(true, {ListOf("list"), TermOf("terminal")},
-                                 {Px(320), REST})});
-        OpenMenuOn("terminal");
-        QVERIFY(!On("menuMoveRight"));
-        QVERIFY(On("menuMoveLeft"));
-        QVERIFY(!On("menuMoveUp"));
-        QVERIFY(!On("menuMoveDown"));
-        QVERIFY(On("menuRotate"));
+        // The only panel has nothing to turn.
+        StartWith(trees.back());
+        OpenMenuOn("list");
+        QVERIFY(!On("menuRotate"));
+        QVERIFY(!On("menuMoveLeft"));
+    }
+
+    void TheMenuEditsKeepThePanelsThatCollapseAndThatTurn() {
+        BootWith(Nested());
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QStringList instances = {"list", "terminal", "terminal-2"};
+        QMap<QString, QQuickItem*> before;
+        for (const QString& instance : instances) {
+            before.insert(instance, PanelByInstance(instance));
+            QVERIFY(before.value(instance) != nullptr);
+        }
+        // The lower terminal goes out to the row: the column that held it
+        // is gone, and its other panel is where the column was.
+        ClickMenuItem("terminal-2", "menuMoveLeft");
+        QCOMPARE(
+            Shell_->CurrentLayout().Root,
+            Split(true,
+                  {ListOf("list"), TermOf("terminal-2"), TermOf("terminal")},
+                  {Px(320), REST, REST}));
+        for (const QString& instance : instances) {
+            QTRY_COMPARE_WITH_TIMEOUT(PanelByInstance(instance),
+                                      before.value(instance), TIMEOUT_MS);
+        }
+        // The row turns into a column.
+        ClickMenuItem("terminal", "menuRotate");
+        QVERIFY(!Shell_->CurrentLayout().Root.Horizontal);
+        QTRY_VERIFY_WITH_TIMEOUT(Above("list", "terminal-2"), TIMEOUT_MS);
+        for (const QString& instance : instances) {
+            QTRY_COMPARE_WITH_TIMEOUT(PanelByInstance(instance),
+                                      before.value(instance), TIMEOUT_MS);
+        }
+        QVERIFY(Problems().isEmpty());
     }
 
     void TheMenuItemMovesThePanelAndUndoBringsItBack() {
@@ -723,9 +975,9 @@ private slots:
         Focus("list");
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         Api_->Commands().Run("layout.moveLeft");
-        QTRY_VERIFY_WITH_TIMEOUT(
-            HasProblem("list cannot move left: it is at the left edge"),
-            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(HasProblem("list cannot move left: no split "
+                                            "around it has room to its left"),
+                                 TIMEOUT_MS);
         QCOMPARE(Shell_->CurrentLayout(), Nested());
         // A refusal is no edit: nothing to undo.
         Api_->Commands().Run("layout.undo");

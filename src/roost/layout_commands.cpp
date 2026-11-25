@@ -512,16 +512,17 @@ QString DirectionName(EMoveDirection direction) {
     return {};
 }
 
-QString EdgeName(EMoveDirection direction) {
+// Where the room is that no split around the panel has.
+QString RoomName(EMoveDirection direction) {
     switch (direction) {
         case EMoveDirection::Left:
-            return QStringLiteral("left");
+            return QStringLiteral("to its left");
         case EMoveDirection::Right:
-            return QStringLiteral("right");
+            return QStringLiteral("to its right");
         case EMoveDirection::Up:
-            return QStringLiteral("top");
+            return QStringLiteral("above it");
         case EMoveDirection::Down:
-            return QStringLiteral("bottom");
+            return QStringLiteral("below it");
     }
     return {};
 }
@@ -585,10 +586,10 @@ LayoutEdit MovePanel(const Layout& layout, const QString& instance,
             return Done(std::move(tree), layout, instance);
         }
     }
-    return Refuse(layout, QStringLiteral("%1 cannot move %2: it is at the %3 "
-                                         "edge")
+    return Refuse(layout, QStringLiteral("%1 cannot move %2: no split around "
+                                         "it has room %3")
                               .arg(instance, DirectionName(direction),
-                                   EdgeName(direction)));
+                                   RoomName(direction)));
 }
 
 LayoutEdit RotateSplit(const Layout& layout, const QString& instance) {
