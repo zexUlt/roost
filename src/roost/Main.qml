@@ -62,6 +62,8 @@ ApplicationWindow {
     property var panelTypes: []
     // Those of them that have inputs, so links to edit; written by C++.
     property var panelsWithInputs: []
+    // There is a layout edit to undo; written by C++.
+    property bool canUndo: false
 
     // C++ calls these: the keyboard to a panel after an edit, and the link
     // editor with the state of a panel.
@@ -404,6 +406,7 @@ ApplicationWindow {
             onTabChosen: (path, index) => root.tabChosen(path, index)
             panelTypes: root.panelTypes
             panelsWithInputs: root.panelsWithInputs
+            canUndo: root.canUndo
             onLayoutEdit: (action, args) => root.layoutEdit(action, args)
         }
 

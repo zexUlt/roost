@@ -12,6 +12,7 @@
 
 #include "api/api.hpp"
 #include "roost/daemon_launcher.hpp"
+#include "roost/layout_commands.hpp"
 #include "roost/layout_model.hpp"
 #include "roost/plugin_loader.hpp"
 
@@ -160,6 +161,10 @@ private:
     void ApplyLayout(Layout layout);
     void PublishLayout();
     void SaveLayout();
+    // Tells the window whether there is an edit to undo.
+    void PublishCanUndo();
+    // Gives the keyboard to the panel `instance` once its slot is there.
+    void FocusInstance(const QString& instance);
     // The panel types that can be created, with their ports.
     LayoutKnownPanels KnownPanels() const;
     // Writes the root's `panelTypes`.
@@ -199,6 +204,8 @@ private:
     // The root shows a layout (it has `layoutTree`).
     bool LayoutMode_ = false;
     Layout Layout_;
+    // The documents before the recent layout edits, for `undo`; memory only.
+    LayoutHistory History_;
     bool LayoutPublished_ = false;
     // The panel types the published tree has collapsed.
     QSet<QString> HiddenPublished_;

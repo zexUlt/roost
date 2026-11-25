@@ -314,6 +314,13 @@ const LayoutNode* FindLeaf(const LayoutNode& node, const QString& instance) {
     return nullptr;
 }
 
+QString FocusAfterWholeEdit(const Layout& layout, const QString& instance) {
+    if (!instance.isEmpty() && FindLeaf(layout.Root, instance) != nullptr) {
+        return instance;
+    }
+    return ShownLeaf(layout.Root).Instance;
+}
+
 int CountLeaves(const LayoutNode& node) {
     std::vector<const LayoutNode*> leaves;
     CollectLeaves(node, leaves);
@@ -603,6 +610,27 @@ LayoutEdit RemoveLink(const Layout& layout, const QString& instance,
     Layout tree = layout;
     At(tree.Root, path, path.size()).Links.remove(input);
     return Done(std::move(tree), layout, instance);
+}
+
+LayoutEdit ResetLayout(const Layout& layout, const QStringList& order,
+                       const LayoutKnownPanels& known) {
+    return Done(DefaultLayoutFor(order, known).Tree, layout, {});
+}
+
+void PushLayoutHistory(LayoutHistory& history, Layout before) {
+    history.push_back(std::move(before));
+    while (history.size() > LAYOUT_HISTORY_DEPTH) {
+        history.pop_front();
+    }
+}
+
+std::optional<Layout> PopLayoutHistory(LayoutHistory& history) {
+    if (history.empty()) {
+        return std::nullopt;
+    }
+    Layout last = std::move(history.back());
+    history.pop_back();
+    return last;
 }
 
 std::vector<LayoutInputChoices> LinkChoices(const Layout& layout,

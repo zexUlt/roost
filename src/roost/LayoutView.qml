@@ -31,7 +31,8 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink) and its
+    // splitDown, intoTabs, outOfTabs, close, toggleLists, editLinks, setLink,
+    // undo, reset) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -39,6 +40,8 @@ Item {
     property var panelTypes: []
     // The panel types that have inputs: only they have links to edit.
     property var panelsWithInputs: []
+    // There is a layout edit to undo; written by the shell.
+    property bool canUndo: false
     // The instance id of the panel that had the keyboard last, "" if none.
     property string lastFocused: ""
     // The panel that takes the keyboard when its slot is there, "" if none.
@@ -213,6 +216,12 @@ Item {
         }
     }
 
+    // Asks before the layout is replaced with the default one: the panels that
+    // are not in the default go with their place in the layout.
+    function askReset() {
+        confirmReset.open();
+    }
+
     // The link editor shows the state the shell worked out for a panel.
     function openLinkEditor(state) {
         linkEditor.show(state);
@@ -346,11 +355,13 @@ Item {
             "layout.outOfTabs": "outOfTabs",
             "layout.close": "close",
             "layout.toggleLists": "toggleLists",
-            "layout.editLinks": "editLinks"
+            "layout.editLinks": "editLinks",
+            "layout.undo": "undo"
         };
         for (const id of Object.keys(actions)) {
             Roost.commands.registerCommand(id, args => view.edit(actions[id], args ?? {}, ""));
         }
+        Roost.commands.registerCommand("layout.reset", () => view.askReset());
         // sessions.newSession is declared by the manifest of the plugin
         // `sessions`; the window runs it, as it runs the layout commands, because
         // the list it names depends on the links of the panel that has the keyboard.
@@ -381,6 +392,15 @@ Item {
                 from: from,
                 output: output
             })
+    }
+
+    ConfirmDialog {
+        id: confirmReset
+
+        title: "Reset the layout to the default?"
+        text: "Panels that are not in the default layout are closed. The others get their default places, sizes and links."
+        confirmText: "Reset"
+        onConfirmed: view.edit("reset", {})
     }
 
     // Opens the menu of the panel of `slot` at the point (x, y) of the slot.
