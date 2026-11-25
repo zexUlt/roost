@@ -27,9 +27,9 @@ ApplicationWindow {
     // hold the keys of its own platform.
     readonly property var keymapOnlyProblems: Roost.keymapProblems.filter(p => problems.indexOf(p) < 0)
     // What the strip shows: `problems`, then keymapOnlyProblems, then the
-    // problems of the font settings (the window's own: other windows have
-    // theirs).
-    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.fontProblems, Roost.updates.problems)
+    // problems of the settings the theme reads (the window's own: other
+    // windows have theirs).
+    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.settingsProblems.map(p => p.text), Roost.updates.problems)
     // Whether the link of the update line opens the browser. A test turns it
     // off; releaseOpened follows either way.
     property bool opensUrls: true
