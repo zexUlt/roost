@@ -1211,13 +1211,20 @@ FocusScope {
         // The rows are cut at the panel edge, not drawn over its neighbour.
         clip: true
 
+        // 76 high, or as high as the two lines with the padding above and below
+        // when a large font of the interface needs more (as the head of the
+        // terminal).
         Item {
             width: parent.width
-            height: 76
+            height: Math.max(76, titleColumn.height + 2 * Roost.theme.panelPadding)
 
             // The title, and under it the label of the keyboard while the
-            // panel has it.
+            // panel has it. The label keeps its place when it is not shown, so
+            // that the title does not move.
             Column {
+                id: titleColumn
+
+                objectName: "sessionsTitleColumn"
                 x: 20
                 anchors.verticalCenter: parent.verticalCenter
                 // The title takes what the button leaves.
@@ -1238,12 +1245,15 @@ FocusScope {
                 // "Input in list": a dot of `focus` and the words, 11 semibold,
                 // only while the panel has the keyboard (its active focus: where
                 // the keys go now; the ring of the card follows `lastFocused`
-                // of the layout and stays while a popup has the keyboard).
+                // of the layout and stays while a popup has the keyboard), and
+                // only if it fits left of "+ New": in a narrow list it goes, as
+                // in the head of the terminal.
                 Row {
                     id: inputLabel
 
                     objectName: "sessionsFocusLabel"
-                    visible: root.activeFocus
+                    // Not `visible`: the title would move with it.
+                    opacity: root.activeFocus && implicitWidth <= Math.max(0, newButton.x - 8 - titleColumn.x) ? 1 : 0
                     spacing: 6
 
                     Rectangle {
