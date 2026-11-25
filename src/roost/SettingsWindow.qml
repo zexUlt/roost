@@ -35,6 +35,10 @@ ApplicationWindow {
     property string readError
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
+    // settings.focusColor {preset, custom}, and the presets in the order of
+    // the box.
+    readonly property var focusColor: settingsDocument.focusColor ?? ({})
+    readonly property var focusPresets: ["base", "contrast", "custom"]
     // settings.updates.check as stored; on when the key is not a bool.
     readonly property bool updatesCheck: settingsDocument.updates?.check !== false
     readonly property string platformName: Qt.platform.os === "osx" ? "mac" : "linux"
@@ -85,14 +89,28 @@ ApplicationWindow {
         });
     }
 
+    // Writes one key of the focus colour, as patchTerminalFont does.
+    function patchFocusColor(key, value) {
+        const stored = focusColor;
+        const others = (typeof stored === "object" && !Array.isArray(stored)) ? Object.keys(stored).filter(k => k !== key) : [];
+        patchSettings({
+            "focusColor": (value === null && others.length === 0) ? null : {
+                [key]: value
+            }
+        });
+    }
+
     // The fields show the document. What the user is typing in is not
     // replaced, unless `force`.
     function showDocument(force) {
-        for (const field of [terminalFamilyField, terminalSizeField, uiSizeField]) {
+        for (const field of [terminalFamilyField, terminalSizeField, uiSizeField, focusCustomField]) {
             if (force || !field.activeFocus) {
                 field.text = field.shown();
             }
         }
+        // A preset that the box does not know shows Base, as the theme takes
+        // it (and says so in its problems), not an empty box.
+        focusPresetBox.currentIndex = Math.max(0, focusPresets.indexOf(focusColor.preset ?? "base"));
         updatesCheckSwitch.checked = updatesCheck;
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
     }
@@ -227,6 +245,20 @@ ApplicationWindow {
         Layout.topMargin: 8
     }
 
+    // What is wrong with one setting of the theme (Roost.theme.settingsProblems),
+    // under the fields of it, in the column of the fields: the width of the
+    // label of a row and its spacing.
+    component SettingProblems: Label {
+        required property string setting
+
+        Layout.fillWidth: true
+        Layout.leftMargin: 160 + 12
+        visible: text !== ""
+        wrapMode: Text.Wrap
+        color: Roost.theme.warning
+        text: Roost.theme.settingsProblems.filter(p => p.setting === setting).map(p => p.text).join("\n")
+    }
+
     component FieldRow: RowLayout {
         property alias label: title.text
 
@@ -325,6 +357,11 @@ ApplicationWindow {
                 }
             }
 
+            SettingProblems {
+                objectName: "terminalFontProblems"
+                setting: "terminalFont"
+            }
+
             FieldRow {
                 label: "Interface font size"
 
@@ -349,6 +386,62 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            SettingProblems {
+                objectName: "uiFontSizeProblems"
+                setting: "uiFontSize"
+            }
+
+            FieldRow {
+                label: "Focus ring color"
+
+                FormComboBox {
+                    id: focusPresetBox
+
+                    objectName: "focusPresetBox"
+                    Layout.fillWidth: true
+                    model: ["Base", "Contrast", "Custom"]
+                    onActivated: index => {
+                        const preset = root.focusPresets[index];
+                        // Custom starts from the colour the ring has now.
+                        root.patchSettings({
+                            "focusColor": preset === "custom" && root.focusColor.custom === undefined ? {
+                                "preset": preset,
+                                "custom": String(Roost.theme.focus)
+                            } : {
+                                "preset": preset
+                            }
+                        });
+                    }
+                }
+
+                // The project has no colour picker: a hex field. What is typed
+                // is written; a colour that is hard to read is a warning of the
+                // theme below the field, and what is not a colour a reason.
+                FormField {
+                    id: focusCustomField
+
+                    function shown() {
+                        return root.focusColor.custom ?? "";
+                    }
+
+                    objectName: "focusCustomField"
+                    visible: root.focusColor.preset === "custom"
+                    Layout.preferredWidth: 110
+                    placeholderText: "#rrggbb"
+                    onEditingFinished: {
+                        const color = text.trim() === "" ? null : text.trim();
+                        if ((color ?? "") !== shown()) {
+                            root.patchFocusColor("custom", color);
+                        }
+                    }
+                }
+            }
+
+            SettingProblems {
+                objectName: "focusColorProblems"
+                setting: "focusColor"
             }
 
             FieldRow {
@@ -404,15 +497,6 @@ ApplicationWindow {
                         }
                     })
                 }
-            }
-
-            Label {
-                objectName: "fontProblems"
-                Layout.fillWidth: true
-                visible: text !== ""
-                wrapMode: Text.Wrap
-                color: Roost.theme.warning
-                text: Roost.theme.fontProblems.join("\n")
             }
 
             Label {

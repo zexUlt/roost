@@ -98,6 +98,16 @@ private:
         return nullptr;
     }
 
+    // The settings the theme has problems with, in the order it lists them.
+    QStringList ProblemSettings() {
+        QStringList settings;
+        for (const QVariant& problem :
+             Singleton_->theme()->settingsProblems()) {
+            settings.append(problem.toMap().value("setting").toString());
+        }
+        return settings;
+    }
+
     // What the strip of problems shows.
     QStringList Shown() {
         return Root()->property("shownProblems").toStringList();
@@ -204,7 +214,7 @@ private slots:
         QCOMPARE(theme->uiFont(), application);
         QCOMPARE(QGuiApplication::font(), application);
         QCOMPARE(Terminal()->font(), DefaultTerminalFont());
-        QVERIFY(theme->fontProblems().isEmpty());
+        QVERIFY(theme->settingsProblems().isEmpty());
         QVERIFY(Shown().isEmpty());
         QVERIFY(!StripShown());
     }
@@ -293,6 +303,7 @@ private slots:
         // The size is taken, the family is not.
         QTRY_COMPARE_WITH_TIMEOUT(Shown().size(), 1, TIMEOUT_MS);
         QVERIFY2(Shown().first().contains(family), qPrintable(Shown().first()));
+        QCOMPARE(ProblemSettings(), QStringList{"terminalFont"});
         QVERIFY(StripShown());
         QVERIFY(IsFixedPitch(terminal->font()));
         QCOMPARE(terminal->font().pointSizeF(), BIG_SIZE);
@@ -332,6 +343,9 @@ private slots:
         QCOMPARE(Terminal()->font(), DefaultTerminalFont());
         QVERIFY(Shown().at(0).contains("settings.terminalFont.size"));
         QVERIFY(Shown().at(1).contains("settings.uiFontSize"));
+        // Each entry names the key of the document it is about.
+        QCOMPARE(ProblemSettings(),
+                 (QStringList{"terminalFont", "uiFontSize"}));
 
         WriteSettings(TerminalFont(QJsonValue::Undefined, 14));
         QTRY_VERIFY_WITH_TIMEOUT(Shown().isEmpty(), TIMEOUT_MS);

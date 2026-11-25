@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <optional>
 
 #include "core/theme_source.hpp"
 #include "terminal/renderer.hpp"
@@ -21,6 +23,58 @@ struct Token {
     const char* Key;
     QColor Theme::* Member;
 };
+
+// What the `focus` token is read against (docs/design/18-style.md): the ring
+// is 3:1 on the surface and the canvas, and `focus` is text on `surface` (the
+// hint of the palette) and on `selectedBackground` (the current filter chip),
+// 4.5:1; the cursor of a list is another ring. The same pairs and numbers as
+// TheDefaultThemeHasTheContrastOfTheStyleGuide (theme_test).
+struct FocusPair {
+    const char* Back;
+    double Least;
+};
+constexpr std::array<FocusPair, 4> FOCUS_PAIRS{{
+    {.Back = "surface", .Least = 4.5},
+    {.Back = "canvas", .Least = 3.0},
+    {.Back = "cursorFocused", .Least = 3.0},
+    {.Back = "selectedBackground", .Least = 4.5},
+}};
+
+TerminalColors::Rgb rgbOf(const QColor& color) {
+    return {.R = static_cast<quint8>(color.red()),
+            .G = static_cast<quint8>(color.green()),
+            .B = static_cast<quint8>(color.blue())};
+}
+
+// The line for the worst pair of FOCUS_PAIRS (the one furthest below its
+// least, in proportion) that the `focus` of `tokens` does not hold, or nothing
+// if it holds them all. The ratio is cut, not rounded, to one decimal, so that
+// a ratio under the least never reads as the least.
+std::optional<QString> focusContrastWarning(const QJsonObject& tokens) {
+    const QColor focus = QColor::fromString(tokens.value("focus").toString());
+    if (!focus.isValid()) {
+        return std::nullopt;
+    }
+    std::optional<QString> worst;
+    double worstShare = 1;
+    for (const FocusPair& pair : FOCUS_PAIRS) {
+        const QColor back =
+            QColor::fromString(tokens.value(pair.Back).toString());
+        if (!back.isValid()) {
+            continue;
+        }
+        const double ratio = Contrast(rgbOf(focus), rgbOf(back));
+        if (ratio >= pair.Least || ratio / pair.Least >= worstShare) {
+            continue;
+        }
+        worstShare = ratio / pair.Least;
+        worst = QStringLiteral("focus colour %1 is %2:1 on %3, below %4:1")
+                    .arg(focus.name(),
+                         QString::number(std::floor(ratio * 10) / 10, 'f', 1),
+                         QLatin1String(pair.Back), QString::number(pair.Least));
+    }
+    return worst;
+}
 
 // uiFont at `ratio` of its size (the prototype's base is 13 px) and `weight`.
 QFont scaled(const QFont& base, double ratio, QFont::Weight weight) {
@@ -66,14 +120,63 @@ QString Theme::follow(const QJsonObject& settings) {
     if (!theme.Problem.isEmpty()) {
         qWarning("roost: %s", qUtf8Printable(theme.Problem));
     }
-    load(theme.Tokens);
+    QJsonObject tokens = theme.Tokens;
+    const bool focusProblemsDiffer = followFocus(settings, tokens);
+    load(tokens);
     followFonts(settings);
+    if (focusProblemsDiffer) {
+        emit changed();
+    }
     return theme.Id;
+}
+
+bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
+    const FocusSettings wanted = ResolveFocusSettings(settings);
+    QList<SettingProblem> problems = wanted.Problems;
+    if (!wanted.Color.isEmpty()) {
+        tokens.insert(QStringLiteral("focus"), wanted.Color);
+    }
+    if (const auto warning = focusContrastWarning(tokens)) {
+        problems.append({.Setting = FOCUS_COLOR_KEY, .Text = *warning});
+    }
+    return setProblems(problems, true);
+}
+
+bool Theme::setProblems(const QList<SettingProblem>& fresh, bool focus) {
+    QList<SettingProblem> next;
+    if (!focus) {
+        next = fresh;
+    }
+    for (const SettingProblem& problem : Problems_) {
+        if ((problem.Setting == FOCUS_COLOR_KEY) != focus) {
+            next.append(problem);
+        }
+    }
+    if (focus) {
+        next += fresh;
+    }
+    if (next == Problems_) {
+        return false;
+    }
+    for (const SettingProblem& problem : fresh) {
+        qWarning("roost: %s", qUtf8Printable(problem.Text));
+    }
+    Problems_ = next;
+    return true;
+}
+
+QVariantList Theme::settingsProblems() const {
+    QVariantList list;
+    for (const SettingProblem& problem : Problems_) {
+        list.append(QVariantMap{{QStringLiteral("setting"), problem.Setting},
+                                {QStringLiteral("text"), problem.Text}});
+    }
+    return list;
 }
 
 void Theme::followFonts(const QJsonObject& settings) {
     const FontSettings wanted = ResolveFontSettings(settings);
-    QStringList problems = wanted.Problems;
+    QList<SettingProblem> problems = wanted.Problems;
 
     QFont terminal = DefaultTerminalFont_;
     if (wanted.TerminalSize > 0) {
@@ -96,10 +199,12 @@ void Theme::followFonts(const QJsonObject& settings) {
             terminal = named;
         } else {
             problems.append(
-                QStringLiteral("settings.terminalFont.family \"%1\" is not "
-                               "an installed monospace font; the system "
-                               "monospace font is used")
-                    .arg(wanted.TerminalFamily));
+                {.Setting = QStringLiteral("terminalFont"),
+                 .Text = QStringLiteral(
+                             "settings.terminalFont.family \"%1\" is not "
+                             "an installed monospace font; the system "
+                             "monospace font is used")
+                             .arg(wanted.TerminalFamily)});
         }
     }
     QFont ui = DefaultUiFont_;
@@ -109,15 +214,9 @@ void Theme::followFonts(const QJsonObject& settings) {
 
     const bool terminalDiffers = terminal != TerminalFont_;
     const bool uiDiffers = ui != UiFont_;
-    const bool problemsDiffer = problems != FontProblems_;
-    if (problemsDiffer) {
-        for (const QString& problem : problems) {
-            qWarning("roost: %s", qUtf8Printable(problem));
-        }
-    }
+    const bool problemsDiffer = setProblems(problems, false);
     TerminalFont_ = terminal;
     UiFont_ = ui;
-    FontProblems_ = problems;
     if (terminalDiffers || uiDiffers || problemsDiffer) {
         emit changed();
     }
