@@ -18,8 +18,16 @@ RoostMenu {
     property var info: ({
             inTabs: false,
             canIntoTabs: false,
+            canTabLeft: false,
+            canTabRight: false,
             canClose: false,
-            hasInputs: false
+            canMoveLeft: false,
+            canMoveRight: false,
+            canMoveUp: false,
+            canMoveDown: false,
+            canRotate: false,
+            hasInputs: false,
+            others: []
         })
 
     // Opens the menu on the panel of `slot` at the point (x, y) of the slot.
@@ -88,6 +96,95 @@ RoostMenu {
         text: "Move out of tabs"
         enabled: root.info.inTabs
         onTriggered: root.run("outOfTabs", {})
+    }
+
+    MenuSeparatorRow {}
+
+    // The moves of the panel and of its tab: one row of the menu, or it would
+    // not fit the window.
+    RoostMenu {
+        id: move
+
+        objectName: "menuMove"
+        title: "Move"
+        enabled: root.info.canMoveLeft || root.info.canMoveRight || root.info.canMoveUp || root.info.canMoveDown || root.info.canTabLeft || root.info.canTabRight
+
+        MenuRow {
+            objectName: "menuMoveLeft"
+            text: "Left"
+            enabled: root.info.canMoveLeft
+            onTriggered: root.run("moveLeft", {})
+        }
+
+        MenuRow {
+            objectName: "menuMoveRight"
+            text: "Right"
+            enabled: root.info.canMoveRight
+            onTriggered: root.run("moveRight", {})
+        }
+
+        MenuRow {
+            objectName: "menuMoveUp"
+            text: "Up"
+            enabled: root.info.canMoveUp
+            onTriggered: root.run("moveUp", {})
+        }
+
+        MenuRow {
+            objectName: "menuMoveDown"
+            text: "Down"
+            enabled: root.info.canMoveDown
+            onTriggered: root.run("moveDown", {})
+        }
+
+        MenuSeparatorRow {}
+
+        MenuRow {
+            objectName: "menuTabLeft"
+            text: "Tab left"
+            enabled: root.info.canTabLeft
+            onTriggered: root.run("tabLeft", {})
+        }
+
+        MenuRow {
+            objectName: "menuTabRight"
+            text: "Tab right"
+            enabled: root.info.canTabRight
+            onTriggered: root.run("tabRight", {})
+        }
+    }
+
+    MenuRow {
+        objectName: "menuRotate"
+        text: "Turn split"
+        enabled: root.info.canRotate
+        onTriggered: root.run("rotate", {})
+    }
+
+    RoostMenu {
+        id: swapWith
+
+        objectName: "menuSwapWith"
+        title: "Swap with…"
+        enabled: root.info.others.length > 0
+
+        // One item per other panel of the window: its instance and type.
+        Instantiator {
+            model: root.info.others
+
+            delegate: MenuRow {
+                required property var modelData
+                required property int index
+
+                objectName: "menuSwapWith_" + modelData.instance
+                text: modelData.instance + " (" + modelData.panel + ")"
+                onTriggered: root.run("swap", {
+                    with: modelData.instance
+                })
+            }
+            onObjectAdded: (index, object) => swapWith.insertItem(index, object)
+            onObjectRemoved: (index, object) => swapWith.removeItem(object)
+        }
     }
 
     MenuRow {
