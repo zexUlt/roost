@@ -172,6 +172,13 @@ public:
     QObject* Root() { return Engine_->rootObjects().first(); }
     QQuickWindow* Window() { return qobject_cast<QQuickWindow*>(Root()); }
 
+    // The slots of the layout the window shows. A layout that is replaced
+    // leaves its slots in the tree of objects until the event loop deletes
+    // them (a Loader drops the item with deleteLater, and its slots lose the
+    // window with it): one of them found by an instance id that the new
+    // layout has too is freed at the next event a test waits for.
+    QList<QQuickItem*> LiveSlots();
+
     QQuickItem* Slot(const QString& type);
 
     QQuickItem* PanelOf(const QString& type);
