@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "api": "0",
   "contributes": {
+    "commands": [
+      { "id": "terminal.fontBigger", "title": "Make the terminal font bigger" },
+      { "id": "terminal.fontSmaller", "title": "Make the terminal font smaller" },
+      { "id": "terminal.fontDefault", "title": "Reset the terminal font size" }
+    ],
+    "keybindings": [
+      { "command": "terminal.fontBigger", "key": "Ctrl+Shift+=", "mac": "Cmd+=" },
+      { "command": "terminal.fontSmaller", "key": "Ctrl+Shift+-", "mac": "Cmd+-" },
+      { "command": "terminal.fontDefault", "key": "Ctrl+Shift+0", "mac": "Cmd+0" }
+    ],
     "panels": [
       {
         "id": "view",

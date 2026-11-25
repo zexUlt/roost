@@ -29,7 +29,7 @@ ApplicationWindow {
     // What the strip shows: `problems`, then keymapOnlyProblems, then the
     // problems of the settings the theme reads (the window's own: other
     // windows have theirs).
-    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.settingsProblems.map(p => p.text), Roost.updates.problems)
+    readonly property var shownProblems: problems.concat(keymapOnlyProblems, Roost.theme.settingsProblems.map(p => p.text), shownFontProblem === "" ? [] : [shownFontProblem], Roost.updates.problems)
     // Whether the link of the update line opens the browser. A test turns it
     // off; releaseOpened follows either way.
     property bool opensUrls: true
@@ -121,6 +121,78 @@ ApplicationWindow {
     // platforms from the toolbar button.
     function openSettings() {
         settingsWindow.open();
+    }
+
+    // The limits of settings.terminalFont.size: MIN_FONT_SIZE and MAX_FONT_SIZE
+    // of src/core/theme_source.hpp (a test holds the two in step).
+    readonly property real minFontSize: 6
+    readonly property real maxFontSize: 72
+    // Why the last font command did nothing, and the size the terminal font had
+    // then: the strip shows it only while the size is still that one, so a
+    // change from anywhere (the next key, the Settings field, another window)
+    // takes it away.
+    property string fontProblem: ""
+    property real fontProblemAt: 0
+    readonly property string shownFontProblem: fontProblem !== "" && Roost.theme.terminalFont.pointSize === fontProblemAt ? fontProblem : ""
+
+    // The commands terminal.fontBigger, terminal.fontSmaller (the manifest of
+    // the plugin `terminal`): the size of the terminal font by `step` within
+    // the limits, written as the Settings field writes it, one store.patch of
+    // {terminalFont: {size}}; every window follows through store.changed. At a
+    // limit nothing is written and the strip says why.
+    function changeFontSize(step) {
+        const current = Roost.theme.terminalFont.pointSize;
+        const next = Math.max(minFontSize, Math.min(maxFontSize, current + step));
+        if (next === current) {
+            refuseFont(step > 0 ? "Terminal font size is already at its maximum, " + maxFontSize : "Terminal font size is already at its minimum, " + minFontSize);
+            return;
+        }
+        patchFontSize(next, false);
+    }
+
+    // The command terminal.fontDefault: removes `size` from terminalFont, and
+    // with it the object when `size` was its last key (as an empty Settings
+    // field does).
+    function resetFontSize() {
+        if (Roost.store === null) {
+            return;
+        }
+        Roost.store.get("settings", (err, result) => {
+            if (err) {
+                refuseFont("Terminal font size was not reset: " + (err.message ?? err));
+                return;
+            }
+            const font = result.document.terminalFont;
+            if (typeof font !== "object" || font === null || !("size" in font)) {
+                return;
+            }
+            const others = Object.keys(font).filter(k => k !== "size");
+            patchFontSize(null, others.length === 0);
+        });
+    }
+
+    // Writes the size; null removes it, and `dropObject` the object with it.
+    function patchFontSize(size, dropObject) {
+        if (Roost.store === null) {
+            return;
+        }
+        const patch = {
+            "terminalFont": dropObject ? null : {
+                "size": size
+            }
+        };
+        Roost.store.patch("settings", patch, err => {
+            if (err) {
+                refuseFont("Terminal font size was not saved: " + (err.message ?? err));
+            } else {
+                fontProblem = "";
+            }
+        });
+    }
+
+    function refuseFont(text) {
+        fontProblem = text;
+        fontProblemAt = Roost.theme.terminalFont.pointSize;
     }
 
     ColumnLayout {
@@ -437,6 +509,9 @@ ApplicationWindow {
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
             Roost.commands.registerCommand("shell.palette", () => root.openPalette());
             Roost.commands.registerCommand("shell.settings", () => root.openSettings());
+            Roost.commands.registerCommand("terminal.fontBigger", () => root.changeFontSize(1));
+            Roost.commands.registerCommand("terminal.fontSmaller", () => root.changeFontSize(-1));
+            Roost.commands.registerCommand("terminal.fontDefault", () => root.resetFontSize());
         }
     }
 
