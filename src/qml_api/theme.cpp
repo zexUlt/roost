@@ -78,7 +78,7 @@ QString Theme::follow(const QJsonObject& settings) {
 
 bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
     const FocusSettings wanted = ResolveFocusSettings(settings);
-    QStringList problems = wanted.Problems;
+    QList<SettingProblem> problems = wanted.Problems;
     // A colour that is refused is the one the token has now.
     bool kept = wanted.Refused;
     if (wanted.Custom) {
@@ -97,12 +97,14 @@ bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
         if (ratio < MIN_FOCUS_CONTRAST) {
             kept = true;
             problems.append(
-                QStringLiteral("settings.focusColor.custom %1 has a contrast "
-                               "of %2:1 against the surface or the canvas, "
-                               "less than %3:1; the focus colour is kept")
-                    .arg(wanted.Color)
-                    .arg(ratio, 0, 'f', 2)
-                    .arg(MIN_FOCUS_CONTRAST));
+                {.Setting = FOCUS_COLOR_KEY,
+                 .Text = QStringLiteral(
+                             "settings.focusColor.custom %1 has a contrast "
+                             "of %2:1 against the surface or the canvas, "
+                             "less than %3:1; the focus colour is kept")
+                             .arg(wanted.Color)
+                             .arg(ratio, 0, 'f', 2)
+                             .arg(MIN_FOCUS_CONTRAST)});
         } else {
             tokens.insert(QStringLiteral("focus"), wanted.Color);
         }
@@ -112,19 +114,44 @@ bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
     if (kept && Focus_.isValid()) {
         tokens.insert(QStringLiteral("focus"), Focus_.name());
     }
-    const bool differ = problems != FocusProblems_;
-    if (differ) {
-        for (const QString& problem : problems) {
-            qWarning("roost: %s", qUtf8Printable(problem));
+    return setProblems(problems, true);
+}
+
+bool Theme::setProblems(const QList<SettingProblem>& fresh, bool focus) {
+    QList<SettingProblem> next;
+    if (!focus) {
+        next = fresh;
+    }
+    for (const SettingProblem& problem : Problems_) {
+        if ((problem.Setting == FOCUS_COLOR_KEY) != focus) {
+            next.append(problem);
         }
     }
-    FocusProblems_ = problems;
-    return differ;
+    if (focus) {
+        next += fresh;
+    }
+    if (next == Problems_) {
+        return false;
+    }
+    for (const SettingProblem& problem : fresh) {
+        qWarning("roost: %s", qUtf8Printable(problem.Text));
+    }
+    Problems_ = next;
+    return true;
+}
+
+QVariantList Theme::settingsProblems() const {
+    QVariantList list;
+    for (const SettingProblem& problem : Problems_) {
+        list.append(QVariantMap{{QStringLiteral("setting"), problem.Setting},
+                                {QStringLiteral("text"), problem.Text}});
+    }
+    return list;
 }
 
 void Theme::followFonts(const QJsonObject& settings) {
     const FontSettings wanted = ResolveFontSettings(settings);
-    QStringList problems = wanted.Problems;
+    QList<SettingProblem> problems = wanted.Problems;
 
     QFont terminal = DefaultTerminalFont_;
     if (wanted.TerminalSize > 0) {
@@ -147,10 +174,12 @@ void Theme::followFonts(const QJsonObject& settings) {
             terminal = named;
         } else {
             problems.append(
-                QStringLiteral("settings.terminalFont.family \"%1\" is not "
-                               "an installed monospace font; the system "
-                               "monospace font is used")
-                    .arg(wanted.TerminalFamily));
+                {.Setting = QStringLiteral("terminalFont"),
+                 .Text = QStringLiteral(
+                             "settings.terminalFont.family \"%1\" is not "
+                             "an installed monospace font; the system "
+                             "monospace font is used")
+                             .arg(wanted.TerminalFamily)});
         }
     }
     QFont ui = DefaultUiFont_;
@@ -160,15 +189,9 @@ void Theme::followFonts(const QJsonObject& settings) {
 
     const bool terminalDiffers = terminal != TerminalFont_;
     const bool uiDiffers = ui != UiFont_;
-    const bool problemsDiffer = problems != FontProblems_;
-    if (problemsDiffer) {
-        for (const QString& problem : problems) {
-            qWarning("roost: %s", qUtf8Printable(problem));
-        }
-    }
+    const bool problemsDiffer = setProblems(problems, false);
     TerminalFont_ = terminal;
     UiFont_ = ui;
-    FontProblems_ = problems;
     if (terminalDiffers || uiDiffers || problemsDiffer) {
         emit changed();
     }

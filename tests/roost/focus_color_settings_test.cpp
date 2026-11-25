@@ -107,7 +107,23 @@ struct FocusWindow {
 
     QColor Focus() const { return Singleton->theme()->focus(); }
 
-    QStringList Problems() const { return Singleton->theme()->fontProblems(); }
+    // The texts of the problems of the theme.
+    QStringList Problems() const {
+        QStringList texts;
+        for (const QVariant& problem : Singleton->theme()->settingsProblems()) {
+            texts.append(problem.toMap().value("text").toString());
+        }
+        return texts;
+    }
+
+    // The keys of the settings the problems are about.
+    QStringList ProblemSettings() const {
+        QStringList settings;
+        for (const QVariant& problem : Singleton->theme()->settingsProblems()) {
+            settings.append(problem.toMap().value("setting").toString());
+        }
+        return settings;
+    }
 
     // What the user does to the box: chooses an entry of the list.
     bool Choose(int index) const {
@@ -311,8 +327,9 @@ private slots:
                  qPrintable(first->Problems().first()));
         QVERIFY2(first->Problems().first().contains("focus colour is kept"),
                  qPrintable(first->Problems().first()));
-        // Where the window shows a refusal: under the fields.
-        QQuickItem* shown = first->Find("fontProblems");
+        // Where the window shows a refusal: under the field of the setting.
+        QCOMPARE(first->ProblemSettings(), QStringList{"focusColor"});
+        QQuickItem* shown = first->Find("focusColorProblems");
         QVERIFY(shown != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(shown->isVisible(), TIMEOUT_MS);
         QCOMPARE(shown->property("text").toString(), first->Problems().first());
@@ -430,6 +447,43 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!window->Problems().isEmpty(), TIMEOUT_MS);
         QCOMPARE(window->Focus(), BASE);
         QVERIFY(window->Problems().first().contains("less than 3:1"));
+    }
+
+    // Each problem of the settings the theme reads is under the field of its
+    // own setting, and only there.
+    void AProblemIsShownUnderTheFieldOfItsSetting() {
+        QVERIFY(WriteSettings(
+            QJsonObject{{"terminalFont", QJsonObject{{"size", -1}}},
+                        {"uiFontSize", "big"},
+                        {"focusColor", QJsonObject{{"preset", "neon"}}}}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto window = OpenReadWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(window->Problems().size(), 3, TIMEOUT_MS);
+        QCOMPARE(window->ProblemSettings(),
+                 (QStringList{"terminalFont", "uiFontSize", "focusColor"}));
+        const std::pair<const char*, const char*> shown[] = {
+            {"terminalFontProblems", "settings.terminalFont.size"},
+            {"uiFontSizeProblems", "settings.uiFontSize"},
+            {"focusColorProblems", "settings.focusColor.preset"}};
+        for (const auto& [field, text] : shown) {
+            QQuickItem* label = window->Find(field);
+            QVERIFY2(label != nullptr, field);
+            QTRY_VERIFY_WITH_TIMEOUT(label->isVisible(), TIMEOUT_MS);
+            const QString words = label->property("text").toString();
+            QVERIFY2(words.startsWith(text), qPrintable(words));
+            QVERIFY2(!words.contains('\n'), qPrintable(words));
+        }
+
+        // Fixed: the lines go from under the fields.
+        QVERIFY(window->Choose(PRESET_BASE));
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QVERIFY(window->Edit("terminalSizeField", "14"));
+        for (const auto& [field, text] : shown) {
+            QQuickItem* label = window->Find(field);
+            QTRY_VERIFY_WITH_TIMEOUT(!label->isVisible(), TIMEOUT_MS);
+        }
+        QVERIFY(window->Problems().isEmpty());
     }
 };
 

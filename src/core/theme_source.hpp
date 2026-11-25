@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -37,6 +38,17 @@ inline const QString DEFAULT_THEME_ID = QStringLiteral("default");
 // outside tests.
 ResolvedTheme ResolveTheme(const QJsonObject& settings);
 
+// A setting of the `settings` document that cannot be used, and why: Setting is
+// the key of the document (terminalFont, uiFontSize, focusColor), Text the line
+// to show to the user. The window shows the line under the field of the
+// setting and in the strip of problems.
+struct SettingProblem {
+    QString Setting;
+    QString Text;
+
+    bool operator==(const SettingProblem&) const = default;
+};
+
 // The terminal colours of a theme's tokens, and the rule for a theme whose
 // terminal tokens do not parse that the window and roostd share: the colours
 // of the default theme (Fallback), Problem being what is wrong with the given
@@ -62,8 +74,8 @@ struct FontSettings {
     QString TerminalFamily;
     double TerminalSize = 0;
     double UiSize = 0;
-    // One line for each key that could not be used, to show to the user.
-    QStringList Problems;
+    // One for each key that could not be used, to show to the user.
+    QList<SettingProblem> Problems;
 };
 
 inline constexpr double MIN_FONT_SIZE = 6;
@@ -88,10 +100,12 @@ struct FocusSettings {
     // Whether the settings ask for a colour that cannot be read: the window
     // keeps the colour it has, and does not fall back to the theme's.
     bool Refused = false;
-    // One line for each key that could not be used, to show to the user.
-    QStringList Problems;
+    // One for each key that could not be used, to show to the user.
+    QList<SettingProblem> Problems;
 };
 
+// The key of the focus colour in the settings document, and of its problems.
+inline const QString FOCUS_COLOR_KEY = QStringLiteral("focusColor");
 inline const QString FOCUS_CONTRAST_COLOR = QStringLiteral("#1b2430");
 // The least contrast of the focus ring against the surface and the canvas
 // (docs/design/18-style.md).

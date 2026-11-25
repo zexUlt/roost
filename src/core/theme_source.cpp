@@ -14,6 +14,7 @@ namespace {
 
 constexpr auto DEFAULT_THEME_FILE = ":/roost/themes/default.json";
 const QString TEST_THEME_ID = QStringLiteral("test");
+const QString TERMINAL_FONT_KEY = QStringLiteral("terminalFont");
 
 std::optional<QJsonObject> ReadTokens(const QString& path) {
     QFile file(path);
@@ -27,20 +28,22 @@ std::optional<QJsonObject> ReadTokens(const QString& path) {
     return document.object();
 }
 
-// The size in `value` (named `key` in a problem), or 0 and a problem.
-double ReadFontSize(const QJsonValue& value, const QString& key,
-                    QStringList& problems) {
+// The size in `value` (named `key` in a problem, a part of `setting`), or 0 and
+// a problem.
+double ReadFontSize(const QJsonValue& value, const QString& setting,
+                    const QString& key, QList<SettingProblem>& problems) {
     const double size = value.toDouble(0);
     if (value.isDouble() && std::isfinite(size) && size >= MIN_FONT_SIZE &&
         size <= MAX_FONT_SIZE) {
         return size;
     }
     problems.append(
-        QStringLiteral("%1 must be a number from %2 to %3; the default size "
-                       "is used")
-            .arg(key)
-            .arg(MIN_FONT_SIZE)
-            .arg(MAX_FONT_SIZE));
+        {.Setting = setting,
+         .Text = QStringLiteral("%1 must be a number from %2 to %3; the "
+                                "default size is used")
+                     .arg(key)
+                     .arg(MIN_FONT_SIZE)
+                     .arg(MAX_FONT_SIZE)});
     return 0;
 }
 
@@ -117,25 +120,29 @@ FontSettings ResolveFontSettings(const QJsonObject& settings) {
             fonts.TerminalFamily = family.toString().trimmed();
         } else if (!family.isUndefined()) {
             fonts.Problems.append(
-                QStringLiteral("settings.terminalFont.family must be a font "
-                               "family name; the system monospace font is "
-                               "used"));
+                {.Setting = TERMINAL_FONT_KEY,
+                 .Text = QStringLiteral("settings.terminalFont.family must be "
+                                        "a font family name; the system "
+                                        "monospace font is used")});
         }
         const QJsonValue size = object.value(QStringLiteral("size"));
         if (!size.isUndefined()) {
-            fonts.TerminalSize =
-                ReadFontSize(size, QStringLiteral("settings.terminalFont.size"),
-                             fonts.Problems);
+            fonts.TerminalSize = ReadFontSize(
+                size, TERMINAL_FONT_KEY,
+                QStringLiteral("settings.terminalFont.size"), fonts.Problems);
         }
     } else if (!terminal.isUndefined()) {
         fonts.Problems.append(
-            QStringLiteral("settings.terminalFont must be an object with "
-                           "family and size; the defaults are used"));
+            {.Setting = TERMINAL_FONT_KEY,
+             .Text = QStringLiteral("settings.terminalFont must be an object "
+                                    "with family and size; the defaults are "
+                                    "used")});
     }
     const QJsonValue ui = settings.value(QStringLiteral("uiFontSize"));
     if (!ui.isUndefined()) {
-        fonts.UiSize = ReadFontSize(ui, QStringLiteral("settings.uiFontSize"),
-                                    fonts.Problems);
+        fonts.UiSize =
+            ReadFontSize(ui, QStringLiteral("uiFontSize"),
+                         QStringLiteral("settings.uiFontSize"), fonts.Problems);
     }
     return fonts;
 }
@@ -149,8 +156,10 @@ FocusSettings ResolveFocusSettings(const QJsonObject& settings) {
     if (!wanted.isObject()) {
         focus.Refused = true;
         focus.Problems.append(
-            QStringLiteral("settings.focusColor must be an object with preset "
-                           "and custom; the focus colour is kept"));
+            {.Setting = FOCUS_COLOR_KEY,
+             .Text = QStringLiteral("settings.focusColor must be an object "
+                                    "with preset and custom; the focus colour "
+                                    "is kept")});
         return focus;
     }
     const QJsonObject object = wanted.toObject();
@@ -171,14 +180,18 @@ FocusSettings ResolveFocusSettings(const QJsonObject& settings) {
         }
         focus.Refused = true;
         focus.Problems.append(
-            QStringLiteral("settings.focusColor.custom must be a colour "
-                           "#rrggbb; the focus colour is kept"));
+            {.Setting = FOCUS_COLOR_KEY,
+             .Text = QStringLiteral("settings.focusColor.custom must be a "
+                                    "colour #rrggbb; the focus colour is "
+                                    "kept")});
         return focus;
     }
     focus.Refused = true;
     focus.Problems.append(
-        QStringLiteral("settings.focusColor.preset must be base, contrast or "
-                       "custom; the focus colour is kept"));
+        {.Setting = FOCUS_COLOR_KEY,
+         .Text = QStringLiteral("settings.focusColor.preset must be base, "
+                                "contrast or custom; the focus colour is "
+                                "kept")});
     return focus;
 }
 

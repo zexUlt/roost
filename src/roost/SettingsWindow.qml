@@ -243,6 +243,20 @@ ApplicationWindow {
         Layout.topMargin: 8
     }
 
+    // What is wrong with one setting of the theme (Roost.theme.settingsProblems),
+    // under the fields of it, in the column of the fields: the width of the
+    // label of a row and its spacing.
+    component SettingProblems: Label {
+        required property string setting
+
+        Layout.fillWidth: true
+        Layout.leftMargin: 160 + 12
+        visible: text !== ""
+        wrapMode: Text.Wrap
+        color: Roost.theme.warning
+        text: Roost.theme.settingsProblems.filter(p => p.setting === setting).map(p => p.text).join("\n")
+    }
+
     component FieldRow: RowLayout {
         property alias label: title.text
 
@@ -341,6 +355,11 @@ ApplicationWindow {
                 }
             }
 
+            SettingProblems {
+                objectName: "terminalFontProblems"
+                setting: "terminalFont"
+            }
+
             FieldRow {
                 label: "Interface font size"
 
@@ -365,6 +384,11 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            SettingProblems {
+                objectName: "uiFontSizeProblems"
+                setting: "uiFontSize"
             }
 
             FieldRow {
@@ -410,6 +434,11 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            SettingProblems {
+                objectName: "focusColorProblems"
+                setting: "focusColor"
             }
 
             FieldRow {
@@ -465,15 +494,6 @@ ApplicationWindow {
                         }
                     })
                 }
-            }
-
-            Label {
-                objectName: "fontProblems"
-                Layout.fillWidth: true
-                visible: text !== ""
-                wrapMode: Text.Wrap
-                color: Roost.theme.warning
-                text: Roost.theme.fontProblems.join("\n")
             }
 
             Label {
