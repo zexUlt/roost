@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QQmlExtensionPlugin>
 #include <QQuickItemGrabResult>
 #include <QSaveFile>
@@ -851,6 +852,28 @@ private slots:
         QVERIFY(!StoredLayout().contains("listsHidden"));
     }
 
+    // A layout that is replaced leaves the slots of the old one in the tree
+    // of objects until the event loop deletes them: they have no window. A
+    // lookup that returned one would hand a test an item that is freed at
+    // the next event it waits for.
+    void ASlotOfTheLayoutThatWasReplacedIsNotFoundWhileItWaitsToBeDeleted() {
+        BootWithTwoLists();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        LayoutNode terminal;
+        terminal.Instance = "terminal";
+        terminal.Panel = "terminal.view";
+        Shell_->SetLayout(Layout{.Root = terminal});
+        // No event has run since the replace: the old slots are still there.
+        QCOMPARE(Root()->findChildren<QQuickItem*>("panelSlot").size(), 4);
+        QCOMPARE(SlotCount(), 1);
+        const QQuickItem* slot = SlotByInstance("terminal");
+        QVERIFY(slot != nullptr);
+        QVERIFY(slot->window() != nullptr);
+        QVERIFY(SlotByInstance("list") == nullptr);
+    }
+
     void AStoredStateOfAWindowWithOnlyListsShowsThemAndGoesWithTheNextEdit() {
         // No terminal in the window: the document has only lists.
         WithoutTerminal_ = true;
@@ -909,6 +932,12 @@ private slots:
                        ->mapToScene(QPointF(buttons.at(i)->width(), 0))
                        .x();
         };
+        // The bar lays its buttons out after they are shown: until then
+        // they all stand at the same x.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ShownTabButtons().last()->mapToScene(QPointF(0, 0)).x() >
+                ShownTabButtons().first()->mapToScene(QPointF(0, 0)).x(),
+            TIMEOUT_MS);
         const double spacing = gapAfter(ShownTabButtons(), 0);
         Snapshot("1-shown");
 

@@ -50,8 +50,23 @@ inline Layout Stacked(std::vector<LayoutNode> pairs) {
 // The panels of a window by the instance id of their slots.
 class LayoutWindow : public SessionsWindow {
 public:
-    QQuickItem* SlotByInstance(const QString& instance) {
+    // The slots of the layout the window shows. A layout that is replaced
+    // leaves its slots in the tree of objects until the event loop deletes
+    // them (a Loader drops the item with deleteLater, and its slots lose the
+    // window with it): one of them found by an instance id that the new
+    // layout has too is freed at the next event a test waits for.
+    QList<QQuickItem*> LiveSlots() {
+        QList<QQuickItem*> live;
         for (auto* item : Root()->findChildren<QQuickItem*>("panelSlot")) {
+            if (item->window() != nullptr) {
+                live.append(item);
+            }
+        }
+        return live;
+    }
+
+    QQuickItem* SlotByInstance(const QString& instance) {
+        for (auto* item : LiveSlots()) {
             if (item->property("instanceId").toString() == instance) {
                 return item;
             }
@@ -65,10 +80,7 @@ public:
                                : slot->property("panel").value<QQuickItem*>();
     }
 
-    int SlotCount() {
-        return static_cast<int>(
-            Root()->findChildren<QQuickItem*>("panelSlot").size());
-    }
+    int SlotCount() { return static_cast<int>(LiveSlots().size()); }
 
     QQuickItem* ListViewOf(const QString& list) {
         QQuickItem* panel = PanelByInstance(list);
