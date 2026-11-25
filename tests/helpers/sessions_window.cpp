@@ -300,8 +300,18 @@ void SessionsWindow::CloseWindow() {
     Api_.reset();
 }
 
-QQuickItem* SessionsWindow::Slot(const QString& type) {
+QList<QQuickItem*> SessionsWindow::LiveSlots() {
+    QList<QQuickItem*> live;
     for (auto* item : Root()->findChildren<QQuickItem*>("panelSlot")) {
+        if (item->window() != nullptr) {
+            live.append(item);
+        }
+    }
+    return live;
+}
+
+QQuickItem* SessionsWindow::Slot(const QString& type) {
+    for (auto* item : LiveSlots()) {
         if (item->property("panelType").toString() == type) {
             return item;
         }
