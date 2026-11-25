@@ -50,13 +50,16 @@ Q_IMPORT_QML_PLUGIN(Roost_ShellPlugin)
 
 namespace {
 
+#ifdef Q_OS_MACOS
 // The limit for a wait that the macOS install has to end first. The install
 // runs the real hdiutil (attach, detach) of the system, and each of the two
 // takes from a fraction of a second to several seconds when the machine is
 // loaded (10.6 s together was seen at load 60; every other step is under 20
-// ms), so TIMEOUT_MS is too short for it. The hang limit of the install
-// itself is the 120 s of the attach (update_install_macos.cpp).
+// ms), so TIMEOUT_MS is too short for it. 60 s bounds a hang of these tool
+// steps together; the product gives the attach alone 120 s and a detach 30 s
+// (update_install_macos.cpp). Only the macOS install cases use it.
 constexpr int INSTALL_TIMEOUT_MS = 60000;
+#endif
 
 const QString RELEASE_PAGE =
     QStringLiteral("https://github.com/zexUlt/roost/releases/tag/test");
@@ -1775,7 +1778,7 @@ private slots:
             QCOMPARE(DownloadState(), QString());
             QCOMPARE(Quits_, 0);
         } else {
-            QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, INSTALL_TIMEOUT_MS);
+            QTRY_COMPARE_WITH_TIMEOUT(Quits_, 1, TIMEOUT_MS);
             QVERIFY(StripShown());
             QCOMPARE(StripText(), QString("Installing roost v9.9.9..."));
         }
