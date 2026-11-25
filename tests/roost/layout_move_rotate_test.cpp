@@ -248,9 +248,47 @@ private:
                                  TIMEOUT_MS);
     }
 
-    // Opens the menu on `instance`, clicks the item, and waits for the write.
+    // The row of the menu whose submenu is `submenu`.
+    QQuickItem* RowOfSubmenu(QObject* submenu) {
+        QObject* menu = Root()->findChild<QObject*>("panelMenu");
+        for (int i = 0; i < 64; ++i) {
+            QQuickItem* candidate = nullptr;
+            if (!QMetaObject::invokeMethod(menu, "itemAt",
+                                           Q_RETURN_ARG(QQuickItem*, candidate),
+                                           Q_ARG(int, i)) ||
+                candidate == nullptr) {
+                break;
+            }
+            if (candidate->property("subMenu").value<QObject*>() == submenu) {
+                return candidate;
+            }
+        }
+        return nullptr;
+    }
+
+    // Opens "Move" of the menu that is open: its rows are then on the screen.
+    void OpenMoveSubmenu() {
+        QObject* submenu = Root()->findChild<QObject*>("menuMove");
+        QVERIFY(submenu != nullptr);
+        QQuickItem* row = RowOfSubmenu(submenu);
+        QVERIFY(row != nullptr);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(row));
+        QTRY_VERIFY_WITH_TIMEOUT(submenu->property("visible").toBool(),
+                                 TIMEOUT_MS);
+    }
+
+    // Opens the menu on `instance`, clicks the item (of "Move" for the moves),
+    // and waits for the write.
     void ClickMenuItem(const QString& instance, const QString& item) {
         OpenMenuOn(instance);
+        if (item.startsWith(QLatin1String("menuMove")) ||
+            item.startsWith(QLatin1String("menuTab"))) {
+            OpenMoveSubmenu();
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+        }
         QQuickItem* row = Named(item);
         QVERIFY2(row != nullptr, qPrintable(item));
         QTRY_VERIFY_WITH_TIMEOUT(row->isEnabled(), TIMEOUT_MS);

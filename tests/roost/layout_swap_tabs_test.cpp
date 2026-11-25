@@ -790,6 +790,14 @@ private slots:
         QVERIFY(Item("menuTabRight") != nullptr);
         QVERIFY(Item("menuTabLeft")->isEnabled());
         QVERIFY(Item("menuTabRight")->isEnabled());
+        QObject* move = Root()->findChild<QObject*>("menuMove");
+        QVERIFY(move != nullptr);
+        QQuickItem* moveRow = RowOfSubmenu(move);
+        QVERIFY(moveRow != nullptr);
+        QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
+                          CenterOf(moveRow));
+        QTRY_VERIFY_WITH_TIMEOUT(move->property("visible").toBool(),
+                                 TIMEOUT_MS);
         QSignalSpy spy(&Api_->Store(), &api::StoreService::Changed);
         QTest::mouseClick(Window(), Qt::LeftButton, Qt::NoModifier,
                           CenterOf(Item("menuTabLeft")));

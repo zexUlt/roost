@@ -100,32 +100,58 @@ RoostMenu {
 
     MenuSeparatorRow {}
 
-    MenuRow {
-        objectName: "menuMoveLeft"
-        text: "Move left"
-        enabled: root.info.canMoveLeft
-        onTriggered: root.run("moveLeft", {})
-    }
+    // The moves of the panel and of its tab: one row of the menu, or it would
+    // not fit the window.
+    RoostMenu {
+        id: move
 
-    MenuRow {
-        objectName: "menuMoveRight"
-        text: "Move right"
-        enabled: root.info.canMoveRight
-        onTriggered: root.run("moveRight", {})
-    }
+        objectName: "menuMove"
+        title: "Move"
+        enabled: root.info.canMoveLeft || root.info.canMoveRight || root.info.canMoveUp || root.info.canMoveDown || root.info.canTabLeft || root.info.canTabRight
 
-    MenuRow {
-        objectName: "menuMoveUp"
-        text: "Move up"
-        enabled: root.info.canMoveUp
-        onTriggered: root.run("moveUp", {})
-    }
+        MenuRow {
+            objectName: "menuMoveLeft"
+            text: "Left"
+            enabled: root.info.canMoveLeft
+            onTriggered: root.run("moveLeft", {})
+        }
 
-    MenuRow {
-        objectName: "menuMoveDown"
-        text: "Move down"
-        enabled: root.info.canMoveDown
-        onTriggered: root.run("moveDown", {})
+        MenuRow {
+            objectName: "menuMoveRight"
+            text: "Right"
+            enabled: root.info.canMoveRight
+            onTriggered: root.run("moveRight", {})
+        }
+
+        MenuRow {
+            objectName: "menuMoveUp"
+            text: "Up"
+            enabled: root.info.canMoveUp
+            onTriggered: root.run("moveUp", {})
+        }
+
+        MenuRow {
+            objectName: "menuMoveDown"
+            text: "Down"
+            enabled: root.info.canMoveDown
+            onTriggered: root.run("moveDown", {})
+        }
+
+        MenuSeparatorRow {}
+
+        MenuRow {
+            objectName: "menuTabLeft"
+            text: "Tab left"
+            enabled: root.info.canTabLeft
+            onTriggered: root.run("tabLeft", {})
+        }
+
+        MenuRow {
+            objectName: "menuTabRight"
+            text: "Tab right"
+            enabled: root.info.canTabRight
+            onTriggered: root.run("tabRight", {})
+        }
     }
 
     MenuRow {
@@ -133,22 +159,6 @@ RoostMenu {
         text: "Turn split"
         enabled: root.info.canRotate
         onTriggered: root.run("rotate", {})
-    }
-
-    MenuSeparatorRow {}
-
-    MenuRow {
-        objectName: "menuTabLeft"
-        text: "Move tab left"
-        enabled: root.info.canTabLeft
-        onTriggered: root.run("tabLeft", {})
-    }
-
-    MenuRow {
-        objectName: "menuTabRight"
-        text: "Move tab right"
-        enabled: root.info.canTabRight
-        onTriggered: root.run("tabRight", {})
     }
 
     RoostMenu {
