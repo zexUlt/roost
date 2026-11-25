@@ -67,6 +67,26 @@ LayoutEdit MoveIntoTabs(const Layout& layout, const QString& instance);
 // sibling in a split: before the stack if it was the first tab, else after.
 LayoutEdit MoveOutOfTabs(const Layout& layout, const QString& instance);
 
+// The way a panel moves in `MovePanel`.
+enum class EMoveDirection { Left, Right, Up, Down };
+
+// Moves the leaf one place in the direction. In a split that runs that way
+// (left and right: side by side, up and down: stacked) it swaps with the
+// neighbour there, a leaf or a whole subtree, and the sizes go with the two
+// panels. At the edge of that split, or in a split that runs the other way,
+// it leaves the split and goes next to it in the parent split, when that one
+// runs the way of the move: before it for left and up, after it for right and
+// down, with the rest of the room; a split left with one child is replaced by
+// it. Refused for a panel in a stack of tabs, for the only panel, and when no
+// split runs that way around the leaf.
+LayoutEdit MovePanel(const Layout& layout, const QString& instance,
+                     EMoveDirection direction);
+
+// Turns the split that holds the leaf (the nearest one above it, past a stack
+// of tabs) from side by side to stacked or back; the children, their order and
+// their sizes stay. Refused for the only panel.
+LayoutEdit RotateSplit(const Layout& layout, const QString& instance);
+
 // Exchanges the places of two leaves, anywhere in the tree. Each leaf keeps
 // its instance id, panel type and links, so its state and what feeds it stay.
 // The sizes: two leaves of one split take their sizes along (the list stays

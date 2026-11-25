@@ -624,6 +624,122 @@ LayoutEdit MoveTab(const Layout& layout, const QString& instance, bool right,
     return Done(std::move(tree), layout, instance);
 }
 
+namespace {
+
+QString DirectionName(EMoveDirection direction) {
+    switch (direction) {
+        case EMoveDirection::Left:
+            return QStringLiteral("left");
+        case EMoveDirection::Right:
+            return QStringLiteral("right");
+        case EMoveDirection::Up:
+            return QStringLiteral("up");
+        case EMoveDirection::Down:
+            return QStringLiteral("down");
+    }
+    return {};
+}
+
+// Where the room is that no split around the panel has.
+QString RoomName(EMoveDirection direction) {
+    switch (direction) {
+        case EMoveDirection::Left:
+            return QStringLiteral("to its left");
+        case EMoveDirection::Right:
+            return QStringLiteral("to its right");
+        case EMoveDirection::Up:
+            return QStringLiteral("above it");
+        case EMoveDirection::Down:
+            return QStringLiteral("below it");
+    }
+    return {};
+}
+
+}  // namespace
+
+LayoutEdit MovePanel(const Layout& layout, const QString& instance,
+                     EMoveDirection direction) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout,
+            QStringLiteral("there is no panel %1 to move").arg(instance));
+    }
+    if (path.empty()) {
+        return Refuse(layout, QStringLiteral("%1 is the only panel: there is "
+                                             "nothing to move it past")
+                                  .arg(instance));
+    }
+    Layout tree = layout;
+    const Path parentPath(path.begin(), path.end() - 1);
+    LayoutNode& parent = At(tree.Root, path, path.size() - 1);
+    if (parent.Kind != ELayoutNodeKind::Split) {
+        return Refuse(layout, QStringLiteral("%1 is in tabs: take it out of "
+                                             "tabs to move it")
+                                  .arg(instance));
+    }
+    const bool sideways =
+        direction == EMoveDirection::Left || direction == EMoveDirection::Right;
+    const bool forward =
+        direction == EMoveDirection::Right || direction == EMoveDirection::Down;
+    const auto own = static_cast<std::ptrdiff_t>(path.back());
+    const std::ptrdiff_t other = forward ? own + 1 : own - 1;
+    if (parent.Horizontal == sideways && other >= 0 &&
+        other < static_cast<std::ptrdiff_t>(parent.Children.size())) {
+        // The panel and its size go to the neighbour's place, and the
+        // neighbour with its size to the panel's.
+        std::swap(parent.Children[static_cast<size_t>(own)],
+                  parent.Children[static_cast<size_t>(other)]);
+        std::swap(parent.Sizes[static_cast<size_t>(own)],
+                  parent.Sizes[static_cast<size_t>(other)]);
+        Tidy(tree.Root, parentPath);
+        return Done(std::move(tree), layout, instance);
+    }
+    if (!parentPath.empty()) {
+        const Path grandPath(parentPath.begin(), parentPath.end() - 1);
+        LayoutNode& grand = At(tree.Root, parentPath, parentPath.size() - 1);
+        if (grand.Kind == ELayoutNodeKind::Split &&
+            grand.Horizontal == sideways) {
+            const size_t at = parentPath.back();
+            LayoutNode leaf = std::move(parent.Children[path.back()]);
+            parent.Children.erase(parent.Children.begin() + own);
+            parent.Sizes.erase(parent.Sizes.begin() + own);
+            Tidy(tree.Root, parentPath);
+            const auto place =
+                static_cast<std::ptrdiff_t>(at) + (forward ? 1 : 0);
+            grand.Children.insert(grand.Children.begin() + place,
+                                  std::move(leaf));
+            grand.Sizes.insert(grand.Sizes.begin() + place, LayoutSize::Rest());
+            Tidy(tree.Root, grandPath);
+            return Done(std::move(tree), layout, instance);
+        }
+    }
+    return Refuse(layout, QStringLiteral("%1 cannot move %2: no split around "
+                                         "it has room %3")
+                              .arg(instance, DirectionName(direction),
+                                   RoomName(direction)));
+}
+
+LayoutEdit RotateSplit(const Layout& layout, const QString& instance) {
+    Path path;
+    if (!PathTo(layout.Root, instance, path)) {
+        return Refuse(
+            layout, QStringLiteral("there is no panel %1 to turn the split of")
+                        .arg(instance));
+    }
+    Layout tree = layout;
+    for (size_t length = path.size(); length-- > 0;) {
+        LayoutNode& node = At(tree.Root, path, length);
+        if (node.Kind == ELayoutNodeKind::Split) {
+            node.Horizontal = !node.Horizontal;
+            return Done(std::move(tree), layout, instance);
+        }
+    }
+    return Refuse(layout, QStringLiteral("%1 is the only panel: there is no "
+                                         "split to turn")
+                              .arg(instance));
+}
+
 LayoutEdit ClosePanel(const Layout& layout, const QString& instance) {
     Path path;
     if (!PathTo(layout.Root, instance, path)) {

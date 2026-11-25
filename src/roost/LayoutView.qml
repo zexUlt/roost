@@ -31,8 +31,9 @@ Item {
     // root to the stack, `index` the tab.
     signal tabChosen(var path, int index)
     // An edit of the layout, for the shell to apply: the action (splitRight,
-    // splitDown, intoTabs, outOfTabs, swap, tabLeft, tabRight, close,
-    // toggleLists, editLinks, setLink, undo, reset) and its
+    // splitDown, intoTabs, outOfTabs, moveLeft, moveRight, moveUp, moveDown,
+    // rotate, swap, tabLeft, tabRight, close, toggleLists, editLinks, setLink,
+    // undo, reset) and its
     // arguments, `instance` among them. See roost::Shell::OnLayoutEdit.
     signal layoutEdit(string action, var args)
 
@@ -138,10 +139,17 @@ Item {
             canTabLeft: false,
             canTabRight: false,
             canClose: false,
+            canMoveLeft: false,
+            canMoveRight: false,
+            canMoveUp: false,
+            canMoveDown: false,
+            canRotate: false,
             hasInputs: false,
             others: []
         };
         let leaves = 0;
+        // The nodes from the root down to the parent of a node.
+        const above = [];
         const walk = (node, parent) => {
             if (node.kind === "leaf") {
                 leaves += 1;
@@ -158,6 +166,7 @@ Item {
                             info.canTabRight = parent.children.slice(at + 1).some(hasButton);
                         }
                     }
+                    view.describeMoves(info, node, above);
                 } else {
                     info.others.push({
                         instance: node.instance,
@@ -166,15 +175,42 @@ Item {
                 }
                 return;
             }
+            above.push(node);
             for (const child of node.children) {
                 walk(child, node);
             }
+            above.pop();
         };
         if (view.tree !== null) {
             walk(view.tree, null);
         }
         info.canClose = leaves > 1;
         return info;
+    }
+
+    // Fills the move and turn entries of `info` for the leaf `leaf` that has
+    // the nodes `above` over it, the root first. As roost::MovePanel and
+    // roost::RotateSplit decide: a leaf in a split moves where a neighbour is
+    // in that split, or into a parent split that runs that way; a split is
+    // turned when there is one above the leaf.
+    function describeMoves(info, leaf, above) {
+        info.canRotate = above.some(node => node.kind === "split");
+        if (above.length === 0 || above[above.length - 1].kind !== "split") {
+            return;
+        }
+        const parent = above[above.length - 1];
+        const grand = above.length > 1 ? above[above.length - 2] : null;
+        const index = parent.children.findIndex(child => child.kind === "leaf" && child.instance === leaf.instance);
+        const can = (sideways, step) => {
+            if (parent.horizontal === sideways && index + step >= 0 && index + step < parent.children.length) {
+                return true;
+            }
+            return grand !== null && grand.kind === "split" && grand.horizontal === sideways;
+        };
+        info.canMoveLeft = can(true, -1);
+        info.canMoveRight = can(true, 1);
+        info.canMoveUp = can(false, -1);
+        info.canMoveDown = can(false, 1);
     }
 
     // Asks the shell for the edit on `instance`, the target of the commands
@@ -371,6 +407,11 @@ Item {
             "layout.splitDown": "splitDown",
             "layout.intoTabs": "intoTabs",
             "layout.outOfTabs": "outOfTabs",
+            "layout.moveLeft": "moveLeft",
+            "layout.moveRight": "moveRight",
+            "layout.moveUp": "moveUp",
+            "layout.moveDown": "moveDown",
+            "layout.rotate": "rotate",
             "layout.swap": "swap",
             "layout.tabLeft": "tabLeft",
             "layout.tabRight": "tabRight",

@@ -618,6 +618,18 @@ target_compile_definitions(layout_lists_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(layout_lists_test roostd fake_tui claude-adapter sessions_qml)
 
+# Move a panel and turn a split: the swap and the step out of a split, the
+# turn, the menu items, the commands, the refusals, one write per edit.
+roost_add_qt_test(layout_move_rotate_test roost/layout_move_rotate_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(layout_move_rotate_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(layout_move_rotate_test roostd fake_tui claude-adapter sessions_qml)
+
 # The warning filter of the window tests: Qt's own animation timer warns about
 # its driver when a pause animation follows an emptied timer (every ListView).
 roost_add_qt_test(fail_on_warnings_test roost/fail_on_warnings_test.cpp

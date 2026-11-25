@@ -207,6 +207,15 @@ private:
                                  TIMEOUT_MS);
     }
 
+    void CloseMenu() {
+        QTest::keyClick(Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!Root()
+                                      ->findChild<QObject*>("panelMenu")
+                                      ->property("visible")
+                                      .toBool(),
+                                 TIMEOUT_MS);
+    }
+
     // The layout is set, the window shows its panels and the history is empty
     // of what the set did (SetLayout is no edit).
     void StartWith(const Layout& layout) {
@@ -424,6 +433,46 @@ private slots:
         // Nothing was edited: there is nothing to undo.
         Api_->Commands().Run("layout.undo");
         QTRY_VERIFY_WITH_TIMEOUT(HasProblem("nothing to undo"), TIMEOUT_MS);
+    }
+
+    // The menu does not fit a window, if a row of it is out of the window:
+    // the click on it is lost.
+    void EveryRowOfThePanelMenuIsInTheDefaultWindow() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        WaitForLayout({{"list", "terminal"}});
+        QCOMPARE(Window()->size(), QSize(960, 600));
+        for (const QString& instance : {"list", "terminal"}) {
+            OpenMenuOn(instance);
+            QObject* menu = Root()->findChild<QObject*>("panelMenu");
+            int rows = 0;
+            for (int i = 0; i < 64; ++i) {
+                QQuickItem* row = nullptr;
+                if (!QMetaObject::invokeMethod(menu, "itemAt",
+                                               Q_RETURN_ARG(QQuickItem*, row),
+                                               Q_ARG(int, i)) ||
+                    row == nullptr) {
+                    break;
+                }
+                ++rows;
+                const QRectF rect = row->mapRectToScene(
+                    QRectF(0, 0, row->width(), row->height()));
+                QVERIFY2(QRectF(QPointF(0, 0), QSizeF(Window()->size()))
+                             .contains(rect),
+                         qPrintable(QStringLiteral("%1: row %2 at %3,%4 %5x%6")
+                                        .arg(instance)
+                                        .arg(i)
+                                        .arg(rect.x())
+                                        .arg(rect.y())
+                                        .arg(rect.width())
+                                        .arg(rect.height())));
+            }
+            QVERIFY(rows > 8);
+            CloseMenu();
+        }
     }
 
     void TheMenuItemAsksAndResets() {
