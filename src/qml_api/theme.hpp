@@ -4,12 +4,14 @@
 #include <QColor>
 #include <QFont>
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
 
 #include "core/terminal_theme.hpp"
+#include "core/theme_source.hpp"
 
 namespace roost {
 
@@ -31,6 +33,14 @@ namespace roost {
 // {family, size} and settings.uiFontSize; what they leave out is the system
 // monospace font at its size of today and the application's default font. The
 // type scale (titleFont, ... smallFont) is uiFont at a ratio of its size.
+//
+// The `focus` token is the one colour that a setting may change: follow() takes
+// settings.focusColor {preset, custom} over the theme's own `focus`. A custom
+// colour is applied as it is; if it is below the contrast that 18-style.md asks
+// of `focus` on `surface`, `canvas`, `cursorFocused` or `selectedBackground`
+// (the worst pair of the current theme), settingsProblems has a line saying so.
+// Only a key that is not a colour is refused, with a line too: the token is the
+// theme's own.
 class Theme : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -111,9 +121,13 @@ class Theme : public QObject {
     // its `font`, which the Controls and the Labels below it inherit; a plain
     // Text does not, so the panels use Label.
     Q_PROPERTY(QFont uiFont READ uiFont NOTIFY changed)
-    // What is wrong with the font settings, one line each; empty when
-    // nothing is. The window shows them in the strip of problems.
-    Q_PROPERTY(QStringList fontProblems READ fontProblems NOTIFY changed)
+    // What is wrong with the settings that the theme reads (the fonts and
+    // settings.focusColor): a list of {setting, text}, `setting` being the key
+    // of the settings document (terminalFont, uiFontSize, focusColor) and
+    // `text` the reason; empty when nothing is. The window shows the texts in
+    // the strip of problems, and the settings window each under its field.
+    Q_PROPERTY(
+        QVariantList settingsProblems READ settingsProblems NOTIFY changed)
     // The colours of the categories, eight, indexed by the model's colorIndex.
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
     // The connection banner: normal, refused, and the text of the normal one
@@ -152,9 +166,9 @@ public:
 
     // The fonts that the settings document names, over the default ones. A
     // family that is not installed or not monospace, and a size outside
-    // MIN_FONT_SIZE..MAX_FONT_SIZE, are the defaults with a line in
-    // fontProblems (and a warning). `changed` follows if a font or a problem
-    // changed.
+    // MIN_FONT_SIZE..MAX_FONT_SIZE, are the defaults with an entry in
+    // settingsProblems (and a warning). `changed` follows if a font or a
+    // problem changed.
     void followFonts(const QJsonObject& settings);
 
     // The colours of the terminals, from the terminal tokens.
@@ -219,7 +233,7 @@ public:
     QFont smallFont() const;
     QFont terminalFont() const { return TerminalFont_; }
     QFont uiFont() const { return UiFont_; }
-    QStringList fontProblems() const { return FontProblems_; }
+    QVariantList settingsProblems() const;
     QVariantList categories() const { return Categories_; }
     QColor bannerBackground() const { return BannerBackground_; }
     QColor bannerRefusedBackground() const { return BannerRefusedBackground_; }
@@ -236,6 +250,17 @@ signals:
     void terminalColorsChanged();
 
 private:
+    // Puts the focus colour of settings.focusColor into `tokens` (the theme's
+    // tokens, which the colours of the FOCUS_PAIRS table are read from) and
+    // keeps the problems of it, with the contrast warning of the worst pair.
+    // Returns whether they are others than before.
+    bool followFocus(const QJsonObject& settings, QJsonObject& tokens);
+    // Takes `fresh` for the problems of the focus colour (or, if not `focus`,
+    // of the fonts) and keeps the others as they are; the fonts come first.
+    // Returns whether the list is another than before; a warning for each
+    // entry of `fresh` if so.
+    bool setProblems(const QList<SettingProblem>& fresh, bool focus);
+
     QColor WindowBackground_;
     QColor WindowText_;
     QColor ControlBackground_;
@@ -282,7 +307,7 @@ private:
     QFont DefaultUiFont_;
     QFont TerminalFont_;
     QFont UiFont_;
-    QStringList FontProblems_;
+    QList<SettingProblem> Problems_;
 };
 
 }  // namespace roost
