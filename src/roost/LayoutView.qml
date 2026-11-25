@@ -284,8 +284,10 @@ Item {
     }
 
     // The list the keyboard belongs to: the list that has it, the list that
-    // feeds the panel that has it, or the first list of the layout. null when
-    // there is none.
+    // feeds the panel that has it, or the first list of the layout. A linked
+    // list on a tab that is not shown is skipped (the keyboard cannot land in
+    // it), as is a link from a panel that is not a list. null when there is no
+    // list.
     function listOfKeyboard() {
         for (const id of Object.keys(view.slots)) {
             const slot = view.slots[id];
@@ -297,7 +299,7 @@ Item {
             }
             for (const link of slot.links) {
                 const source = view.slotOf(link.from);
-                if (source !== null && source.panel !== null) {
+                if (source !== null && source.panel !== null && source.visible && view.listTypes.includes(source.panelType)) {
                     return source;
                 }
             }

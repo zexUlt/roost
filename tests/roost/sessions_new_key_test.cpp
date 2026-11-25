@@ -65,6 +65,22 @@ Layout ListTerminalOfSecondList() {
     return {.Root = std::move(split)};
 }
 
+// A stack of the terminal fed by the list "hidden" and that list, the terminal
+// shown, and the list "visible" beside it: the linked list is on a tab that is
+// not shown.
+Layout TerminalOfListOnHiddenTab() {
+    LayoutNode tabs;
+    tabs.Kind = ELayoutNodeKind::Tabs;
+    tabs.Active = 0;
+    tabs.Children = {TerminalLeaf("terminal", "hidden"), ListLeaf("hidden")};
+    LayoutNode split;
+    split.Kind = ELayoutNodeKind::Split;
+    split.Horizontal = true;
+    split.Children = {std::move(tabs), ListLeaf("visible")};
+    split.Sizes = {LayoutSize::Rest(), LayoutSize::Px(320)};
+    return {.Root = std::move(split)};
+}
+
 }  // namespace
 
 class SessionsNewKeyTest : public LayoutWindow {
@@ -102,6 +118,26 @@ private:
         WaitForLayout({{"list2", "terminal"}}, false);
         QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("list") != nullptr,
                                  TIMEOUT_MS);
+    }
+
+    // The terminal with the linked list on a hidden tab and a list that is
+    // shown. The hidden list is loaded, so a key that went to it would open its
+    // form.
+    void BootWithLinkedListOnHiddenTab() {
+        FailOnWarnings();
+        Boot();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Shell_->SetLayout(TerminalOfListOnHiddenTab());
+        QTRY_VERIFY_WITH_TIMEOUT(PanelByInstance("visible") != nullptr &&
+                                     PanelByInstance("hidden") != nullptr,
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("terminal") != nullptr &&
+                                     SlotByInstance("terminal")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(!SlotByInstance("hidden")->isVisible());
+        Focus("terminal");
     }
 
 private slots:
@@ -227,6 +263,34 @@ private slots:
         Focus("terminal");
         Press(Qt::Key_N, NEW_MODIFIERS);
         QTRY_VERIFY_WITH_TIMEOUT(FormOpenIn("list2"), TIMEOUT_MS);
+    }
+
+    // The list that feeds the terminal is on a tab that is not shown: the
+    // keyboard cannot land in it, so the form opens in the first list that is
+    // shown and the hidden list's state is left alone.
+    void ALinkedListOnAHiddenTabIsSkipped() {
+        BootWithLinkedListOnHiddenTab();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Press(Qt::Key_N, NEW_MODIFIERS);
+        QTRY_VERIFY_WITH_TIMEOUT(FormOpenIn("visible"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(TaskOf("visible")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QVERIFY(!FormOpenIn("hidden"));
+    }
+
+    // `shell.focusList` goes by the same rule: the keyboard goes to the list
+    // that is shown.
+    void FocusListSkipsALinkedListOnAHiddenTab() {
+        BootWithLinkedListOnHiddenTab();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Api_->Commands().Run("shell.focusList");
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("visible")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        QVERIFY(!SlotByInstance("hidden")->hasActiveFocus());
     }
 };
 

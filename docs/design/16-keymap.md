@@ -6,7 +6,7 @@
 
 ```json
 [
-  { "key": "Ctrl+Shift+N", "mac": "Cmd+N", "command": "claude.newSession" },
+  { "key": "Ctrl+Alt+N", "mac": "Cmd+Alt+N", "command": "claude.newSession" },
   { "key": "Ctrl+Shift+M", "mac": "Cmd+Shift+N", "command": "claude.newSession", "args": { "category": "work" } },
   { "key": "J", "command": "sessions.next", "when": "sessions.list" },
   { "mac": "Cmd+W", "command": null }
@@ -50,7 +50,7 @@
 
 ## Вклады плагинов
 
-- Вклад — та же запись без `args`, с обязательной `command`: `{ "command": "claude.newSession", "key": "Ctrl+Shift+N", "mac": "Cmd+N" }`. Ключ `mac` взят у `contributes.keybindings` VS Code (https://code.visualstudio.com/api/references/contribution-points).
+- Вклад — та же запись без `args`, с обязательной `command`: `{ "command": "claude.newSession", "key": "Ctrl+Alt+N", "mac": "Cmd+Alt+N" }`. Ключ `mac` взят у `contributes.keybindings` VS Code (https://code.visualstudio.com/api/references/contribution-points).
 - Неразборная клавиша во вкладе — проблема: вклад не действует, остальной манифест грузится. Текст проблемы: `keybinding <номер с 0 в массиве вкладов> of plugin <id> is ignored: "key": <сообщение разбора>` (или `"mac"`). Клавиши разбирает реестр при `Add`; `ParseKeybindings` отвергает манифест только за структуру: нет id команды, ни `key`, ни `mac`, не строка в `key`, `mac` или `when`, команда другого плагина. Вклад только с `mac` на Linux не действует и проблемой не считается.
 - Вклад без `Cmd`, `Ctrl` и `Alt` (кроме F1–F24) и без `when` — проблема, он не действует, как и такая запись файла (см. «Ввод текста»). Текст: `keybinding <номер> of plugin <id> is ignored: <клавиша> has no Cmd, Ctrl or Alt: without "when" it would take the text typed into any panel`. Такая клавиша с `when` панели допустима.
 
@@ -64,8 +64,8 @@
 
 | Команда | Клавиша | Обработчик |
 |---|---|---|
-| `shell.focusList` | `Ctrl+\` (Control на обеих платформах), без `when` | `LayoutView.qml`: фокус в список, связанный с терминалом в фокусе (иначе в первый); в списке ничего не делает |
-| `sessions.newSession` | `Ctrl+Shift+N`, `mac`: `Cmd+N`, без `when` (вклад плагина `sessions`, не `shell`) | `LayoutView.qml`: открывает форму новой сессии в списке, у которого клавиатура, иначе в связанном с терминалом в фокусе, иначе в первом; при скрытых списках ничего не делает (`06-panels.md`) |
+| `shell.focusList` | `Ctrl+\` (Control на обеих платформах), без `when` | `LayoutView.qml`: фокус в видимый список, связанный с терминалом в фокусе (скрытая вкладка и незагруженная панель пропускаются; иначе в первый видимый); в списке ничего не делает |
+| `sessions.newSession` | `Ctrl+Shift+N`, `mac`: `Cmd+N`, без `when` (вклад плагина `sessions`, не `shell`) | `LayoutView.qml`: открывает форму новой сессии в списке, у которого клавиатура, иначе в видимом списке, связанном с терминалом в фокусе (список на скрытой вкладке и список с незагруженной панелью пропускаются: клавиша ничего не делает, если не нашлось загруженного), иначе в первом видимом; при скрытых списках ничего не делает (`06-panels.md`) |
 | `shell.reportBug` | `Cmd+Shift+B`, только `mac` | `Main.qml`: диалог отчёта об ошибке |
 | `shell.palette` | `Ctrl+Shift+P`, `mac`: `Cmd+Shift+P`, без `when` | `Main.qml`: палитра команд (см. «Палитра») |
 | `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md) |
