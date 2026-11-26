@@ -45,6 +45,9 @@ ApplicationWindow {
     // the default), undefined when none: one user action writes one patch,
     // although a pick can end in two signals of the box.
     property var pendingFamily: undefined
+    // The text the box was last given by the window: leaving the box with it
+    // unchanged writes nothing (the document may have changed meanwhile).
+    property string shownFamilyText: ""
     readonly property string notInstalledMark: " (not installed)"
     // settings.focusColor {preset, custom}, and the presets in the order of
     // the box.
@@ -126,6 +129,7 @@ ApplicationWindow {
         terminalFamilyBox.currentIndex = values.indexOf(name);
         // The text too: the index may not change while the text was typed over.
         terminalFamilyBox.editText = terminalFamilyBox.textAt(terminalFamilyBox.currentIndex);
+        shownFamilyText = terminalFamilyBox.editText;
     }
 
     // The list opens: the installed families are read now, the first time since
@@ -517,7 +521,14 @@ ApplicationWindow {
                     // Leaving the box or Enter, as a field of the form.
                     Connections {
                         function onEditingFinished() {
-                            root.commitFamily(terminalFamilyBox.editText);
+                            // An untouched text is not a choice: it may be of a
+                            // family the document no longer has; show the
+                            // document instead of writing the text back.
+                            if (terminalFamilyBox.editText === root.shownFamilyText) {
+                                root.showFamily();
+                            } else {
+                                root.commitFamily(terminalFamilyBox.editText);
+                            }
                         }
 
                         target: terminalFamilyBox.contentItem

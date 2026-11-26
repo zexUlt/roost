@@ -691,6 +691,42 @@ private slots:
                      QVariant("14"));
     }
 
+    // The text of the family box has the keyboard and nothing is typed while
+    // another window writes a family: leaving the box writes nothing back, and
+    // the box shows the new family.
+    void LeavingAnUntouchedFamilyTextKeepsAChangeFromElsewhere() {
+        auto first = OpenWindow();
+        auto second = OpenWindow();
+        QVERIFY(first);
+        QVERIFY(second);
+        QQuickItem* box = first->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        auto* input = box->property("contentItem").value<QQuickItem*>();
+        QVERIFY(input != nullptr);
+        // The second window was opened last and has the keyboard.
+        box->window()->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(box->window()));
+        input->forceActiveFocus();
+        QTRY_VERIFY(input->hasActiveFocus());
+        QVERIFY(second->TypeFamily("Courier"));
+        QTRY_COMPARE(Document("settings").value("terminalFont").toObject(),
+                     (QJsonObject{{"family", "Courier"}}));
+        QTRY_COMPARE(
+            first->Document().value("terminalFont").toObject().value("family"),
+            QJsonValue("Courier"));
+        QVERIFY(input->hasActiveFocus());
+        QVERIFY(QMetaObject::invokeMethod(input, "editingFinished"));
+        // A later write of the first window is the barrier: a write of the
+        // family back would come before it.
+        QVERIFY(first->Edit("uiSizeField", "14"));
+        QTRY_COMPARE(Document("settings").value("uiFontSize"), QJsonValue(14));
+        QCOMPARE(Document("settings").value("terminalFont").toObject(),
+                 (QJsonObject{{"family", "Courier"}}));
+        QTRY_VERIFY(box->property("currentText")
+                        .toString()
+                        .startsWith(QStringLiteral("Courier")));
+    }
+
     // An empty field is the default: the key goes, the others stay.
     void AnEmptyFieldRemovesItsKey() {
         auto window = OpenWindow();
