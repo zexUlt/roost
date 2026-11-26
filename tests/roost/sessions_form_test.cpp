@@ -15,6 +15,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickWindow>
 #include <QSaveFile>
@@ -22,9 +24,12 @@
 
 #include <optional>
 
+#include "api/api.hpp"
 #include "helpers/scoped_env.hpp"
 #include "helpers/sessions_window.hpp"
 #include "helpers/snapshot.hpp"
+#include "qml_api/roost_singleton.hpp"
+#include "qml_api/sessions_model.hpp"
 
 using namespace roost;
 using namespace roost::testing;
@@ -61,7 +66,8 @@ const QString STARTED = "bg-4e5f6071";
 
 // A fake `claude`, steered by the files next to it: `agents` prints
 // agents.json with the cwds of /work moved into this directory, which it
-// makes, and adds a line to agents.polls; `attach` runs fake_tui; `--bg` adds
+// makes, and adds a line to agents.polls, or, while agents.fail has content,
+// fails with "claude is broken"; `attach` runs fake_tui; `--bg` adds
 // a line to bg.runs, writes the directory it runs in and its arguments, each
 // whole in brackets, to bg.ran, waits while bg.hold is there, kills its parent
 // (the adapter) when bg.crash is there, fails with the exit code in bg.exit
@@ -75,6 +81,7 @@ if [ "$verb" = --bg ]; then verb=bg; fi
 case "$verb" in
 agents)
   echo poll >> "$dir/agents.polls"
+  if [ -s "$dir/agents.fail" ]; then echo "claude is broken" >&2; exit 2; fi
   mkdir -p "$dir/work/alpha" "$dir/work/beta" "$dir/work/gamma" "$dir/work/delta" "$dir/work/other"
   sed 's|"/work/|"'"$dir"'/work/|g' "$dir/agents.json"
   ;;
@@ -144,6 +151,84 @@ private:
                 .size());
     }
 
+    // How the backend of the second agent is: it lists (the given sessions),
+    // answers the list with an error, is not there (no binary) or ends as it
+    // starts.
+    enum class EOtherBackend { Lists, FailsToList, NoBinary, ExitsAtStart };
+
+    // A second agent, `other`, with the command `other.newSession`, behind
+    // the fixture backend (the real roostd runs it as it runs the Claude
+    // plugin). Added before Start. Its starts are counted in newSession.runs.
+    bool AddOtherAgent(EOtherBackend backend = EOtherBackend::Lists,
+                       const QJsonArray& sessions = {}) {
+        const QDir dir(Dir_->filePath("plugins/other"));
+        if (!dir.mkpath(".")) {
+            return false;
+        }
+        if (backend != EOtherBackend::NoBinary &&
+            !QFile::link(FIXTURE_BACKEND_PATH, dir.filePath("backend"))) {
+            return false;
+        }
+        QJsonArray command{"backend"};
+        if (backend == EOtherBackend::ExitsAtStart) {
+            command.append("--crash-on-start");
+        }
+        const QJsonObject manifest{
+            {"id", "other"},
+            {"version", "1"},
+            {"api", "0"},
+            {"backend", QJsonObject{{"command", command}}},
+            {"contributes",
+             QJsonObject{{"agents", QJsonArray{QJsonObject{{"id", "other"}}}},
+                         {"commands", QJsonArray{QJsonObject{
+                                          {"id", "other.newSession"},
+                                          {"title", "New other session"}}}}}},
+        };
+        QSaveFile file(dir.filePath("plugin.json"));
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(QJsonDocument(manifest).toJson()) >= 0 &&
+               file.commit() &&
+               SetOtherList(backend == EOtherBackend::FailsToList, sessions);
+    }
+
+    // What the fixture backend of `other` answers to a list from now on (it
+    // reads agent.json anew for each request): the sessions, or an error.
+    bool SetOtherList(bool fails, const QJsonArray& sessions = {}) {
+        const QJsonObject answer =
+            fails ? QJsonObject{{"error",
+                                 QJsonObject{{"code", -32000},
+                                             {"message", "other is broken"}}}}
+                  : QJsonObject{{"result", sessions}};
+        const QJsonObject answers{
+            {"agent.listSessions", QJsonObject{{"other", answer}}}};
+        QSaveFile file(Dir_->filePath("plugins/other/agent.json"));
+        return file.open(QIODevice::WriteOnly) &&
+               file.write(QJsonDocument(answers).toJson()) >= 0 &&
+               file.commit();
+    }
+
+    // The starts the second agent was asked for: {agent, args} each.
+    QList<QJsonObject> OtherRuns() const {
+        QList<QJsonObject> runs;
+        for (const QByteArray& line :
+             ReadFile(Dir_->filePath("plugins/other/newSession.runs"))
+                 .split('\n')) {
+            if (!line.isEmpty()) {
+                runs.append(QJsonDocument::fromJson(line).object());
+            }
+        }
+        return runs;
+    }
+
+    // The session of the second agent in its list.
+    static QJsonObject OtherSession() {
+        return {{"id", "o1"},
+                {"title", "Other one"},
+                {"cwd", "/tmp"},
+                {"state", "idle"},
+                {"startedAt", qint64{1790150400000}}};
+    }
+
     // The font of the application, which the theme takes as its base, is a
     // state of the process: a case that changes it puts it back in cleanup().
     void ScaleAppFont(qreal factor) {
@@ -189,12 +274,14 @@ private:
 
     // `withParts`: the panel must have the head and the form that the cases
     // drive; a case about what was there before the form goes without.
+    // `empty`: `claude agents` lists no session, with `rows` 0.
     void Start(const QJsonObject& sections = {}, bool withParts = true,
-               int rows = 4, const char* claude = FORM_CLAUDE) {
+               int rows = 4, const char* claude = FORM_CLAUDE,
+               bool empty = false) {
         if (!sections.isEmpty()) {
             QVERIFY(Seed(sections));
         }
-        Boot(rows, claude);
+        Boot(rows, claude, empty);
         if (QTest::currentTestFailed() || !withParts) {
             return;
         }
@@ -202,7 +289,8 @@ private:
         for (const char* name :
              {"sessionsSearch", "sessionsSearchInput", "sessionsNewButton",
               "sessionsNewForm", "sessionsNewTask", "sessionsNewName",
-              "sessionsNewCategory", "sessionsNewCreate", "sessionsNewBack"}) {
+              "sessionsNewAgent", "sessionsNewCategory", "sessionsNewCreate",
+              "sessionsNewBack"}) {
             QVERIFY2(Part(name) != nullptr, name);
         }
     }
@@ -219,6 +307,7 @@ private:
     QQuickItem* Form() { return Part("sessionsNewForm"); }
     QQuickItem* TaskField() { return Part("sessionsNewTask"); }
     QQuickItem* NameField() { return Part("sessionsNewName"); }
+    QQuickItem* AgentBox() { return Part("sessionsNewAgent"); }
     QQuickItem* CategoryBox() { return Part("sessionsNewCategory"); }
     QQuickItem* CategoryName() { return Part("sessionsNewCategoryName"); }
     QQuickItem* CreateButton() { return Part("sessionsNewCreate"); }
@@ -304,26 +393,78 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
     }
 
-    QObject* CategoryPopup() {
-        return qvariant_cast<QObject*>(CategoryBox()->property("popup"));
+    // From the name to the category: through the agent row, which has the
+    // keyboard on the way.
+    void ToCategory() {
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
     }
 
-    // Opens the list of the category box with Space, walks it with Down to
-    // the entry at `index` and takes it with Enter: an explicit choice, unlike
-    // a Down on the closed box.
-    void PickCategoryWithKeys(int index) {
+    static QObject* PopupOf(QQuickItem* box) {
+        return qvariant_cast<QObject*>(box->property("popup"));
+    }
+
+    QObject* CategoryPopup() { return PopupOf(CategoryBox()); }
+
+    // Opens the list of the box that has the keyboard with Space, walks it
+    // with Down or Up to the entry at `index` and takes it with Enter: an
+    // explicit choice, unlike a Down on the closed box.
+    void PickWithKeys(QQuickItem* box, int index) {
         Press(Qt::Key_Space);
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryPopup()->property("visible").toBool(),
+        QTRY_VERIFY_WITH_TIMEOUT(PopupOf(box)->property("visible").toBool(),
                                  TIMEOUT_MS);
         for (int step = 0;
-             step < 8 &&
-             CategoryBox()->property("highlightedIndex").toInt() != index;
+             step < 8 && box->property("highlightedIndex").toInt() != index;
              ++step) {
-            Press(Qt::Key_Down);
+            Press(box->property("highlightedIndex").toInt() < index
+                      ? Qt::Key_Down
+                      : Qt::Key_Up);
         }
-        QCOMPARE(CategoryBox()->property("highlightedIndex").toInt(), index);
+        QCOMPARE(box->property("highlightedIndex").toInt(), index);
         Press(Qt::Key_Return);
-        QTRY_VERIFY_WITH_TIMEOUT(!CategoryPopup()->property("visible").toBool(),
+        QTRY_VERIFY_WITH_TIMEOUT(!PopupOf(box)->property("visible").toBool(),
+                                 TIMEOUT_MS);
+    }
+
+    void PickCategoryWithKeys(int index) { PickWithKeys(CategoryBox(), index); }
+
+    // The entries of the agent list, as it shows them, and the one it shows.
+    QStringList AgentChoices() {
+        return AgentBox()->property("model").toStringList();
+    }
+    QString CurrentAgent() {
+        return AgentBox()->property("currentText").toString();
+    }
+
+    // The agent under the cursor of the list.
+    QString CursorAgent() {
+        return Role(ViewRow(Cursor()), "agent").toString();
+    }
+
+    // The agent the view of the panel stored as the last one chosen in the
+    // form: the view of the panel is one member of `view` in the document.
+    QString StoredNewAgent() {
+        const QJsonObject views = StoredDocument().value("view").toObject();
+        for (auto it = views.begin(); it != views.end(); ++it) {
+            const QString agent =
+                it.value().toObject().value("newAgent").toString();
+            if (!agent.isEmpty()) {
+                return agent;
+            }
+        }
+        return {};
+    }
+
+    // The window is a new one: its list has read the document and settled.
+    void WaitForTheListToBeReady() {
+        QTRY_VERIFY_WITH_TIMEOUT(PanelOf(LIST)
+                                     ->findChild<QObject*>("sessionsModel")
+                                     ->property("ready")
+                                     .toBool(),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!PanelOf(LIST)->property("resetting").toBool(),
                                  TIMEOUT_MS);
     }
 
@@ -360,6 +501,8 @@ private:
         Tab();
         VerifyShown(NameField(), "name");
         Tab();
+        VerifyShown(AgentBox(), "agent");
+        Tab();
         VerifyShown(CategoryBox(), "category");
         Tab();
         VerifyShown(CreateButton(), "create");
@@ -394,7 +537,7 @@ private:
         Type("Ship it");
         TO_NAME();
         Type("Shipped");
-        Tab();
+        ToCategory();
         ChooseNewCategory();
         Type("Brand new");
     }
@@ -418,6 +561,151 @@ private:
         QVERIFY(Notice().isEmpty());
         QVERIFY(Problem().startsWith("Not started: ") || Problem() == reason);
         Snap("1-failed");
+    }
+
+    // The agent that cannot list stays in the list, marked; chosen, it gives
+    // its reason under Create, Create is off, and nothing starts.
+    void VerifyUnavailableAgentIsMarkedAndRefused(const QString& reason) {
+        QTRY_VERIFY_WITH_TIMEOUT(UnavailableNow().startsWith("other: "),
+                                 TIMEOUT_MS);
+        OPEN_FORM();
+        Type("Ship it");
+        QTRY_COMPARE_WITH_TIMEOUT(
+            AgentChoices(), (QStringList{"claude", "other (unavailable)"}),
+            TIMEOUT_MS);
+        QVERIFY(Problem().isEmpty());
+        QVERIFY(CreateButton()->property("enabled").toBool());
+        TO_NAME();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+
+        PickWithKeys(AgentBox(), 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(Problem(), "other is unavailable: " + reason,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        Snap("1-unavailable-agent");
+        // Enter in the task does what Create does: nothing. The form asks
+        // roostd for nothing, so that there is no answer to wait for.
+        BackTab();
+        BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QVERIFY(!PanelOf(LIST)->property("newStarting").toBool());
+        QCOMPARE(TextOf("sessionsNewCreate"), QString("Create session"));
+        QVERIFY(FormOpen());
+        QCOMPARE(Runs(), 0);
+        QVERIFY(OtherRuns().isEmpty());
+
+        // An agent that can start gives the form back.
+        Tab();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        PickWithKeys(AgentBox(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().isEmpty(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+    }
+
+    // The list is not polled: the agents are asked again when an event of an
+    // adapter says so, or while one cannot list. The test says so.
+    void ListAgainNow() { Singleton_->sessions()->refresh(); }
+
+    // The entries of the agent row once the list is asked again: the claude
+    // adapter polls on its own, and what its poll found comes to roostd's
+    // answer to the next ask.
+    bool ChoicesAfterListingAgain(const QStringList& expected) {
+        ListAgainNow();
+        return AgentChoices() == expected;
+    }
+
+    // The form of an `other`-and-claude pair with `other` the agent of the
+    // form, as the cursor makes it (a session of `other` under it) or as a
+    // pick does, with a task typed.
+    void OpenFormWithOtherChosen(bool byPick) {
+        if (byPick) {
+            OPEN_FORM();
+            Type("Ship it");
+            TO_NAME();
+            Tab();
+            QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+            QTRY_COMPARE_WITH_TIMEOUT(AgentChoices().size(), 2, TIMEOUT_MS);
+            PickWithKeys(AgentBox(), 1);
+        } else {
+            for (int step = 0; step < 12 && CursorAgent() != "other"; ++step) {
+                Press(Qt::Key_Down);
+            }
+            QCOMPARE(CursorAgent(), QString("other"));
+            OPEN_FORM();
+            Type("Ship it");
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+    }
+
+    // Create, and the session is started by `other` and by nobody else.
+    void VerifyOtherStartsTheSession() {
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        Click(CreateButton());
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(OtherRuns().size(), 1, TIMEOUT_MS);
+        QCOMPARE(OtherRuns().value(0).value("agent").toString(),
+                 QString("other"));
+        QCOMPARE(Runs(), 0);
+    }
+
+    // The list of the other agent fails and recovers: the model of the row
+    // changes each time, and the row goes on showing the agent that was chosen.
+    void VerifyChosenAgentStaysWhenAnotherListFailsAndRecovers(bool byPick) {
+        OpenFormWithOtherChosen(byPick);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("agents.fail", "1"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            ChoicesAfterListingAgain({"claude (unavailable)", "other"}),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+        QVERIFY(Problem().isEmpty());
+        QVERIFY(CreateButton()->property("enabled").toBool());
+
+        QVERIFY(Put("agents.fail", ""));
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices(),
+                                  (QStringList{"claude", "other"}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+        QVERIFY(Problem().isEmpty());
+        VerifyOtherStartsTheSession();
+    }
+
+    // The chosen agent cannot list for a while: the row marks it and says why,
+    // Create is off; when it lists again the row shows it as it was chosen and
+    // Create starts it.
+    void VerifyChosenAgentBecomesUnavailableAndRecovers(bool byPick) {
+        OpenFormWithOtherChosen(byPick);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QJsonArray sessions =
+            byPick ? QJsonArray{} : QJsonArray{OtherSession()};
+        QVERIFY(SetOtherList(true, sessions));
+        ListAgainNow();
+        QTRY_COMPARE_WITH_TIMEOUT(
+            AgentChoices(), (QStringList{"claude", "other (unavailable)"}),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(),
+                                  QString("other (unavailable)"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Problem() == "other is unavailable: other is broken", TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+
+        QVERIFY(SetOtherList(false, sessions));
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices(),
+                                  (QStringList{"claude", "other"}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().isEmpty(), TIMEOUT_MS);
+        VerifyOtherStartsTheSession();
     }
 
 private slots:
@@ -539,7 +827,8 @@ private slots:
         QCOMPARE(NameField()->property("placeholderText").toString(),
                  QString("Named by the agent"));
         QVERIFY(TaskField()->y() < NameField()->y());
-        QVERIFY(NameField()->y() < CategoryBox()->y());
+        QVERIFY(NameField()->y() < AgentBox()->y());
+        QVERIFY(AgentBox()->y() < CategoryBox()->y());
         QVERIFY(!CreateButton()->property("enabled").toBool());
         Snap("1-empty");
     }
@@ -555,6 +844,8 @@ private slots:
 
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
@@ -572,6 +863,8 @@ private slots:
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(TaskField()->hasActiveFocus(), TIMEOUT_MS);
@@ -587,8 +880,7 @@ private slots:
         OPEN_FORM();
         QVERIFY(!CategoryName()->isVisible());
         TO_NAME();
-        Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        ToCategory();
 
         // Down on the closed box takes the next entry, "New category…", and
         // the field of its name appears; the keyboard stays on the box, which
@@ -635,14 +927,14 @@ private slots:
         OPEN_FORM();
         Type("x");
         TO_NAME();
-        Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        ToCategory();
         Press(Qt::Key_Escape);
         VerifyListShown();
 
         OPEN_FORM();
         Type("x");
         TO_NAME();
+        Tab();
         Tab();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
@@ -675,7 +967,7 @@ private slots:
         Type("Ship it");
         TO_NAME();
         Type("Shipping");
-        Tab();
+        ToCategory();
         ChooseNewCategory();
         Type("Ops");
 
@@ -713,8 +1005,7 @@ private slots:
         Type("Ship it");
         TO_NAME();
         Type("Shipped");
-        Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        ToCategory();
         // The known category after "Uncategorized".
         Press(Qt::Key_Down);
         QTRY_COMPARE_WITH_TIMEOUT(
@@ -759,7 +1050,7 @@ private slots:
         OPEN_FORM();
         Type("Ship it");
         TO_NAME();
-        Tab();
+        ToCategory();
         ChooseNewCategory();
         Type("Brand new");
 
@@ -790,7 +1081,7 @@ private slots:
         TO_NAME();
         // A blank name is no name.
         Type("  ");
-        Tab();
+        ToCategory();
         ChooseNewCategory();
         Type("Brand new");
 
@@ -1065,8 +1356,7 @@ private slots:
         OPEN_FORM();
         Type("Ship it");
         TO_NAME();
-        Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        ToCategory();
         // Arrows on the closed box walk the entries and keep the keyboard.
         Press(Qt::Key_Down);
         Press(Qt::Key_Down);
@@ -1095,8 +1385,7 @@ private slots:
         }
         OPEN_FORM();
         TO_NAME();
-        Tab();
-        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        ToCategory();
 
         Click(CategoryBox());
         QTRY_VERIFY_WITH_TIMEOUT(CategoryPopup()->property("visible").toBool(),
@@ -1453,6 +1742,383 @@ private slots:
                                   QString("[--bg][--][do it]"), TIMEOUT_MS);
         QVERIFY(!FormOpen());
         QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+    }
+
+    void TheAgentRowListsTheAgentsThatCanStartInTheOrderOfThePlugins() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OPEN_FORM();
+        QVERIFY(AgentBox() != nullptr);
+
+        // codex is an agent too, but has no `newSession`.
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices(),
+                                  (QStringList{"claude", "other"}), TIMEOUT_MS);
+        QCOMPARE(CurrentAgent(), QString("claude"));
+        QVERIFY(NameField()->y() < AgentBox()->y());
+        QVERIFY(AgentBox()->y() < CategoryBox()->y());
+        Snap("1-agent-row");
+    }
+
+    void TheChosenAgentStartsTheSession() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        OPEN_FORM();
+        Type("Ship it");
+        TO_NAME();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices().size(), 2, TIMEOUT_MS);
+
+        // Space opens the list, Down walks it, Enter takes the entry.
+        PickWithKeys(AgentBox(), 1);
+        QCOMPARE(CurrentAgent(), QString("other"));
+        Click(CreateButton());
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(OtherRuns().size(), 1, TIMEOUT_MS);
+        QCOMPARE(OtherRuns().value(0).value("agent").toString(),
+                 QString("other"));
+        QCOMPARE(OtherRuns()
+                     .value(0)
+                     .value("args")
+                     .toObject()
+                     .value("prompt")
+                     .toString(),
+                 QString("Ship it"));
+        QCOMPARE(Runs(), 0);
+
+        // The cursor is on a session of claude: it decides, not the choice
+        // of the last form.
+        OPEN_FORM();
+        Type("And again");
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("claude"),
+                                  TIMEOUT_MS);
+        Click(CreateButton());
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QCOMPARE(OtherRuns().size(), 1);
+    }
+
+    void TheDefaultAgentFollowsTheSessionUnderTheCursor() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::Lists, {OtherSession()}));
+        Start({}, true, 5);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        for (int step = 0; step < 12 && CursorAgent() != "other"; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(CursorAgent(), QString("other"));
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        for (int step = 0; step < 12 && CursorAgent() != "claude"; ++step) {
+            Press(Qt::Key_Up);
+        }
+        QCOMPARE(CursorAgent(), QString("claude"));
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("claude"),
+                                  TIMEOUT_MS);
+    }
+
+    void WithoutASessionUnderTheCursorTheLastChosenAgentIsTheDefault() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start({}, true, 0, FORM_CLAUDE, true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices().size(), 2, TIMEOUT_MS);
+        // None chosen yet: the first.
+        QCOMPARE(CurrentAgent(), QString("claude"));
+        Tab();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        PickWithKeys(AgentBox(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredNewAgent(), QString("other"),
+                                  TIMEOUT_MS);
+
+        // Nothing was created: the choice is kept all the same.
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+
+        // And in a new window: it is kept in the view of the panel.
+        CloseWindow();
+        OpenWindow();
+        WaitForTheListToBeReady();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(CurrentAgent(), QString("other"), TIMEOUT_MS);
+    }
+
+    void AnAgentWhoseListFailsIsMarkedAndRefused() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::FailsToList));
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyUnavailableAgentIsMarkedAndRefused("other is broken");
+    }
+
+    void AnAgentWithoutItsAdapterBinaryIsMarkedAndRefused() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::NoBinary));
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyUnavailableAgentIsMarkedAndRefused(
+            "the backend of other is not running");
+    }
+
+    void AnAgentWhoseBackendIsNotRunningIsMarkedAndRefused() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::ExitsAtStart));
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyUnavailableAgentIsMarkedAndRefused(
+            "the backend of other is not running");
+    }
+
+    void TheAgentOfTheCursorStaysChosenWhileAnotherListFailsAndRecovers() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::Lists, {OtherSession()}));
+        Start({}, true, 5);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyChosenAgentStaysWhenAnotherListFailsAndRecovers(false);
+    }
+
+    void ThePickedAgentStaysChosenWhileAnotherListFailsAndRecovers() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyChosenAgentStaysWhenAnotherListFailsAndRecovers(true);
+    }
+
+    void TheAgentOfTheCursorBecomesUnavailableAndRecovers() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent(EOtherBackend::Lists, {OtherSession()}));
+        Start({}, true, 5);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyChosenAgentBecomesUnavailableAndRecovers(false);
+    }
+
+    void ThePickedAgentBecomesUnavailableAndRecovers() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        VerifyChosenAgentBecomesUnavailableAndRecovers(true);
+    }
+
+    void CreateGivesTheKeyboardToTheAgentRowWhenTheChosenAgentFails() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        OpenFormWithOtherChosen(true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
+
+        QVERIFY(SetOtherList(true));
+        ListAgainNow();
+
+        // Create goes off with the keyboard on it: the agent row takes it.
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+    }
+
+    void AListOfTheAgentsThatFailsKeepsCreateOffUntilRoostdAnswers() {
+        FailOnWarnings();
+        QVERIFY(WriteFakeClaude(FORM_CLAUDE));
+        // A panel whose API is not connected yet: plugins.list fails.
+        SelectStyleOnce();
+        api::Api api;
+        QQmlEngine engine;
+        auto* singleton =
+            engine.singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
+        QVERIFY(singleton != nullptr);
+        singleton->setApi(api);
+        engine.addImportPath(QStringLiteral(ROOST_PLUGINS_DIR "/sessions/qml"));
+        QQmlComponent component(
+            &engine, QUrl::fromLocalFile(QStringLiteral(
+                         ROOST_PLUGINS_DIR "/sessions/qml/SessionsPanel.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        const std::unique_ptr<QObject> panel(component.create());
+        QVERIFY(panel != nullptr);
+        const auto part = [&](const char* name) {
+            return panel->findChild<QQuickItem*>(name);
+        };
+        const auto problem = [&] {
+            const QQuickItem* const label = part("sessionsNewProblem");
+            return label->isVisible() ? label->property("text").toString()
+                                      : QString();
+        };
+        const auto canCreate = [&] {
+            return part("sessionsNewCreate")->property("enabled").toBool();
+        };
+        const auto agents = [&] {
+            return part("sessionsNewAgent")->property("model").toStringList();
+        };
+
+        QVERIFY(QMetaObject::invokeMethod(panel.get(), "openNewForm"));
+        QVERIFY(panel->setProperty("draftTask", "Ship it"));
+
+        // Not "No agent can start a session": no list of agents came.
+        QTRY_VERIFY2_WITH_TIMEOUT(problem().startsWith("No agent list: "),
+                                  qPrintable(problem()), TIMEOUT_MS);
+        QCOMPARE(part("sessionsNewAgent")->property("displayText").toString(),
+                 QString("No agent list"));
+        QVERIFY(!canCreate());
+        QVERIFY(QMetaObject::invokeMethod(panel.get(), "createFromForm"));
+        QVERIFY(!panel->property("newStarting").toBool());
+
+        // The row asks again when it opens (no window here to open its
+        // popup: the signal of the popup is what the form listens to).
+        const int asked = panel->property("newAgentsAsked").toInt();
+        QVERIFY(QMetaObject::invokeMethod(PopupOf(part("sessionsNewAgent")),
+                                          "aboutToShow"));
+        QVERIFY(panel->property("newAgentsAsked").toInt() > asked);
+        QVERIFY(!canCreate());
+
+        // roostd comes: the form asks again by itself.
+        ArmStart();
+        QVERIFY(StartDaemon());
+        api.Connect(SocketPath());
+        QTRY_COMPARE_WITH_TIMEOUT(agents(), (QStringList{"claude"}), 30000);
+        QTRY_VERIFY_WITH_TIMEOUT(problem().isEmpty(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(canCreate(), TIMEOUT_MS);
+        QVERIFY(QMetaObject::invokeMethod(panel.get(), "createFromForm"));
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+    }
+
+    void AnUnavailableDefaultAgentIsRefusedAndAnotherOneStarts() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        // `claude agents` fails: claude is the first agent, so the default.
+        Start({}, true, 0, BROKEN_CLAUDE);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(UnavailableNow().contains("claude is broken"),
+                                 TIMEOUT_MS);
+        OPEN_FORM();
+        Type("Ship it");
+        QTRY_COMPARE_WITH_TIMEOUT(
+            AgentChoices(), (QStringList{"claude (unavailable)", "other"}),
+            TIMEOUT_MS);
+        QCOMPARE(CurrentAgent(), QString("claude (unavailable)"));
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().contains("claude is broken"),
+                                 TIMEOUT_MS);
+        QVERIFY(!CreateButton()->property("enabled").toBool());
+
+        TO_NAME();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        PickWithKeys(AgentBox(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().isEmpty(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        Click(CreateButton());
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(OtherRuns().size(), 1, TIMEOUT_MS);
+        QCOMPARE(Runs(), 0);
+    }
+
+    void
+    AChosenAgentThatCannotStartAnyMoreFailsWithTheReasonAndKeepsTheDraft() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        FillTheDraft();
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices(), (QStringList{"claude"}),
+                                  TIMEOUT_MS);
+        // The list of the form is older than the plugins: the chosen agent is
+        // gone from roostd's list of those that can start.
+        QVERIFY(PanelOf(LIST)->setProperty("draftAgent", "ghost"));
+
+        VerifyFailureKeepsTheDraft("ghost cannot start a session");
+        QCOMPARE(Runs(), 0);
+    }
+
+    void TheNPromptKeepsItsDefaultAgentWhateverTheFormChose() {
+        FailOnWarnings();
+        QVERIFY(AddOtherAgent());
+        // No session of claude: the cursor has no session's agent, so `n`
+        // would take the form's last choice if it read it.
+        Start({}, true, 0, FORM_CLAUDE, true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        OPEN_FORM();
+        QTRY_COMPARE_WITH_TIMEOUT(AgentChoices().size(), 2, TIMEOUT_MS);
+        Tab();
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        PickWithKeys(AgentBox(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredNewAgent(), QString("other"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        QVERIFY(CursorAgent().isEmpty());
+
+        Press(Qt::Key_N);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Type("do it");
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(TextOf("sessionsPromptLabel"),
+                                  QString("Category:"), TIMEOUT_MS);
+        Press(Qt::Key_Return);
+
+        // The first agent (claude), as before the row, not the form's other.
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QVERIFY(OtherRuns().isEmpty());
     }
 };
 

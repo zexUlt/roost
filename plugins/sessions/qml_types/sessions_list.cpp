@@ -73,6 +73,7 @@ struct SessionsList::Exposed {
     QString Tab;
     bool Archive = false;
     bool Compact = false;
+    QString NewAgent;
     TabCounts Counts;
     QStringList Known;
     QString CursorKey;
@@ -300,6 +301,12 @@ bool SessionsList::compact() const { return State_.Compact(); }
 
 void SessionsList::setCompact(bool compact) {
     edit([&] { return State_.SetCompact(compact); });
+}
+
+QString SessionsList::newAgent() const { return State_.NewAgent(); }
+
+void SessionsList::setNewAgent(const QString& agent) {
+    edit([&] { return State_.SetNewAgent(agent); });
 }
 
 QVariantMap SessionsList::counts() const {
@@ -916,6 +923,7 @@ SessionsList::Exposed SessionsList::snapshot() const {
     out.Tab = tab();
     out.Archive = State_.View().ViewArchive;
     out.Compact = State_.Compact();
+    out.NewAgent = State_.NewAgent();
     out.Counts = Counts_;
     out.Known = Known_;
     out.CursorKey = CursorKey_;
@@ -958,6 +966,9 @@ void SessionsList::announce(const Exposed& before) {
     }
     if (now.Compact != before.Compact) {
         emit compactChanged();
+    }
+    if (now.NewAgent != before.NewAgent) {
+        emit newAgentChanged();
     }
     if (!(now.Counts == before.Counts)) {
         emit countsChanged();

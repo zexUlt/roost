@@ -27,6 +27,7 @@ const QString QUERY_KEY = QStringLiteral("query");
 const QString TAB_KEY = QStringLiteral("tab");
 const QString ARCHIVE_KEY = QStringLiteral("archive");
 const QString COMPACT_KEY = QStringLiteral("compact");
+const QString NEW_AGENT_KEY = QStringLiteral("newAgent");
 const QString OPENED_KEY = QStringLiteral("opened");
 
 const QString TAB_ALL = QStringLiteral("all");
@@ -186,6 +187,7 @@ bool ListState::Restore(const QJsonObject& document) {
     View_.Tab = TabOf(view.value(TAB_KEY).toString());
     View_.ViewArchive = view.value(ARCHIVE_KEY).toBool(false);
     Compact_ = view.value(COMPACT_KEY).toBool(false);
+    NewAgent_ = view.value(NEW_AGENT_KEY).toString();
     const QString opened = view.value(OPENED_KEY).toString();
     View_.Opened = IsSessionKey(opened) ? opened : QString();
     Unread_.remove(View_.Opened);
@@ -239,6 +241,10 @@ std::optional<QJsonObject> ListState::BuildDocument(
     own.insert(TAB_KEY, TabName(View_.Tab));
     own.insert(ARCHIVE_KEY, View_.ViewArchive);
     own.insert(COMPACT_KEY, Compact_);
+    // Written only when there is one: a view that never chose has no key.
+    if (!NewAgent_.isEmpty()) {
+        own.insert(NEW_AGENT_KEY, NewAgent_);
+    }
     own.insert(OPENED_KEY, View_.Opened);
     // The shared view keeps the views of the other instances next to its own
     // keys; the view of an instance is one member of it.
@@ -427,6 +433,10 @@ bool ListState::SetViewArchive(bool archive) {
 
 bool ListState::SetCompact(bool compact) {
     return Saved(Assign(Compact_, compact));
+}
+
+bool ListState::SetNewAgent(const QString& agent) {
+    return Saved(Assign(NewAgent_, agent));
 }
 
 bool ListState::SetOpened(const QString& key) {

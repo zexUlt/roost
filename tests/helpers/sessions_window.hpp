@@ -155,6 +155,12 @@ public:
     void Boot(int rows = 4, const char* claude = FAKE_CLAUDE,
               bool empty = false);
 
+    // The style of the controls, as main() selects it, before the first
+    // engine of the process (the style cannot be changed once Controls are
+    // loaded). OpenWindow does it; a case that makes an engine of its own
+    // does it first.
+    static void SelectStyleOnce();
+
     // A window of the shell, connected to the running daemon, with the panels
     // loaded; waits until both slots hold theirs and the list has its first
     // sessions.

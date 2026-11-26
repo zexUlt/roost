@@ -17,6 +17,8 @@
 //   fixture.empty    answers with neither a result nor an error
 //   fixture.lastWord answers only when its stdin closes, on the way out
 //   fixture.notify   sends each message of the args as it is, then answers
+//   <agent>.newSession  adds {agent, args} as a line to newSession.runs in the
+//                    working directory, answers a session {id, agent, title}
 // An agent method such as agent.listSessions {agent, ...} is answered as
 // agent.json in the working directory says, read anew for each request:
 //   {"<method>": {"<agent>": {"result": ...} | {"error": {...}} | "crash" |
@@ -172,6 +174,23 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
             Send(message.toObject());
         }
         Answer(id, true);
+    } else if (command.endsWith(".newSession")) {
+        // One line in newSession.runs for each start, so that a test counts
+        // them; the session is not listed afterwards.
+        const QString agent = command.chopped(QString(".newSession").size());
+        QFile runs("newSession.runs");
+        if (runs.open(QIODevice::WriteOnly | QIODevice::Append)) {
+            runs.write(
+                QJsonDocument(QJsonObject{{"agent", agent}, {"args", args}})
+                    .toJson(QJsonDocument::Compact) +
+                '\n');
+            // Closed (flushed) before the answer: a test counts the lines as
+            // soon as it has the answer.
+            runs.close();
+        }
+        Answer(id, QJsonObject{{"id", agent + "-started"},
+                               {"agent", agent},
+                               {"title", "Started by " + agent}});
     } else {
         Fail(id, -32602, QString("unknown command %1").arg(command));
     }

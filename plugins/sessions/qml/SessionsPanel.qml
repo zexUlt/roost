@@ -300,8 +300,20 @@ FocusScope {
     property bool draftNewCategory: false
     property string draftNewName: ""
     // The agent and the directory of the session, taken from the cursor when
-    // the form opens, as n does.
+    // the form opens, as n does. The agent is the default of `draftAgent`.
     property var draftTarget: null
+    // The agent the form starts the session with: the one of the cursor if it
+    // can start sessions, else the one chosen last in a form (kept in the
+    // view), else the first. `newAgents` are the agents that have a
+    // `newSession` command, in the order of the plugins, once `newAgentsLoaded`
+    // (an answer of the list, empty or not); `newAgentsProblem` is why the list
+    // of the plugins failed: Create is off until a new question gets an answer.
+    // `newAgentsAsked` numbers the question, as `newStart` numbers a start.
+    property string draftAgent: ""
+    property var newAgents: []
+    property bool newAgentsLoaded: false
+    property string newAgentsProblem: ""
+    property int newAgentsAsked: 0
     // The start of the form: while it runs Create does nothing; a failure
     // leaves the form with its draft and `newProblem` says why. `newStart`
     // numbers the start: a Cancel ends the form's claim on it (a late answer
@@ -309,6 +321,45 @@ FocusScope {
     property bool newStarting: false
     property string newProblem: ""
     property int newStart: 0
+
+    // Why the agent of the form cannot start: the reason its list gave, or "".
+    // It is shown in place of the reason of a failed start, and Create is off.
+    readonly property string agentProblem: {
+        const reason = unavailableReason(draftAgent);
+        return reason === "" ? "" : draftAgent + " is unavailable: " + reason;
+    }
+
+    // Create goes off while it has the keyboard, and a disabled button drops
+    // it: the agent row, whose choice caused it, takes it, so that Esc and Tab
+    // still work in the form.
+    onAgentProblemChanged: {
+        if (newOpen && agentProblem !== "" && newCreate.activeFocus) {
+            newAgentBox.forceActiveFocus();
+        }
+    }
+
+    // The agent list of the form: the id of the agent, marked when its adapter
+    // did not answer with a list.
+    readonly property var agentChoices: newAgents.map(agent => unavailableReason(agent) === "" ? agent : agent + " (unavailable)")
+
+    // The index of `draftAgent` in the row of the form. A new model resets the
+    // index of a ComboBox to 0, and `agentChoices` changes with every reason of
+    // an agent that cannot list. A binding of `currentIndex` that calls this
+    // reads `agentChoices` itself (a property of its own would not notify when
+    // its value stays), so it runs again after each such change.
+    function draftAgentIndex() {
+        return agentChoices.length < 0 ? -1 : newAgents.indexOf(draftAgent);
+    }
+
+    // The reason an agent's list failed (Roost.sessions.unavailable), or "".
+    function unavailableReason(agent) {
+        for (const entry of Roost.sessions.unavailable) {
+            if (entry.agent === agent) {
+                return entry.reason === "" ? "no answer" : entry.reason;
+            }
+        }
+        return "";
+    }
 
     // The entries of the category list of the form: none, the known ones, a
     // new one. The category of the draft stays among them while the form holds
@@ -350,11 +401,51 @@ FocusScope {
                 "agent": base.agent,
                 "cwd": base.cwd
             };
+            draftAgent = "";
+            newAgents = [];
+            newAgentsLoaded = false;
+            newAgentsProblem = "";
             newStarting = false;
             newProblem = "";
             newOpen = true;
+            askNewAgents();
         }
         newTaskField.forceActiveFocus();
+    }
+
+    // The agents the form offers: those with a `newSession` command. The agent
+    // of the draft is the default of the form once they are known. The list
+    // is asked again only while it has not come (a failed answer): nothing is
+    // chosen before it comes.
+    function askNewAgents() {
+        const asked = ++newAgentsAsked;
+        agentsWithCommand("newSession", agents => {
+            if (asked !== newAgentsAsked) {
+                return;
+            }
+            newAgents = Array.from(agents);
+            draftAgent = defaultNewAgent(newAgents);
+            newAgentsProblem = "";
+            newAgentsLoaded = true;
+        }, message => {
+            // The list of plugins failed (roostd not connected yet, say): no
+            // agent is offered, Create is off and the reason is shown. The
+            // form asks again when roostd connects and when the row opens.
+            if (asked === newAgentsAsked) {
+                newAgents = [];
+                newAgentsLoaded = false;
+                newAgentsProblem = "No agent list: " + message;
+            }
+        });
+    }
+
+    function defaultNewAgent(agents) {
+        const cursor = draftTarget === null ? "" : draftTarget.agent;
+        if (agents.indexOf(cursor) >= 0) {
+            return cursor;
+        }
+        const last = sessionsList.newAgent;
+        return agents.indexOf(last) >= 0 ? last : (agents[0] ?? "");
     }
 
     // Cancel and Esc: the draft goes, the list has the keyboard. A start that
@@ -366,6 +457,7 @@ FocusScope {
         newOpen = false;
         newStarting = false;
         newStart++;
+        newAgentsAsked++;
         draftTarget = null;
         if (takeKeyboard) {
             list.forceActiveFocus();
@@ -375,7 +467,7 @@ FocusScope {
     }
 
     function canCreate() {
-        return draftTask.trim() !== "" && (!draftNewCategory || draftNewName.trim() !== "");
+        return newAgentsLoaded && agentProblem === "" && draftTask.trim() !== "" && (!draftNewCategory || draftNewName.trim() !== "");
     }
 
     // Create: the session starts as n starts it, with the task as its first
@@ -388,6 +480,7 @@ FocusScope {
             return;
         }
         const target = draftTarget;
+        const agent = draftAgent;
         const task = draftTask.trim();
         const name = draftName.trim();
         const category = draftNewCategory ? draftNewName.trim() : draftCategory;
@@ -398,7 +491,7 @@ FocusScope {
         }
         newStarting = true;
         newProblem = "";
-        startSession(target.agent, target.cwd, task, category, name, problem => {
+        startSession(agent, target.cwd, task, category, name, problem => {
             if (start !== newStart) {
                 // Cancelled meanwhile: the form is not waiting for this.
                 if (problem !== "") {
@@ -422,7 +515,7 @@ FocusScope {
                     newScroll.reveal(newProblemLabel);
                 });
             }
-        });
+        }, true);
     }
 
     // Opens the prompt of the footer with its text. The keys then go to the
@@ -999,11 +1092,16 @@ FocusScope {
     // `title`, when given, is the title of the session once it is listed.
     // `done(problem)` is called once, when the agent has answered: with "" for a
     // session that started, else with the reason it did not (the caller shows
-    // it).
-    function startSession(preferredAgent, cwd, task, category, title, done) {
+    // it). The agent is `preferredAgent`, or, unless `exact` (the form: the
+    // user chose it), the first that can start a session when it cannot.
+    function startSession(preferredAgent, cwd, task, category, title, done, exact = false) {
         agentsWithCommand("newSession", agents => {
             if (agents.size === 0) {
                 done("No agent can start a session");
+                return;
+            }
+            if (exact && !agents.has(preferredAgent)) {
+                done("Not started: " + (preferredAgent === "" ? "no agent chosen" : preferredAgent + " cannot start a session"));
                 return;
             }
             const agent = agents.has(preferredAgent) ? preferredAgent : agents.values().next().value;
@@ -1105,6 +1203,9 @@ FocusScope {
 
         function onConnectedChanged() {
             if (Roost.connected) {
+                if (root.newOpen && !root.newAgentsLoaded) {
+                    root.askNewAgents();
+                }
                 root.readStore();
             } else {
                 root.storeGeneration++;
@@ -2006,8 +2107,46 @@ FocusScope {
                         text: root.draftName
                         onTextEdited: root.draftName = text
                         onAccepted: root.createFromForm()
-                        KeyNavigation.tab: newCategoryBox
+                        KeyNavigation.tab: newAgentBox
                         KeyNavigation.backtab: newTaskField
+                    }
+
+                    Label {
+                        topPadding: 8
+                        color: Roost.theme.textSecondary
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        text: "Agent"
+                    }
+
+                    PanelComboBox {
+                        id: newAgentBox
+
+                        objectName: "sessionsNewAgent"
+                        width: parent.width
+                        model: root.agentChoices
+                        currentIndex: root.draftAgentIndex()
+                        displayText: root.newAgentsLoaded ? (root.newAgents.length === 0 ? "No agent can start a session" : currentText) : (root.newAgentsProblem !== "" ? "No agent list" : "")
+                        // An agent that cannot list stays in the list, marked: the
+                        // reason is under Create, and Create is off.
+                        onActivated: index => {
+                            root.draftAgent = root.newAgents[index];
+                            root.newProblem = "";
+                            sessionsList.newAgent = root.draftAgent;
+                        }
+                        KeyNavigation.tab: newCategoryBox
+                        KeyNavigation.backtab: newNameField
+
+                        // A list of the agents that is not loaded is asked again
+                        // when the row opens.
+                        Connections {
+                            target: newAgentBox.popup
+
+                            function onAboutToShow() {
+                                if (!root.newAgentsLoaded) {
+                                    root.askNewAgents();
+                                }
+                            }
+                        }
                     }
 
                     Label {
@@ -2040,7 +2179,7 @@ FocusScope {
                             }
                         }
                         KeyNavigation.tab: newCategoryName.visible ? newCategoryName : newCreate
-                        KeyNavigation.backtab: newNameField
+                        KeyNavigation.backtab: newAgentBox
                     }
 
                     PanelField {
@@ -2081,11 +2220,11 @@ FocusScope {
                         objectName: "sessionsNewProblem"
                         textFormat: Text.PlainText
                         width: parent.width
-                        visible: root.newProblem !== ""
+                        visible: text !== ""
                         color: Roost.theme.error
                         font: Roost.theme.metaFont
                         wrapMode: Text.Wrap
-                        text: root.newProblem
+                        text: root.agentProblem !== "" ? root.agentProblem : (root.newAgentsProblem !== "" ? root.newAgentsProblem : root.newProblem)
                     }
                 }
             }

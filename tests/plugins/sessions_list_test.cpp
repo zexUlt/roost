@@ -404,6 +404,7 @@ private slots:
     void NoEchoOutlivesItsWrite();
     void AForeignDocumentInTheMiddleOfOurWriteKeepsOurKeys();
     void AForeignDocumentKeepsUnsentEdits();
+    void TheAgentOfTheFormIsKeptInTheViewOfTheInstance();
     void AForeignDocumentUpdatesKeysWeDidNotTouch();
     void TwoInstancesKeepTheirOwnOpened();
     void AnOldSharedViewSeedsANewInstance();
@@ -1342,6 +1343,39 @@ void SessionsListTest::AForeignDocumentInTheMiddleOfOurWriteKeepsOurKeys() {
     QCOMPARE(Rows(env.List).first(), QString("header:alpha"));
     Settle();
     QCOMPARE(env.Saved.size(), 1);
+}
+
+// The agent last chosen in the form of a new session is a key of the view of
+// the instance: written when it is chosen, read back, absent while none was.
+void SessionsListTest::TheAgentOfTheFormIsKeptInTheViewOfTheInstance() {
+    Env env;
+    env.List.setInstanceId("left");
+    env.Open({{"a"}}, Doc({{"a", "work"}}));
+    QVERIFY(env.List.newAgent().isEmpty());
+    QVERIFY(!ViewOfInstance(env.Store, "left").contains("newAgent"));
+
+    QSignalSpy changed(&env.List, &SessionsList::newAgentChanged);
+    env.List.setNewAgent("codex");
+    Settle();
+    QCOMPARE(changed.size(), 1);
+    QCOMPARE(ViewOfInstance(env.Store, "left").value("newAgent").toString(),
+             QString("codex"));
+
+    // The same agent again writes nothing.
+    env.Patches.clear();
+    env.List.setNewAgent("codex");
+    Settle();
+    QCOMPARE(changed.size(), 1);
+    QVERIFY(env.Patches.isEmpty());
+
+    SessionsList again;
+    again.setInstanceId("left");
+    again.restore(env.Store.toVariantMap());
+    QCOMPARE(again.newAgent(), QString("codex"));
+    SessionsList other;
+    other.setInstanceId("right");
+    other.restore(env.Store.toVariantMap());
+    QVERIFY(other.newAgent().isEmpty());
 }
 
 // What we have not written is ours: a document of the store that comes first
