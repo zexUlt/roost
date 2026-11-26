@@ -437,7 +437,8 @@ private slots:
         }
         // Every installed fixed-pitch family that is not hidden is there.
         for (const QString& family : QFontDatabase::families()) {
-            if (!family.startsWith(u'.') && IsFixedPitch(QFont(family))) {
+            if (!family.startsWith(u'.') && QFontDatabase::hasFamily(family) &&
+                IsFixedPitch(QFont(family))) {
                 QVERIFY2(listed.contains(family), qPrintable(family));
             }
         }
