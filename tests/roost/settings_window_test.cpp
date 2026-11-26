@@ -264,17 +264,38 @@ private:
         return Daemon_->ConfigPath() + "/keymap.json";
     }
 
-    // What a user does to a switch: a click at its middle.
+    // What a user does to a control: Tab to it, which scrolls the form to it
+    // when it is below the visible part (what a font of another size does to
+    // the layout), and a click at its middle.
     static void Click(const SettingsWindow& window, QQuickItem* item) {
-        // The layout gives the switch its place after the window is shown.
-        QTRY_VERIFY(item->width() > 0 && item->height() > 0 &&
-                    QRectF(QPointF(0, 0), QSizeF(window.Window()->size()))
-                        .contains(item->mapToScene(
-                            QPointF(item->width() / 2, item->height() / 2))));
-        QTest::mouseClick(
-            window.Window(), Qt::LeftButton, Qt::NoModifier,
-            item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
-                .toPoint());
+        // The layout gives the control its place after the window is shown.
+        QTRY_VERIFY(item->width() > 0 && item->height() > 0);
+        item->forceActiveFocus(Qt::TabFocusReason);
+        QQuickItem* scroll = window.Find("settingsScroll");
+        QVERIFY(scroll != nullptr);
+        const auto middle = [&] {
+            return item->mapToScene(
+                QPointF(item->width() / 2, item->height() / 2));
+        };
+        QTRY_VERIFY(scroll
+                        ->mapRectToScene(
+                            QRectF(0, 0, scroll->width(), scroll->height()))
+                        .contains(middle()));
+        QTest::mouseClick(window.Window(), Qt::LeftButton, Qt::NoModifier,
+                          middle().toPoint());
+    }
+
+    // What another program, or a hand edit, leaves in the document: a patch
+    // that the window never writes itself.
+    static bool PatchSettings(const SettingsWindow& window,
+                              const QJsonObject& patch) {
+        const QFuture<rpc::Result> writing =
+            window.Api->Store().Patch(QStringLiteral("settings"), patch);
+        return WaitFor(writing) && writing.result();
+    }
+
+    static QString InUseText(const QFont& font) {
+        return "In use: " + font.family() + " / " + Theme::sizeText(font);
     }
 
     std::unique_ptr<testing::RoostdProcess> Daemon_;
@@ -383,6 +404,39 @@ private slots:
                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ringIsInside(last), TIMEOUT_MS);
         QVERIFY(testing::SaveSnapshot(window->Window(), "ring-bottom"));
+    }
+
+    // The form scrolls: a control below the visible part is reached with the
+    // keyboard, which brings it into view with its ring, and then with the
+    // mouse.
+    void AControlBelowTheVisiblePartIsReached() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
+                                 TIMEOUT_MS);
+        QQuickItem* scroll = window->Find("settingsScroll");
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QVERIFY(scroll != nullptr && check != nullptr);
+        window->Window()->setHeight(300);
+        QTRY_VERIFY_WITH_TIMEOUT(scroll->height() < 260, TIMEOUT_MS);
+        const auto view = [&] {
+            return scroll->mapRectToScene(
+                QRectF(0, 0, scroll->width(), scroll->height()));
+        };
+        const auto outer = [&] {
+            constexpr qreal ring = 4;
+            return check
+                ->mapRectToScene(QRectF(0, 0, check->width(), check->height()))
+                .adjusted(-ring, -ring, ring, ring);
+        };
+        // Below the visible part to begin with.
+        QVERIFY(!view().contains(outer()));
+
+        check->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(view().contains(outer()), TIMEOUT_MS);
+        Click(*window, check);
+        QTRY_VERIFY(
+            Document("settings").value("updates").toObject().contains("check"));
     }
 
     void APluginWithoutAPageHasNoSection() {
@@ -834,6 +888,280 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(main, "openSettings"));
         QCOMPARE(main->findChildren<QQuickWindow*>("settingsWindow").size(), 1);
         QVERIFY(settings->isVisible());
+    }
+
+    // An empty size field says which size is in force, from the theme and not
+    // from a literal; a stored size is the text and has a Reset.
+    void TheSizeFieldsSayTheSizeInForce() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        const auto sizeText = [](const QFont& font) {
+            return Theme::sizeText(font);
+        };
+        QQuickItem* terminal = window->Find("terminalSizeField");
+        QQuickItem* ui = window->Find("uiSizeField");
+        QQuickItem* reset = window->Find("terminalSizeReset");
+        QVERIFY(terminal != nullptr && ui != nullptr && reset != nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            terminal->property("placeholderText"),
+            QVariant("default: " + sizeText(theme->defaultTerminalFont())),
+            TIMEOUT_MS);
+        QCOMPARE(ui->property("placeholderText"),
+                 QVariant("default: " + sizeText(theme->defaultUiFont())));
+        QVERIFY(!reset->isVisible());
+
+        // A size that no system font has by default.
+        QVERIFY(window->Edit("terminalSizeField", "27.5"));
+        QTRY_COMPARE_WITH_TIMEOUT(theme->terminalFont().pointSizeF(), 27.5,
+                                  TIMEOUT_MS);
+        QCOMPARE(terminal->property("text"), QVariant("27.5"));
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+        QCOMPARE(ui->property("placeholderText"),
+                 QVariant("default: " + sizeText(theme->defaultUiFont())));
+
+        // Reset is the empty field: the key goes.
+        Click(*window, reset);
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("terminalFont"),
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(terminal->property("text"), QVariant(""),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!reset->isVisible(), TIMEOUT_MS);
+        QCOMPARE(
+            terminal->property("placeholderText"),
+            QVariant("default: " + sizeText(theme->defaultTerminalFont())));
+    }
+
+    // A size is said as the font has it: points without a trailing ".0", and
+    // pixels, with "px", when the font has no point size. The QML side cannot
+    // tell them apart (it has both for any font), so the text is made in C++.
+    void ASizeIsSaidInPointsOrPixels() {
+        QFont points;
+        points.setPointSizeF(13);
+        QCOMPARE(Theme::sizeText(points), QString("13 pt"));
+        points.setPointSizeF(13.5);
+        QCOMPARE(Theme::sizeText(points), QString("13.5 pt"));
+        QFont pixels;
+        pixels.setPixelSize(17);
+        QCOMPARE(Theme::sizeText(pixels), QString("17 px"));
+
+        // QML calls it by its name.
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QString text;
+        QVERIFY(QMetaObject::invokeMethod(
+            window->Singleton->theme(), "sizeText", Q_RETURN_ARG(QString, text),
+            Q_ARG(QFont, pixels)));
+        QCOMPARE(text, QString("17 px"));
+    }
+
+    // A family that is not installed stays in the field with its reason, and
+    // the placeholder is the font that the terminals use.
+    void ANotInstalledFamilyKeepsItsTextAndThePlaceholderIsTheFontInForce() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        const QString missing = "Roost No Such Family";
+        QQuickItem* family = window->Find("terminalFamilyField");
+        QQuickItem* problems = window->Find("terminalFontProblems");
+        QVERIFY(family != nullptr && problems != nullptr);
+        QVERIFY(window->Edit("terminalFamilyField", missing));
+        QTRY_VERIFY_WITH_TIMEOUT(problems->isVisible(), TIMEOUT_MS);
+        QVERIFY(problems->property("text").toString().contains(missing));
+        QCOMPARE(family->property("text"), QVariant(missing));
+        QVERIFY(theme->terminalFont().family() != missing);
+        QCOMPARE(family->property("placeholderText"),
+                 QVariant("default: " + theme->defaultTerminalFont().family()));
+        QVERIFY(window->Find("terminalFamilyReset")->isVisible());
+    }
+
+    // The two presets of the focus ring show their colour, taken from the
+    // theme; Custom has its field instead.
+    void TheFocusPresetsShowTheirColour() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* colour = window->Find("focusPresetColor");
+        QQuickItem* box = window->Find("focusPresetBox");
+        QQuickItem* reset = window->Find("focusColorReset");
+        QVERIFY(colour != nullptr && box != nullptr && reset != nullptr);
+        QVERIFY(colour->isVisible());
+        QCOMPARE(colour->property("text"), QVariant(theme->focusBaseText()));
+        QCOMPARE(theme->focusBaseText(), QString("#225fc2"));
+        QVERIFY(!reset->isVisible());
+
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 1)));
+        QTRY_COMPARE_WITH_TIMEOUT(colour->property("text"), QVariant("#1b2430"),
+                                  TIMEOUT_MS);
+        QCOMPARE(theme->focusContrastText(), QString("#1b2430"));
+        // The ring has the colour, and Base is still the theme's own.
+        QCOMPARE(theme->focus().name(), QString("#1b2430"));
+        QCOMPARE(theme->focusBaseText(), QString("#225fc2"));
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 2)));
+        QTRY_VERIFY_WITH_TIMEOUT(!colour->isVisible(), TIMEOUT_MS);
+        Click(*window, reset);
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("focusColor"),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(colour->isVisible(), TIMEOUT_MS);
+        QCOMPARE(colour->property("text"), QVariant("#225fc2"));
+    }
+
+    // The placeholder of an emptied field is the default, not the stored
+    // value that is in force until the emptied field is left.
+    void TheHintIsTheDefaultWhileTheKeyIsStored() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* terminal = window->Find("terminalSizeField");
+        QQuickItem* ui = window->Find("uiSizeField");
+        QQuickItem* family = window->Find("terminalFamilyField");
+        QVERIFY(terminal != nullptr && ui != nullptr && family != nullptr);
+        // Sizes and a family that no system has by default.
+        QVERIFY(window->Edit("terminalSizeField", "27.5"));
+        QVERIFY(window->Edit("uiSizeField", "23.5"));
+        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QTRY_COMPARE_WITH_TIMEOUT(theme->terminalFont().pointSizeF(), 27.5,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(theme->uiFont().pointSizeF(), 23.5,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject().size(), 2,
+            TIMEOUT_MS);
+        // The fields are emptied, not yet left: the keys are still stored.
+        QVERIFY(terminal->setProperty("text", ""));
+        QVERIFY(ui->setProperty("text", ""));
+        QVERIFY(family->setProperty("text", ""));
+        QCOMPARE(terminal->property("placeholderText"),
+                 QVariant("default: " +
+                          Theme::sizeText(theme->defaultTerminalFont())));
+        QCOMPARE(
+            ui->property("placeholderText"),
+            QVariant("default: " + Theme::sizeText(theme->defaultUiFont())));
+        QCOMPARE(family->property("placeholderText"),
+                 QVariant("default: " + theme->defaultTerminalFont().family()));
+        QVERIFY(theme->defaultTerminalFont().pointSizeF() != 27.5);
+        QVERIFY(theme->defaultUiFont().pointSizeF() != 23.5);
+    }
+
+    // Reset of the family removes the family and leaves the size.
+    void ResetOfTheFamilyKeepsTheSize() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QVERIFY(window->Edit("terminalSizeField", "15"));
+        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Document("settings").value("terminalFont").toObject(),
+            (QJsonObject{{"family", "Courier"}, {"size", 15}}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject().size(), 2,
+            TIMEOUT_MS);
+        QQuickItem* reset = window->Find("terminalFamilyReset");
+        QVERIFY(reset != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+        Click(*window, reset);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Document("settings").value("terminalFont").toObject(),
+            (QJsonObject{{"size", 15}}), TIMEOUT_MS);
+        // The file is written before the window hears of it: wait for the
+        // field, not only for the file.
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Find("terminalFamilyField")->property("text"), QVariant(""),
+            TIMEOUT_MS);
+    }
+
+    // A terminalFont that is no object is stored: both rows of the font
+    // have Reset, and it removes the whole key.
+    void AFontThatIsNoObjectCanBeReset_data() {
+        QTest::addColumn<QString>("reset");
+        QTest::newRow("family") << "terminalFamilyReset";
+        QTest::newRow("size") << "terminalSizeReset";
+    }
+
+    void AFontThatIsNoObjectCanBeReset() {
+        QFETCH(QString, reset);
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* family = window->Find("terminalFamilyReset");
+        QQuickItem* size = window->Find("terminalSizeReset");
+        QVERIFY(family != nullptr && size != nullptr);
+        QVERIFY(!family->isVisible() && !size->isVisible());
+        QVERIFY(PatchSettings(*window, {{"terminalFont", "big"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(family->isVisible() && size->isVisible(),
+                                 TIMEOUT_MS);
+        Click(*window, window->Find(reset));
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("terminalFont"),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!family->isVisible() && !size->isVisible(),
+                                 TIMEOUT_MS);
+    }
+
+    // A focusColor that is stored in any form has Reset: a wrong type, and an
+    // object that has a colour but no preset.
+    void AFocusColorInAnyFormCanBeReset_data() {
+        QTest::addColumn<QJsonValue>("stored");
+        QTest::newRow("not an object") << QJsonValue("red");
+        QTest::newRow("a colour without a preset")
+            << QJsonValue(QJsonObject{{"custom", "#112233"}});
+    }
+
+    void AFocusColorInAnyFormCanBeReset() {
+        QFETCH(QJsonValue, stored);
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* reset = window->Find("focusColorReset");
+        QVERIFY(reset != nullptr);
+        QVERIFY(!reset->isVisible());
+        QVERIFY(PatchSettings(*window, {{"focusColor", stored}}));
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+        Click(*window, reset);
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("focusColor"),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!reset->isVisible(), TIMEOUT_MS);
+    }
+
+    // A stored value that is not applied: the font in force is named under
+    // the field, and the line goes when the value is put right.
+    void TheFontInUseIsSaidWhileAStoredValueIsNotApplied() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* terminal = window->Find("terminalFontInUse");
+        QQuickItem* ui = window->Find("uiFontInUse");
+        QVERIFY(terminal != nullptr && ui != nullptr);
+        QVERIFY(!terminal->isVisible() && !ui->isVisible());
+
+        // A family that is not installed: the system font is in use.
+        const QString missing = "Roost No Such Family";
+        QVERIFY(window->Edit("terminalFamilyField", missing));
+        QTRY_VERIFY_WITH_TIMEOUT(terminal->isVisible(), TIMEOUT_MS);
+        QCOMPARE(terminal->property("text"),
+                 QVariant(InUseText(theme->terminalFont())));
+        QVERIFY(theme->terminalFont().family() != missing);
+        QVERIFY(terminal->property("text").toString().contains(
+            theme->defaultTerminalFont().family()));
+        QVERIFY(window->Edit("terminalFamilyField", ""));
+        QTRY_VERIFY_WITH_TIMEOUT(!terminal->isVisible(), TIMEOUT_MS);
+
+        // A size out of range: the default size is in use.
+        QVERIFY(window->Edit("terminalSizeField", "500"));
+        QTRY_VERIFY_WITH_TIMEOUT(terminal->isVisible(), TIMEOUT_MS);
+        QCOMPARE(terminal->property("text"),
+                 QVariant(InUseText(theme->terminalFont())));
+        QCOMPARE(theme->terminalFont().pointSizeF(),
+                 theme->defaultTerminalFont().pointSizeF());
+        QVERIFY(window->Edit("terminalSizeField", "15"));
+        QTRY_VERIFY_WITH_TIMEOUT(!terminal->isVisible(), TIMEOUT_MS);
+
+        QVERIFY(window->Edit("uiSizeField", "500"));
+        QTRY_VERIFY_WITH_TIMEOUT(ui->isVisible(), TIMEOUT_MS);
+        QCOMPARE(ui->property("text"), QVariant(InUseText(theme->uiFont())));
+        QCOMPARE(theme->uiFont().pointSizeF(),
+                 theme->defaultUiFont().pointSizeF());
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QTRY_VERIFY_WITH_TIMEOUT(!ui->isVisible(), TIMEOUT_MS);
+        QCOMPARE(ui->property("text"), QVariant(InUseText(theme->uiFont())));
     }
 };
 

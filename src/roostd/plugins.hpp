@@ -60,6 +60,12 @@ DisabledPlugins ReadDisabledPlugins(const Store& store);
 //   session.removed       {agent, id}, as a backend notifies it with
 //                         session.removed {agent, session: <id>} about an
 //                         agent of its own plugin
+//   session.listed        {agent}, as a backend notifies it with
+//                         session.listed {agent} about an agent of its own
+//                         plugin: its listing is complete, the events of the
+//                         rows that listing changed have been sent. Under
+//                         session.* to come after them: the bus keeps the
+//                         order within one pattern only.
 //   session.adapterStarted {plugin, agents}, when the backend of a plugin
 //                         that serves agents started again after it stopped
 //                         or failed to start: agents are the ones it owns. Its
@@ -106,6 +112,7 @@ private:
                     const QJsonValue& params);
     void OnStateChanged(const QString& pluginId, const QJsonObject& params);
     void OnRemoved(const QString& pluginId, const QJsonObject& params);
+    void OnListed(const QString& pluginId, const QJsonObject& params);
     // Whether the plugin is the one that serves the agent.
     bool ServesAgent(const QString& pluginId, const QString& agent) const;
 

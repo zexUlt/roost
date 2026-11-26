@@ -52,6 +52,12 @@ QJsonObject StateChanged(const QJsonObject& session) {
             {"params", QJsonObject{{"agent", AGENT}, {"session", session}}}};
 }
 
+QJsonObject Listed(const QString& agent = AGENT) {
+    return {{"jsonrpc", "2.0"},
+            {"method", "session.listed"},
+            {"params", QJsonObject{{"agent", agent}}}};
+}
+
 QJsonObject Removed(const QString& id) {
     return {{"jsonrpc", "2.0"},
             {"method", "session.removed"},
@@ -217,6 +223,22 @@ private slots:
         for (QThread* thread : Threads_) {
             QCOMPARE(thread, QThread::currentThread());
         }
+    }
+
+    // The end of a listing comes after the rows it changed, and is the signal
+    // Listed of its agent.
+    void TheEndOfAListingFollowsTheRowsItChanged() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        QStringList told;
+        connect(&Api_->Sessions(), &api::SessionService::RowInserted, this,
+                [&](int) { told.append("inserted"); });
+        connect(&Api_->Sessions(), &api::SessionService::Listed, this,
+                [&](const QString& agent) { told.append("listed " + agent); });
+        QVERIFY(Notify({StateChanged(Row("s3", "blocked")), Listed()}));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            told, (QStringList{"inserted", QString("listed ") + AGENT}),
+            TIMEOUT_MS);
     }
 
     void AnUnknownSessionIsAppended() {

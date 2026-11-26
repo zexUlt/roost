@@ -100,6 +100,16 @@ ApplicationWindow {
         });
     }
 
+    function isObject(value) {
+        return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+
+    // Whether the key is in the document in any form, a wrong one too: there
+    // is something to reset.
+    function isStored(value) {
+        return value !== undefined && value !== null;
+    }
+
     // The fields show the document. What the user is typing in is not
     // replaced, unless `force`.
     function showDocument(force) {
@@ -113,6 +123,27 @@ ApplicationWindow {
         focusPresetBox.currentIndex = Math.max(0, focusPresets.indexOf(focusColor.preset ?? "base"));
         updatesCheckSwitch.checked = updatesCheck;
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
+    }
+
+    // Scrolls the form so that the control with the keyboard is in view, with
+    // its ring. Only for a control of the form.
+    function revealFocused(scrollView) {
+        const item = root.activeFocusItem;
+        const flick = scrollView.contentItem;
+        let inForm = false;
+        for (let up = item; up !== null && !inForm; up = up.parent) {
+            inForm = up === flick.contentItem;
+        }
+        if (!inForm) {
+            return;
+        }
+        const top = item.mapToItem(flick.contentItem, 0, 0).y - root.ringSpace;
+        const bottom = top + item.height + 2 * root.ringSpace;
+        if (top < flick.contentY) {
+            flick.contentY = Math.max(0, top);
+        } else if (bottom > flick.contentY + flick.height) {
+            flick.contentY = Math.min(bottom - flick.height, flick.contentHeight - flick.height);
+        }
     }
 
     function applyDocument(document) {
@@ -259,6 +290,30 @@ ApplicationWindow {
         text: Roost.theme.settingsProblems.filter(p => p.setting === setting).map(p => p.text).join("\n")
     }
 
+    // What a setting means, under its row, in the column of the fields.
+    component SettingHelp: Label {
+        Layout.fillWidth: true
+        Layout.leftMargin: 160 + 12
+        wrapMode: Text.Wrap
+        color: Roost.theme.textMuted
+    }
+
+    // The font in force under a field whose stored value is not the one in
+    // force: shown while the theme has a problem with the key.
+    component SettingInUse: SettingHelp {
+        required property string setting
+        required property font inUse
+
+        visible: Roost.theme.settingsProblems.some(p => p.setting === setting)
+        text: "In use: " + inUse.family + " / " + Roost.theme.sizeText(inUse)
+    }
+
+    // Puts a stored setting back to its default: shown only while one is
+    // stored.
+    component ResetButton: FormButton {
+        text: "Reset"
+    }
+
     component FieldRow: RowLayout {
         property alias label: title.text
 
@@ -282,10 +337,23 @@ ApplicationWindow {
     }
 
     ScrollView {
+        id: scroll
+
         objectName: "settingsScroll"
         anchors.fill: parent
         anchors.margins: Roost.theme.windowMargin + Roost.theme.panelPadding
         contentWidth: availableWidth
+
+        // The form is taller than the window at the default size, and the
+        // keyboard goes to a control that is below the visible part: scroll
+        // to it, with room for its ring.
+        Connections {
+            function onActiveFocusItemChanged() {
+                root.revealFocused(scroll);
+            }
+
+            target: root
+        }
 
         ColumnLayout {
             x: root.ringSpace
@@ -311,6 +379,10 @@ ApplicationWindow {
                 }
             }
 
+            SettingHelp {
+                text: "Colors of the window and the terminals."
+            }
+
             FieldRow {
                 label: "Terminal font"
 
@@ -323,7 +395,7 @@ ApplicationWindow {
 
                     objectName: "terminalFamilyField"
                     Layout.fillWidth: true
-                    placeholderText: "system monospace"
+                    placeholderText: "default: " + Roost.theme.defaultTerminalFont.family
                     onEditingFinished: {
                         const family = text.trim() === "" ? null : text.trim();
                         if ((family ?? "") !== shown()) {
@@ -331,6 +403,16 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                ResetButton {
+                    objectName: "terminalFamilyReset"
+                    visible: root.terminalFont.family !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
+                    onClicked: root.patchTerminalFont("family", null)
+                }
+            }
+
+            SettingHelp {
+                text: "Monospace font of the terminals."
             }
 
             FieldRow {
@@ -345,7 +427,7 @@ ApplicationWindow {
 
                     objectName: "terminalSizeField"
                     Layout.fillWidth: true
-                    placeholderText: "default"
+                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultTerminalFont)
                     onEditingFinished: {
                         const size = root.sizeOf(text);
                         if (size === undefined) {
@@ -355,11 +437,27 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                ResetButton {
+                    objectName: "terminalSizeReset"
+                    visible: root.terminalFont.size !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
+                    onClicked: root.patchTerminalFont("size", null)
+                }
+            }
+
+            SettingHelp {
+                text: "Size of the text in terminals, 6-72."
             }
 
             SettingProblems {
                 objectName: "terminalFontProblems"
                 setting: "terminalFont"
+            }
+
+            SettingInUse {
+                objectName: "terminalFontInUse"
+                setting: "terminalFont"
+                inUse: Roost.theme.terminalFont
             }
 
             FieldRow {
@@ -374,7 +472,7 @@ ApplicationWindow {
 
                     objectName: "uiSizeField"
                     Layout.fillWidth: true
-                    placeholderText: "default"
+                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultUiFont)
                     onEditingFinished: {
                         const size = root.sizeOf(text);
                         if (size === undefined) {
@@ -386,11 +484,29 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                ResetButton {
+                    objectName: "uiSizeReset"
+                    visible: root.settingsDocument.uiFontSize !== undefined
+                    onClicked: root.patchSettings({
+                        "uiFontSize": null
+                    })
+                }
+            }
+
+            SettingHelp {
+                text: "Size of the text of the window: lists, menus, settings. 6-72."
             }
 
             SettingProblems {
                 objectName: "uiFontSizeProblems"
                 setting: "uiFontSize"
+            }
+
+            SettingInUse {
+                objectName: "uiFontInUse"
+                setting: "uiFontSize"
+                inUse: Roost.theme.uiFont
             }
 
             FieldRow {
@@ -416,6 +532,14 @@ ApplicationWindow {
                     }
                 }
 
+                // The colour of the two presets, from the theme.
+                Label {
+                    objectName: "focusPresetColor"
+                    visible: root.focusColor.preset !== "custom"
+                    color: Roost.theme.textMuted
+                    text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrastText : Roost.theme.focusBaseText)
+                }
+
                 // The project has no colour picker: a hex field. What is typed
                 // is written; a colour that is hard to read is a warning of the
                 // theme below the field, and what is not a colour a reason.
@@ -437,6 +561,18 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                ResetButton {
+                    objectName: "focusColorReset"
+                    visible: root.isStored(root.settingsDocument.focusColor)
+                    onClicked: root.patchSettings({
+                        "focusColor": null
+                    })
+                }
+            }
+
+            SettingHelp {
+                text: "Outline of the control that the keyboard is on."
             }
 
             SettingProblems {
@@ -497,6 +633,10 @@ ApplicationWindow {
                         }
                     })
                 }
+            }
+
+            SettingHelp {
+                text: "Look for a new version of roost."
             }
 
             Label {

@@ -785,6 +785,45 @@ private slots:
             }));
     }
 
+    void TheEndOfAListingIsPublishedAfterTheChangesOfIt() {
+        AddPlugin("one", {"claude"});
+        AddPlugin("two", {"codex"});
+        QVERIFY(Start());
+        QList<QJsonValue> events;
+        QVERIFY(Server_->Bus().Subscribe(
+            "session.*", [&](const QString& name, const QJsonValue& payload) {
+                events.append(
+                    QJsonObject{{"name", name}, {"payload", payload}});
+            }));
+        QTest::ignoreMessage(QtWarningMsg,
+                             "roostd: the backend of one told the end of a "
+                             "listing of agent \"codex\", which it does not "
+                             "serve");
+        QTest::ignoreMessage(QtWarningMsg,
+                             "roostd: the backend of one told the end of a "
+                             "listing of agent \"\", which it does not "
+                             "serve");
+        Notify(
+            "one",
+            {
+                Notification("session.stateChanged",
+                             QJsonObject{{"agent", "claude"},
+                                         {"session", Session("s1", "done")}}),
+                Notification("session.listed",
+                             QJsonObject{{"agent", "claude"}}),
+                // Not its agent.
+                Notification("session.listed", QJsonObject{{"agent", "codex"}}),
+                Notification("session.listed", QJsonObject{}),
+            });
+        QCOMPARE(events.size(), 2);
+        QCOMPARE(events[0].toObject().value("name"),
+                 QJsonValue("session.stateChanged"));
+        QCOMPARE(events[1], QJsonValue(QJsonObject{
+                                {"name", "session.listed"},
+                                {"payload", QJsonObject{{"agent", "claude"}}},
+                            }));
+    }
+
     void ARestartIsAnnouncedAfterWhatTheOldBackendSaid() {
         AddPlugin("one", {"claude", "codex"});
         AddPlugin("two", {"gemini"});
