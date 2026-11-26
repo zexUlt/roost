@@ -84,6 +84,11 @@ class Theme : public QObject {
     // The focus ring, and the colour of what asks for attention (a waiting
     // session).
     Q_PROPERTY(QColor focus READ focus NOTIFY changed)
+    // The two presets of settings.focusColor: the `focus` of the theme itself
+    // (Base) and the fixed dark colour (Contrast) as hex texts, not colour
+    // tokens, for the settings window to show what each one is.
+    Q_PROPERTY(QString focusBaseText READ focusBaseText NOTIFY changed)
+    Q_PROPERTY(QString focusContrastText READ focusContrastText CONSTANT)
     Q_PROPERTY(QColor attention READ attention NOTIFY changed)
     // The primary button: normal, hovered, and its text.
     Q_PROPERTY(QColor primary READ primary NOTIFY changed)
@@ -121,6 +126,11 @@ class Theme : public QObject {
     // its `font`, which the Controls and the Labels below it inherit; a plain
     // Text does not, so the panels use Label.
     Q_PROPERTY(QFont uiFont READ uiFont NOTIFY changed)
+    // The fonts without settings, read once at start (a system font changed
+    // later shows after a restart): what an empty field of the settings
+    // window stands for, for display only.
+    Q_PROPERTY(QFont defaultTerminalFont READ defaultTerminalFont CONSTANT)
+    Q_PROPERTY(QFont defaultUiFont READ defaultUiFont CONSTANT)
     // What is wrong with the settings that the theme reads (the fonts and
     // settings.focusColor): a list of {setting, text}, `setting` being the key
     // of the settings document (terminalFont, uiFontSize, focusColor) and
@@ -198,6 +208,8 @@ public:
     QColor selectedBackground() const { return SelectedBackground_; }
     QColor hoverBackground() const { return HoverBackground_; }
     QColor focus() const { return Focus_; }
+    QString focusBaseText() const { return FocusBase_.name(); }
+    QString focusContrastText() const { return FOCUS_CONTRAST_COLOR; }
     QColor attention() const { return Attention_; }
     QColor primary() const { return Primary_; }
     QColor primaryHover() const { return PrimaryHover_; }
@@ -226,6 +238,9 @@ public:
     // pieces of a font in QML cannot tell a size in pixels from one in points.
     Q_INVOKABLE static QFont withWeight(const QFont& font, int weight,
                                         bool tabularDigits = false);
+    // The size of a font as a text for the settings: "13 pt" ("13.5 pt" for a
+    // fraction, never "13.0 pt"), or "17 px" for a font sized in pixels.
+    Q_INVOKABLE static QString sizeText(const QFont& font);
     QFont titleFont() const;
     QFont headingFont() const;
     QFont rowFont() const;
@@ -233,6 +248,8 @@ public:
     QFont smallFont() const;
     QFont terminalFont() const { return TerminalFont_; }
     QFont uiFont() const { return UiFont_; }
+    QFont defaultTerminalFont() const { return DefaultTerminalFont_; }
+    QFont defaultUiFont() const { return DefaultUiFont_; }
     QVariantList settingsProblems() const;
     QVariantList categories() const { return Categories_; }
     QColor bannerBackground() const { return BannerBackground_; }
@@ -285,6 +302,8 @@ private:
     QColor SelectedBackground_;
     QColor HoverBackground_;
     QColor Focus_;
+    // The `focus` that the theme has, before settings.focusColor.
+    QColor FocusBase_;
     QColor Attention_;
     QColor Primary_;
     QColor PrimaryHover_;
