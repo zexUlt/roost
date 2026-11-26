@@ -16,6 +16,7 @@
 #include <QTest>
 
 #include <signal.h>
+#include <unistd.h>
 
 #include <optional>
 
@@ -203,6 +204,11 @@ private:
     bool Prompting() { return Shown("sessionsPrompt"); }
     QString PromptLabel() { return TextOf("sessionsPromptLabel"); }
     QString PromptText() { return TextOf("sessionsPromptInput"); }
+    // The number the panel gives each start of a session and each prompt it
+    // opens or ends (`promptStart`): it stays while the prompt only refuses.
+    int PromptStarts() {
+        return PanelOf(LIST)->property("promptStart").toInt();
+    }
 
     int Unread() {
         return List()->property("counts").toMap().value("unread").toInt();
@@ -223,6 +229,61 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(Confirm().isEmpty(), TIMEOUT_MS);
     }
 
+    // The Directory step of n, with the default it was prefilled with kept by
+    // Enter: the Category step follows.
+    void KeepTheDirectory() {
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Directory:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+    }
+
+    // n with the task typed and Enter pressed: the prompt is on the Directory
+    // step.
+    void OpenTheDirectoryStep(const QString& task) {
+        Press(Qt::Key_N);
+        QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Type(task);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Directory:"),
+                                  TIMEOUT_MS);
+    }
+
+    // The input of the prompt emptied by Backspace, then `text` typed.
+    void Retype(const QString& text) {
+        const int limit = static_cast<int>(PromptText().size()) + 8;
+        for (int i = 0; i < limit && !PromptText().isEmpty(); ++i) {
+            Press(Qt::Key_Backspace);
+        }
+        QVERIFY2(PromptText().isEmpty(),
+                 "the prompt input did not empty by Backspace");
+        Type(text);
+    }
+
+    // Enter on the Directory step with `typed` in it: the prompt stays on the
+    // step with `reason` under the input, and the task is kept for the steps
+    // that follow.
+    void VerifyDirectoryRefused(const QString& typed, const QString& reason) {
+        const int starts = PromptStarts();
+        Retype(typed);
+        QCOMPARE(PromptText(), typed);
+        // Editing the text took the reason of the earlier refusal away.
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(PromptProblem().contains(reason), TIMEOUT_MS);
+        // No start was made for it: the panel numbers each start it sends.
+        QCOMPARE(PromptStarts(), starts);
+        QVERIFY(!PanelOf(LIST)->property("promptStarting").toBool());
+        QVERIFY(Prompting());
+        QCOMPARE(PromptLabel(), QString("Directory:"));
+        QCOMPARE(PromptText(), typed);
+        QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
+        QVERIFY(Notice().isEmpty());
+    }
+
     // n with the task and the category as typed, ending with the Enters.
     void StartNewSession(const QString& task, const QString& category = {}) {
         Press(Qt::Key_N);
@@ -232,8 +293,7 @@ private:
         QCOMPARE(PromptLabel(), QString("Task:"));
         Type(task);
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         if (!category.isEmpty()) {
             Type(category);
         }
@@ -250,8 +310,7 @@ private:
                                  TIMEOUT_MS);
         Type(task);
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         if (!category.isEmpty()) {
             Type(category);
         }
@@ -783,8 +842,7 @@ private slots:
         QCOMPARE(PromptText(), QString("dx do it"));
         QVERIFY(Confirm().isEmpty());
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         Press(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(cwd));
@@ -811,6 +869,7 @@ private slots:
         Type("do it");
         QCOMPARE(PromptText(), QString("do it"));
         Press(Qt::Key_Return);
+        KeepTheDirectory();
         // The category is prefilled with the cursor's.
         QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
                                   TIMEOUT_MS);
@@ -857,8 +916,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
         Type("do it");
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         // The session under the cursor has no category: the field is empty.
         QCOMPARE(PromptText(), QString());
         Press(Qt::Key_1);
@@ -1075,8 +1133,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
         Type("do it");
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         QCOMPARE(PromptText(), QString("Ops"));
         Press(Qt::Key_Return);
 
@@ -1096,6 +1153,200 @@ private slots:
         QVERIFY(SelectedId().isEmpty());
         QCOMPARE(activated.count(), 0);
         QCOMPARE(Cursor(), ON_HEADER);
+    }
+
+    // The Directory step: the directory typed there is the cwd of the new
+    // session, with `~` for the home directory expanded.
+    void TheDirectoryTypedInTheStepIsTheCwdOfTheSession() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        const QString project = Dir_->filePath("projects/app");
+        QVERIFY(QDir().mkpath(project));
+        QVERIFY(QDir().mkpath(Dir_->filePath("home/notes")));
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        Retype(project);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+        QCOMPARE(Runs(), 1);
+
+        // `~/…` is the home directory of the user (HOME of the window).
+        QVERIFY(QFile::remove(BinPath("bg.ran")));
+        OpenTheDirectoryStep("again");
+        Retype("~/notes");
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)),
+                 Canonical(Dir_->filePath("home/notes")));
+        QCOMPARE(BgRan().value(1), QString("[--bg][--][again]"));
+    }
+
+    // Enter on the prefilled step keeps today's default: the directory of the
+    // session under the cursor, the home directory as `~` on a header.
+    void EnterOnThePrefilledDirectoryKeepsTheDefault() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        QCOMPARE(Canonical(PromptText()), Canonical(BinPath("work/beta")));
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        // The prompt closes when the agent answers; a key before that goes to
+        // the prompt, not to the list.
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/beta")));
+
+        // On a header the default is the home directory, shown as `~`.
+        QVERIFY(QFile::remove(BinPath("bg.ran")));
+        Press(Qt::Key_Z);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), ON_HEADER, TIMEOUT_MS);
+        OpenTheDirectoryStep("home");
+        QCOMPARE(PromptText(), QString("~"));
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)),
+                 Canonical(Dir_->filePath("home")));
+    }
+
+    // What cannot be the directory of a session keeps the prompt on the step
+    // with the reason and the panel sends no start (`promptStart` stays), until
+    // a good directory does: the fake claude has seen the one run at the end.
+    // The claude adapter refuses such a directory itself, so a start that
+    // leaked would not show in the runs of the fake.
+    void ADirectoryThatCannotBeEnteredKeepsThePromptAndStartsNothing() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        const QString project = Dir_->filePath("projects/app");
+        QVERIFY(QDir().mkpath(project));
+        const QString file = Dir_->filePath("projects/plain.txt");
+        QSaveFile plain(file);
+        QVERIFY(plain.open(QIODevice::WriteOnly) && plain.commit());
+        const QString locked = Dir_->filePath("projects/locked");
+        QVERIFY(QDir().mkpath(locked));
+        const QFile::Permissions open = QFile::permissions(locked);
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        const QString missing = Dir_->filePath("projects/missing");
+        VerifyDirectoryRefused(missing, missing + " does not exist");
+        VerifyDirectoryRefused(file, file + " is not a directory");
+        VerifyDirectoryRefused("projects/app", "is not an absolute path");
+        VerifyDirectoryRefused("~nobody/app", "is not an absolute path");
+        VerifyDirectoryRefused(
+            "~/missing", Dir_->filePath("home/missing") + " does not exist");
+        VerifyDirectoryRefused("   ", "No directory");
+        // root enters any directory.
+        if (geteuid() != 0) {
+            QVERIFY(QFile::setPermissions(
+                locked, QFile::ReadOwner | QFile::WriteOwner));
+            VerifyDirectoryRefused(locked, locked + " cannot be entered");
+            // Enterable but not readable: the claude adapter refuses it too.
+            QVERIFY(QFile::setPermissions(locked,
+                                          QFile::WriteOwner | QFile::ExeOwner));
+            VerifyDirectoryRefused(locked, locked + " cannot be read");
+            QVERIFY(QFile::setPermissions(locked, open));
+        }
+
+        // The same prompt goes on with a directory that can be entered.
+        Retype(project);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+        QCOMPARE(Runs(), 1);
+    }
+
+    // A directory whose name ends with a blank is used as typed, not trimmed.
+    void ADirectoryWithATrailingBlankIsUsedAsTyped() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        const QString blank = Dir_->filePath("projects/dir ");
+        QVERIFY(QDir().mkpath(blank));
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        Retype(blank);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(BgRan().value(0), Canonical(blank));
+        QVERIFY(BgRan().value(0).endsWith(u' '));
+        QCOMPARE(Runs(), 1);
+    }
+
+    // A start that fails returns to the task; the directory typed comes back
+    // on the next step, not the default.
+    void AFailedNewSessionKeepsTheDirectoryTyped() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+        const QString project = Dir_->filePath("projects/app");
+        QVERIFY(QDir().mkpath(project));
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        Retype(project);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        VerifyPromptKeepsTheTask("do it", "Workspace not trusted");
+
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Directory:"),
+                                  TIMEOUT_MS);
+        QCOMPARE(PromptText(), project);
     }
 
     void ThePromptKeepsItsTargetAcrossAPoll() {
@@ -1136,6 +1387,7 @@ private slots:
 
         Press(Qt::Key_Return);
         Press(Qt::Key_Return);
+        Press(Qt::Key_Return);
 
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/beta")));
@@ -1165,8 +1417,7 @@ private slots:
                     "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
         QVERIFY(Put("bg.agents", AgentsWithStarted()));
         Press(Qt::Key_Return);
-        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
-                                  TIMEOUT_MS);
+        KeepTheDirectory();
         QCOMPARE(PromptText(), QString("OpsX"));
         QVERIFY(PromptProblem().isEmpty());
         Press(Qt::Key_Return);

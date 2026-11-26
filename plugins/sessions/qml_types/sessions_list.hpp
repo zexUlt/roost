@@ -178,6 +178,13 @@ public:
     // shows when the file of the user fails to load.
     Q_INVOKABLE QUrl bundledAgentIcon(const QString& agent) const;
 
+    // The directory typed for a new session (directory.hpp): {path, problem},
+    // the path with `~` expanded and the reason it is no directory to start
+    // in, "" if it is one. shownDirectory is a path as the input shows it, the
+    // home directory as `~`.
+    Q_INVOKABLE QVariantMap checkDirectory(const QString& typed) const;
+    Q_INVOKABLE QString shownDirectory(const QString& path) const;
+
 signals:
     void instanceIdChanged();
     void sourceChanged();
