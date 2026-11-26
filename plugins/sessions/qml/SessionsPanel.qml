@@ -414,17 +414,17 @@ FocusScope {
     }
 
     // The agents the form offers: those with a `newSession` command. The agent
-    // of the draft is the default of the form once they are known; asked
-    // again, the agent chosen meanwhile stays while it is still there.
+    // of the draft is the default of the form once they are known. The list
+    // is asked again only while it has not come (a failed answer): nothing is
+    // chosen before it comes.
     function askNewAgents() {
         const asked = ++newAgentsAsked;
         agentsWithCommand("newSession", agents => {
             if (asked !== newAgentsAsked) {
                 return;
             }
-            const chosen = draftAgent;
             newAgents = Array.from(agents);
-            draftAgent = newAgents.indexOf(chosen) >= 0 ? chosen : defaultNewAgent(newAgents);
+            draftAgent = defaultNewAgent(newAgents);
             newAgentsProblem = "";
             newAgentsLoaded = true;
         }, message => {

@@ -519,8 +519,7 @@ target_compile_definitions(sessions_form_test PRIVATE
     FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
     FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
-    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
-    SESSIONS_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/sessions")
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
 add_dependencies(sessions_form_test roostd fake_tui fixture_backend claude-adapter sessions_qml)
 
 # The key of a new session (Cmd+N, Ctrl+Shift+N): the form opens in the list of

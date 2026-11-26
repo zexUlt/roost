@@ -1984,7 +1984,7 @@ private slots:
         engine.addImportPath(QStringLiteral(ROOST_PLUGINS_DIR "/sessions/qml"));
         QQmlComponent component(
             &engine, QUrl::fromLocalFile(QStringLiteral(
-                         SESSIONS_PLUGIN_DIR "/qml/SessionsPanel.qml")));
+                         ROOST_PLUGINS_DIR "/sessions/qml/SessionsPanel.qml")));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         const std::unique_ptr<QObject> panel(component.create());
         QVERIFY(panel != nullptr);
@@ -2088,7 +2088,9 @@ private slots:
     void TheNPromptKeepsItsDefaultAgentWhateverTheFormChose() {
         FailOnWarnings();
         QVERIFY(AddOtherAgent());
-        Start();
+        // No session of claude: the cursor has no session's agent, so `n`
+        // would take the form's last choice if it read it.
+        Start({}, true, 0, FORM_CLAUDE, true);
         if (QTest::currentTestFailed()) {
             return;
         }
@@ -2103,6 +2105,7 @@ private slots:
                                   TIMEOUT_MS);
         Press(Qt::Key_Escape);
         VerifyListShown();
+        QVERIFY(CursorAgent().isEmpty());
 
         Press(Qt::Key_N);
         QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
@@ -2113,7 +2116,7 @@ private slots:
                                   QString("Category:"), TIMEOUT_MS);
         Press(Qt::Key_Return);
 
-        // The agent of the session under the cursor, as before the row.
+        // The first agent (claude), as before the row, not the form's other.
         QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
         QVERIFY(OtherRuns().isEmpty());
     }

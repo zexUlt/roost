@@ -27,10 +27,9 @@ public:
     // The instance of the panel the view belongs to: the view lives in the
     // document at `view.<instance>`. A document without that key gives the
     // instance the shared `view` of an older roost (query, tab, archive,
-    // compact, opened), read as its starting value and never written again
-    // (an older roost never wrote `newAgent`: it is only in a view of an
-    // instance). Empty: the view is the shared `view` itself. Set before the
-    // first Restore.
+    // compact, opened, newAgent), read as its starting value and never
+    // written again. Empty: the view is the shared `view` itself. Set before
+    // the first Restore.
     void SetInstance(const QString& instance) { Instance_ = instance; }
     const QString& Instance() const { return Instance_; }
 
