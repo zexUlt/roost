@@ -1215,6 +1215,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
                                   TIMEOUT_MS);
         Press(Qt::Key_Return);
+        // The prompt closes when the agent answers; a key before that goes to
+        // the prompt, not to the list.
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/beta")));
 
@@ -1228,6 +1231,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
                                   TIMEOUT_MS);
         Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)),
                  Canonical(Dir_->filePath("home")));
