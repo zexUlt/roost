@@ -6,12 +6,17 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSaveFile>
 #include <QtLogging>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <set>
 #include <variant>
 #include <vector>
 
+#include "core/protocol.hpp"
 #include "core/rpc.hpp"
 #include "roostd/manifest.hpp"
 
@@ -143,6 +148,65 @@ std::expected<std::variant<Entry, OtherPlatform>, QString> ParseEntry(
     return entry;
 }
 
+rpc::Result InvalidParams(const QString& message) {
+    return Fail(rpc::EErrorCode::InvalidParams, message);
+}
+
+// The file cannot be read or written, or is not what a write may build on.
+rpc::Result StoreFailed(const QString& message) {
+    return std::unexpected(
+        protocol::MakeError(protocol::EErrorCode::StoreFailed, message));
+}
+
+// The command, args and when that a request names.
+struct Target {
+    QString Command;
+    QJsonValue Args;
+    QString When;
+};
+
+// `args` of an entry or a request: none and null are the same.
+QJsonValue ArgsOf(const QJsonValue& value) {
+    return value.isNull() ? QJsonValue(QJsonValue::Undefined) : value;
+}
+
+// An entry of the file that binds the target: the command, args and when
+// are the same. An entry that is not an object, or has a `when` that is not a
+// string, is not.
+bool BindsTarget(const QJsonValue& value, const Target& target) {
+    if (!value.isObject()) {
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    const QJsonValue command = object.value(QStringLiteral("command"));
+    const QJsonValue when = object.value(QStringLiteral("when"));
+    if (!command.isString() || command.toString() != target.Command ||
+        (!when.isUndefined() && !when.isString())) {
+        return false;
+    }
+    return when.toString() == target.When &&
+           ArgsOf(object.value(QStringLiteral("args"))) == target.Args;
+}
+
+// The target of keymap.setCommand and keymap.resetCommand; the message is for
+// the caller.
+std::expected<Target, QString> TargetOf(const QJsonObject& params) {
+    const QJsonValue command = params.value(QStringLiteral("command"));
+    const QJsonValue when = params.value(QStringLiteral("when"));
+    if (!command.isString() || command.toString().isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("\"command\" is not the id of a command"));
+    }
+    if (!when.isUndefined() && !when.isString()) {
+        return std::unexpected(QStringLiteral("\"when\" is not a string"));
+    }
+    return Target{command.toString(),
+                  ArgsOf(params.value(QStringLiteral("args"))),
+                  when.toString()};
+}
+
+constexpr std::array<EPlatform, 2> PLATFORMS{EPlatform::Mac, EPlatform::Linux};
+
 }  // namespace
 
 KeymapService::KeymapService(QString configDirectory, Server& server,
@@ -189,6 +253,31 @@ KeymapService::KeymapService(QString configDirectory, Server& server,
         });
     Q_ASSERT(getting);
     Q_UNUSED(getting);
+
+    // Both change the file and leave the announcing to the watcher, as for a
+    // hand edit (store.patch, in StoreService, is the precedent for the shape:
+    // params checked first, the work done in the handler, which the event
+    // loop runs to its end, so two writes never interleave).
+    const bool setting = Server_.Register(
+        QStringLiteral("keymap.setCommand"),
+        [self](const rpc::Call& call) -> QFuture<rpc::Result> {
+            return rpc::Ready(
+                self ? self->SetCommand(call.Params.toObject())
+                     : Fail(rpc::EErrorCode::InternalError,
+                            QStringLiteral("the keymap is not available")));
+        });
+    const bool resetting = Server_.Register(
+        QStringLiteral("keymap.resetCommand"),
+        [self](const rpc::Call& call) -> QFuture<rpc::Result> {
+            return rpc::Ready(
+                self ? self->ResetCommand(call.Params.toObject())
+                     : Fail(rpc::EErrorCode::InternalError,
+                            QStringLiteral("the keymap is not available")));
+        });
+    Q_ASSERT(setting);
+    Q_ASSERT(resetting);
+    Q_UNUSED(setting);
+    Q_UNUSED(resetting);
 
     connect(
         &Server_, &Server::ConnectionClosed, this,
@@ -255,6 +344,12 @@ void KeymapService::ReadFile() {
 }
 
 KeymapService::Table KeymapService::Resolve(EPlatform platform) const {
+    return ResolveWith(platform, Entries_, Problem_);
+}
+
+KeymapService::Table KeymapService::ResolveWith(
+    EPlatform platform, const std::optional<QJsonArray>& entries,
+    const QString& problem) const {
     // The registry chooses the plugins' keys for one platform, the one it is
     // made for; the window's may be the other.
     PluginRegistry registry(platform);
@@ -262,11 +357,11 @@ KeymapService::Table KeymapService::Resolve(EPlatform platform) const {
         registry.Add(plugin);
     }
     Table table;
-    for (const QString& problem : registry.KeyProblems()) {
-        table.Problems.append(problem);
+    for (const QString& found : registry.KeyProblems()) {
+        table.Problems.append(found);
     }
-    if (!Problem_.isEmpty()) {
-        table.Problems.append(Problem_);
+    if (!problem.isEmpty()) {
+        table.Problems.append(problem);
     }
 
     // In the order the keys came; a removed one leaves a hole.
@@ -277,10 +372,10 @@ KeymapService::Table KeymapService::Resolve(EPlatform platform) const {
         bindings.push_back(
             Binding{key.Chord, key.When, key.Command, {}, key.Plugin});
     }
-    if (Entries_) {
-        for (qsizetype position = 0; position < Entries_->size(); ++position) {
+    if (entries) {
+        for (qsizetype position = 0; position < entries->size(); ++position) {
             const auto entry =
-                ParseEntry(Entries_->at(position), platform, Plugins_);
+                ParseEntry(entries->at(position), platform, Plugins_);
             if (!entry) {
                 table.Problems.append(
                     QStringLiteral("keymap.json entry %1 is ignored: %2")
@@ -329,6 +424,235 @@ KeymapService::Table KeymapService::Resolve(EPlatform platform) const {
         table.Bindings.append(object);
     }
     return table;
+}
+
+namespace {
+
+// The file as a write builds on it: what is in it now, not what the service
+// has kept from before. A missing file is an empty array.
+std::expected<QJsonArray, QString> ReadForWrite(const QString& path) {
+    QFile file(path);
+    if (!file.exists()) {
+        return QJsonArray();
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::unexpected(
+            QStringLiteral("keymap.json cannot be read: %1, it is left as it "
+                           "is")
+                .arg(file.errorString()));
+    }
+    const QByteArray bytes = file.read(KeymapService::MAX_FILE_BYTES + 1);
+    if (bytes.size() > KeymapService::MAX_FILE_BYTES) {
+        return std::unexpected(
+            QStringLiteral("keymap.json is over 1 MiB, it is left as it is"));
+    }
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &error);
+    if (error.error != QJsonParseError::NoError) {
+        return std::unexpected(
+            QStringLiteral("keymap.json is not JSON (%1 at byte %2), it is "
+                           "left as it is: mend it by hand")
+                .arg(error.errorString())
+                .arg(error.offset));
+    }
+    if (!document.isArray()) {
+        return std::unexpected(
+            QStringLiteral("keymap.json is not an array, it is left as it "
+                           "is: mend it by hand"));
+    }
+    return document.array();
+}
+
+// Replaces the file by `entries`, all or nothing.
+rpc::Result WriteEntries(const QString& path, const QJsonArray& entries) {
+    const QByteArray bytes =
+        QJsonDocument(entries).toJson(QJsonDocument::Indented);
+    if (bytes.size() > KeymapService::MAX_FILE_BYTES) {
+        return StoreFailed(
+            QStringLiteral("keymap.json would be over 1 MiB, it is left as "
+                           "it is"));
+    }
+    if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
+        return StoreFailed(
+            QStringLiteral("cannot make the directory of keymap.json"));
+    }
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() ||
+        !file.commit()) {
+        return StoreFailed(QStringLiteral("cannot write keymap.json: %1")
+                               .arg(file.errorString()));
+    }
+    return QJsonValue();
+}
+
+}  // namespace
+
+rpc::Result KeymapService::SetCommand(const QJsonObject& params) {
+    const auto target = TargetOf(params);
+    const QJsonValue given = params.value(QStringLiteral("entries"));
+    if (!target || (!given.isNull() && !given.isArray())) {
+        return InvalidParams(QStringLiteral(
+            "keymap.setCommand takes {command, args?, when?, entries}: "
+            "entries is an array of {key?, mac?} or null to unbind"));
+    }
+    if (Plugins_.CommandOwner(target->Command) == nullptr) {
+        return InvalidParams(QStringLiteral("no plugin has the command %1")
+                                 .arg(target->Command));
+    }
+    // The new entries, as the file will hold them; each one is checked as the
+    // file's own are, for both platforms: the file is shared.
+    QJsonArray added;
+    for (const QJsonValue& value : given.toArray()) {
+        if (!value.isObject()) {
+            return InvalidParams(QStringLiteral("an entry is not an object"));
+        }
+        QJsonObject entry;
+        for (const QString& name :
+             {QStringLiteral("key"), QStringLiteral("mac")}) {
+            if (value.toObject().contains(name)) {
+                entry.insert(name, value.toObject().value(name));
+            }
+        }
+        entry.insert(QStringLiteral("command"), target->Command);
+        if (!target->Args.isUndefined()) {
+            entry.insert(QStringLiteral("args"), target->Args);
+        }
+        if (!target->When.isEmpty()) {
+            entry.insert(QStringLiteral("when"), target->When);
+        }
+        for (const EPlatform platform : PLATFORMS) {
+            const auto parsed = ParseEntry(entry, platform, Plugins_);
+            if (!parsed) {
+                return InvalidParams(QStringLiteral("entry %1 is refused: %2")
+                                         .arg(added.size())
+                                         .arg(parsed.error()));
+            }
+        }
+        added.append(entry);
+    }
+
+    const auto current = ReadForWrite(Path_);
+    if (!current) {
+        return StoreFailed(current.error());
+    }
+    QJsonArray kept;
+    for (const QJsonValue& value : *current) {
+        if (!BindsTarget(value, *target)) {
+            kept.append(value);
+        }
+    }
+    if (added.isEmpty()) {
+        // Unbind: what the command has without its own entries is what the
+        // file must remove, for each platform; entries that remove a key bind
+        // nothing, so they are no problem whatever the key.
+        std::array<QJsonArray, 2> keys;
+        for (std::size_t index = 0; index < PLATFORMS.size(); ++index) {
+            for (const QJsonValue& value :
+                 ResolveWith(PLATFORMS[index], kept, QString()).Bindings) {
+                const QJsonObject binding = value.toObject();
+                if (binding.value(QStringLiteral("command")) ==
+                        target->Command &&
+                    binding.value(QStringLiteral("when")).toString() ==
+                        target->When &&
+                    ArgsOf(binding.value(QStringLiteral("args"))) ==
+                        target->Args) {
+                    keys[index].append(binding.value(QStringLiteral("key")));
+                }
+            }
+        }
+        const auto removal = [&](const QJsonValue& macKey,
+                                 const QJsonValue& linuxKey) {
+            QJsonObject entry{{QStringLiteral("command"), QJsonValue::Null}};
+            if (!macKey.isUndefined()) {
+                entry.insert(QStringLiteral("mac"), macKey);
+            }
+            if (!linuxKey.isUndefined()) {
+                entry.insert(QStringLiteral("key"), linuxKey);
+            }
+            if (!target->When.isEmpty()) {
+                entry.insert(QStringLiteral("when"), target->When);
+            }
+            added.append(entry);
+        };
+        const QJsonArray& mac = keys[0];
+        const QJsonArray& linux = keys[1];
+        if (mac.size() == linux.size()) {
+            // The same contribution on both: one entry for the pair.
+            for (qsizetype i = 0; i < mac.size(); ++i) {
+                removal(mac.at(i), linux.at(i));
+            }
+        } else {
+            // A contribution for one platform only has shifted the lists: one
+            // entry for each key. An entry with `key` alone acts on the Mac
+            // too, where it may take the same key from another command.
+            for (const QJsonValue& key : mac) {
+                removal(key, QJsonValue::Undefined);
+            }
+            for (const QJsonValue& key : linux) {
+                removal(QJsonValue::Undefined, key);
+            }
+        }
+    }
+    for (const QJsonValue& entry : added) {
+        kept.append(entry);
+    }
+    // Nothing to change: the file, or the lack of it, stays as it is.
+    return kept == *current ? rpc::Result(QJsonValue())
+                            : WriteEntries(Path_, kept);
+}
+
+rpc::Result KeymapService::ResetCommand(const QJsonObject& params) {
+    const auto target = TargetOf(params);
+    if (!target) {
+        return InvalidParams(
+            QStringLiteral("keymap.resetCommand takes {command, args?, when?}: "
+                           "%1")
+                .arg(target.error()));
+    }
+    const auto current = ReadForWrite(Path_);
+    if (!current) {
+        return StoreFailed(current.error());
+    }
+    // The pairs that the plugins bind to the command, for each platform: an
+    // entry that removes one of them was written to unbind it.
+    std::set<QString> contributed;
+    if (target->Args.isUndefined()) {
+        for (const EPlatform platform : PLATFORMS) {
+            for (const QJsonValue& value :
+                 ResolveWith(platform, std::nullopt, QString()).Bindings) {
+                const QJsonObject binding = value.toObject();
+                const auto chord = ParseKeyChord(
+                    binding.value(QStringLiteral("key")).toString(), platform);
+                if (chord && binding.value(QStringLiteral("command")) ==
+                                 target->Command) {
+                    contributed.insert(KeyOf(
+                        *chord,
+                        binding.value(QStringLiteral("when")).toString()));
+                }
+            }
+        }
+    }
+    const auto removesContributed = [&](const QJsonValue& value) {
+        for (const EPlatform platform : PLATFORMS) {
+            const auto entry = ParseEntry(value, platform, Plugins_);
+            if (entry && std::holds_alternative<Entry>(*entry)) {
+                const Entry& parsed = std::get<Entry>(*entry);
+                if (!parsed.Command &&
+                    contributed.contains(KeyOf(parsed.Chord, parsed.When))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    QJsonArray kept;
+    for (const QJsonValue& value : *current) {
+        if (!BindsTarget(value, *target) && !removesContributed(value)) {
+            kept.append(value);
+        }
+    }
+    return kept == *current ? rpc::Result(QJsonValue())
+                            : WriteEntries(Path_, kept);
 }
 
 void KeymapService::Sync() {

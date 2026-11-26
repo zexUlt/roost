@@ -14,6 +14,7 @@
 #include <set>
 
 #include "core/key_chord.hpp"
+#include "core/rpc.hpp"
 #include "roostd/server.hpp"
 
 namespace roost {
@@ -36,6 +37,30 @@ class PluginRegistry;
 //     plugins and from the entries above. InvalidParams for another platform;
 //     InternalError if the answer does not fit a frame.
 //
+//   keymap.setCommand {command, args?, when?, entries}   null
+//     Writes the user's keys of one command to keymap.json: the entries of the
+//     file that have this command, the same args (none if left out) and the
+//     same when (none if left out) are replaced by `entries`, an array of
+//     {key?, mac?} (at least one of them, as in the file), appended at the
+//     end of the file. With `entries` null or empty the command is unbound
+//     instead: its own entries go, and for each key that the command still
+//     has (from the plugins) an entry with "command": null is appended. The
+//     entries of other commands stay as they are, in their order; the file is
+//     rewritten as indented JSON, so its formatting is not kept. A missing
+//     file is created. InvalidParams for a command no plugin has, for a key
+//     that does not parse, for an entry that the file would flag as a problem
+//     (a key with no Cmd, Ctrl or Alt and no `when`), for params that are not
+//     of this shape; StoreFailed, and the file untouched, if the file is not
+//     JSON or not an array, is over 1 MiB (also after the change), cannot be
+//     read or written.
+//
+//   keymap.resetCommand {command, args?, when?}   null
+//     Takes the user's keys of one command out of the file: its entries as
+//     above, and the "command": null entries that remove a key of its own
+//     contribution (with no args), so the keys of the plugins apply again.
+//     The same errors as keymap.setCommand, but a command that no plugin has
+//     is no error: its entries are taken out all the same.
+//
 // and publishes on the bus, for each platform that a connected window asked
 // for with keymap.get, when keymap.json has changed:
 //
@@ -47,8 +72,9 @@ class PluginRegistry;
 // A file that is not JSON, not an array, unreadable or over 1 MiB leaves the
 // entries of the version before it and adds a problem; at start there is no
 // version before it, and the plugins' keys stand alone. A broken entry is
-// skipped with a problem. A missing file is no problem. roostd never writes
-// the file.
+// skipped with a problem. A missing file is no problem. roostd writes the file
+// only on keymap.setCommand and keymap.resetCommand, and does not publish
+// them: the watcher below sees the write as it sees a hand edit.
 //
 // The file is watched as PluginWatcher watches a plugin directory (the recipe
 // is the same: the file and its directory, an event counts when the
@@ -92,6 +118,14 @@ private:
     static Signature SignatureOf(const QString& path);
 
     Table Resolve(EPlatform platform) const;
+    // The table of the plugins with `entries` over them; `problem` is the one
+    // of the file.
+    Table ResolveWith(EPlatform platform,
+                      const std::optional<QJsonArray>& entries,
+                      const QString& problem) const;
+    // The keymap.setCommand and keymap.resetCommand methods.
+    rpc::Result SetCommand(const QJsonObject& params);
+    rpc::Result ResetCommand(const QJsonObject& params);
     // Reads the file; keeps the entries of before if it cannot be used.
     void ReadFile();
     // Brings the watched paths to the file, if it exists, and the directory,
