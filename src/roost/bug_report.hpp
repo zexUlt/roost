@@ -57,6 +57,11 @@ QList<BugReportFile> LogFiles(const QString& logDirectory,
 // directory, plugins/ included.
 QList<BugReportFile> SettingsFiles(const QString& configDirectory);
 
+// The first lines of about.txt, "roost: <VersionString()>" and "Qt (runtime):
+// <version>", each ended by a newline. The window "About roost" shows and
+// copies the same text.
+QString VersionLines();
+
 // Versions, platform and the socket of this process. `graphicsApi` is the
 // graphics API of the window, or empty if there is none.
 QString AboutText(const QString& socketPath, const QString& graphicsApi);
