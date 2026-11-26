@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QJsonObject>
 #include <QString>
 
@@ -12,6 +13,15 @@ namespace roost {
 // An error if it comes to HOME and HOME is unset, relative or "/". Tests
 // always set ROOST_CONFIG, so they never touch the real directory.
 std::expected<QString, QString> ConfigDirectory();
+
+// Writes `bytes` to `path`, a file of `directory`, for the owner only: the
+// directory is created, 0700, if it is missing (one that exists is left as
+// it is), the file is 0600, put in place by a rename of a temporary file, so
+// a failure leaves the old file. Store::Save and the keymap.json writes of
+// roostd (design.md §8) both go through it.
+std::expected<void, QString> SaveOwnerOnly(const QString& directory,
+                                           const QString& path,
+                                           const QByteArray& bytes);
 
 // One JSON object per plugin, in <directory>/<plugin id>.json.
 //

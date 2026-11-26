@@ -58,6 +58,13 @@ private:
                file.write(QJsonDocument(entries).toJson()) > 0;
     }
 
+    QJsonArray ReadKeymap() {
+        QFile file(Daemon_->ConfigPath() + "/keymap.json");
+        return file.open(QIODevice::ReadOnly)
+                   ? QJsonDocument::fromJson(file.readAll()).array()
+                   : QJsonArray();
+    }
+
     bool StartDaemon(const QJsonArray& entries) {
         return Daemon_->IsValid() &&
                Daemon_->AddFixturePlugin("fixture", FIXTURE_BACKEND_PATH) &&
@@ -188,6 +195,76 @@ private slots:
         // Events are in order: the first, which came before, changed nothing.
         QVERIFY(Find("Ctrl+Shift+Y") == nullptr);
         QVERIFY(Find("Ctrl+Shift+U") != nullptr);
+    }
+
+    // The window asks roostd to write the file; the table comes back by the
+    // event that a hand edit also gives, once, and the call touches nothing
+    // itself.
+    void SetCommandWritesTheFileAndTheTableFollowsOnce() {
+        QVERIFY(StartDaemon({}));
+        QVERIFY(ConnectApi());
+        QVERIFY(Find("Ctrl+Shift+Y") == nullptr);
+        QSignalSpy changed(&Api_->Keymap(), &api::KeymapService::Changed);
+
+        auto done = Api_->Keymap().SetCommand(
+            "fixture.echo",
+            QJsonArray{QJsonObject{{"key", "Ctrl+Shift+Y"},
+                                   {"mac", Spelled("Ctrl+Shift+Y")}}});
+        QVERIFY(WaitFor(done));
+        QVERIFY2(done.result().has_value(), qPrintable(Why(done.result())));
+
+        QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, TIMEOUT_MS);
+        const api::KeyBinding* now = Find("Ctrl+Shift+Y");
+        QVERIFY(now != nullptr);
+        QCOMPARE(now->Command, QString("fixture.echo"));
+        QCOMPARE(now->Source, QString("user"));
+        QCOMPARE(ReadKeymap().size(), 1);
+
+        // A barrier for "once": a later, different edit, as an editor saves
+        // it. Its event comes after any second event of the write above, so
+        // when the table has it, the count is final.
+        QVERIFY(WriteKeymap({Entry("Ctrl+Shift+U", "fixture.pid")}));
+        QTRY_VERIFY_WITH_TIMEOUT(Find("Ctrl+Shift+U") != nullptr, TIMEOUT_MS);
+        QCOMPARE(changed.size(), 2);
+    }
+
+    void ResetCommandTakesTheKeyAwayAgain() {
+        QVERIFY(StartDaemon(
+            {Entry("Ctrl+Shift+Y"), Entry("Ctrl+Shift+U", "fixture.pid")}));
+        QVERIFY(ConnectApi());
+        QVERIFY(Find("Ctrl+Shift+Y") != nullptr);
+
+        auto done = Api_->Keymap().ResetCommand("fixture.echo");
+        QVERIFY(WaitFor(done));
+        QVERIFY2(done.result().has_value(), qPrintable(Why(done.result())));
+
+        QTRY_VERIFY_WITH_TIMEOUT(Find("Ctrl+Shift+Y") == nullptr, TIMEOUT_MS);
+        // The entry of the other command stays.
+        QVERIFY(Find("Ctrl+Shift+U") != nullptr);
+    }
+
+    // roostd's refusals pass unchanged, and the file stays.
+    void SetCommandPassesTheErrorsOfRoostd() {
+        QVERIFY(StartDaemon({}));
+        QVERIFY(ConnectApi());
+        auto badKey = Api_->Keymap().SetCommand(
+            "fixture.echo", QJsonArray{QJsonObject{{"key", "Ctrl+Nonsense"}}});
+        QVERIFY(WaitFor(badKey));
+        QVERIFY(!badKey.result());
+        QCOMPARE(badKey.result().error().Code,
+                 static_cast<int>(rpc::EErrorCode::InvalidParams));
+
+        QFile file(Daemon_->ConfigPath() + "/keymap.json");
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QVERIFY(file.write("[ {") > 0);
+        file.close();
+        auto broken = Api_->Keymap().SetCommand(
+            "fixture.echo", QJsonArray{QJsonObject{{"key", "Ctrl+Shift+Y"}}});
+        QVERIFY(WaitFor(broken));
+        QVERIFY(!broken.result());
+        QCOMPARE(broken.result().error().Code, -32004);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("[ {"));
     }
 
     void ARoostdThatComesBackIsAskedAgain() {

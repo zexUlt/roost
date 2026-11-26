@@ -75,6 +75,45 @@ QFuture<rpc::Result> KeymapService::Get() {
     return Fetch();
 }
 
+namespace {
+
+// The params that name the entries of one command.
+QJsonObject TargetParams(const QString& command, const QString& when,
+                         const QJsonValue& args) {
+    QJsonObject params{{QStringLiteral("command"), command}};
+    if (!when.isEmpty()) {
+        params.insert(QStringLiteral("when"), when);
+    }
+    if (!args.isUndefined()) {
+        params.insert(QStringLiteral("args"), args);
+    }
+    return params;
+}
+
+}  // namespace
+
+QFuture<rpc::Result> KeymapService::SetCommand(const QString& command,
+                                               const QJsonArray& entries,
+                                               const QString& when,
+                                               const QJsonValue& args) {
+    if (!CheckThread(*this, "KeymapService::SetCommand")) {
+        return rpc::Ready(std::unexpected(WrongThread()));
+    }
+    QJsonObject params = TargetParams(command, when, args);
+    params.insert(QStringLiteral("entries"), entries);
+    return Io_.Request(QStringLiteral("keymap.setCommand"), params);
+}
+
+QFuture<rpc::Result> KeymapService::ResetCommand(const QString& command,
+                                                 const QString& when,
+                                                 const QJsonValue& args) {
+    if (!CheckThread(*this, "KeymapService::ResetCommand")) {
+        return rpc::Ready(std::unexpected(WrongThread()));
+    }
+    return Io_.Request(QStringLiteral("keymap.resetCommand"),
+                       TargetParams(command, when, args));
+}
+
 bool KeymapService::IsLoaded() const {
     return CheckThread(*this, "KeymapService::IsLoaded") && Loaded_;
 }

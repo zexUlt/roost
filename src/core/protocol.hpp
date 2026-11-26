@@ -19,7 +19,8 @@ enum class EErrorCode : int {
                                   // or answered by another roostd version
     ConnectionLost = -32002,      // client side: the socket went away
     BackendUnavailable = -32003,  // the plugin's backend is not running
-    StoreFailed = -32004,         // reading or writing a plugin's state failed
+    StoreFailed = -32004,         // reading or writing a plugin's state or
+                                  // keymap.json failed
 };
 
 // The name of the roostd executable. QLockFile writes the name of the running
