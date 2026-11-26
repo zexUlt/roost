@@ -183,6 +183,26 @@ ApplicationWindow {
         });
     }
 
+    // A swatch of the ring colour is picked: the colour is the custom one, in
+    // the same patch as the preset when that is not Custom yet (as the box
+    // does for Custom). The colour that is stored already is not written again;
+    // the theme reads it in lower case, so the case does not tell them apart.
+    function pickFocusColor(color) {
+        if (focusColor.preset === "custom") {
+            const stored = focusColor.custom;
+            if (typeof stored !== "string" || stored.toLowerCase() !== color.toLowerCase()) {
+                patchFocusColor("custom", color);
+            }
+            return;
+        }
+        patchSettings({
+            "focusColor": {
+                "preset": "custom",
+                "custom": color
+            }
+        });
+    }
+
     function isObject(value) {
         return typeof value === "object" && value !== null && !Array.isArray(value);
     }
@@ -672,9 +692,10 @@ ApplicationWindow {
                     text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrastText : Roost.theme.focusBaseText)
                 }
 
-                // The project has no colour picker: a hex field. What is typed
-                // is written; a colour that is hard to read is a warning of the
-                // theme below the field, and what is not a colour a reason.
+                // Any colour that the swatches below do not have: a hex field.
+                // What is typed is written; a colour that is hard to read is a
+                // warning of the theme below the field, and what is not a
+                // colour a reason.
                 FormField {
                     id: focusCustomField
 
@@ -700,6 +721,143 @@ ApplicationWindow {
                     onClicked: root.patchSettings({
                         "focusColor": null
                     })
+                }
+            }
+
+            // The swatches of the ring colour, in the column of the fields and
+            // always shown with the preset box: a click on one is the whole
+            // choice, whichever preset is on (it makes the preset Custom).
+            // The colour in force is marked; the field above takes any other.
+            Flow {
+                id: swatchRow
+
+                // The row is one stop of Tab, as a radio group: the swatch that
+                // has the keyboard is the stop while it has it, otherwise the
+                // colour in force (the first if none of the swatches is).
+                readonly property int entry: {
+                    for (let i = 0; i < swatches.count; ++i) {
+                        if (swatches.itemAt(i)?.inForce) {
+                            return i;
+                        }
+                    }
+                    return 0;
+                }
+                property int focused: -1
+
+                // Moves the keyboard to the swatch of the next row up (-1) or
+                // down (1), the nearest in x; nothing if there is no such row.
+                function moveRow(from, direction) {
+                    const here = swatches.itemAt(from);
+                    let rowY = null;
+                    for (let i = 0; i < swatches.count; ++i) {
+                        const y = swatches.itemAt(i).y;
+                        if ((y - here.y) * direction > 0 && (rowY === null || (y - rowY) * direction < 0)) {
+                            rowY = y;
+                        }
+                    }
+                    let best = null;
+                    for (let i = 0; i < swatches.count && rowY !== null; ++i) {
+                        const item = swatches.itemAt(i);
+                        if (item.y === rowY && (best === null || Math.abs(item.x - here.x) < Math.abs(best.x - here.x))) {
+                            best = item;
+                        }
+                    }
+                    if (best !== null) {
+                        best.forceActiveFocus(Qt.TabFocusReason);
+                    }
+                }
+
+                function moveAlong(from, step) {
+                    const item = swatches.itemAt(from + step);
+                    if (item) {
+                        item.forceActiveFocus(Qt.TabFocusReason);
+                    }
+                }
+
+                objectName: "focusSwatches"
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "Focus ring color"
+                Layout.fillWidth: true
+                Layout.leftMargin: 160 + 12
+                spacing: 8 + Roost.theme.cursorRingWidth
+
+                Repeater {
+                    id: swatches
+
+                    model: Roost.theme.focusSwatches
+
+                    delegate: AbstractButton {
+                        id: swatch
+
+                        required property int index
+                        required property string modelData
+                        readonly property bool inForce: Qt.colorEqual(Roost.theme.focus, modelData)
+                        // The presets are named as the box names them.
+                        readonly property string presetName: modelData.toLowerCase() === Roost.theme.focusBaseText.toLowerCase() ? "Base" : modelData.toLowerCase() === Roost.theme.focusContrastText.toLowerCase() ? "Contrast" : ""
+
+                        objectName: "focusSwatch" + index
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        activeFocusOnTab: swatchRow.focused === index || (swatchRow.focused < 0 && swatchRow.entry === index)
+                        onActiveFocusChanged: {
+                            if (activeFocus) {
+                                swatchRow.focused = index;
+                            } else if (swatchRow.focused === index) {
+                                swatchRow.focused = -1;
+                            }
+                        }
+                        // Arrows move inside the row; Space and Enter pick.
+                        Keys.onLeftPressed: swatchRow.moveAlong(index, -1)
+                        Keys.onRightPressed: swatchRow.moveAlong(index, 1)
+                        Keys.onUpPressed: swatchRow.moveRow(index, -1)
+                        Keys.onDownPressed: swatchRow.moveRow(index, 1)
+                        // A held Enter repeats: one pick per press.
+                        Keys.onReturnPressed: event => {
+                            if (!event.isAutoRepeat) {
+                                clicked();
+                            }
+                        }
+                        Keys.onEnterPressed: event => {
+                            if (!event.isAutoRepeat) {
+                                clicked();
+                            }
+                        }
+                        Accessible.role: Accessible.RadioButton
+                        Accessible.name: presetName === "" ? modelData : presetName + " (" + modelData + ")"
+                        Accessible.description: root.focusColor.preset === "custom" ? "" : "Picking it makes the preset Custom"
+                        Accessible.checkable: true
+                        Accessible.checked: inForce
+                        onClicked: root.pickFocusColor(modelData)
+
+                        background: Rectangle {
+                            radius: width / 2
+                            color: swatch.modelData
+                            border.width: 1
+                            border.color: Roost.theme.line
+
+                            // The colour in force: a ring of the surface inside.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                visible: swatch.inForce
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Roost.theme.surface
+                            }
+
+                            // The ring of the focus, outside with a gap of 2 px.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                                visible: swatch.visualFocus
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: Roost.theme.cursorRingWidth
+                                border.color: Roost.theme.focus
+                            }
+                        }
+                    }
                 }
             }
 
