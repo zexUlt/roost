@@ -116,19 +116,13 @@ private:
     // binds Cmd+Alt+X and Ctrl+Alt+X on the Mac only. "omega" is later, so on
     // the Mac its Cmd+Alt+X loses to gamma.y, and omega.x and omega.w have
     // their keys on Linux only: Ctrl+Alt+X, which gamma.z has on the Mac, and
-    // Ctrl+Alt+W, which nobody has there. With `decoyTaken` gamma.d has the
-    // chord that an entry for Linux alone is given on the Mac.
-    bool WriteConflictingPlugins(bool decoyTaken = false) {
-        QJsonArray commands{"gamma.y", "gamma.z"};
-        QJsonArray keys{
-            QJsonObject{{"command", "gamma.y"}, {"mac", "Cmd+Alt+X"}},
-            QJsonObject{{"command", "gamma.z"}, {"mac", "Ctrl+Alt+X"}}};
-        if (decoyTaken) {
-            commands.append("gamma.d");
-            keys.append(QJsonObject{{"command", "gamma.d"},
-                                    {"mac", "Cmd+Ctrl+Alt+Shift+F24"}});
-        }
-        return WritePlugin(Plugin("gamma", commands, keys)) &&
+    // Ctrl+Alt+W, which nobody has there.
+    bool WriteConflictingPlugins() {
+        return WritePlugin(Plugin(
+                   "gamma", {"gamma.y", "gamma.z"},
+                   {QJsonObject{{"command", "gamma.y"}, {"mac", "Cmd+Alt+X"}},
+                    QJsonObject{{"command", "gamma.z"},
+                                {"mac", "Ctrl+Alt+X"}}})) &&
                WritePlugin(Plugin("omega", {"omega.x", "omega.w"},
                                   {QJsonObject{{"command", "omega.x"},
                                                {"key", "Ctrl+Alt+X"},
@@ -587,10 +581,8 @@ private slots:
                     .contains(Binding("Ctrl+Shift+N", "beta.new", "beta")));
     }
 
-    // A key that the command has on Linux only: the format has no entry for
-    // Linux alone, and `key` alone also acts on the Mac. With a key that
-    // nothing has there the entry is `key` alone; with one that another
-    // command has on the Mac it gets a chord for `mac` that nobody has.
+    // A key that the command has on Linux only: the entry is `key` with
+    // `mac: null`, so it takes nothing on the Mac, whoever has the chord there.
     void UnbindOfALinuxOnlyKeyTakesNothingOnTheMac() {
         QVERIFY(WriteConflictingPlugins());
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
@@ -600,16 +592,14 @@ private slots:
         const QJsonArray macBefore = Get("mac").value("bindings").toArray();
 
         QVERIFY(Set("omega.x", QJsonArray{}).has_value());
-        QCOMPARE(FileEntries(),
-                 (QJsonArray{QJsonObject{{"command", UNBIND},
-                                         {"key", "Ctrl+Alt+X"},
-                                         {"mac", "Cmd+Ctrl+Alt+Shift+F24"}}}));
+        const QJsonObject x{
+            {"command", UNBIND}, {"key", "Ctrl+Alt+X"}, {"mac", UNBIND}};
+        const QJsonObject w{
+            {"command", UNBIND}, {"key", "Ctrl+Alt+W"}, {"mac", UNBIND}};
+        QCOMPARE(FileEntries(), QJsonArray{x});
         QVERIFY(Set("omega.w", QJsonArray{}).has_value());
         // The removals of a later call come before the earlier ones.
-        QCOMPARE(FileEntries().size(), 2);
-        QCOMPARE(FileEntries().at(0),
-                 QJsonValue(
-                     QJsonObject{{"command", UNBIND}, {"key", "Ctrl+Alt+W"}}));
+        QCOMPARE(FileEntries(), (QJsonArray{w, x}));
 
         QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("linux").contains("omega.x") &&
                                      !CommandsOf("linux").contains("omega.w"),
@@ -619,18 +609,95 @@ private slots:
         QVERIFY(macBefore.contains(Binding("Ctrl+Alt+X", "gamma.z", "gamma")));
     }
 
-    void UnbindOfALinuxOnlyKeyIsRefusedIfNoChordIsFreeOnTheMac() {
-        QVERIFY(WriteConflictingPlugins(true));
+    // The removal of a Linux-only key does not take the same key from another
+    // plugin that has it on the Mac only; reset takes the removal away.
+    void ALinuxOnlyRemovalLeavesAnotherPluginsMacKey() {
+        QVERIFY(WriteConflictingPlugins());
+        QVERIFY(WritePlugin(Plugin(
+            "zeta", {"zeta.w"},
+            {QJsonObject{{"command", "zeta.w"}, {"mac", "Ctrl+Alt+W"}}})));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        const QJsonObject zeta = Binding("Ctrl+Alt+W", "zeta.w", "zeta");
+        QVERIFY(Get("mac").value("bindings").toArray().contains(zeta));
+        QVERIFY(CommandsOf("linux").contains("omega.w"));
+
+        QVERIFY(Set("omega.w", QJsonArray{}).has_value());
+        QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("linux").contains("omega.w"),
+                                 TIMEOUT_MS);
+        QVERIFY(Get("mac").value("bindings").toArray().contains(zeta));
+
+        QVERIFY(Reset("omega.w").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{});
+        QTRY_VERIFY_WITH_TIMEOUT(CommandsOf("linux").contains("omega.w"),
+                                 TIMEOUT_MS);
+        QVERIFY(Get("mac").value("bindings").toArray().contains(zeta));
+    }
+
+    // `mac: null` is an entry for Linux alone; a key for Linux alone can be
+    // asked for by setCommand too.
+    void SetOfALinuxOnlyKeyWritesMacNull() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        const QJsonObject entry{
+            {"command", "alpha.save"}, {"key", "Ctrl+Alt+S"}, {"mac", UNBIND}};
+        QVERIFY(Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+S"}},
+                                             QJsonObject{{"key", "Ctrl+Alt+S"},
+                                                         {"mac", UNBIND}}})
+                    .has_value());
+        QCOMPARE(FileEntries(), QJsonArray{entry});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Get("linux")
+                .value("bindings")
+                .toArray()
+                .contains(Binding("Ctrl+Alt+S", "alpha.save", "user")),
+            TIMEOUT_MS);
+        for (const QJsonValue& binding :
+             Get("mac").value("bindings").toArray()) {
+            QVERIFY(binding.toObject().value("source") != "user");
+        }
+    }
+
+    // `mac: null` leaves the Mac out; without a `key` it binds nothing, which
+    // is a problem of the entry on both platforms, as is any other `mac` that
+    // is not a string.
+    void MacNullIsAnEntryForLinuxAlone() {
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{
+                {"key", "Ctrl+K"}, {"mac", UNBIND}, {"command", "alpha.new"}},
+            QJsonObject{{"mac", UNBIND}, {"command", "alpha.save"}},
+            QJsonObject{
+                {"key", "Ctrl+L"}, {"mac", 5}, {"command", "alpha.new"}},
+            QJsonObject{
+                {"key", "Cmd+Q"}, {"mac", UNBIND}, {"command", "alpha.new"}},
+        }));
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
 
-        const rpc::Result refused = Set("omega.x", QJsonArray{});
-        QVERIFY(!refused);
-        QCOMPARE(refused.error().Code,
-                 static_cast<int>(rpc::EErrorCode::InvalidParams));
-        QVERIFY(!QFile::exists(KeymapPath()));
-        // The key that has a pair on the Mac is no trouble.
-        QVERIFY(Set("omega.w", QJsonArray{}).has_value());
+        const QJsonObject linux = Get("linux");
+        QVERIFY(linux.value("bindings")
+                    .toArray()
+                    .contains(Binding("Ctrl+K", "alpha.new", "user")));
+        QCOMPARE(linux.value("bindings").toArray().size(), 5);
+        const QJsonObject mac = Get("mac");
+        QVERIFY(!mac.value("bindings")
+                     .toArray()
+                     .contains(Binding("Ctrl+K", "alpha.new", "user")));
+        for (const QJsonObject& table : {linux, mac}) {
+            QCOMPARE(ProblemsWith(table, "keymap.json entry").size(), 3);
+            QCOMPARE(ProblemsWith(table,
+                                  "entry 1 is ignored: \"mac\" is null and "
+                                  "there is no \"key\"")
+                         .size(),
+                     1);
+            QCOMPARE(ProblemsWith(table,
+                                  "entry 2 is ignored: \"mac\" is not a "
+                                  "string")
+                         .size(),
+                     1);
+            QCOMPARE(ProblemsWith(table, "entry 3 is ignored: \"key\":").size(),
+                     1);
+        }
     }
 
     // Set and reset give back what the plugins gave, for both platforms.

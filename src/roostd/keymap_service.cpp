@@ -103,14 +103,19 @@ std::expected<std::variant<Entry, OtherPlatform>, QString> ParseEntry(
     if (!key) {
         return std::unexpected(key.error());
     }
-    const auto mac = OptionalString(object, QStringLiteral("mac"));
+    // "mac": null is no binding on the Mac: the entry is for Linux alone.
+    const bool noMac = object.value(QStringLiteral("mac")).isNull();
+    const auto mac = noMac ? std::expected<std::optional<QString>, QString>(
+                                 std::optional<QString>())
+                           : OptionalString(object, QStringLiteral("mac"));
     if (!mac) {
         return std::unexpected(mac.error());
     }
     if (!*key && !*mac) {
         return std::unexpected(
-            QStringLiteral("it has neither \"key\" nor "
-                           "\"mac\""));
+            noMac ? QStringLiteral("\"mac\" is null and there is no "
+                                   "\"key\": nothing to bind")
+                  : QStringLiteral("it has neither \"key\" nor \"mac\""));
     }
     const auto when = OptionalString(object, QStringLiteral("when"));
     if (!when) {
@@ -130,6 +135,14 @@ std::expected<std::variant<Entry, OtherPlatform>, QString> ParseEntry(
     } else if (!command.isNull()) {
         return std::unexpected(
             QStringLiteral("\"command\" is neither a string nor null"));
+    }
+    if (noMac && platform == EPlatform::Mac) {
+        // `key` is still checked, as for any platform.
+        const auto checked = ChooseKeyChord(*key, std::nullopt, platform);
+        if (!checked) {
+            return std::unexpected(checked.error());
+        }
+        return OtherPlatform{};
     }
     const auto chord = ChooseKeyChord(*key, *mac, platform);
     if (!chord) {
@@ -602,30 +615,22 @@ QJsonArray WithoutTarget(const Resolver& resolve, const PluginRegistry& plugins,
     return kept;
 }
 
-// A chord that no command is likely to have: an entry for Linux alone has to
-// give the Mac something, and this takes nothing from it.
-const QString DECOY_MAC_KEY = QStringLiteral("Cmd+Ctrl+Alt+Shift+F24");
-
 // The entries "command": null that remove, on each platform, exactly the given
 // chords of the target's contributions and nothing else. An entry with `key`
 // removes it on Linux and, with no `mac`, on the Mac too; `mac` alone is for
-// the Mac; there is no entry for Linux alone. So the mac and linux chords go
-// in pairs, and a chord left over has its own entry: a Mac one with `mac`
-// alone; a Linux one with `key` alone if the Mac has no binding for the same
-// chord, else with `mac` set to a chord that nothing has. `takenOnMac` are the
-// pairs (chord, when) that the plugins bind on the Mac.
-std::expected<QJsonArray, QString> UnbindEntries(
-    const Chords& chords, const QString& when,
-    const std::set<QString>& takenOnMac) {
+// the Mac; `mac: null` leaves the Mac out. So the mac and linux chords go in
+// pairs, and a chord left over has its own entry: a Mac one with `mac` alone,
+// a Linux one with `key` and `mac: null`.
+QJsonArray UnbindEntries(const Chords& chords, const QString& when) {
     const std::vector<KeyChord>& mac = chords[0];
     const std::vector<KeyChord>& linux = chords[1];
     QJsonArray entries;
-    const auto add = [&](const QString& key, const QString& macKey) {
+    const auto add = [&](const QString& key, const QJsonValue& macKey) {
         QJsonObject entry{{QStringLiteral("command"), QJsonValue::Null}};
         if (!key.isEmpty()) {
             entry.insert(QStringLiteral("key"), key);
         }
-        if (!macKey.isEmpty()) {
+        if (!macKey.isUndefined()) {
             entry.insert(QStringLiteral("mac"), macKey);
         }
         if (!when.isEmpty()) {
@@ -641,36 +646,9 @@ std::expected<QJsonArray, QString> UnbindEntries(
         add(QString(), WriteKeyChord(mac[i]));
     }
     for (std::size_t i = paired; i < linux.size(); ++i) {
-        const QString key = WriteKeyChord(linux[i]);
-        const auto asked = ChooseKeyChord(key, std::nullopt, EPlatform::Mac);
-        if (asked && *asked && !takenOnMac.contains(KeyOf(**asked, when))) {
-            add(key, QString());
-            continue;
-        }
-        const auto decoy = ParseKeyChord(DECOY_MAC_KEY, EPlatform::Mac);
-        if (!decoy || takenOnMac.contains(KeyOf(*decoy, when))) {
-            return std::unexpected(
-                QStringLiteral("%1 cannot be removed on Linux without taking "
-                               "the same key of another command on the Mac")
-                    .arg(key));
-        }
-        add(key, DECOY_MAC_KEY);
+        add(WriteKeyChord(linux[i]), QJsonValue::Null);
     }
     return entries;
-}
-
-// The pairs (chord, when) of the bindings, as keys of a set.
-std::set<QString> PairsOf(const QJsonArray& bindings, EPlatform platform) {
-    std::set<QString> pairs;
-    for (const QJsonValue& value : bindings) {
-        const QJsonObject binding = value.toObject();
-        if (const auto chord = ParseKeyChord(
-                binding.value(QStringLiteral("key")).toString(), platform)) {
-            pairs.insert(KeyOf(
-                *chord, binding.value(QStringLiteral("when")).toString()));
-        }
-    }
-    return pairs;
 }
 
 }  // namespace
@@ -793,15 +771,10 @@ rpc::Result KeymapService::SetCommand(const QJsonObject& params) {
             }
         }
     }
-    const auto unbinds = UnbindEntries(
-        removed, target->When,
-        PairsOf(resolve(EPlatform::Mac, std::nullopt), EPlatform::Mac));
-    if (!unbinds) {
-        return InvalidParams(unbinds.error());
-    }
+    const QJsonArray unbinds = UnbindEntries(removed, target->When);
     // The removals come first: they take the plugins' keys only, and not the
     // keys that other entries of the file bind below them.
-    QJsonArray result = *unbinds;
+    QJsonArray result = unbinds;
     for (const QJsonValue& value : kept) {
         result.append(value);
     }
