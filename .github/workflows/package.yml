@@ -33,7 +33,7 @@ name: Package
 # ended with: a dispatch packages anyway. A night that has a release to make
 # is not skipped: a red night followed by a day of documentation must not
 # leave a product change without a release. But a night does not release on
-# the commit on which the previous night ended red (that would hide a flaky
+# a commit on which any earlier night ended red (that would hide a flaky
 # test): it falls back to the rule above, and a release is made after the
 # fix, or by a dispatch with `release`. Only documentation (docs/, .claude/,
 # *.md, issue templates) does not reach a package. The path list is the files that rarely change and
@@ -100,7 +100,7 @@ jobs:
   # Decides whether the jobs below run and what version they build, by
   # tools/package_plan.sh (its header has the rules). Only a night run can be
   # skipped: tags, dispatches and pushes always package, and so does a night
-  # that has a release to make, unless the previous night ended red on this very
+  # that has a release to make, unless an earlier night ended red on this very
   # commit (then no release, and the night is skipped by the base rule). The
   # base of a night run is the head of the last other run of this workflow on
   # trunk (any event, any result).
@@ -139,11 +139,15 @@ jobs:
           if [ "$EVENT" = schedule ]; then
             BASE=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&per_page=20" \
               --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0].head_sha // empty")
-            # The previous night: the head it ran on and whether it ended red.
-            prev=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&event=schedule&per_page=20" \
-              --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0] // empty | \"\(.head_sha) \(.conclusion)\"")
-            read -r PREV_NIGHT_SHA prev_conclusion <<<"$prev"
-            if [ "${prev_conclusion:-}" = failure ]; then PREV_NIGHT_RED=true; fi
+            # Any earlier night that ended red on this very commit, not only
+            # the last one: a red night followed by a skipped one (success)
+            # must not release the red commit on the third.
+            red=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&event=schedule&per_page=100" \
+              --jq "[.workflow_runs[] | select(.id != $RUN_ID and .head_sha == \"$GITHUB_SHA\" and .conclusion == \"failure\")] | length")
+            if [ "${red:-0}" -gt 0 ]; then
+              PREV_NIGHT_SHA=$GITHUB_SHA
+              PREV_NIGHT_RED=true
+            fi
           fi
           export BASE PREV_NIGHT_SHA PREV_NIGHT_RED
           set -o pipefail
@@ -715,6 +719,8 @@ jobs:
           set -euo pipefail
           state=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq ".[] | select(.tag_name == \"$TAG\") | if .draft then \"draft\" else \"published\" end")
+          # Any published one wins over a draft of the same tag.
+          if grep -qx published <<<"$state"; then state=published; fi
           case "$state" in
             published*)
               echo "::error::a published release of $TAG exists: nothing to make"

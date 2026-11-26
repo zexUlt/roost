@@ -15,9 +15,9 @@
 #   RELEASE  the dispatch input `release` (true | false)
 #   DRAFT    the dispatch input `draft_release` (true | false)
 #   BASE     the head of the last other run of the workflow on trunk, or empty
-#   PREV_NIGHT_SHA  the head_sha of the previous schedule run on trunk (not this
-#            run), or empty
-#   PREV_NIGHT_RED  true when that run ended with failure
+#   PREV_NIGHT_SHA  a commit on which an earlier schedule run (not this run)
+#            ended with failure, or empty
+#   PREV_NIGHT_RED  true when PREV_NIGHT_SHA is set
 #   HEAD_REV the commit to plan for, default HEAD
 #
 # The rules
@@ -30,10 +30,11 @@
 #     *.md, and .github/workflows/package.yml (the Qt and zig versions live
 #     there). Its version is MAJOR.MINOR of CMakeLists.txt (read from HEAD) and
 #     the patch is one more than the highest patch among all the tags
-#     vMAJOR.MINOR.* (0 if none). A tag vMAJOR.MINOR.* that is not an ancestor
-#     of HEAD fails the plan: a run on an old commit must not tag a patch on
-#     the ancestor of an existing tag.
-#   - A red night is not retried on the same commit: when the previous night
+#     vMAJOR.MINOR.* (0 if none). A release on an ancestor of a tag
+#     vMAJOR.MINOR.* fails the plan: a run on an old commit must not tag a
+#     higher patch on a commit before an existing tag. (A tag off the history
+#     of HEAD, e.g. on a fix branch, is no obstacle.)
+#   - A red night is not retried on the same commit: when any earlier night
 #     (PREV_NIGHT_*) ended red on this very HEAD, the night makes no release;
 #     a release after the fix, or a dispatch with release=true, makes it.
 #   - A dispatch with draft_release=true (the dry run) plans that version and
@@ -98,9 +99,11 @@ plan_release_version() {
     # The highest patch of all the tags vMAJOR.MINOR.*, plus one; 0 without a tag.
     local highest=-1 tag n
     while IFS= read -r tag; do
-        # A run on an old commit must not tag a patch on the ancestor of a tag.
-        git_ merge-base --is-ancestor "$tag^{commit}" "$head" ||
-            fail "the tag $tag is not an ancestor of $head: no release of $major.$minor from a commit before it"
+        # A run on an old commit must not tag a higher patch on a commit before
+        # an existing tag. A dry run makes no tag: not checked.
+        if [ "$release" = true ] && git_ merge-base --is-ancestor "$head" "$tag^{commit}"; then
+            fail "$head is before the tag $tag: no release of $major.$minor from a commit before it"
+        fi
         n=${tag##*.}
         if [ "$n" -gt "$highest" ]; then highest=$n; fi
     done < <(git_ tag --list "v$major.$minor.*" | grep -E "^v$major\.$minor\.(0|[1-9][0-9]*)$" || true)
