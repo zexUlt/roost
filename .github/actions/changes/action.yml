@@ -7,6 +7,10 @@ description: Whether this change needs a build and tests, by tools/ci_changes.sh
 outputs:
   code:
     value: ${{ steps.decide.outputs.code }}
+  tests_only:
+    value: ${{ steps.decide.outputs.tests_only }}
+  tests_files:
+    value: ${{ steps.decide.outputs.tests_files }}
 
 runs:
   using: composite
