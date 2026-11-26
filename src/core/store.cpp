@@ -120,27 +120,24 @@ std::expected<QJsonObject, QString> Store::Load(const QString& pluginId) const {
     return document.object();
 }
 
-std::expected<void, QString> Store::Save(const QString& pluginId,
-                                         const QJsonObject& document) const {
-    if (auto checked = CheckRequest(pluginId); !checked) {
-        return checked;
-    }
-    if (!QDir(Directory_).exists()) {
-        if (!QDir().mkpath(Directory_)) {
+std::expected<void, QString> SaveOwnerOnly(const QString& directory,
+                                           const QString& path,
+                                           const QByteArray& bytes) {
+    if (!QDir(directory).exists()) {
+        if (!QDir().mkpath(directory)) {
             return std::unexpected(
-                QStringLiteral("cannot create %1").arg(Directory_));
+                QStringLiteral("cannot create %1").arg(directory));
         }
         // Plugin state may hold tokens: only the owner gets in.
-        if (!QFile::setPermissions(Directory_, QFile::ReadOwner |
-                                                   QFile::WriteOwner |
-                                                   QFile::ExeOwner)) {
+        if (!QFile::setPermissions(directory, QFile::ReadOwner |
+                                                  QFile::WriteOwner |
+                                                  QFile::ExeOwner)) {
             return std::unexpected(
                 QStringLiteral("cannot restrict %1 to its owner")
-                    .arg(Directory_));
+                    .arg(directory));
         }
     }
 
-    const QString path = PathOf(pluginId);
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         return std::unexpected(QStringLiteral("cannot write %1: %2")
@@ -153,7 +150,7 @@ std::expected<void, QString> Store::Save(const QString& pluginId,
         return std::unexpected(QStringLiteral("cannot restrict %1: %2")
                                    .arg(path, file.errorString()));
     }
-    file.write(QJsonDocument(document).toJson(QJsonDocument::Indented));
+    file.write(bytes);
     // A failed write above makes the commit fail and drops the temporary
     // file; the old document stays as it was.
     if (!file.commit()) {
@@ -161,6 +158,16 @@ std::expected<void, QString> Store::Save(const QString& pluginId,
                                    .arg(path, file.errorString()));
     }
     return {};
+}
+
+std::expected<void, QString> Store::Save(const QString& pluginId,
+                                         const QJsonObject& document) const {
+    if (auto checked = CheckRequest(pluginId); !checked) {
+        return checked;
+    }
+    return SaveOwnerOnly(
+        Directory_, PathOf(pluginId),
+        QJsonDocument(document).toJson(QJsonDocument::Indented));
 }
 
 void ApplyMergePatch(QJsonObject& target, const QJsonObject& patch) {

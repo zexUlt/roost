@@ -214,13 +214,18 @@ private slots:
         QVERIFY2(done.result().has_value(), qPrintable(Why(done.result())));
 
         QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, TIMEOUT_MS);
-        QTest::qWait(300);
-        QCOMPARE(changed.size(), 1);
         const api::KeyBinding* now = Find("Ctrl+Shift+Y");
         QVERIFY(now != nullptr);
         QCOMPARE(now->Command, QString("fixture.echo"));
         QCOMPARE(now->Source, QString("user"));
         QCOMPARE(ReadKeymap().size(), 1);
+
+        // A barrier for "once": a later, different edit, as an editor saves
+        // it. Its event comes after any second event of the write above, so
+        // when the table has it, the count is final.
+        QVERIFY(WriteKeymap({Entry("Ctrl+Shift+U", "fixture.pid")}));
+        QTRY_VERIFY_WITH_TIMEOUT(Find("Ctrl+Shift+U") != nullptr, TIMEOUT_MS);
+        QCOMPARE(changed.size(), 2);
     }
 
     void ResetCommandTakesTheKeyAwayAgain() {

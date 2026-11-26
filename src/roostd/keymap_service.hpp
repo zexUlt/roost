@@ -38,28 +38,48 @@ class PluginRegistry;
 //     InternalError if the answer does not fit a frame.
 //
 //   keymap.setCommand {command, args?, when?, entries}   null
-//     Writes the user's keys of one command to keymap.json: the entries of the
-//     file that have this command, the same args (none if left out) and the
-//     same when (none if left out) are replaced by `entries`, an array of
-//     {key?, mac?} (at least one of them, as in the file), appended at the
-//     end of the file. With `entries` null or empty the command is unbound
-//     instead: its own entries go, and for each key that the command still
-//     has (from the plugins) an entry with "command": null is appended. The
-//     entries of other commands stay as they are, in their order; the file is
-//     rewritten as indented JSON, so its formatting is not kept. A missing
-//     file is created. InvalidParams for a command no plugin has, for a key
-//     that does not parse, for an entry that the file would flag as a problem
-//     (a key with no Cmd, Ctrl or Alt and no `when`), for params that are not
-//     of this shape; StoreFailed, and the file untouched, if the file is not
-//     JSON or not an array, is over 1 MiB (also after the change), cannot be
-//     read or written.
+//     Sets the whole set of the keys of one command, in one write of
+//     keymap.json. `entries` is an array of {key?, mac?} (at least one of
+//     them, as in the file, and no other field: command, args and when are
+//     those of the request): the keys that the command must have afterwards
+//     for this args (none if left out) and this when (none if left out), on
+//     each platform. The entries of the file that have this command, args and
+//     when are replaced by those of `entries`, appended at the end of the
+//     file; a key that the plugins give the command already, and `entries`
+//     has, is not written again (unless another entry of the file holds it).
+//     Each key that the plugins give the command for this `when` (they give
+//     no args) and `entries` does not have gets an entry with "command": null
+//     at the start of the file, so it removes the plugins' key and nothing
+//     that the file binds below, even when another entry holds the key now.
+//     Each such entry takes the keys of this command only, on each platform:
+//     the Mac's and Linux's keys go in pairs {key, mac}, and what has no pair
+//     has an entry of its own (see keymap_service.cpp). `entries` empty
+//     removes every key of the command; to add a key, send the keys the
+//     command has now and the new one. The entries "command": null that an
+//     earlier call wrote for this command are taken out and made again, the
+//     rest of the file stays as it is, in its order; the file is rewritten as
+//     indented JSON, so its formatting is not kept. A missing file is
+//     created, in a directory made 0700 if it is missing, the file 0600 (as
+//     the store's own). All or nothing: one entry that is refused refuses the
+//     call, and the file is not touched. InvalidParams for a command no
+//     plugin has, for a key that does not parse, for an entry with a field
+//     other than key and mac or that the file would flag as a problem (a key
+//     with no Cmd, Ctrl or Alt and no `when`), for `entries` that is not an
+//     array (null too), for params that are not of this shape; StoreFailed,
+//     and the file untouched, if the file is not JSON or not an array, is
+//     over 1 MiB (also after the change), cannot be read or written. The
+//     handler runs to its end in the event loop: calls of two clients do not
+//     interleave, and the second reads the file the first wrote.
 //
 //   keymap.resetCommand {command, args?, when?}   null
-//     Takes the user's keys of one command out of the file: its entries as
-//     above, and the "command": null entries that remove a key of its own
-//     contribution (with no args), so the keys of the plugins apply again.
-//     The same errors as keymap.setCommand, but a command that no plugin has
-//     is no error: its entries are taken out all the same.
+//     Returns the command to what the plugins give it: takes out of the file
+//     what setCommand writes for this args and when: the entries of the
+//     command, and the entries "command": null whose only effect, on each
+//     platform where they apply, is to remove keys of the command with this
+//     args and when (and which remove one on some platform; those written by
+//     hand for another command's key, or for no key, stay). The same errors
+//     as keymap.setCommand, but a command that no plugin has is no error: its
+//     entries are taken out all the same.
 //
 // and publishes on the bus, for each platform that a connected window asked
 // for with keymap.get, when keymap.json has changed:

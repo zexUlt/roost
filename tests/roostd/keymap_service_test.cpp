@@ -1,6 +1,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -19,6 +20,7 @@ using namespace roost;
 namespace {
 
 constexpr int TIMEOUT_MS = 10000;
+constexpr qsizetype MAX_FILE_BYTES = 1024 * 1024;
 // For the checks that nothing more comes, after an event that shows the daemon
 // has handled the change: longer than the delay of the service (100 ms) by a
 // good margin, so what would come after the first event is in by then. A state
@@ -108,6 +110,32 @@ private:
                                 {"key", "J"},
                                 {"when", "beta.transcript"}},
                     QJsonObject{{"command", "beta.mac"}, {"mac", "Cmd+B"}}}));
+    }
+
+    // Keys that the plugins have on one platform and not on the other: "gamma"
+    // binds Cmd+Alt+X and Ctrl+Alt+X on the Mac only. "omega" is later, so on
+    // the Mac its Cmd+Alt+X loses to gamma.y, and omega.x and omega.w have
+    // their keys on Linux only: Ctrl+Alt+X, which gamma.z has on the Mac, and
+    // Ctrl+Alt+W, which nobody has there. With `decoyTaken` gamma.d has the
+    // chord that an entry for Linux alone is given on the Mac.
+    bool WriteConflictingPlugins(bool decoyTaken = false) {
+        QJsonArray commands{"gamma.y", "gamma.z"};
+        QJsonArray keys{
+            QJsonObject{{"command", "gamma.y"}, {"mac", "Cmd+Alt+X"}},
+            QJsonObject{{"command", "gamma.z"}, {"mac", "Ctrl+Alt+X"}}};
+        if (decoyTaken) {
+            commands.append("gamma.d");
+            keys.append(QJsonObject{{"command", "gamma.d"},
+                                    {"mac", "Cmd+Ctrl+Alt+Shift+F24"}});
+        }
+        return WritePlugin(Plugin("gamma", commands, keys)) &&
+               WritePlugin(Plugin("omega", {"omega.x", "omega.w"},
+                                  {QJsonObject{{"command", "omega.x"},
+                                               {"key", "Ctrl+Alt+X"},
+                                               {"mac", "Cmd+Alt+X"}},
+                                   QJsonObject{{"command", "omega.w"},
+                                               {"key", "Ctrl+Alt+W"},
+                                               {"mac", "Cmd+Alt+X"}}}));
     }
 
     bool Connect() {
@@ -223,8 +251,10 @@ private slots:
         Daemon_.reset();
     }
 
-    // The window asks, roostd writes, and the watcher tells both platforms
-    // once, as for a hand edit. No file before: the call makes it.
+    // The window asks for the keys of a command: those it has now and a new
+    // one. roostd writes the new one only (the other is the plugin's already),
+    // and the watcher tells both platforms once, as for a hand edit. No file
+    // before: the call makes it.
     void SetCreatesTheFileAndTheTableChangesOnce() {
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
@@ -233,7 +263,8 @@ private slots:
         QVERIFY(Get("mac").value("bindings").toArray().size() > 0);
 
         const rpc::Result done =
-            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"},
+            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+S"}},
+                                         QJsonObject{{"key", "Ctrl+Alt+S"},
                                                      {"mac", "Cmd+Alt+S"}}});
         if (!done) {
             qWarning().noquote() << done.error().Message;
@@ -246,8 +277,6 @@ private slots:
                                          {"mac", "Cmd+Alt+S"}}}));
 
         QTRY_COMPARE_WITH_TIMEOUT(Changes().size(), 2, TIMEOUT_MS);
-        QTest::qWait(SETTLE_MS);
-        QCOMPARE(Changes().size(), 2);
         for (QJsonObject change : Changes()) {
             const QString platform = change.value("platform").toString();
             change.remove("platform");
@@ -255,13 +284,31 @@ private slots:
         }
         const QJsonArray linux = Get("linux").value("bindings").toArray();
         QVERIFY(linux.contains(Binding("Ctrl+Alt+S", "alpha.save", "user")));
-        // The contribution of the plugin stays: setCommand adds a key.
         QVERIFY(linux.contains(Binding("Ctrl+S", "alpha.save", "alpha")));
         QVERIFY(Get("mac")
                     .value("bindings")
                     .toArray()
                     .contains(Binding("Cmd+Alt+S", "alpha.save", "user")));
         QVERIFY(Get("linux") != before);
+
+        // A barrier for "once": a later, different edit, saved as an editor
+        // does. Its events come after any second event of the write above, on
+        // the same bus, so when both are in, nothing more is to come from the
+        // write: four events, two for each file.
+        const QJsonObject edited = Binding("Ctrl+Alt+Z", "alpha.save", "user");
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{{"key", "Ctrl+Alt+Z"}, {"command", "alpha.save"}}}));
+        const auto editEvents = [&] {
+            int count = 0;
+            for (const QJsonObject& change : Changes()) {
+                count += change.value("bindings").toArray().contains(edited);
+            }
+            return count;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(editEvents(), 2, TIMEOUT_MS);
+        QCOMPARE(Changes().size(), 4);
+        QVERIFY(!Changes().at(0).value("bindings").toArray().contains(edited));
+        QVERIFY(!Changes().at(1).value("bindings").toArray().contains(edited));
     }
 
     // The keys of a command are the ones asked for last: a second call replaces
@@ -269,14 +316,14 @@ private slots:
     void SetTwiceReplacesTheEntriesOfTheCommand() {
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
-        QVERIFY(
-            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}},
-                                         QJsonObject{{"key", "Ctrl+Alt+D"}}})
-                .has_value());
+        QVERIFY(Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}},
+                                             QJsonObject{{"key", "Ctrl+Alt+D"}},
+                                             QJsonObject{{"key", "Ctrl+S"}}})
+                    .has_value());
         QCOMPARE(FileEntries().size(), 2);
-        QVERIFY(
-            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+F"}}})
-                .has_value());
+        QVERIFY(Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+F"}},
+                                             QJsonObject{{"key", "Ctrl+S"}}})
+                    .has_value());
 
         QCOMPARE(FileEntries(),
                  (QJsonArray{QJsonObject{{"command", "alpha.save"},
@@ -321,9 +368,9 @@ private slots:
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
 
-        QVERIFY(
-            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+F"}}})
-                .has_value());
+        QVERIFY(Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+F"}},
+                                             QJsonObject{{"key", "Ctrl+S"}}})
+                    .has_value());
 
         QJsonArray expected = others;
         expected.append(
@@ -355,22 +402,15 @@ private slots:
                                          {"args", args}}}));
     }
 
-    // Unbind (entries null or empty): the keys that the plugin gave the command
-    // go from both platforms, and nothing else does.
-    void UnbindRemovesTheBindingOfAContributedCommand_data() {
-        QTest::addColumn<QJsonValue>("entries");
-        QTest::newRow("Null") << QJsonValue(QJsonValue::Null);
-        QTest::newRow("Empty") << QJsonValue(QJsonArray{});
-    }
-
+    // Unbind (no entries): the keys that the plugin gave the command go from
+    // both platforms, and nothing else does.
     void UnbindRemovesTheBindingOfAContributedCommand() {
-        QFETCH(QJsonValue, entries);
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
         QVERIFY(CommandsOf("linux").contains("alpha.new"));
         QVERIFY(CommandsOf("mac").contains("alpha.new"));
 
-        QVERIFY(Set("alpha.new", entries).has_value());
+        QVERIFY(Set("alpha.new", QJsonArray{}).has_value());
 
         // The same key and mac of the contribution, "command": null.
         QCOMPARE(FileEntries(), (QJsonArray{QJsonObject{{"command", UNBIND},
@@ -397,8 +437,7 @@ private slots:
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
 
-        QVERIFY(Set("alpha.next", QJsonValue(QJsonValue::Null), "sessions.list")
-                    .has_value());
+        QVERIFY(Set("alpha.next", QJsonArray{}, "sessions.list").has_value());
 
         QCOMPARE(FileEntries(),
                  (QJsonArray{QJsonObject{{"command", UNBIND},
@@ -425,7 +464,7 @@ private slots:
         QVERIFY(Connect());
         QVERIFY(CommandsOf("mac").contains("beta.mac"));
 
-        QVERIFY(Set("beta.mac", QJsonValue(QJsonValue::Null)).has_value());
+        QVERIFY(Set("beta.mac", QJsonArray{}).has_value());
 
         QCOMPARE(
             FileEntries(),
@@ -442,13 +481,268 @@ private slots:
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         QVERIFY(Connect());
 
-        QVERIFY(Set("alpha.save", QJsonValue(QJsonValue::Null)).has_value());
+        QVERIFY(Set("alpha.save", QJsonArray{}).has_value());
 
         QCOMPARE(FileEntries(), (QJsonArray{QJsonObject{{"command", UNBIND},
                                                         {"key", "Ctrl+S"},
                                                         {"mac", "Ctrl+S"}}}));
         QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("linux").contains("alpha.save"),
                                  TIMEOUT_MS);
+    }
+
+    // The keys asked for are all the keys of the command. A key that the
+    // plugin gives and that is asked for again is not written; one that is not
+    // asked for is removed by an entry at the start of the file, the others
+    // are the user's. The entry of the removal goes when the key is asked for
+    // again.
+    void SetOfTheKeysThePluginGivesWritesNoEntryForThem() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        const QJsonObject own{{"key", "Ctrl+Shift+N"}, {"mac", "Cmd+N"}};
+
+        QVERIFY(Set("alpha.new", QJsonArray{own}).has_value());
+        QVERIFY(!QFile::exists(KeymapPath()));
+
+        QVERIFY(Set("alpha.new",
+                    QJsonArray{own, QJsonObject{{"key", "Ctrl+Alt+N"}}})
+                    .has_value());
+        QCOMPARE(FileEntries(),
+                 (QJsonArray{QJsonObject{{"command", "alpha.new"},
+                                         {"key", "Ctrl+Alt+N"}}}));
+
+        // Not asked for any more: the removal comes before the user's entry.
+        QVERIFY(Set("alpha.new", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+N"}}})
+                    .has_value());
+        QCOMPARE(FileEntries(),
+                 (QJsonArray{QJsonObject{{"command", UNBIND},
+                                         {"key", "Ctrl+Shift+N"},
+                                         {"mac", "Cmd+N"}},
+                             QJsonObject{{"command", "alpha.new"},
+                                         {"key", "Ctrl+Alt+N"}}}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Get("mac")
+                 .value("bindings")
+                 .toArray()
+                 .contains(Binding("Cmd+N", "alpha.new", "alpha")),
+            TIMEOUT_MS);
+        QVERIFY(Get("mac")
+                    .value("bindings")
+                    .toArray()
+                    .contains(Binding("Ctrl+Alt+N", "alpha.new", "user")));
+
+        // Asked for again: the removal of the earlier call goes, nothing else
+        // is written.
+        QVERIFY(Set("alpha.new", QJsonArray{own}).has_value());
+        QCOMPARE(FileEntries(), QJsonArray{});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Get("mac")
+                .value("bindings")
+                .toArray()
+                .contains(Binding("Cmd+N", "alpha.new", "alpha")),
+            TIMEOUT_MS);
+    }
+
+    // Unbind must take the keys of the command on each platform and nothing
+    // else. The file here gives Cmd+N on the Mac to beta.next: alpha.new has
+    // Ctrl+Shift+N on Linux and Cmd+N on the Mac, beta.new has Ctrl+Shift+N on
+    // the Mac. The removal has both keys of the contribution as one entry, and
+    // it comes before the entry of beta.next, which stays in force. When that
+    // entry goes, the key does not come back to alpha.new.
+    void UnbindKeepsTheKeysOfOtherCommandsOnBothPlatforms() {
+        const QJsonObject other{{"mac", "Cmd+N"}, {"command", "beta.next"}};
+        QVERIFY(SaveFile(QJsonArray{other}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        QVERIFY(Set("alpha.new", QJsonArray{}).has_value());
+
+        const QJsonObject removal{
+            {"command", UNBIND}, {"key", "Ctrl+Shift+N"}, {"mac", "Cmd+N"}};
+        QCOMPARE(FileEntries(), (QJsonArray{removal, other}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Get("mac")
+                .value("bindings")
+                .toArray()
+                .contains(Binding("Cmd+N", "beta.next", "user")),
+            TIMEOUT_MS);
+        const QJsonArray mac = Get("mac").value("bindings").toArray();
+        QVERIFY(mac.contains(Binding("Ctrl+Shift+N", "beta.new", "beta")));
+        QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("linux").contains("alpha.new"),
+                                 TIMEOUT_MS);
+        QVERIFY(!CommandsOf("mac").contains("alpha.new"));
+
+        // The other entry goes: alpha.new stays unbound, beta.new keeps its
+        // key.
+        QVERIFY(SaveFile(QJsonArray{removal}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Get("mac")
+                 .value("bindings")
+                 .toArray()
+                 .contains(Binding("Cmd+N", "beta.next", "user")),
+            TIMEOUT_MS);
+        QVERIFY(!CommandsOf("mac").contains("alpha.new"));
+        QVERIFY(Get("mac")
+                    .value("bindings")
+                    .toArray()
+                    .contains(Binding("Ctrl+Shift+N", "beta.new", "beta")));
+    }
+
+    // A key that the command has on Linux only: the format has no entry for
+    // Linux alone, and `key` alone also acts on the Mac. With a key that
+    // nothing has there the entry is `key` alone; with one that another
+    // command has on the Mac it gets a chord for `mac` that nobody has.
+    void UnbindOfALinuxOnlyKeyTakesNothingOnTheMac() {
+        QVERIFY(WriteConflictingPlugins());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        QVERIFY(CommandsOf("linux").contains("omega.x"));
+        QVERIFY(!CommandsOf("mac").contains("omega.x"));
+        const QJsonArray macBefore = Get("mac").value("bindings").toArray();
+
+        QVERIFY(Set("omega.x", QJsonArray{}).has_value());
+        QCOMPARE(FileEntries(),
+                 (QJsonArray{QJsonObject{{"command", UNBIND},
+                                         {"key", "Ctrl+Alt+X"},
+                                         {"mac", "Cmd+Ctrl+Alt+Shift+F24"}}}));
+        QVERIFY(Set("omega.w", QJsonArray{}).has_value());
+        // The removals of a later call come before the earlier ones.
+        QCOMPARE(FileEntries().size(), 2);
+        QCOMPARE(FileEntries().at(0),
+                 QJsonValue(
+                     QJsonObject{{"command", UNBIND}, {"key", "Ctrl+Alt+W"}}));
+
+        QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("linux").contains("omega.x") &&
+                                     !CommandsOf("linux").contains("omega.w"),
+                                 TIMEOUT_MS);
+        // Every key of every other command is where it was, on the Mac too.
+        QCOMPARE(Get("mac").value("bindings").toArray(), macBefore);
+        QVERIFY(macBefore.contains(Binding("Ctrl+Alt+X", "gamma.z", "gamma")));
+    }
+
+    void UnbindOfALinuxOnlyKeyIsRefusedIfNoChordIsFreeOnTheMac() {
+        QVERIFY(WriteConflictingPlugins(true));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        const rpc::Result refused = Set("omega.x", QJsonArray{});
+        QVERIFY(!refused);
+        QCOMPARE(refused.error().Code,
+                 static_cast<int>(rpc::EErrorCode::InvalidParams));
+        QVERIFY(!QFile::exists(KeymapPath()));
+        // The key that has a pair on the Mac is no trouble.
+        QVERIFY(Set("omega.w", QJsonArray{}).has_value());
+    }
+
+    // Set and reset give back what the plugins gave, for both platforms.
+    void ResetAfterAnUnbindRestoresTheTable() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        const QJsonObject linux = Get("linux");
+        const QJsonObject mac = Get("mac");
+
+        QVERIFY(Set("alpha.new", QJsonArray{}).has_value());
+        QTRY_VERIFY_WITH_TIMEOUT(!CommandsOf("mac").contains("alpha.new"),
+                                 TIMEOUT_MS);
+        QVERIFY(Reset("alpha.new").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{});
+
+        QTRY_COMPARE_WITH_TIMEOUT(Get("linux"), linux, TIMEOUT_MS);
+        QCOMPARE(Get("mac"), mac);
+    }
+
+    // A hand-written removal that takes the key of another command stays: for
+    // alpha.new it is the key on Linux, for beta.new the key on the Mac. It
+    // is not written for the command that is reset.
+    void ResetKeepsARemovalThatTakesAnotherCommandsKey() {
+        const QJsonObject byHand{{"key", "Ctrl+Shift+N"}, {"command", UNBIND}};
+        const QByteArray text = QJsonDocument(QJsonArray{byHand}).toJson();
+        QVERIFY(SaveFile(text));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        QVERIFY(Reset("alpha.new").has_value());
+        QCOMPARE(FileBytes(), text);
+
+        // With an entry of the command beside it, only that goes.
+        QVERIFY(SaveFile(QJsonArray{
+            QJsonObject{{"key", "Ctrl+Alt+N"}, {"command", "alpha.new"}},
+            byHand}));
+        QVERIFY(Reset("alpha.new").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{byHand});
+    }
+
+    // The removals that setCommand wrote have the `when` of the command's
+    // contribution, and reset takes those of its `when` only.
+    void ResetTakesTheRemovalsOfItsWhenOnly() {
+        const QJsonObject removal{{"key", "J"},
+                                  {"mac", "J"},
+                                  {"when", "sessions.list"},
+                                  {"command", UNBIND}};
+        const QByteArray text = QJsonDocument(QJsonArray{removal}).toJson();
+        QVERIFY(SaveFile(text));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        // No `when`: it is another pair, the removal is not of this reset.
+        QVERIFY(Reset("alpha.next").has_value());
+        QCOMPARE(FileBytes(), text);
+        QVERIFY(Reset("alpha.next", "sessions.list").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{});
+    }
+
+    // The directory that a write makes is the owner's, as the store's own are
+    // (design.md §8), and so is the file; the permissions of a directory that
+    // is there are not changed.
+    void AWriteMakesTheDirectoryAndTheFileForTheOwnerOnly() {
+        const auto others = [](const QString& path) {
+            return QFileInfo(path).permissions() &
+                   (QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
+                    QFile::ReadOther | QFile::WriteOther | QFile::ExeOther);
+        };
+        QVERIFY(QDir(Daemon_->ConfigPath()).removeRecursively());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        QVERIFY(!QFileInfo::exists(Daemon_->ConfigPath()));
+
+        QVERIFY(
+            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}}})
+                .has_value());
+
+        const QFile::Permissions owner =
+            QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
+        QVERIFY(QFileInfo(Daemon_->ConfigPath()).isDir());
+        QCOMPARE(
+            (QFileInfo(Daemon_->ConfigPath()).permissions() & 0x7000).toInt(),
+            owner.toInt());
+        QVERIFY(!others(Daemon_->ConfigPath()));
+        QCOMPARE((QFileInfo(KeymapPath()).permissions() & 0x7000).toInt(),
+                 (QFile::ReadOwner | QFile::WriteOwner).toInt());
+        QVERIFY(!others(KeymapPath()));
+    }
+
+    // The limit is for what is written too: a file just under it that grows by
+    // the change, and by the indentation the write gives it, is refused, and
+    // stays.
+    void AWriteThatMakesTheFileOverTheLimitIsRefused() {
+        const QByteArray head =
+            "[{\"key\":\"Ctrl+K\",\"command\":\"alpha.new\",\"note\":\"";
+        const QByteArray tail = "\"}]";
+        QByteArray text = head;
+        text.append(
+            QByteArray(MAX_FILE_BYTES - head.size() - tail.size() - 8, 'x'));
+        text.append(tail);
+        QVERIFY(text.size() < MAX_FILE_BYTES);
+        QVERIFY(SaveFile(text));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        const rpc::Result set =
+            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}}});
+        QVERIFY(!set);
+        QCOMPARE(set.error().Code, -32004);
+        QVERIFY2(set.error().Message.contains("1 MiB"),
+                 qPrintable(set.error().Message));
+        QCOMPARE(FileBytes(), text);
     }
 
     // Reset takes out the user's entries of the command, and what removed its
@@ -535,7 +829,7 @@ private slots:
         QCOMPARE(set.error().Code, -32004);
         QVERIFY2(set.error().Message.contains(reason),
                  qPrintable(set.error().Message));
-        QVERIFY(!Set("alpha.save", QJsonValue(QJsonValue::Null)));
+        QVERIFY(!Set("alpha.save", QJsonArray{}));
         const rpc::Result reset = Reset("alpha.save");
         QVERIFY(!reset);
         QCOMPARE(reset.error().Code, -32004);
@@ -580,6 +874,15 @@ private slots:
         row("UnknownCommand", "no.such.command",
             QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}}});
         row("EntriesNotAnArray", "alpha.save", QJsonValue("Ctrl+Alt+S"));
+        row("EntriesNull", "alpha.save", QJsonValue(QJsonValue::Null));
+        row("EntryWithAWhen", "alpha.save",
+            QJsonArray{
+                QJsonObject{{"key", "Ctrl+Alt+S"}, {"when", "sessions.list"}}});
+        row("EntryWithACommand", "alpha.save",
+            QJsonArray{
+                QJsonObject{{"key", "Ctrl+Alt+S"}, {"command", "alpha.new"}}});
+        row("EntryWithArgs", "alpha.save",
+            QJsonArray{QJsonObject{{"key", "Ctrl+Alt+S"}, {"args", 1}}});
         row("EntriesMissing", "alpha.save", QJsonValue(QJsonValue::Undefined));
     }
 
