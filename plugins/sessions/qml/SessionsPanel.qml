@@ -63,8 +63,8 @@ FocusScope {
     property string notice: ""
     property int noticeMs: 8000
 
-    // The prompt of the footer: "category", "rename", "task" and
-    // "newCategory" (the two steps of n), or "" when there is none. The session
+    // The prompt of the footer: "category", "rename", "task", "newDirectory"
+    // and "newCategory" (the three steps of n), or "" when there is none. The session
     // a category or a name is for is taken when the prompt opens (`promptRef`),
     // and the agent, the directory and the task of a new one are (`promptNew`),
     // whatever the cursor and the polls do while the user types.
@@ -81,6 +81,7 @@ FocusScope {
             "category": "Category:",
             "rename": "Name:",
             "task": "Task:",
+            "newDirectory": "Directory:",
             "newCategory": "Category:"
         })
     // The field takes a known category by its digit.
@@ -299,8 +300,12 @@ FocusScope {
     property string draftCategory: ""
     property bool draftNewCategory: false
     property string draftNewName: ""
+    // The directory of the session as typed (`~` allowed), prefilled with the
+    // default of n; checked when Create is pressed.
+    property string draftDirectory: ""
     // The agent and the directory of the session, taken from the cursor when
-    // the form opens, as n does. The agent is the default of `draftAgent`.
+    // the form opens, as n does. The agent is the default of `draftAgent`, the
+    // directory of `draftDirectory`.
     property var draftTarget: null
     // The agent the form starts the session with: the one of the cursor if it
     // can start sessions, else the one chosen last in a form (kept in the
@@ -397,6 +402,7 @@ FocusScope {
             draftCategory = base.category;
             draftNewCategory = false;
             draftNewName = "";
+            draftDirectory = sessionsList.shownDirectory(base.cwd);
             draftTarget = {
                 "agent": base.agent,
                 "cwd": base.cwd
@@ -474,12 +480,19 @@ FocusScope {
     // message. A name, when there is one, becomes its title; without one the
     // title stays the agent's. The form stays open until the agent answers:
     // then it closes, or, on a failure, it stays with the draft and the
-    // reason. A second Create while the start runs does nothing.
+    // reason. A second Create while the start runs does nothing. A directory
+    // that cannot be entered (`checkDirectory`) starts nothing: the form stays
+    // with the reason under Create.
     function createFromForm() {
         if (!newOpen || newStarting || !canCreate()) {
             return;
         }
-        const target = draftTarget;
+        const directory = sessionsList.checkDirectory(draftDirectory);
+        if (directory.problem !== "") {
+            newProblem = directory.problem;
+            revealNewProblem();
+            return;
+        }
         const agent = draftAgent;
         const task = draftTask.trim();
         const name = draftName.trim();
@@ -491,7 +504,7 @@ FocusScope {
         }
         newStarting = true;
         newProblem = "";
-        startSession(agent, target.cwd, task, category, name, problem => {
+        startSession(agent, directory.path, task, category, name, problem => {
             if (start !== newStart) {
                 // Cancelled meanwhile: the form is not waiting for this.
                 if (problem !== "") {
@@ -506,16 +519,19 @@ FocusScope {
                 closeNewForm(root.activeFocus);
             } else {
                 newProblem = problem;
-                // The reason is under Create: Create from the keyboard moved
-                // the keyboard, and the form's view, to the task at the top.
-                // The column places the shown reason at its next polish: place
-                // it now, then scroll.
-                Qt.callLater(() => {
-                    newFields.forceLayout();
-                    newScroll.reveal(newProblemLabel);
-                });
+                revealNewProblem();
             }
         }, true);
+    }
+
+    // The reason is under Create: Create from the keyboard moved the keyboard,
+    // and the form's view, to the task at the top. The column places the shown
+    // reason at its next polish: place it now, then scroll.
+    function revealNewProblem() {
+        Qt.callLater(() => {
+            newFields.forceLayout();
+            newScroll.reveal(newProblemLabel);
+        });
     }
 
     // Opens the prompt of the footer with its text. The keys then go to the
@@ -547,10 +563,12 @@ FocusScope {
         list.forceActiveFocus();
     }
 
-    // Enter: the category or the name goes to the model. In n the task goes on to the category, and
-    // the category starts the session: the prompt stays until the agent
-    // answers, and on a failure it goes back to the task, kept, with the
-    // reason.
+    // Enter: the category or the name goes to the model. In n the task goes on
+    // to the directory, the directory (checked: `checkDirectory`) to the
+    // category, and the category starts the session: the prompt stays until
+    // the agent answers, and on a failure it goes back to the task, kept, with
+    // the reason. A directory that cannot be entered keeps the prompt on the
+    // directory with the reason.
     function submitPrompt() {
         if (promptStarting) {
             return;
@@ -568,8 +586,23 @@ FocusScope {
                     "category": promptNew.category,
                     "task": task
                 };
-                openPrompt("newCategory", null, promptNew.category);
+                openPrompt("newDirectory", null, sessionsList.shownDirectory(promptNew.cwd));
             }
+            return;
+        }
+        if (kind === "newDirectory") {
+            const directory = sessionsList.checkDirectory(text);
+            if (directory.problem !== "") {
+                promptProblem = directory.problem;
+                return;
+            }
+            promptNew = {
+                "agent": promptNew.agent,
+                "cwd": directory.path,
+                "category": promptNew.category,
+                "task": promptNew.task
+            };
+            openPrompt("newCategory", null, promptNew.category);
             return;
         }
         if (kind === "newCategory") {
@@ -1060,7 +1093,8 @@ FocusScope {
     }
 
     // n opens the prompt immediately and keeps the cursor's directory and
-    // category. The agent is chosen when the completed prompt is submitted.
+    // category, the directory as the default of its step. The agent is chosen
+    // when the completed prompt is submitted.
     function openNewSessionPrompt() {
         const base = newSessionBase();
         promptNew = {
@@ -2133,7 +2167,7 @@ FocusScope {
                             root.newProblem = "";
                             sessionsList.newAgent = root.draftAgent;
                         }
-                        KeyNavigation.tab: newCategoryBox
+                        KeyNavigation.tab: newDirectoryField
                         KeyNavigation.backtab: newNameField
 
                         // A list of the agents that is not loaded is asked again
@@ -2147,6 +2181,28 @@ FocusScope {
                                 }
                             }
                         }
+                    }
+
+                    Label {
+                        topPadding: 8
+                        color: Roost.theme.textSecondary
+                        font: Roost.theme.withWeight(Roost.theme.metaFont, Font.DemiBold)
+                        text: "Directory"
+                    }
+
+                    PanelField {
+                        id: newDirectoryField
+
+                        objectName: "sessionsNewDirectory"
+                        width: parent.width
+                        text: root.draftDirectory
+                        onTextEdited: {
+                            root.draftDirectory = text;
+                            root.newProblem = "";
+                        }
+                        onAccepted: root.createFromForm()
+                        KeyNavigation.tab: newCategoryBox
+                        KeyNavigation.backtab: newAgentBox
                     }
 
                     Label {
@@ -2179,7 +2235,7 @@ FocusScope {
                             }
                         }
                         KeyNavigation.tab: newCategoryName.visible ? newCategoryName : newCreate
-                        KeyNavigation.backtab: newAgentBox
+                        KeyNavigation.backtab: newDirectoryField
                     }
 
                     PanelField {
@@ -2392,6 +2448,12 @@ FocusScope {
                     readOnly: root.promptStarting
 
                     onAccepted: root.submitPrompt()
+                    // The reason of a directory is about what was typed.
+                    onTextEdited: {
+                        if (root.promptKind === "newDirectory") {
+                            root.promptProblem = "";
+                        }
+                    }
                     // A tap on the list takes the keyboard away: the prompt is
                     // dropped. Not when the whole window lost the focus.
                     onActiveFocusChanged: {
@@ -2419,7 +2481,8 @@ FocusScope {
                 }
             }
 
-            // The start of n: under way, or why it failed (the task is as typed).
+            // The start of n: under way, or why it failed (the task is as
+            // typed), or why the directory is none.
             Label {
                 objectName: "sessionsPromptProblem"
                 textFormat: Text.PlainText

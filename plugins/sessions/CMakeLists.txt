@@ -13,6 +13,7 @@ configure_file(qml/SessionsPanel.qml
 # SessionsList. Position independent: the QML module links it.
 add_library(sessions_list_lib STATIC
     model/agent_icon.cpp
+    model/directory.cpp
     model/session_rows.cpp
     model/list_state.cpp
     model/merge_patch.cpp

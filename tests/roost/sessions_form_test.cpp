@@ -22,6 +22,8 @@
 #include <QSaveFile>
 #include <QTest>
 
+#include <unistd.h>
+
 #include <optional>
 
 #include "api/api.hpp"
@@ -289,8 +291,8 @@ private:
         for (const char* name :
              {"sessionsSearch", "sessionsSearchInput", "sessionsNewButton",
               "sessionsNewForm", "sessionsNewTask", "sessionsNewName",
-              "sessionsNewAgent", "sessionsNewCategory", "sessionsNewCreate",
-              "sessionsNewBack"}) {
+              "sessionsNewAgent", "sessionsNewDirectory", "sessionsNewCategory",
+              "sessionsNewCreate", "sessionsNewBack"}) {
             QVERIFY2(Part(name) != nullptr, name);
         }
     }
@@ -308,6 +310,7 @@ private:
     QQuickItem* TaskField() { return Part("sessionsNewTask"); }
     QQuickItem* NameField() { return Part("sessionsNewName"); }
     QQuickItem* AgentBox() { return Part("sessionsNewAgent"); }
+    QQuickItem* DirectoryField() { return Part("sessionsNewDirectory"); }
     QQuickItem* CategoryBox() { return Part("sessionsNewCategory"); }
     QQuickItem* CategoryName() { return Part("sessionsNewCategoryName"); }
     QQuickItem* CreateButton() { return Part("sessionsNewCreate"); }
@@ -364,10 +367,36 @@ private:
         QVERIFY(!swapped.isEmpty() || swapped.wait(TIMEOUT_MS));
     }
 
+    // A control of the form that the scroll of the form has put out of sight
+    // (the form is taller than the window shows) is scrolled into it, as the
+    // wheel of the user would: a click on it would land on the hint.
+    void RevealInForm(QQuickItem* item) {
+        QObject* const scroll = Part("sessionsNewScroll");
+        for (const QQuickItem* owner = item; owner != nullptr;
+             owner = owner->parentItem()) {
+            if (owner == scroll) {
+                QVERIFY(QMetaObject::invokeMethod(
+                    scroll, "reveal",
+                    Q_ARG(QVariant, QVariant::fromValue(item))));
+                return;
+            }
+        }
+    }
+
     // A click at a point of the item, in its own coordinates, once the item
     // has its place.
     void ClickAt(QQuickItem* item, qreal x, qreal y) {
-        QTRY_VERIFY_WITH_TIMEOUT(Placed(item), TIMEOUT_MS);
+        // Laid out, not yet in sight: the scroll of the form may hold it above
+        // or below what the window shows.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            item->isVisible() && item->width() > 0 && item->height() > 0,
+            TIMEOUT_MS);
+        WaitForFrame();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The layout of the frame is in: only now is there a place to reveal.
+        RevealInForm(item);
         WaitForFrame();
         if (QTest::currentTestFailed()) {
             return;
@@ -393,11 +422,19 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(NameField()->hasActiveFocus(), TIMEOUT_MS);
     }
 
-    // From the name to the category: through the agent row, which has the
+    // From the name to the directory: through the agent row, which has the
     // keyboard on the way.
-    void ToCategory() {
+    void ToDirectory() {
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(DirectoryField()->hasActiveFocus(),
+                                 TIMEOUT_MS);
+    }
+
+    // From the name to the category: through the agent row and the directory.
+    void ToCategory() {
+        ToDirectory();
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
     }
@@ -502,6 +539,8 @@ private:
         VerifyShown(NameField(), "name");
         Tab();
         VerifyShown(AgentBox(), "agent");
+        Tab();
+        VerifyShown(DirectoryField(), "directory");
         Tab();
         VerifyShown(CategoryBox(), "category");
         Tab();
@@ -828,7 +867,8 @@ private slots:
                  QString("Named by the agent"));
         QVERIFY(TaskField()->y() < NameField()->y());
         QVERIFY(NameField()->y() < AgentBox()->y());
-        QVERIFY(AgentBox()->y() < CategoryBox()->y());
+        QVERIFY(AgentBox()->y() < DirectoryField()->y());
+        QVERIFY(DirectoryField()->y() < CategoryBox()->y());
         QVERIFY(!CreateButton()->property("enabled").toBool());
         Snap("1-empty");
     }
@@ -847,6 +887,9 @@ private slots:
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(DirectoryField()->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
         // A task makes the button usable, so that Tab reaches it.
@@ -862,6 +905,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
+        BackTab();
+        QTRY_VERIFY_WITH_TIMEOUT(DirectoryField()->hasActiveFocus(),
+                                 TIMEOUT_MS);
         BackTab();
         QTRY_VERIFY_WITH_TIMEOUT(AgentBox()->hasActiveFocus(), TIMEOUT_MS);
         BackTab();
@@ -934,6 +980,7 @@ private slots:
         OPEN_FORM();
         Type("x");
         TO_NAME();
+        Tab();
         Tab();
         Tab();
         Tab();
@@ -1721,6 +1768,144 @@ private slots:
         QCOMPARE(Runs(), 1);
     }
 
+    // Retypes the directory field: emptied by Backspace, then `text`; the
+    // keyboard is on the field.
+    void RetypeDirectory(const QString& text) {
+        while (!TextOf("sessionsNewDirectory").isEmpty()) {
+            Press(Qt::Key_Backspace);
+        }
+        Type(text);
+    }
+
+    // The directory field is prefilled with the default of `n` (the directory
+    // of the session under the cursor), and Create keeps it.
+    void TheDirectoryFieldHoldsTheDefaultAndCreateKeepsIt() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        for (int step = 0; step < 8 && CursorId() != ALPHA; ++step) {
+            Press(Qt::Key_Down);
+        }
+        QCOMPARE(CursorId(), ALPHA);
+
+        OPEN_FORM();
+        QCOMPARE(Canonical(TextOf("sessionsNewDirectory")),
+                 Canonical(BinPath("work/alpha")));
+        Type("Ship it");
+        Click(CreateButton());
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/alpha")));
+    }
+
+    // The directory of the form is the cwd of the session; `~` is the home
+    // directory.
+    void TheDirectoryTypedInTheFormIsTheCwdOfTheSession() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        const QString project = Dir_->filePath("projects/app");
+        QVERIFY(QDir().mkpath(project));
+        QVERIFY(QDir().mkpath(Dir_->filePath("home/notes")));
+
+        OPEN_FORM();
+        Type("Ship it");
+        TO_NAME();
+        ToDirectory();
+        RetypeDirectory(project);
+        Press(Qt::Key_Return);
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+
+        QVERIFY(QFile::remove(BinPath("bg.ran")));
+        OPEN_FORM();
+        Type("Again");
+        TO_NAME();
+        ToDirectory();
+        RetypeDirectory("~/notes");
+        Press(Qt::Key_Return);
+
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)),
+                 Canonical(Dir_->filePath("home/notes")));
+        QCOMPARE(BgRan().value(1), QString("[--bg][--][Again]"));
+    }
+
+    // What cannot be the directory of a session leaves the form open with the
+    // draft and the reason under Create, and the agent gets nothing; the one
+    // run at the end is the only one the fake has seen.
+    void ADirectoryThatCannotBeEnteredKeepsTheFormAndStartsNothing() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        const QString project = Dir_->filePath("projects/app");
+        QVERIFY(QDir().mkpath(project));
+        const QString file = Dir_->filePath("projects/plain.txt");
+        QSaveFile plain(file);
+        QVERIFY(plain.open(QIODevice::WriteOnly) && plain.commit());
+        const QString locked = Dir_->filePath("projects/locked");
+        QVERIFY(QDir().mkpath(locked));
+        const QFile::Permissions open = QFile::permissions(locked);
+
+        OPEN_FORM();
+        Type("Ship it");
+        TO_NAME();
+        ToDirectory();
+        const auto refuse = [&](const QString& typed, const QString& reason) {
+            RetypeDirectory(typed);
+            Press(Qt::Key_Return);
+            QTRY_VERIFY_WITH_TIMEOUT(Problem().contains(reason), TIMEOUT_MS);
+            QVERIFY(FormOpen());
+            QCOMPARE(TextOf("sessionsNewDirectory"), typed);
+            QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
+            QVERIFY(CreateButton()->property("enabled").toBool());
+            QCOMPARE(TextOf("sessionsNewCreate"), QString("Create session"));
+            QVERIFY(Notice().isEmpty());
+        };
+        const QString missing = Dir_->filePath("projects/missing");
+        refuse(missing, missing + " does not exist");
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        refuse(file, file + " is not a directory");
+        refuse("projects/app", "is not an absolute path");
+        refuse("~nobody/app", "is not an absolute path");
+        refuse("~/missing", Dir_->filePath("home/missing") + " does not exist");
+        refuse("   ", "No directory");
+        // root enters any directory.
+        if (geteuid() != 0) {
+            QVERIFY(QFile::setPermissions(
+                locked, QFile::ReadOwner | QFile::WriteOwner));
+            refuse(locked, locked + " cannot be entered");
+            QVERIFY(QFile::setPermissions(locked, open));
+        }
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // Editing the field takes the reason away, and Create starts.
+        RetypeDirectory(project);
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().isEmpty(), TIMEOUT_MS);
+        Click(CreateButton());
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+        QCOMPARE(Runs(), 1);
+    }
+
     void NStillStartsASessionFromThePrompt() {
         FailOnWarnings();
         Start({}, false);
@@ -1733,6 +1918,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
                                  TIMEOUT_MS);
         Type("do it");
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(TextOf("sessionsPromptLabel"),
+                                  QString("Directory:"), TIMEOUT_MS);
         Press(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(TextOf("sessionsPromptLabel"),
                                   QString("Category:"), TIMEOUT_MS);
@@ -1759,7 +1947,8 @@ private slots:
                                   (QStringList{"claude", "other"}), TIMEOUT_MS);
         QCOMPARE(CurrentAgent(), QString("claude"));
         QVERIFY(NameField()->y() < AgentBox()->y());
-        QVERIFY(AgentBox()->y() < CategoryBox()->y());
+        QVERIFY(AgentBox()->y() < DirectoryField()->y());
+        QVERIFY(DirectoryField()->y() < CategoryBox()->y());
         Snap("1-agent-row");
     }
 
@@ -1955,6 +2144,9 @@ private slots:
             return;
         }
         Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(DirectoryField()->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CategoryBox()->hasActiveFocus(), TIMEOUT_MS);
         Tab();
         QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
@@ -2111,6 +2303,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
                                  TIMEOUT_MS);
         Type("do it");
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(TextOf("sessionsPromptLabel"),
+                                  QString("Directory:"), TIMEOUT_MS);
         Press(Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(TextOf("sessionsPromptLabel"),
                                   QString("Category:"), TIMEOUT_MS);
