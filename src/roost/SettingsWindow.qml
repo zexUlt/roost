@@ -35,6 +35,13 @@ ApplicationWindow {
     property string readError
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
+    // The families of the terminal font box. The list of the installed ones is
+    // made when the box opens, not before; until then the box has the default
+    // entry and the stored family. `familyValues` is the family each text
+    // stands for, "" for the default entry.
+    property var installedFamilies: []
+    property var familyValues: [""]
+    readonly property string notInstalledMark: " (not installed)"
     // settings.focusColor {preset, custom}, and the presets in the order of
     // the box.
     readonly property var focusColor: settingsDocument.focusColor ?? ({})
@@ -89,6 +96,56 @@ ApplicationWindow {
         });
     }
 
+    // Makes the entries of the terminal font box: the default first, the stored
+    // family if the list does not have it (marked when the theme will not take
+    // it, so that the box never shows another entry in its place), then the
+    // installed families. The box shows the entry of the stored family.
+    function showFamily() {
+        const stored = terminalFont.family;
+        const name = (stored === undefined || stored === null || stored === "") ? "" : String(stored);
+        const texts = ["System monospace (" + Roost.theme.defaultTerminalFont.family + ")"];
+        const values = [""];
+        if (name !== "" && !installedFamilies.includes(name)) {
+            // "monospace" is the system font itself: the theme takes it.
+            const taken = name.toLowerCase() === "monospace" || Roost.theme.isMonospaceFamily(name);
+            texts.push(taken ? name : name + notInstalledMark);
+            values.push(name);
+        }
+        for (const family of installedFamilies) {
+            texts.push(family);
+            values.push(family);
+        }
+        familyValues = values;
+        terminalFamilyBox.model = texts;
+        terminalFamilyBox.currentIndex = values.indexOf(name);
+    }
+
+    // The list opens: the installed families are read now. What is typed in the
+    // box and not written yet stays.
+    function openFamilies() {
+        const input = terminalFamilyBox.contentItem;
+        const typed = terminalFamilyBox.editText;
+        const edited = input.activeFocus;
+        installedFamilies = Roost.theme.monospaceFamilies();
+        showFamily();
+        if (edited) {
+            terminalFamilyBox.editText = typed;
+        }
+    }
+
+    // Writes the family that was picked or typed: the text of an entry stands
+    // for its family, any other text is a name; empty is the default, as an
+    // empty field was.
+    function commitFamily(text) {
+        const typed = text.trim();
+        const at = terminalFamilyBox.model.indexOf(typed);
+        const family = at >= 0 ? familyValues[at] : typed;
+        const value = family === "" ? null : family;
+        if ((value ?? "") !== (terminalFont.family ?? "")) {
+            patchTerminalFont("family", value);
+        }
+    }
+
     // Writes one key of the focus colour, as patchTerminalFont does.
     function patchFocusColor(key, value) {
         const stored = focusColor;
@@ -113,10 +170,13 @@ ApplicationWindow {
     // The fields show the document. What the user is typing in is not
     // replaced, unless `force`.
     function showDocument(force) {
-        for (const field of [terminalFamilyField, terminalSizeField, uiSizeField, focusCustomField]) {
+        for (const field of [terminalSizeField, uiSizeField, focusCustomField]) {
             if (force || !field.activeFocus) {
                 field.text = field.shown();
             }
+        }
+        if (force || !terminalFamilyBox.contentItem.activeFocus) {
+            showFamily();
         }
         // A preset that the box does not know shows Base, as the theme takes
         // it (and says so in its problems), not an empty box.
@@ -386,21 +446,34 @@ ApplicationWindow {
             FieldRow {
                 label: "Terminal font"
 
-                FormField {
-                    id: terminalFamilyField
+                // A list of the installed monospace families, and a name can be
+                // typed: one that is not installed or not monospace keeps the
+                // line of the problem under the row.
+                FormComboBox {
+                    id: terminalFamilyBox
 
-                    function shown() {
-                        return root.terminalFont.family ?? "";
+                    objectName: "terminalFamilyBox"
+                    Layout.fillWidth: true
+                    editable: true
+                    onActivated: index => root.commitFamily(textAt(index))
+                    Component.onCompleted: root.showFamily()
+
+                    Connections {
+                        function onAboutToShow() {
+                            root.openFamilies();
+                        }
+
+                        target: terminalFamilyBox.popup
                     }
 
-                    objectName: "terminalFamilyField"
-                    Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.defaultTerminalFont.family
-                    onEditingFinished: {
-                        const family = text.trim() === "" ? null : text.trim();
-                        if ((family ?? "") !== shown()) {
-                            root.patchTerminalFont("family", family);
+                    // Leaving the box or Enter, as a field of the form.
+                    Connections {
+                        function onEditingFinished() {
+                            root.commitFamily(terminalFamilyBox.editText);
                         }
+
+                        target: terminalFamilyBox.contentItem
+                        ignoreUnknownSignals: true
                     }
                 }
 

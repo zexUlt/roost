@@ -35,6 +35,7 @@
 #include "roost/controls_style.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/settings_pages.hpp"
+#include "terminal/renderer.hpp"
 
 using namespace roost;
 using namespace roost::api_test;
@@ -118,6 +119,12 @@ bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
                      QJsonDocument(manifest).toJson());
 }
 
+// The first entry of the terminal family box.
+QString DefaultFamilyEntry(const Theme& theme) {
+    return QStringLiteral("System monospace (%1)")
+        .arg(theme.defaultTerminalFont().family());
+}
+
 QQuickItem* FindItem(QQuickItem* root, const QString& name) {
     if (root->objectName() == name) {
         return root;
@@ -179,6 +186,17 @@ struct SettingsWindow {
     QJsonObject Document() const {
         return QJsonObject::fromVariantMap(
             Object->property("settingsDocument").toMap());
+    }
+
+    // What a user does to the box of the terminal family: types a name, then
+    // leaves it.
+    bool TypeFamily(const QString& text) const {
+        QQuickItem* box = Find("terminalFamilyBox");
+        auto* input = box == nullptr
+                          ? nullptr
+                          : box->property("contentItem").value<QQuickItem*>();
+        return input != nullptr && input->setProperty("text", text) &&
+               QMetaObject::invokeMethod(input, "editingFinished");
     }
 
     // What a user does to a text field: types, then leaves it.
@@ -602,7 +620,7 @@ private slots:
         QVERIFY(first);
         QVERIFY(second);
         QVERIFY(first->Edit("uiSizeField", "14"));
-        QVERIFY(first->Edit("terminalFamilyField", "Courier"));
+        QVERIFY(first->TypeFamily("Courier"));
         QVERIFY(second->Edit("terminalSizeField", "15"));
         QTRY_COMPARE(
             Document("settings"),
@@ -636,7 +654,7 @@ private slots:
         auto window = OpenWindow();
         QVERIFY(window);
         QVERIFY(window->Edit("terminalSizeField", "15"));
-        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QVERIFY(window->TypeFamily("Courier"));
         QTRY_COMPARE(Document("settings").value("terminalFont").toObject(),
                      (QJsonObject{{"family", "Courier"}, {"size", 15}}));
         QTRY_COMPARE(window->Document().value("terminalFont").toObject().size(),
@@ -646,7 +664,7 @@ private slots:
                      (QJsonObject{{"family", "Courier"}}));
         QTRY_COMPARE(window->Document().value("terminalFont").toObject().size(),
                      1);
-        QVERIFY(window->Edit("terminalFamilyField", ""));
+        QVERIFY(window->TypeFamily(""));
         QTRY_VERIFY(!Document("settings").contains("terminalFont"));
     }
 
@@ -955,24 +973,156 @@ private slots:
         QCOMPARE(text, QString("17 px"));
     }
 
-    // A family that is not installed stays in the field with its reason, and
-    // the placeholder is the font that the terminals use.
-    void ANotInstalledFamilyKeepsItsTextAndThePlaceholderIsTheFontInForce() {
+    // A family that is not installed stays in the box with its reason, and
+    // the first entry is the font that the terminals use.
+    void ANotInstalledFamilyKeepsItsTextAndTheFirstEntryIsTheFontInForce() {
         auto window = OpenWindow();
         QVERIFY(window);
         const Theme* theme = window->Singleton->theme();
         const QString missing = "Roost No Such Family";
-        QQuickItem* family = window->Find("terminalFamilyField");
+        QQuickItem* family = window->Find("terminalFamilyBox");
         QQuickItem* problems = window->Find("terminalFontProblems");
         QVERIFY(family != nullptr && problems != nullptr);
-        QVERIFY(window->Edit("terminalFamilyField", missing));
+        QVERIFY(window->TypeFamily(missing));
         QTRY_VERIFY_WITH_TIMEOUT(problems->isVisible(), TIMEOUT_MS);
         QVERIFY(problems->property("text").toString().contains(missing));
-        QCOMPARE(family->property("text"), QVariant(missing));
+        QTRY_COMPARE_WITH_TIMEOUT(family->property("currentText"),
+                                  QVariant(missing + " (not installed)"),
+                                  TIMEOUT_MS);
         QVERIFY(theme->terminalFont().family() != missing);
-        QCOMPARE(family->property("placeholderText"),
-                 QVariant("default: " + theme->defaultTerminalFont().family()));
+        // The first entry is still the default, not the stored name.
+        QCOMPARE(family->property("model").toStringList().first(),
+                 DefaultFamilyEntry(*theme));
         QVERIFY(window->Find("terminalFamilyReset")->isVisible());
+    }
+
+    // The list of the family box: the default first, then the installed
+    // monospace families; it is made when the box opens, not before.
+    void TheFamilyListHasTheDefaultFirstThenTheInstalledMonospaceFamilies() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        const QStringList installed = InstalledMonospaceFamilies();
+        QVERIFY(installed.size() > 1);
+        // Closed: the default only, and the box shows it.
+        QCOMPARE(box->property("count"), QVariant(1));
+        QCOMPARE(box->property("currentText"),
+                 QVariant(DefaultFamilyEntry(*theme)));
+
+        QCOMPARE(
+            testing::OpenedRowTexts(window->Window(), box, 3, TIMEOUT_MS, true),
+            (QStringList{DefaultFamilyEntry(*theme), installed.at(0),
+                         installed.at(1)}));
+        QCOMPARE(box->property("count"), QVariant(1 + installed.size()));
+        QCOMPARE(box->property("model").toStringList().mid(1), installed);
+        QVERIFY(testing::SaveSnapshot(window->Window(), "family-list"));
+    }
+
+    // A family picked from the list is one `store.patch` of the one key.
+    void PickingAFamilyWritesOneKey() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        QCOMPARE(
+            testing::OpenedRowTexts(window->Window(), box, 1, TIMEOUT_MS, true)
+                .size(),
+            1);
+        const QString family = InstalledMonospaceFamilies().at(0);
+
+        api::Api other;
+        QSignalSpy connected(&other, &api::Api::Connected);
+        other.Connect(Daemon_->SocketPath());
+        QVERIFY(connected.wait(TIMEOUT_MS) || !connected.isEmpty());
+        const QFuture<rpc::Result> read = other.Store().Get("settings");
+        QVERIFY(WaitFor(read));
+        QSignalSpy changed(&other.Store(), &api::StoreService::Changed);
+
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 1)));
+        QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), TIMEOUT_MS);
+        QCOMPARE(
+            changed.first().at(1).toJsonObject(),
+            (QJsonObject{{"terminalFont", QJsonObject{{"family", family}}}}));
+        // The next write of the window is a barrier: nothing came in between.
+        QVERIFY(window->Edit("uiSizeField", "14"));
+        QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 2, TIMEOUT_MS);
+        QCOMPARE(changed.at(1).at(1).toJsonObject().value("uiFontSize"),
+                 QJsonValue(14));
+        QCOMPARE(Document("settings").value("terminalFont").toObject(),
+                 (QJsonObject{{"family", family}}));
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(family), TIMEOUT_MS);
+    }
+
+    // The first entry is the default: it removes the key, and the size stays.
+    void TheFirstEntryOfTheFamilyListRemovesTheKey() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QVERIFY(window->Edit("terminalSizeField", "15"));
+        QVERIFY(window->TypeFamily(InstalledMonospaceFamilies().at(0)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject().size(), 2,
+            TIMEOUT_MS);
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 0)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Document("settings").value("terminalFont").toObject(),
+            (QJsonObject{{"size", 15}}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(DefaultFamilyEntry(*theme)),
+                                  TIMEOUT_MS);
+        // The default entry as typed text does the same.
+        QVERIFY(window->TypeFamily(InstalledMonospaceFamilies().at(0)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject().size(), 2,
+            TIMEOUT_MS);
+        QVERIFY(window->TypeFamily(DefaultFamilyEntry(*theme)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Document("settings").value("terminalFont").toObject(),
+            (QJsonObject{{"size", 15}}), TIMEOUT_MS);
+    }
+
+    // A stored family that the list does not have is shown, marked, and an
+    // installed one is shown as itself: the box never shows another entry.
+    void AStoredFamilyIsShownAndAMissingOneIsMarked() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        const QString installed = InstalledMonospaceFamilies().at(0);
+        const QString missing = "Roost No Such Family";
+
+        QVERIFY(PatchSettings(
+            *window, {{"terminalFont", QJsonObject{{"family", installed}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(installed), TIMEOUT_MS);
+        QVERIFY(PatchSettings(
+            *window, {{"terminalFont", QJsonObject{{"family", missing}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(missing + " (not installed)"),
+                                  TIMEOUT_MS);
+        // The list has it, after the default, and the box is on it.
+        QCOMPARE(box->property("model").toStringList().mid(0, 2),
+                 (QStringList{DefaultFamilyEntry(*window->Singleton->theme()),
+                              missing + " (not installed)"}));
+        QCOMPARE(box->property("currentIndex"), QVariant(1));
+        // Enter on the marked text keeps the stored name, not the mark.
+        QVERIFY(window->TypeFamily(missing + " (not installed)"));
+        QVERIFY(PatchSettings(*window, {{"uiFontSize", 14}}));
+        QTRY_COMPARE_WITH_TIMEOUT(window->Document().value("uiFontSize"),
+                                  QJsonValue(14), TIMEOUT_MS);
+        QCOMPARE(Document("settings").value("terminalFont").toObject(),
+                 (QJsonObject{{"family", missing}}));
     }
 
     // The two presets of the focus ring show their colour, taken from the
@@ -1016,12 +1166,12 @@ private slots:
         const Theme* theme = window->Singleton->theme();
         QQuickItem* terminal = window->Find("terminalSizeField");
         QQuickItem* ui = window->Find("uiSizeField");
-        QQuickItem* family = window->Find("terminalFamilyField");
+        QQuickItem* family = window->Find("terminalFamilyBox");
         QVERIFY(terminal != nullptr && ui != nullptr && family != nullptr);
         // Sizes and a family that no system has by default.
         QVERIFY(window->Edit("terminalSizeField", "27.5"));
         QVERIFY(window->Edit("uiSizeField", "23.5"));
-        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QVERIFY(window->TypeFamily("Courier"));
         QTRY_COMPARE_WITH_TIMEOUT(theme->terminalFont().pointSizeF(), 27.5,
                                   TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(theme->uiFont().pointSizeF(), 23.5,
@@ -1032,15 +1182,16 @@ private slots:
         // The fields are emptied, not yet left: the keys are still stored.
         QVERIFY(terminal->setProperty("text", ""));
         QVERIFY(ui->setProperty("text", ""));
-        QVERIFY(family->setProperty("text", ""));
         QCOMPARE(terminal->property("placeholderText"),
                  QVariant("default: " +
                           Theme::sizeText(theme->defaultTerminalFont())));
         QCOMPARE(
             ui->property("placeholderText"),
             QVariant("default: " + Theme::sizeText(theme->defaultUiFont())));
-        QCOMPARE(family->property("placeholderText"),
-                 QVariant("default: " + theme->defaultTerminalFont().family()));
+        // The first entry of the family box is the default, not the stored
+        // name.
+        QCOMPARE(family->property("model").toStringList().first(),
+                 DefaultFamilyEntry(*theme));
         QVERIFY(theme->defaultTerminalFont().pointSizeF() != 27.5);
         QVERIFY(theme->defaultUiFont().pointSizeF() != 23.5);
     }
@@ -1050,7 +1201,7 @@ private slots:
         auto window = OpenWindow();
         QVERIFY(window);
         QVERIFY(window->Edit("terminalSizeField", "15"));
-        QVERIFY(window->Edit("terminalFamilyField", "Courier"));
+        QVERIFY(window->TypeFamily("Courier"));
         QTRY_COMPARE_WITH_TIMEOUT(
             Document("settings").value("terminalFont").toObject(),
             (QJsonObject{{"family", "Courier"}, {"size", 15}}), TIMEOUT_MS);
@@ -1067,8 +1218,8 @@ private slots:
         // The file is written before the window hears of it: wait for the
         // field, not only for the file.
         QTRY_COMPARE_WITH_TIMEOUT(
-            window->Find("terminalFamilyField")->property("text"), QVariant(""),
-            TIMEOUT_MS);
+            window->Find("terminalFamilyBox")->property("currentIndex"),
+            QVariant(0), TIMEOUT_MS);
     }
 
     // A terminalFont that is no object is stored: both rows of the font
@@ -1134,14 +1285,14 @@ private slots:
 
         // A family that is not installed: the system font is in use.
         const QString missing = "Roost No Such Family";
-        QVERIFY(window->Edit("terminalFamilyField", missing));
+        QVERIFY(window->TypeFamily(missing));
         QTRY_VERIFY_WITH_TIMEOUT(terminal->isVisible(), TIMEOUT_MS);
         QCOMPARE(terminal->property("text"),
                  QVariant(InUseText(theme->terminalFont())));
         QVERIFY(theme->terminalFont().family() != missing);
         QVERIFY(terminal->property("text").toString().contains(
             theme->defaultTerminalFont().family()));
-        QVERIFY(window->Edit("terminalFamilyField", ""));
+        QVERIFY(window->TypeFamily(""));
         QTRY_VERIFY_WITH_TIMEOUT(!terminal->isVisible(), TIMEOUT_MS);
 
         // A size out of range: the default size is in use.

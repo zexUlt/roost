@@ -138,6 +138,20 @@ QFont DefaultTerminalFont() {
     return system;
 }
 
+bool IsInstalledMonospaceFamily(const QString& family) {
+    return QFontDatabase::hasFamily(family) && IsFixedPitch(QFont(family));
+}
+
+QStringList InstalledMonospaceFamilies() {
+    QStringList families;
+    for (const QString& family : QFontDatabase::families()) {
+        if (!family.startsWith(u'.') && IsFixedPitch(QFont(family))) {
+            families.append(family);
+        }
+    }
+    return families;
+}
+
 QList<Run> SplitRow(const VtRenderState::Row& row, Rgb defaultForeground,
                     Rgb defaultBackground, Rgb selection) {
     const auto& cells = row.Cells;

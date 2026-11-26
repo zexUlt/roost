@@ -14,13 +14,15 @@ namespace roost::testing {
 
 // What a user sees when a combo box is opened with the mouse: the texts of the
 // rows of its list, in order, `count` of them. Empty when the list did not
-// open or did not make the rows in `timeoutMs`. The list is left open.
+// open or did not make the rows in `timeoutMs`. The list is left open. The
+// click is in the middle of the box, or on its arrow with `onArrow`: a box
+// with a text to edit opens its list from the arrow only.
 inline QStringList OpenedRowTexts(QQuickWindow* window, QQuickItem* box,
-                                  int count, int timeoutMs) {
-    QTest::mouseClick(
-        window, Qt::LeftButton, Qt::NoModifier,
-        box->mapToScene(QPointF(box->width() / 2, box->height() / 2))
-            .toPoint());
+                                  int count, int timeoutMs,
+                                  bool onArrow = false) {
+    const qreal x = onArrow ? box->width() - 15 : box->width() / 2;
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                      box->mapToScene(QPointF(x, box->height() / 2)).toPoint());
     auto* popup = box->property("popup").value<QObject*>();
     if (popup == nullptr ||
         !QTest::qWaitFor([&] { return popup->property("opened").toBool(); },

@@ -100,6 +100,12 @@ QString Theme::sizeText(const QFont& font) {
     return QStringLiteral("%1 px").arg(font.pixelSize());
 }
 
+QStringList Theme::monospaceFamilies() { return InstalledMonospaceFamilies(); }
+
+bool Theme::isMonospaceFamily(const QString& family) {
+    return IsInstalledMonospaceFamily(family);
+}
+
 QFont Theme::withWeight(const QFont& font, int weight, bool tabularDigits) {
     QFont result = font;
     result.setWeight(static_cast<QFont::Weight>(std::clamp(weight, 1, 1000)));

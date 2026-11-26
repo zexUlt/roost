@@ -420,6 +420,37 @@ private slots:
         QCOMPARE(sizeOf(report), before);
     }
 
+    // The list of the settings: every family in it is installed and fixed
+    // pitch, none is hidden, and the check for one family agrees.
+    void TheListOfFamiliesHasOnlyInstalledMonospaceOnes() {
+        const QStringList listed = InstalledMonospaceFamilies();
+        QVERIFY(!listed.isEmpty());
+        QCOMPARE(QSet<QString>(listed.begin(), listed.end()).size(),
+                 listed.size());
+        for (const QString& family : listed) {
+            QVERIFY2(QFontDatabase::hasFamily(family), qPrintable(family));
+            QVERIFY2(IsFixedPitch(QFont(family)), qPrintable(family));
+            QVERIFY2(!family.startsWith(u'.'), qPrintable(family));
+            QVERIFY2(IsInstalledMonospaceFamily(family), qPrintable(family));
+        }
+        // Every installed fixed-pitch family that is not hidden is there.
+        for (const QString& family : QFontDatabase::families()) {
+            if (!family.startsWith(u'.') && IsFixedPitch(QFont(family))) {
+                QVERIFY2(listed.contains(family), qPrintable(family));
+            }
+        }
+        const QString proportional = ProportionalFamily();
+        if (!proportional.isEmpty()) {
+            QVERIFY(!listed.contains(proportional));
+            QVERIFY(!IsInstalledMonospaceFamily(proportional));
+        }
+        QVERIFY(!IsInstalledMonospaceFamily("Roost No Such Family"));
+        QVERIFY(!IsInstalledMonospaceFamily(QStringLiteral("monospace")));
+        // QML reads the same list from the theme.
+        QCOMPARE(Theme::monospaceFamilies(), listed);
+        QVERIFY(Theme::isMonospaceFamily(listed.first()));
+    }
+
     // The generic name of the system monospace font is not an installed
     // family to QFontDatabase, and not a problem either.
     void TheGenericMonospaceIsTheSystemMonospace() {
