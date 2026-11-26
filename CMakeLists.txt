@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
 
+# The patch of the version is not in this file: the night and a release dispatch
+# of package.yml take the next one from the tags (tools/package_plan.sh) and pass
+# it in; a build by hand is MAJOR.MINOR.0. The minor is raised in a pull request.
+set(ROOST_VERSION_PATCH 0 CACHE STRING "Patch of the project version")
+if(NOT ROOST_VERSION_PATCH MATCHES "^(0|[1-9][0-9]*)$")
+    message(FATAL_ERROR
+        "ROOST_VERSION_PATCH must be a non-negative integer without leading "
+        "zeros, found '${ROOST_VERSION_PATCH}'.")
+endif()
+
 project(roost
-    VERSION 0.5.0
+    VERSION 0.6.${ROOST_VERSION_PATCH}
     DESCRIPTION "A desktop app over background coding-agent sessions"
     LANGUAGES C CXX
 )
