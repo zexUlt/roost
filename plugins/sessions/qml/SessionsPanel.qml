@@ -413,6 +413,14 @@ FocusScope {
                 closeNewForm(root.activeFocus);
             } else {
                 newProblem = problem;
+                // The reason is under Create: Create from the keyboard moved
+                // the keyboard, and the form's view, to the task at the top.
+                // The column places the shown reason at its next polish: place
+                // it now, then scroll.
+                Qt.callLater(() => {
+                    newFields.forceLayout();
+                    newScroll.reveal(newProblemLabel);
+                });
             }
         });
     }
@@ -1015,7 +1023,7 @@ FocusScope {
                 }
                 done("");
                 const ref = {
-                    "agent": result.agent,
+                    "agent": result.agent || agent,
                     "id": result.id
                 };
                 showNotice("\"" + result.title + "\" started");
@@ -2068,6 +2076,8 @@ FocusScope {
 
                     // Why the start failed; the draft is as it was.
                     Label {
+                        id: newProblemLabel
+
                         objectName: "sessionsNewProblem"
                         textFormat: Text.PlainText
                         width: parent.width

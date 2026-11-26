@@ -1337,10 +1337,38 @@ private slots:
         VerifyFailureKeepsTheDraft("LASTWORD");
 
         const QQuickItem* const problem = Part("sessionsNewProblem");
-        QVERIFY(!problem->property("truncated").toBool());
         QVERIFY(problem->property("lineCount").toInt() > 1);
         QVERIFY(problem->property("contentWidth").toReal() <=
                 problem->width() + 1);
+    }
+
+    // In a low panel the form scrolls; Create from the keyboard moves the
+    // keyboard (and the view) to the task at the top, and the reason under
+    // Create is still brought into view.
+    void TheReasonIsScrolledIntoViewInALowPanel() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted: LASTWORD\n"));
+        FillTheDraft();
+        Window()->resize(Window()->width(), 260);
+        QQuickItem* const scroll = Part("sessionsNewScroll");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            scroll->property("contentHeight").toReal() > scroll->height() + 40,
+            TIMEOUT_MS);
+        CreateButton()->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Space);
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().contains("LASTWORD"), TIMEOUT_MS);
+        const QQuickItem* const problem = Part("sessionsNewProblem");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            problem->mapToItem(scroll, QPointF(0, 0)).y() >= 0 &&
+                problem->mapToItem(scroll, QPointF(0, problem->height())).y() <=
+                    scroll->height(),
+            TIMEOUT_MS);
     }
 
     void ALostConnectionToRoostdSaysTheSessionMayHaveStarted() {

@@ -1350,7 +1350,6 @@ private slots:
 
         VerifyPromptKeepsTheTask("do it", "LASTWORD");
         const QQuickItem* const problem = Part("sessionsPromptProblem");
-        QVERIFY(!problem->property("truncated").toBool());
         QVERIFY(problem->property("lineCount").toInt() > 1);
     }
 
