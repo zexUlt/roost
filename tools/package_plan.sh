@@ -68,8 +68,13 @@ patch=
 last=
 
 is_product_change() {
-    # stdin: paths. Succeeds when one of them is not documentation, tests or tooling of the repository.
-    grep -q -v -E '^(docs/|tests/|\.claude/|\.github/)|\.md$'
+    # Succeeds when a file changed between $1 and $2 is not documentation, tests
+    # or tooling of the repository. The list is read whole first: `grep -q`
+    # stops at the first match, and under pipefail git, cut off by SIGPIPE on a
+    # long list, would turn the match into a failure.
+    local files
+    files=$(git_ diff --no-renames --name-only "$1" "$2")
+    [ -n "$files" ] && grep -q -v -E '^(docs/|tests/|\.claude/|\.github/)|\.md$' <<<"$files"
 }
 
 plan_release_version() {
@@ -109,7 +114,7 @@ else
             why="no v* tag before $head"
         elif [ -n "$(git_ tag --points-at "$head" --list 'v[0-9]*')" ]; then
             why="$head has the tag $last already"
-        elif git_ diff --no-renames --name-only "$last" "$head" | is_product_change; then
+        elif is_product_change "$last" "$head"; then
             release=true
             why="a product change since $last"
         else
