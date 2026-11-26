@@ -337,9 +337,13 @@ private slots:
         Press(Qt::Key_Minus, FONT_MODIFIERS);
         Press(Qt::Key_Minus, FONT_MODIFIERS);
         Press(Qt::Key_Equal, FONT_MODIFIERS);
-        QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), 15.0, TIMEOUT_MS);
+        // The size does not tell the last write: 15 is the first write's too
+        // (15, 14, 15), and the window shows it as soon as that one is
+        // announced. The announcements come in the order roostd sent them, so
+        // the fifth is the last key's.
+        QTRY_COMPARE_WITH_TIMEOUT(SettingsWrites(*writes), 5, TIMEOUT_MS);
+        QCOMPARE(SizeOf(Singleton_), 15.0);
         QCOMPARE(Stored(), TerminalFont({{"size", 15}}));
-        QCOMPARE(SettingsWrites(*writes), 5);
     }
 
     // One below the maximum, two keys in a row: one write, then the refusal,
