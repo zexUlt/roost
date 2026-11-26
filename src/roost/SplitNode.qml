@@ -121,7 +121,29 @@ SplitView {
         return Math.max(40, Math.floor(room / split.fillCount));
     }
 
+    // What the children that are shown need, with the handles between them:
+    // the sum along the split, the largest across it. A child takes the room
+    // its own minimum says (LayoutNode); the sizes of the document are kept.
+    property real minimumWidth: 40
+    property real minimumHeight: 40
+
     function recount() {
+        let along = 0;
+        let across = 40;
+        let shown = 0;
+        for (let i = 0; i < children.count; ++i) {
+            const child = children.objectAt(i);
+            if (child === null || child.gone || child.collapsed) {
+                continue;
+            }
+            along += split.horizontal ? child.minWidth : child.minHeight;
+            across = Math.max(across, split.horizontal ? child.minHeight : child.minWidth);
+            ++shown;
+        }
+        along += Math.max(0, shown - 1) * split.handleSize;
+        split.minimumWidth = split.horizontal ? Math.max(40, along) : across;
+        split.minimumHeight = split.horizontal ? across : Math.max(40, along);
+
         let total = 0;
         for (let i = 0; i < children.count; ++i) {
             const child = children.objectAt(i);
@@ -212,6 +234,9 @@ SplitView {
             readonly property bool filler: !collapsed && index === split.lastFill
             readonly property real fixedPx: fills || collapsed ? 0 : (stepped > 0 ? stepped : size)
             onFixedPxChanged: split.recount()
+            onMinWidthChanged: split.recount()
+            onMinHeightChanged: split.recount()
+            onCollapsedChanged: split.recount()
 
             node: modelData
             view: split.view
@@ -228,8 +253,8 @@ SplitView {
 
             SplitView.preferredWidth: split.node.horizontal ? preferred : -1
             SplitView.preferredHeight: !split.node.horizontal ? preferred : -1
-            SplitView.minimumWidth: 40
-            SplitView.minimumHeight: 40
+            SplitView.minimumWidth: minWidth
+            SplitView.minimumHeight: minHeight
         }
     }
 }

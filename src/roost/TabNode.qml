@@ -96,6 +96,26 @@ PanelCard {
         }
     }
 
+    // What the stack needs: the largest minimum of its pages, and the bar
+    // above the page. A page with nothing to show (a hidden list) needs none.
+    property real minimumWidth: 40
+    property real minimumHeight: 40
+
+    function recountMinimum() {
+        let width = 40;
+        let height = 40;
+        for (let i = 0; i < made.count; ++i) {
+            const page = made.objectAt(i);
+            if (page === null || page.node === null || page.node.hidden === true) {
+                continue;
+            }
+            width = Math.max(width, page.minWidth);
+            height = Math.max(height, page.minHeight);
+        }
+        stack.minimumWidth = width;
+        stack.minimumHeight = bar.height + height;
+    }
+
     // The user chose a tab: the shell stores it, and the keyboard goes to the
     // first panel shown on it, as the layout commands act on the panel that
     // has the keyboard. Late: the shown panel is known when the page has
@@ -130,6 +150,11 @@ PanelCard {
 
         // An Instantiator for the QObject parent, as in SplitNode.
         Instantiator {
+            id: made
+
+            onObjectAdded: stack.recountMinimum()
+            onObjectRemoved: stack.recountMinimum()
+
             model: stack.node !== null ? stack.node.children : []
 
             delegate: LayoutNode {
@@ -141,6 +166,8 @@ PanelCard {
                 width: pages.width
                 height: pages.height
                 visible: index === bar.currentIndex && modelData.hidden !== true
+                onMinWidthChanged: stack.recountMinimum()
+                onMinHeightChanged: stack.recountMinimum()
                 node: modelData
                 view: stack.view
                 path: stack.path.concat([index])

@@ -19,10 +19,23 @@ Item {
     // of its own.
     property bool stacked: false
 
+    // How narrow and how low the node may get; the split that holds it takes
+    // them as the minimum of the child (docs/design/06-panels.md). A leaf: what
+    // its panel declares (PanelSlot), 40 when it declares none. A split or a
+    // stack of tabs: what its children need (SplitNode, TabNode).
+    readonly property int defaultMinimum: 40
+    readonly property real minWidth: root.node !== null && root.node.kind === "leaf" ? root.leafMinWidth : (structure.item?.minimumWidth ?? root.defaultMinimum)
+    readonly property real minHeight: root.node !== null && root.node.kind === "leaf" ? root.leafMinHeight : (structure.item?.minimumHeight ?? root.defaultMinimum)
+    // Written by the slot of the leaf (a Binding in the leaf component).
+    property real leafMinWidth: root.defaultMinimum
+    property real leafMinHeight: root.defaultMinimum
+
     // A split or a stack of tabs is loaded by file name: SplitNode and TabNode
     // use this type for their children, and a type that used them back would
     // be a cycle the QML engine refuses.
     Loader {
+        id: structure
+
         anchors.fill: parent
         source: {
             switch (root.node === null ? "" : root.node.kind) {
@@ -94,6 +107,18 @@ Item {
                 instanceId: root.node.instance
                 panelType: root.node.panel
                 resolveSource: instance => root.view.slotOf(instance)
+
+                Binding {
+                    target: root
+                    property: "leafMinWidth"
+                    value: slot.minimumWidth
+                }
+
+                Binding {
+                    target: root
+                    property: "leafMinHeight"
+                    value: slot.minimumHeight
+                }
 
                 // The keyboard is where the layout commands act, and the menu
                 // takes it first: a right click chooses the panel.
