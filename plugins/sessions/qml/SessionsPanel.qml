@@ -71,6 +71,12 @@ FocusScope {
     property string promptKind: ""
     property var promptRef: null
     property var promptNew: null
+    // The start of n: while it runs Enter does nothing; a failure returns the
+    // prompt to the task, kept, with `promptProblem`. `promptStart` numbers it,
+    // as `newStart` does.
+    property bool promptStarting: false
+    property string promptProblem: ""
+    property int promptStart: 0
     readonly property var promptLabels: ({
             "category": "Category:",
             "rename": "Name:",
@@ -296,6 +302,13 @@ FocusScope {
     // The agent and the directory of the session, taken from the cursor when
     // the form opens, as n does.
     property var draftTarget: null
+    // The start of the form: while it runs Create does nothing; a failure
+    // leaves the form with its draft and `newProblem` says why. `newStart`
+    // numbers the start: a Cancel ends the form's claim on it (a late answer
+    // is not the form's any more).
+    property bool newStarting: false
+    property string newProblem: ""
+    property int newStart: 0
 
     // The entries of the category list of the form: none, the known ones, a
     // new one. The category of the draft stays among them while the form holds
@@ -337,16 +350,28 @@ FocusScope {
                 "agent": base.agent,
                 "cwd": base.cwd
             };
+            newStarting = false;
+            newProblem = "";
             newOpen = true;
         }
         newTaskField.forceActiveFocus();
     }
 
-    // Cancel and Esc: the draft goes, the list has the keyboard.
-    function closeNewForm() {
+    // Cancel and Esc: the draft goes, the list has the keyboard. A start that
+    // is still running goes on: a session it starts is listed, a failure of it
+    // comes to the footer. `takeKeyboard` false (the answer of a start, which
+    // comes whenever): the list is only the focus of its panel, the keyboard
+    // stays where the user took it.
+    function closeNewForm(takeKeyboard = true) {
         newOpen = false;
+        newStarting = false;
+        newStart++;
         draftTarget = null;
-        list.forceActiveFocus();
+        if (takeKeyboard) {
+            list.forceActiveFocus();
+        } else {
+            list.focus = true;
+        }
     }
 
     function canCreate() {
@@ -355,17 +380,49 @@ FocusScope {
 
     // Create: the session starts as n starts it, with the task as its first
     // message. A name, when there is one, becomes its title; without one the
-    // title stays the agent's.
+    // title stays the agent's. The form stays open until the agent answers:
+    // then it closes, or, on a failure, it stays with the draft and the
+    // reason. A second Create while the start runs does nothing.
     function createFromForm() {
-        if (!newOpen || !canCreate()) {
+        if (!newOpen || newStarting || !canCreate()) {
             return;
         }
         const target = draftTarget;
         const task = draftTask.trim();
         const name = draftName.trim();
         const category = draftNewCategory ? draftNewName.trim() : draftCategory;
-        closeNewForm();
-        startSession(target.agent, target.cwd, task, category, name);
+        const start = ++newStart;
+        // The disabled button drops the keyboard: Esc needs it in the form.
+        if (newCreate.activeFocus) {
+            newTaskField.forceActiveFocus();
+        }
+        newStarting = true;
+        newProblem = "";
+        startSession(target.agent, target.cwd, task, category, name, problem => {
+            if (start !== newStart) {
+                // Cancelled meanwhile: the form is not waiting for this.
+                if (problem !== "") {
+                    showNotice(problem);
+                }
+                return;
+            }
+            newStarting = false;
+            if (problem === "") {
+                // The keyboard moves only if the form has it: the user may
+                // have gone to another panel while the agent started.
+                closeNewForm(root.activeFocus);
+            } else {
+                newProblem = problem;
+                // The reason is under Create: Create from the keyboard moved
+                // the keyboard, and the form's view, to the task at the top.
+                // The column places the shown reason at its next polish: place
+                // it now, then scroll.
+                Qt.callLater(() => {
+                    newFields.forceLayout();
+                    newScroll.reveal(newProblemLabel);
+                });
+            }
+        });
     }
 
     // Opens the prompt of the footer with its text. The keys then go to the
@@ -373,6 +430,9 @@ FocusScope {
     function openPrompt(kind, ref, text) {
         promptKind = kind;
         promptRef = ref;
+        promptStarting = false;
+        promptStart++;
+        promptProblem = "";
         promptInput.text = text;
         promptInput.cursorPosition = text.length;
         promptInput.forceActiveFocus();
@@ -383,6 +443,9 @@ FocusScope {
         promptKind = "";
         promptRef = null;
         promptNew = null;
+        promptStarting = false;
+        promptProblem = "";
+        promptStart++;
         promptInput.text = "";
     }
 
@@ -392,8 +455,13 @@ FocusScope {
     }
 
     // Enter: the category or the name goes to the model. In n the task goes on to the category, and
-    // the category starts the session.
+    // the category starts the session: the prompt stays until the agent
+    // answers, and on a failure it goes back to the task, kept, with the
+    // reason.
     function submitPrompt() {
+        if (promptStarting) {
+            return;
+        }
         const ref = promptRef;
         const text = promptInput.text;
         const kind = promptKind;
@@ -411,15 +479,45 @@ FocusScope {
             }
             return;
         }
-        const started = promptNew;
+        if (kind === "newCategory") {
+            startFromPrompt(text.trim());
+            return;
+        }
         closePrompt();
         if (kind === "category") {
             sessionsList.setCategory(ref, text.trim());
         } else if (kind === "rename") {
             sessionsList.rename(ref, text);
-        } else if (kind === "newCategory") {
-            startSession(started.agent, started.cwd, started.task, text.trim());
         }
+    }
+
+    function startFromPrompt(category) {
+        const started = promptNew;
+        const start = ++promptStart;
+        promptStarting = true;
+        promptProblem = "";
+        startSession(started.agent, started.cwd, started.task, category, "", problem => {
+            if (start !== promptStart) {
+                // Cancelled meanwhile: the prompt is not waiting for this.
+                if (problem !== "") {
+                    showNotice(problem);
+                }
+                return;
+            }
+            if (problem === "") {
+                closePrompt();
+                return;
+            }
+            // The task and the category come back as typed.
+            promptNew = {
+                "agent": started.agent,
+                "cwd": started.cwd,
+                "category": category,
+                "task": started.task
+            };
+            openPrompt("task", null, started.task);
+            promptProblem = problem;
+        });
     }
 
     // Esc: nothing changes.
@@ -607,6 +705,10 @@ FocusScope {
         Roost.commands.run(agent + "." + verb, args, callback);
     }
 
+    // The code of the error of a command whose connection to roostd went away
+    // before the answer (protocol::EErrorCode::ConnectionLost).
+    readonly property int connectionLost: -32002
+
     function failure(error) {
         return error && error.message ? error.message : "the command failed";
     }
@@ -647,18 +749,33 @@ FocusScope {
     }
 
     // Commands are optional contributions, independent of terminal support.
-    function agentsWithCommand(verb, callback) {
+    // `onError(message)`, when given, takes the failure of the list in place of
+    // the notice.
+    function agentsWithCommand(verb, callback, onError) {
         Roost.call("plugins.list", {}, (error, result) => {
             if (error) {
-                showNotice(failure(error));
+                if (onError) {
+                    onError(failure(error));
+                } else {
+                    showNotice(failure(error));
+                }
                 return;
             }
             const suffix = "." + verb;
+            // A command of a plugin that is no agent (`sessions.newSession`
+            // is the panel's own) is no agent's command.
+            const known = new Set();
+            for (const plugin of result.plugins) {
+                for (const agent of (plugin.contributes ?? {}).agents ?? []) {
+                    known.add(agent.id);
+                }
+            }
             const agents = new Set();
             for (const plugin of result.plugins) {
                 for (const command of (plugin.contributes ?? {}).commands ?? []) {
-                    if (command.id.endsWith(suffix)) {
-                        agents.add(command.id.slice(0, -suffix.length));
+                    const agent = command.id.endsWith(suffix) ? command.id.slice(0, -suffix.length) : "";
+                    if (known.has(agent)) {
+                        agents.add(agent);
                     }
                 }
             }
@@ -880,11 +997,13 @@ FocusScope {
     }
 
     // `title`, when given, is the title of the session once it is listed.
-    function startSession(preferredAgent, cwd, task, category, title) {
-        showNotice("Starting…");
+    // `done(problem)` is called once, when the agent has answered: with "" for a
+    // session that started, else with the reason it did not (the caller shows
+    // it).
+    function startSession(preferredAgent, cwd, task, category, title, done) {
         agentsWithCommand("newSession", agents => {
             if (agents.size === 0) {
-                showNotice("No agent can start a session");
+                done("No agent can start a session");
                 return;
             }
             const agent = agents.has(preferredAgent) ? preferredAgent : agents.values().next().value;
@@ -893,11 +1012,18 @@ FocusScope {
                 "prompt": task
             }, (error, result) => {
                 if (error) {
-                    showNotice("Not started: " + failure(error));
+                    // A connection lost under the command: the agent may have
+                    // started the session, and a second start would repeat it.
+                    done((error.code === connectionLost ? "May have started: " : "Not started: ") + failure(error));
                     return;
                 }
+                if (!result || typeof result.id !== "string" || result.id === "") {
+                    done("Not started: " + agent + " answered without a session id");
+                    return;
+                }
+                done("");
                 const ref = {
-                    "agent": result.agent,
+                    "agent": result.agent || agent,
                     "id": result.id
                 };
                 showNotice("\"" + result.title + "\" started");
@@ -908,7 +1034,7 @@ FocusScope {
                     sessionsList.rename(ref, title);
                 }
             });
-        });
+        }, message => done("Not started: " + message));
     }
 
     // The stored document: read on creation if connected and at every
@@ -1941,11 +2067,25 @@ FocusScope {
 
                         objectName: "sessionsNewCreate"
                         primary: true
-                        enabled: root.canCreate()
-                        text: "Create session"
+                        enabled: root.canCreate() && !root.newStarting
+                        text: root.newStarting ? "Starting…" : "Create session"
                         onClicked: root.createFromForm()
                         KeyNavigation.tab: newBack
                         KeyNavigation.backtab: newCategoryName.visible ? newCategoryName : newCategoryBox
+                    }
+
+                    // Why the start failed; the draft is as it was.
+                    Label {
+                        id: newProblemLabel
+
+                        objectName: "sessionsNewProblem"
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        visible: root.newProblem !== ""
+                        color: Roost.theme.error
+                        font: Roost.theme.metaFont
+                        wrapMode: Text.Wrap
+                        text: root.newProblem
                     }
                 }
             }
@@ -2108,6 +2248,9 @@ FocusScope {
                     color: root.textColor
                     selectionColor: Roost.theme.selection
                     selectByMouse: true
+                    // The task is on its way: what is typed now would not go
+                    // with it.
+                    readOnly: root.promptStarting
 
                     onAccepted: root.submitPrompt()
                     // A tap on the list takes the keyboard away: the prompt is
@@ -2128,13 +2271,27 @@ FocusScope {
                     Keys.onPressed: event => {
                         const index = event.key - Qt.Key_1;
                         const plain = (event.modifiers & ~Qt.KeypadModifier) === Qt.NoModifier;
-                        if (root.promptPicksCategory && text === "" && plain && index >= 0 && index < 9 && index < sessionsList.knownCategories.length) {
+                        if (!root.promptStarting && root.promptPicksCategory && text === "" && plain && index >= 0 && index < 9 && index < sessionsList.knownCategories.length) {
                             text = sessionsList.knownCategories[index];
                             root.submitPrompt();
                             event.accepted = true;
                         }
                     }
                 }
+            }
+
+            // The start of n: under way, or why it failed (the task is as typed).
+            Label {
+                objectName: "sessionsPromptProblem"
+                textFormat: Text.PlainText
+                width: parent.width
+                leftPadding: Roost.theme.panelPadding
+                rightPadding: Roost.theme.panelPadding
+                visible: root.promptStarting || root.promptProblem !== ""
+                color: root.promptStarting ? Roost.theme.textMuted : Roost.theme.error
+                font: Roost.theme.metaFont
+                wrapMode: Text.Wrap
+                text: root.promptStarting ? "Starting…" : root.promptProblem
             }
 
             // The categories the digits pick.

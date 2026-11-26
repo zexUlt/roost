@@ -50,10 +50,12 @@ const QString STARTED = "bg-4e5f6071";
 //             the real claude does, unless <verb>.nokill is there; wait
 //             <verb>.sleep seconds after that. `rm` puts rm.agents in place of
 //             agents.json when it is there.
-//   --bg      writes the directory it runs in and its arguments, each whole in
-//             brackets, to bg.ran; fails with bg.exit and the text of
-//             bg.stderr, or puts bg.agents in place of agents.json and prints
-//             bg.stdout
+//   --bg      adds a line to bg.runs, writes the directory it runs in and its
+//             arguments, each whole in brackets, to bg.ran; waits while bg.hold
+//             is there; kills its parent (the adapter) when bg.crash is there;
+//             fails with bg.exit and the text of bg.stderr, or puts bg.agents
+//             in place of agents.json and prints bg.stdout
+//   agents    adds a line to agents.polls
 constexpr const char* COMMANDS_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 verb=$1
@@ -61,6 +63,7 @@ argv=; for a in "$@"; do argv="$argv[$a]"; done
 if [ "$verb" = --bg ]; then verb=bg; fi
 case "$verb" in
 agents)
+  echo poll >> "$dir/agents.polls"
   mkdir -p "$dir/work/alpha" "$dir/work/beta" "$dir/work/gamma" "$dir/work/delta" "$dir/work/other"
   sed 's|"/work/|"'"$dir"'/work/|g' "$dir/agents.json"
   ;;
@@ -87,7 +90,10 @@ stop|rm|respawn)
   if [ -f "$dir/$1.sleep" ]; then sleep "$(cat "$dir/$1.sleep")"; fi
   ;;
 bg)
+  echo run >> "$dir/bg.runs"
   printf '%s\n%s\n' "$(pwd -P)" "$argv" > "$dir/bg.ran"
+  while [ -f "$dir/bg.hold" ]; do sleep 0.05; done
+  if [ -f "$dir/bg.crash" ]; then kill -9 $PPID; sleep 5; exit 1; fi
   if [ -f "$dir/bg.exit" ]; then
     cat "$dir/bg.stderr" >&2
     exit $(cat "$dir/bg.exit")
@@ -234,6 +240,47 @@ private:
         Press(Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
     }
+
+    // n with the task and the category typed and both Enters pressed, the
+    // answer of the agent not waited for.
+    void TypeNewSession(const QString& task, const QString& category = {}) {
+        Press(Qt::Key_N);
+        QTRY_VERIFY_WITH_TIMEOUT(Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Part("sessionsPromptInput")->hasActiveFocus(),
+                                 TIMEOUT_MS);
+        Type(task);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        if (!category.isEmpty()) {
+            Type(category);
+        }
+        Press(Qt::Key_Return);
+    }
+
+    // The reason the prompt shows for a start that failed.
+    QString PromptProblem() {
+        const QQuickItem* const problem = Part("sessionsPromptProblem");
+        return problem != nullptr && problem->isVisible()
+                   ? problem->property("text").toString()
+                   : QString();
+    }
+
+    // The prompt after a failed start: open on the task as typed, with the
+    // reason in it and no notice in the footer.
+    void VerifyPromptKeepsTheTask(const QString& task, const QString& reason) {
+        QTRY_VERIFY_WITH_TIMEOUT(PromptProblem().contains(reason), TIMEOUT_MS);
+        QVERIFY(Prompting());
+        QCOMPARE(PromptLabel(), QString("Task:"));
+        QCOMPARE(PromptText(), task);
+        QVERIFY(Part("sessionsPromptInput")->hasActiveFocus());
+        QVERIFY(Notice().isEmpty());
+        QCOMPARE(Count(), 4);
+    }
+
+    int Runs() const { return static_cast<int>(Lines("bg.runs").size()); }
+
+    int Polls() const { return static_cast<int>(Lines("agents.polls").size()); }
 
     // Typed text: a press of each character, to whatever has the focus.
     void Type(const QString& text) {
@@ -1094,7 +1141,139 @@ private slots:
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(BinPath("work/beta")));
     }
 
-    void AFailedNewSessionShowsANotice() {
+    void AFailedNewSessionKeepsThePromptWithTheTask() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+
+        // The cursor starts on the category "Ops", which the step offers; the
+        // typed letter is added to it.
+        TypeNewSession("do it", "X");
+
+        VerifyPromptKeepsTheTask("do it", "Workspace not trusted");
+        QVERIFY(PromptProblem().startsWith("Not started: "));
+        QVERIFY(SelectedId().isEmpty());
+
+        // The same prompt starts it once the cause is gone, in the category
+        // typed before.
+        QVERIFY(QFile::remove(BinPath("bg.exit")));
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        QCOMPARE(PromptText(), QString("OpsX"));
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(StoredDocument()
+                                      .value("categories")
+                                      .toObject()
+                                      .value(KeyOf(STARTED)),
+                                  QJsonValue("OpsX"), TIMEOUT_MS);
+        QCOMPARE(Runs(), 2);
+    }
+
+    void NoAgentThatCanStartKeepsThePromptWithTheTask() {
+        FailOnWarnings();
+        WithoutCommands_ = {"claude.newSession"};
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "No agent can start a session");
+        QCOMPARE(Runs(), 0);
+    }
+
+    void AStartThatTimesOutKeepsThePromptWithTheTask() {
+        FailOnWarnings();
+        // The adapter's own limit of a start: the window has none.
+        AdapterArgs_ = {"--new-session-timeout-ms", "300"};
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.hold", ""));
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "did not finish in 300 ms");
+    }
+
+    void AnAnswerWithoutAnIdKeepsThePromptWithTheTask() {
+        FailOnWarnings();
+        AnswerWithoutSessionId_ = true;
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "answered without a session id");
+        QCOMPARE(Runs(), 1);
+    }
+
+    void ABackendThatExitsDuringTheStartKeepsThePromptWithTheTask() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.crash", ""));
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "the backend of claude");
+        // The window and roostd are alive, and roostd answers.
+        QVERIFY(Window()->isVisible());
+        QCOMPARE(Daemon_->state(), QProcess::Running);
+        WAIT_FOR_EFFECTS();
+        QVERIFY(Prompting());
+    }
+
+    void ASecondEnterWhileTheStartRunsStartsNothing() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QVERIFY(Put("bg.hold", ""));
+
+        TypeNewSession("do it");
+
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QVERIFY(Prompting());
+        QTRY_COMPARE_WITH_TIMEOUT(PromptProblem(), QString("Starting…"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        Press(Qt::Key_Return);
+        QVERIFY(Prompting());
+
+        QVERIFY(QFile::remove(BinPath("bg.hold")));
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Do it"), TIMEOUT_MS);
+        // Barrier: two more polls of the agents, one of which began after the
+        // Enters; a start they had made would have run.
+        const int polls = Polls();
+        QTRY_VERIFY_WITH_TIMEOUT(Polls() >= polls + 2, TIMEOUT_MS);
+        QCOMPARE(Runs(), 1);
+    }
+
+    void EscWhileTheStartRunsClosesThePromptAndAFailureComesToTheFooter() {
         FailOnWarnings();
         Start();
         if (QTest::currentTestFailed()) {
@@ -1102,14 +1281,76 @@ private slots:
         }
         QVERIFY(Put("bg.exit", "1"));
         QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+        QVERIFY(Put("bg.hold", ""));
 
-        StartNewSession("do it");
+        TypeNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptProblem(), QString("Starting…"),
+                                  TIMEOUT_MS);
+        Press(Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QVERIFY(QFile::remove(BinPath("bg.hold")));
 
         QTRY_VERIFY_WITH_TIMEOUT(Notice().startsWith("Not started: "),
                                  TIMEOUT_MS);
         QVERIFY(Notice().contains("Workspace not trusted"));
-        QCOMPARE(Count(), 4);
-        QVERIFY(SelectedId().isEmpty());
+        QVERIFY(!Prompting());
+    }
+
+    void ADigitWhileTheStartRunsChangesNothing() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QVERIFY(Put("bg.hold", ""));
+        MoveTo(ALPHA);
+
+        TypeNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptProblem(), QString("Starting…"),
+                                  TIMEOUT_MS);
+        // The category of the session under the cursor is empty: a digit
+        // would pick the first known one.
+        QCOMPARE(PromptText(), QString());
+        Press(Qt::Key_1);
+        Type("x");
+
+        QCOMPARE(PromptText(), QString());
+        QVERIFY(Prompting());
+
+        QVERIFY(QFile::remove(BinPath("bg.hold")));
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QCOMPARE(Runs(), 1);
+    }
+
+    void AReasonIsWrappedByWordsAtTheLeastWidthOfTheList() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString reason =
+            "Workspace not trusted. Run it by hand once, accept the trust "
+            "dialog of the folder, and start the session again from here, "
+            "then wait for the final word of this long reason: LASTWORD";
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", reason.toUtf8() + "\n"));
+        // The panel at its minimum width.
+        QCOMPARE(PanelOf(LIST)->property("minimumWidth").toInt(), 200);
+        Window()->resize(Window()->width() / 6, Window()->height());
+        QTRY_COMPARE_WITH_TIMEOUT(PanelOf(LIST)->width(), qreal(200),
+                                  TIMEOUT_MS);
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "LASTWORD");
+        const QQuickItem* const problem = Part("sessionsPromptProblem");
+        QVERIFY(problem->property("lineCount").toInt() > 1);
     }
 
     void ThePromptTakesTextWithoutListKeysAndEscCancels() {
