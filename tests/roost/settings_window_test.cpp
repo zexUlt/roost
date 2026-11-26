@@ -22,6 +22,7 @@
 #include <QTest>
 #include <QUrl>
 
+#include <algorithm>
 #include <memory>
 
 #include "api/api.hpp"
@@ -250,6 +251,62 @@ private:
             QMetaObject::invokeMethod(window->Object.get(), "open");
         }
         return window;
+    }
+
+    // A second client that hears every change of the document `settings`: the
+    // patches the window wrote. Null if it did not connect.
+    std::unique_ptr<api::Api> Listen() {
+        auto other = std::make_unique<api::Api>();
+        QSignalSpy connected(other.get(), &api::Api::Connected);
+        other->Connect(Daemon_->SocketPath());
+        if (!(connected.wait(TIMEOUT_MS) || !connected.isEmpty())) {
+            return nullptr;
+        }
+        const QFuture<rpc::Result> read = other->Store().Get("settings");
+        return WaitFor(read) ? std::move(other) : nullptr;
+    }
+
+    // Keys of the text, one after another, to the focus of the window.
+    static void TypeText(QQuickWindow* window, const QString& text) {
+        for (const QChar ch : text) {
+            QTest::keyClick(window, ch.toLatin1());
+        }
+    }
+
+    // The next write of the window is a barrier: whatever the window wrote
+    // before it has been heard when this returns. The result is how many
+    // writes were heard before the barrier, -1 if the barrier was not heard.
+    static qsizetype WritesBeforeBarrier(const SettingsWindow& window,
+                                         const QSignalSpy& changed, int size) {
+        const qsizetype before = changed.size();
+        if (!window.Edit("uiSizeField", QString::number(size)) ||
+            !QTest::qWaitFor([&] { return changed.size() > before; },
+                             TIMEOUT_MS)) {
+            return -1;
+        }
+        return changed.size() - 1;
+    }
+
+    // The window is on its family box with the keyboard, as after a click in
+    // its text. The text is selected, so that the typing replaces it.
+    static QQuickItem* FocusFamilyText(const SettingsWindow& window) {
+        QQuickItem* box = window.Find("terminalFamilyBox");
+        if (box == nullptr ||
+            !QTest::qWaitFor([&] { return box->width() > 0; }, TIMEOUT_MS)) {
+            return nullptr;
+        }
+        QTest::mouseClick(
+            window.Window(), Qt::LeftButton, Qt::NoModifier,
+            box->mapToScene(QPointF(box->width() / 3, box->height() / 2))
+                .toPoint());
+        auto* input = box->property("contentItem").value<QQuickItem*>();
+        if (input == nullptr ||
+            !QTest::qWaitFor([&] { return input->hasActiveFocus(); },
+                             TIMEOUT_MS)) {
+            return nullptr;
+        }
+        QMetaObject::invokeMethod(input, "selectAll");
+        return box;
     }
 
     bool StartDaemon() { return Daemon_->Start(ROOSTD_PATH); }
@@ -1006,17 +1063,23 @@ private slots:
         QVERIFY(box != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
                                  TIMEOUT_MS);
+        // The CI image has one monospace family: the rows are the default and
+        // as many of the installed ones as there are, up to two.
         const QStringList installed = InstalledMonospaceFamilies();
-        QVERIFY(installed.size() > 1);
+        if (installed.isEmpty()) {
+            QSKIP("no fixed-pitch font is installed");
+        }
+        const qsizetype shown = std::min<qsizetype>(2, installed.size());
         // Closed: the default only, and the box shows it.
         QCOMPARE(box->property("count"), QVariant(1));
         QCOMPARE(box->property("currentText"),
                  QVariant(DefaultFamilyEntry(*theme)));
 
-        QCOMPARE(
-            testing::OpenedRowTexts(window->Window(), box, 3, TIMEOUT_MS, true),
-            (QStringList{DefaultFamilyEntry(*theme), installed.at(0),
-                         installed.at(1)}));
+        QCOMPARE(testing::OpenedRowTexts(window->Window(), box,
+                                         static_cast<int>(1 + shown),
+                                         TIMEOUT_MS, true),
+                 (QStringList{DefaultFamilyEntry(*theme)} +
+                  installed.mid(0, shown)));
         QCOMPARE(box->property("count"), QVariant(1 + installed.size()));
         QCOMPARE(box->property("model").toStringList().mid(1), installed);
         QVERIFY(testing::SaveSnapshot(window->Window(), "family-list"));
@@ -1056,6 +1119,9 @@ private slots:
                  QJsonValue(14));
         QCOMPARE(Document("settings").value("terminalFont").toObject(),
                  (QJsonObject{{"family", family}}));
+        // The list is still open (the signal was sent by hand): the box shows
+        // the family when it closes.
+        QTest::keyClick(window->Window(), Qt::Key_Escape);
         QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
                                   QVariant(family), TIMEOUT_MS);
     }
@@ -1123,6 +1189,178 @@ private slots:
                                   QJsonValue(14), TIMEOUT_MS);
         QCOMPARE(Document("settings").value("terminalFont").toObject(),
                  (QJsonObject{{"family", missing}}));
+    }
+
+    // Clicking a row of the opened list is one patch, although the box says
+    // both `activated` and `editingFinished` of it.
+    void ClickingARowOfTheListWritesOnePatch() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        const QString family = InstalledMonospaceFamilies().at(0);
+        auto other = Listen();
+        QVERIFY(other);
+        QSignalSpy changed(&other->Store(), &api::StoreService::Changed);
+
+        QCOMPARE(
+            testing::OpenedRowTexts(window->Window(), box, 2, TIMEOUT_MS, true)
+                .size(),
+            2);
+        QVERIFY(testing::ClickOpenedRow(window->Window(), box, 1));
+        // This Qt says only `activated` of a click. A box that also says
+        // `editingFinished` before roostd has answered must not write twice.
+        QVERIFY(QMetaObject::invokeMethod(
+            box->property("contentItem").value<QQuickItem*>(),
+            "editingFinished"));
+        QTRY_COMPARE_WITH_TIMEOUT(Document("settings").value("terminalFont"),
+                                  QJsonValue(QJsonObject{{"family", family}}),
+                                  TIMEOUT_MS);
+        // The focus leaves the box: the same value is not written again.
+        QCOMPARE(WritesBeforeBarrier(*window, changed, 14), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(family), TIMEOUT_MS);
+    }
+
+    // A name typed and Enter: one patch, also when the name is a row of the
+    // list (the box then says `activated` and `editingFinished`).
+    void TypingANameAndEnterWritesOnePatch_data() {
+        QTest::addColumn<bool>("row");
+        QTest::newRow("a name") << false;
+        QTest::newRow("a row of the list") << true;
+    }
+
+    void TypingANameAndEnterWritesOnePatch() {
+        QFETCH(bool, row);
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const QString family = row ? InstalledMonospaceFamilies().at(0)
+                                   : QStringLiteral("Roost No Such Family");
+        auto other = Listen();
+        QVERIFY(other);
+        QSignalSpy changed(&other->Store(), &api::StoreService::Changed);
+        QQuickItem* box = FocusFamilyText(*window);
+        QVERIFY(box != nullptr);
+
+        TypeText(window->Window(), family);
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        // Both signals of the box for one Enter, if it says both.
+        QVERIFY(QMetaObject::invokeMethod(
+            box->property("contentItem").value<QQuickItem*>(),
+            "editingFinished"));
+        QTRY_COMPARE_WITH_TIMEOUT(Document("settings").value("terminalFont"),
+                                  QJsonValue(QJsonObject{{"family", family}}),
+                                  TIMEOUT_MS);
+        QCOMPARE(WritesBeforeBarrier(*window, changed, 14), 1);
+    }
+
+    // A name typed and Tab (the focus leaves the box): one patch.
+    void TypingANameAndTabWritesOnePatch() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const QString family = QStringLiteral("Roost No Such Family");
+        auto other = Listen();
+        QVERIFY(other);
+        QSignalSpy changed(&other->Store(), &api::StoreService::Changed);
+        QQuickItem* box = FocusFamilyText(*window);
+        QVERIFY(box != nullptr);
+        auto* input = box->property("contentItem").value<QQuickItem*>();
+
+        TypeText(window->Window(), family);
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QTRY_VERIFY_WITH_TIMEOUT(!input->hasActiveFocus(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Document("settings").value("terminalFont"),
+                                  QJsonValue(QJsonObject{{"family", family}}),
+                                  TIMEOUT_MS);
+        QCOMPARE(WritesBeforeBarrier(*window, changed, 14), 1);
+    }
+
+    // Escape in the text: the text goes back to the shown value and nothing is
+    // written, also when the box is left after it.
+    void EscapeInTheFamilyTextWritesNothingAndRestoresTheValue() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        auto other = Listen();
+        QVERIFY(other);
+        QSignalSpy changed(&other->Store(), &api::StoreService::Changed);
+        QQuickItem* box = FocusFamilyText(*window);
+        QVERIFY(box != nullptr);
+        auto* input = box->property("contentItem").value<QQuickItem*>();
+
+        TypeText(window->Window(), "Roost No Such Family");
+        QCOMPARE(input->property("text"), QVariant("Roost No Such Family"));
+        QTest::keyClick(window->Window(), Qt::Key_Escape);
+        QTRY_COMPARE_WITH_TIMEOUT(input->property("text"),
+                                  QVariant(DefaultFamilyEntry(*theme)),
+                                  TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QTRY_VERIFY_WITH_TIMEOUT(!input->hasActiveFocus(), TIMEOUT_MS);
+        QCOMPARE(WritesBeforeBarrier(*window, changed, 14), 0);
+        QVERIFY(!Document("settings").contains("terminalFont"));
+        QCOMPARE(box->property("currentText"),
+                 QVariant(DefaultFamilyEntry(*theme)));
+    }
+
+    // A document that changes while the list is open does not touch the
+    // list: it stays open with its rows. When it closes the box shows the new
+    // value.
+    void TheDocumentChangesUnderAnOpenListAndTheBoxShowsItAfterwards() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(box->width() > 0 && box->height() > 0,
+                                 TIMEOUT_MS);
+        const QStringList installed = InstalledMonospaceFamilies();
+        const int count = static_cast<int>(1 + installed.size());
+        const QStringList rows = testing::OpenedRowTexts(
+            window->Window(), box, std::min(count, 2), TIMEOUT_MS, true);
+        QVERIFY(!rows.isEmpty());
+        const QStringList model = box->property("model").toStringList();
+        auto* popup = box->property("popup").value<QObject*>();
+        QVERIFY(popup != nullptr);
+
+        // Another program writes a family that is not in the list.
+        const QString missing = "Roost No Such Family";
+        QVERIFY(PatchSettings(
+            *window, {{"terminalFont", QJsonObject{{"family", missing}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject(),
+            (QJsonObject{{"family", missing}}), TIMEOUT_MS);
+        // The document has come: the list is open, its rows are the same.
+        QVERIFY(popup->property("visible").toBool());
+        QCOMPARE(box->property("model").toStringList(), model);
+        QCOMPARE(box->property("count"), QVariant(count));
+
+        QTest::keyClick(window->Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!popup->property("visible").toBool(),
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(missing + " (not installed)"),
+                                  TIMEOUT_MS);
+    }
+
+    // A family of only spaces is no family: the default entry, not a missing
+    // name.
+    void AFamilyOfSpacesIsTheDefaultEntry() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* box = window->Find("terminalFamilyBox");
+        QVERIFY(box != nullptr);
+        QVERIFY(PatchSettings(
+            *window, {{"terminalFont", QJsonObject{{"family", "   "}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject(),
+            (QJsonObject{{"family", "   "}}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
+                                  QVariant(DefaultFamilyEntry(*theme)),
+                                  TIMEOUT_MS);
+        QCOMPARE(box->property("currentIndex"), QVariant(0));
+        QCOMPARE(box->property("count"), QVariant(1));
     }
 
     // The two presets of the focus ring show their colour, taken from the

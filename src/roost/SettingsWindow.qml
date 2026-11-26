@@ -41,6 +41,10 @@ ApplicationWindow {
     // stands for, "" for the default entry.
     property var installedFamilies: []
     property var familyValues: [""]
+    // The family the window wrote and the document has not answered yet ("" is
+    // the default), undefined when none: one user action writes one patch,
+    // although a pick can end in two signals of the box.
+    property var pendingFamily: undefined
     readonly property string notInstalledMark: " (not installed)"
     // settings.focusColor {preset, custom}, and the presets in the order of
     // the box.
@@ -79,6 +83,7 @@ ApplicationWindow {
             error = err ? err.message : "";
             if (err) {
                 // The write did not happen: the fields show what is stored.
+                pendingFamily = undefined;
                 showDocument(true);
             }
         });
@@ -101,8 +106,9 @@ ApplicationWindow {
     // it, so that the box never shows another entry in its place), then the
     // installed families. The box shows the entry of the stored family.
     function showFamily() {
-        const stored = terminalFont.family;
-        const name = (stored === undefined || stored === null || stored === "") ? "" : String(stored);
+        const stored = pendingFamily !== undefined ? pendingFamily : terminalFont.family;
+        // A name of only spaces is no family: the default entry.
+        const name = (stored === undefined || stored === null) ? "" : String(stored).trim();
         const texts = ["System monospace (" + Roost.theme.defaultTerminalFont.family + ")"];
         const values = [""];
         if (name !== "" && !installedFamilies.includes(name)) {
@@ -118,15 +124,20 @@ ApplicationWindow {
         familyValues = values;
         terminalFamilyBox.model = texts;
         terminalFamilyBox.currentIndex = values.indexOf(name);
+        // The text too: the index may not change while the text was typed over.
+        terminalFamilyBox.editText = terminalFamilyBox.textAt(terminalFamilyBox.currentIndex);
     }
 
-    // The list opens: the installed families are read now. What is typed in the
-    // box and not written yet stays.
+    // The list opens: the installed families are read now, the first time since
+    // the window was opened (the first read is the slow one, see the docs).
+    // What is typed in the box and not written yet stays.
     function openFamilies() {
         const input = terminalFamilyBox.contentItem;
         const typed = terminalFamilyBox.editText;
         const edited = input.activeFocus;
-        installedFamilies = Roost.theme.monospaceFamilies();
+        if (installedFamilies.length === 0) {
+            installedFamilies = Roost.theme.monospaceFamilies();
+        }
         showFamily();
         if (edited) {
             terminalFamilyBox.editText = typed;
@@ -141,9 +152,20 @@ ApplicationWindow {
         const at = terminalFamilyBox.model.indexOf(typed);
         const family = at >= 0 ? familyValues[at] : typed;
         const value = family === "" ? null : family;
-        if ((value ?? "") !== (terminalFont.family ?? "")) {
+        if (family !== (pendingFamily ?? (terminalFont.family ?? ""))) {
+            pendingFamily = family;
             patchTerminalFont("family", value);
         }
+        // The text becomes the entry of what is written (a name that is not
+        // installed gets its mark). An open list does it when it closes.
+        if (!terminalFamilyBox.popup.visible) {
+            showFamily();
+        }
+    }
+
+    // Escape in the text: back to the shown value, nothing is written.
+    function revertFamily() {
+        showFamily();
     }
 
     // Writes one key of the focus colour, as patchTerminalFont does.
@@ -175,7 +197,13 @@ ApplicationWindow {
                 field.text = field.shown();
             }
         }
-        if (force || !terminalFamilyBox.contentItem.activeFocus) {
+        // The document answered what was written, if it did.
+        if (pendingFamily !== undefined && String(terminalFont.family ?? "") === pendingFamily) {
+            pendingFamily = undefined;
+        }
+        // Not under an open list (it would close or shift) or a text in use:
+        // the box is made again when the list closes or the text is left.
+        if (force || !(terminalFamilyBox.popup.visible || terminalFamilyBox.contentItem.activeFocus)) {
             showFamily();
         }
         // A preset that the box does not know shows Base, as the theme takes
@@ -293,6 +321,11 @@ ApplicationWindow {
     }
 
     onVisibleChanged: {
+        if (!visible) {
+            // The list of the installed families is read again at the next
+            // opening of the window.
+            installedFamilies = [];
+        }
         if (!visible || shownOnce) {
             return;
         }
@@ -456,11 +489,26 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     editable: true
                     onActivated: index => root.commitFamily(textAt(index))
+                    Keys.onEscapePressed: event => {
+                        // With the list open, Escape closes the list.
+                        event.accepted = !popup.visible;
+                        if (event.accepted) {
+                            root.revertFamily();
+                        }
+                    }
                     Component.onCompleted: root.showFamily()
 
                     Connections {
                         function onAboutToShow() {
                             root.openFamilies();
+                        }
+
+                        function onClosed() {
+                            // What came while the list was open shows now;
+                            // a text that is being typed stays.
+                            if (!(terminalFamilyBox.contentItem.activeFocus && terminalFamilyBox.editText !== terminalFamilyBox.currentText)) {
+                                root.showFamily();
+                            }
                         }
 
                         target: terminalFamilyBox.popup
