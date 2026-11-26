@@ -103,6 +103,19 @@ struct FocusSettings {
 inline const QString FOCUS_COLOR_KEY = QStringLiteral("focusColor");
 inline const QString FOCUS_CONTRAST_COLOR = QStringLiteral("#1b2430");
 
+// The swatches of the settings window for the colour of the ring: the colours
+// that read as a ring on the cards of the default theme, each one holds every
+// pair of the focus contrast (docs/design/18-style.md). The first two are the
+// presets, Base of the default theme and Contrast. Picking one writes it as the
+// "custom" colour; the field takes any other.
+inline const QStringList FOCUS_SWATCHES{
+    QStringLiteral("#225fc2"), QStringLiteral("#1b2430"),
+    QStringLiteral("#0369a1"), QStringLiteral("#0f766e"),
+    QStringLiteral("#166534"), QStringLiteral("#92400e"),
+    QStringLiteral("#c2410c"), QStringLiteral("#b42318"),
+    QStringLiteral("#be185d"), QStringLiteral("#6d28d9"),
+};
+
 FocusSettings ResolveFocusSettings(const QJsonObject& settings);
 
 }  // namespace roost

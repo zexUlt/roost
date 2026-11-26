@@ -89,6 +89,9 @@ class Theme : public QObject {
     // tokens, for the settings window to show what each one is.
     Q_PROPERTY(QString focusBaseText READ focusBaseText NOTIFY changed)
     Q_PROPERTY(QString focusContrastText READ focusContrastText CONSTANT)
+    // The swatches of the settings window for the focus ring colour, as hex
+    // texts (FOCUS_SWATCHES).
+    Q_PROPERTY(QStringList focusSwatches READ focusSwatches CONSTANT)
     Q_PROPERTY(QColor attention READ attention NOTIFY changed)
     // The primary button: normal, hovered, and its text.
     Q_PROPERTY(QColor primary READ primary NOTIFY changed)
@@ -210,6 +213,7 @@ public:
     QColor focus() const { return Focus_; }
     QString focusBaseText() const { return FocusBase_.name(); }
     QString focusContrastText() const { return FOCUS_CONTRAST_COLOR; }
+    static QStringList focusSwatches() { return FOCUS_SWATCHES; }
     QColor attention() const { return Attention_; }
     QColor primary() const { return Primary_; }
     QColor primaryHover() const { return PrimaryHover_; }
