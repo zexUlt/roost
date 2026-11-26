@@ -1810,6 +1810,35 @@ private slots:
         QCOMPARE(KeymapBytes(), edited);
     }
 
+    // The plugin gives J to Hello, a line of the file gives it to Other. The
+    // user adds K to Hello and has not touched J: the file must not unbind J
+    // for Hello (a `command: null` entry that would keep it from Hello for
+    // good). This is the probe of the review.
+    void AKeyOfThePluginThatAnEntryOfAnotherCommandHoldsIsNotUnbound() {
+        KeymapEdited_ = true;
+        const QByteArray edited =
+            R"([{"key": "Ctrl+Alt+J", "command": "settings-fixture.other"}])";
+        QVERIFY(WriteFile(KeymapPath(), edited));
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  (QStringList{"Ctrl+Alt+J", "Ctrl+Alt+O"}),
+                                  TIMEOUT_MS);
+        QVERIFY(!KeysOf(*window, HELLO).contains("Ctrl+Alt+J"));
+
+        QVERIFY(OpenCapture(*window, HELLO));
+        PressCtrlAlt(*window, Qt::Key_K);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            KeysOf(*window, HELLO).contains("Ctrl+Alt+K") &&
+                !KeysWriting(*window),
+            TIMEOUT_MS);
+        QCOMPARE(UnbindsOf("Ctrl+Alt+J"), 0);
+
+        // roostd writes J for Hello as the last entry, so it wins J (design
+        // 16-keymap.md): Hello has it, as the table of the window says.
+        QVERIFY(KeysOf(*window, HELLO).contains("Ctrl+Alt+J"));
+    }
+
     // A write that changes nothing is answered and has no table after it:
     // the controls do not stay off for it.
     void AWriteThatChangesNothingEndsByTheTimeout() {

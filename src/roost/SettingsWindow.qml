@@ -464,6 +464,37 @@ ApplicationWindow {
         return params;
     }
 
+    // The keys a command has in a table (`bindings`, that of `platform`), and
+    // the keys that its plugin gives it which the table gives to another
+    // command only because an entry of the user's file binds them there: the
+    // user has not taken those off the command, and a set that left them out
+    // would have roostd unbind them (design.md §16, "Запись из окна"). The
+    // plugins' keys come from `plugins.list`, `contributes.keybindings`; a key
+    // that another plugin holds is not the user's doing, and is left out.
+    function latentKeys(bindings, platform, command, args, when) {
+        const keys = keysIn(bindings, command, args, when);
+        // The plugins give no args.
+        if (args !== undefined && args !== null) {
+            return keys;
+        }
+        for (const plugin of plugins) {
+            for (const binding of plugin.contributes?.keybindings ?? []) {
+                if (binding.command !== command || (binding.when ?? "") !== (when ?? "")) {
+                    continue;
+                }
+                const text = contributedKey(binding, platform);
+                if (text === "" || keys.some(k => keyChords.sameKey(k) === keyChords.sameKey(text))) {
+                    continue;
+                }
+                const holder = bindings.find(b => (b.when ?? "") === (when ?? "") && keyChords.sameKey(b.key) === keyChords.sameKey(text));
+                if (holder !== undefined && holder.source === "user" && holder.command !== command) {
+                    keys.push(text);
+                }
+            }
+        }
+        return keys;
+    }
+
     // The refusal for a caller that is a plugin's code: the helpers of the
     // window that write keys are the window's own. A plugin sets the keys of
     // the commands it declares with Roost.call (which is judged by the
@@ -552,7 +583,7 @@ ApplicationWindow {
                     return;
                 }
                 const params = targetOf(command, args, when);
-                params.entries = entriesOf(change(keysIn(keymap, command, args, when)), keysIn(result.bindings ?? [], command, args, when));
+                params.entries = entriesOf(change(latentKeys(keymap, platformName, command, args, when)), latentKeys(result.bindings ?? [], otherPlatformName, command, args, when));
                 Roost.call("keymap.setCommand", params, answered);
             });
         }, done);
