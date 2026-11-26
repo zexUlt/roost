@@ -1345,8 +1345,6 @@ void SessionsListTest::AForeignDocumentInTheMiddleOfOurWriteKeepsOurKeys() {
     QCOMPARE(env.Saved.size(), 1);
 }
 
-// What we have not written is ours: a document of the store that comes first
-// takes what we did not touch and nothing of what we did.
 // The agent last chosen in the form of a new session is a key of the view of
 // the instance: written when it is chosen, read back, absent while none was.
 void SessionsListTest::TheAgentOfTheFormIsKeptInTheViewOfTheInstance() {
@@ -1380,6 +1378,8 @@ void SessionsListTest::TheAgentOfTheFormIsKeptInTheViewOfTheInstance() {
     QVERIFY(other.newAgent().isEmpty());
 }
 
+// What we have not written is ours: a document of the store that comes first
+// takes what we did not touch and nothing of what we did.
 void SessionsListTest::AForeignDocumentKeepsUnsentEdits() {
     Env env;
     env.Open({{"a"}, {"z"}}, Doc({{"a", "work"}, {"z", "alpha"}}));

@@ -253,14 +253,16 @@ void SessionsWindow::Boot(int rows, const char* claude, bool empty) {
                              TIMEOUT_MS);
 }
 
+void SessionsWindow::SelectStyleOnce() {
+    static std::once_flag styleSelected;
+    std::call_once(styleSelected, roost::SelectControlsStyle);
+}
+
 // A window of the shell, connected to the running daemon, with the panels
 // loaded; waits until both slots hold theirs and the list has its first
 // sessions.
 void SessionsWindow::OpenWindow() {
-    // The style of the window, as main() selects it, before the first engine
-    // of the process; the style cannot be changed once Controls are loaded.
-    static std::once_flag styleSelected;
-    std::call_once(styleSelected, roost::SelectControlsStyle);
+    SelectStyleOnce();
     Api_ = std::make_unique<api::Api>();
     Engine_ = std::make_unique<QQmlApplicationEngine>();
     Singleton_ =

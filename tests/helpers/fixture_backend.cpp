@@ -184,6 +184,9 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
                 QJsonDocument(QJsonObject{{"agent", agent}, {"args", args}})
                     .toJson(QJsonDocument::Compact) +
                 '\n');
+            // Closed (flushed) before the answer: a test counts the lines as
+            // soon as it has the answer.
+            runs.close();
         }
         Answer(id, QJsonObject{{"id", agent + "-started"},
                                {"agent", agent},
