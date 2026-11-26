@@ -276,15 +276,24 @@ private:
     // The next write of the window is a barrier: whatever the window wrote
     // before it has been heard when this returns. The result is how many
     // writes were heard before the barrier, -1 if the barrier was not heard.
+    // The barrier is known by its own value (uiFontSize == size), not by being
+    // the next change: a slow write before it may be heard after the edit.
     static qsizetype WritesBeforeBarrier(const SettingsWindow& window,
                                          const QSignalSpy& changed, int size) {
-        const qsizetype before = changed.size();
+        const auto barrier = [&]() -> qsizetype {
+            for (qsizetype at = 0; at < changed.size(); ++at) {
+                if (changed.at(at).at(1).toJsonObject().value("uiFontSize") ==
+                    QJsonValue(size)) {
+                    return at;
+                }
+            }
+            return -1;
+        };
         if (!window.Edit("uiSizeField", QString::number(size)) ||
-            !QTest::qWaitFor([&] { return changed.size() > before; },
-                             TIMEOUT_MS)) {
+            !QTest::qWaitFor([&] { return barrier() >= 0; }, TIMEOUT_MS)) {
             return -1;
         }
-        return changed.size() - 1;
+        return barrier();
     }
 
     // The window is on its family box with the keyboard, as after a click in
