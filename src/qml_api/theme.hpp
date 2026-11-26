@@ -126,6 +126,11 @@ class Theme : public QObject {
     // its `font`, which the Controls and the Labels below it inherit; a plain
     // Text does not, so the panels use Label.
     Q_PROPERTY(QFont uiFont READ uiFont NOTIFY changed)
+    // The fonts without settings, read once at start (a system font changed
+    // later shows after a restart): what an empty field of the settings
+    // window stands for, for display only.
+    Q_PROPERTY(QFont defaultTerminalFont READ defaultTerminalFont CONSTANT)
+    Q_PROPERTY(QFont defaultUiFont READ defaultUiFont CONSTANT)
     // What is wrong with the settings that the theme reads (the fonts and
     // settings.focusColor): a list of {setting, text}, `setting` being the key
     // of the settings document (terminalFont, uiFontSize, focusColor) and
@@ -243,6 +248,8 @@ public:
     QFont smallFont() const;
     QFont terminalFont() const { return TerminalFont_; }
     QFont uiFont() const { return UiFont_; }
+    QFont defaultTerminalFont() const { return DefaultTerminalFont_; }
+    QFont defaultUiFont() const { return DefaultUiFont_; }
     QVariantList settingsProblems() const;
     QVariantList categories() const { return Categories_; }
     QColor bannerBackground() const { return BannerBackground_; }

@@ -100,6 +100,16 @@ ApplicationWindow {
         });
     }
 
+    function isObject(value) {
+        return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+
+    // Whether the key is in the document in any form, a wrong one too: there
+    // is something to reset.
+    function isStored(value) {
+        return value !== undefined && value !== null;
+    }
+
     // The fields show the document. What the user is typing in is not
     // replaced, unless `force`.
     function showDocument(force) {
@@ -267,6 +277,16 @@ ApplicationWindow {
         color: Roost.theme.textMuted
     }
 
+    // The font in force under a field whose stored value is not the one in
+    // force: shown while the theme has a problem with the key.
+    component SettingInUse: SettingHelp {
+        required property string setting
+        required property font inUse
+
+        visible: Roost.theme.settingsProblems.some(p => p.setting === setting)
+        text: "In use: " + inUse.family + " / " + Roost.theme.sizeText(inUse)
+    }
+
     // Puts a stored setting back to its default: shown only while one is
     // stored.
     component ResetButton: FormButton {
@@ -341,7 +361,7 @@ ApplicationWindow {
 
                     objectName: "terminalFamilyField"
                     Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.terminalFont.family
+                    placeholderText: "default: " + Roost.theme.defaultTerminalFont.family
                     onEditingFinished: {
                         const family = text.trim() === "" ? null : text.trim();
                         if ((family ?? "") !== shown()) {
@@ -352,7 +372,7 @@ ApplicationWindow {
 
                 ResetButton {
                     objectName: "terminalFamilyReset"
-                    visible: root.terminalFont.family !== undefined
+                    visible: root.terminalFont.family !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
                     onClicked: root.patchTerminalFont("family", null)
                 }
             }
@@ -373,7 +393,7 @@ ApplicationWindow {
 
                     objectName: "terminalSizeField"
                     Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.terminalFont)
+                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultTerminalFont)
                     onEditingFinished: {
                         const size = root.sizeOf(text);
                         if (size === undefined) {
@@ -386,7 +406,7 @@ ApplicationWindow {
 
                 ResetButton {
                     objectName: "terminalSizeReset"
-                    visible: root.terminalFont.size !== undefined
+                    visible: root.terminalFont.size !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
                     onClicked: root.patchTerminalFont("size", null)
                 }
             }
@@ -398,6 +418,12 @@ ApplicationWindow {
             SettingProblems {
                 objectName: "terminalFontProblems"
                 setting: "terminalFont"
+            }
+
+            SettingInUse {
+                objectName: "terminalFontInUse"
+                setting: "terminalFont"
+                inUse: Roost.theme.terminalFont
             }
 
             FieldRow {
@@ -412,7 +438,7 @@ ApplicationWindow {
 
                     objectName: "uiSizeField"
                     Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.uiFont)
+                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultUiFont)
                     onEditingFinished: {
                         const size = root.sizeOf(text);
                         if (size === undefined) {
@@ -441,6 +467,12 @@ ApplicationWindow {
             SettingProblems {
                 objectName: "uiFontSizeProblems"
                 setting: "uiFontSize"
+            }
+
+            SettingInUse {
+                objectName: "uiFontInUse"
+                setting: "uiFontSize"
+                inUse: Roost.theme.uiFont
             }
 
             FieldRow {
@@ -498,7 +530,7 @@ ApplicationWindow {
 
                 ResetButton {
                     objectName: "focusColorReset"
-                    visible: root.focusColor.preset !== undefined
+                    visible: root.isStored(root.settingsDocument.focusColor)
                     onClicked: root.patchSettings({
                         "focusColor": null
                     })
