@@ -231,7 +231,9 @@ private slots:
                                       TIMEOUT_MS);
             QCOMPARE(Stored(), TerminalFont({{"size", expected}}));
             QVERIFY(Shown().isEmpty());
-            // The answer to Stored() came after everything the key wrote.
+            // Stored() answers from the window's cache, which only the
+            // announcements update, in the order roostd sent them: once it
+            // shows the key's size, every write announced before is counted.
             QCOMPARE(SettingsWrites(*writes), 1);
         }
 
