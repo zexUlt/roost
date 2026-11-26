@@ -1234,7 +1234,7 @@ private slots:
 
         TypeNewSession("do it");
 
-        VerifyPromptKeepsTheTask("do it", "Not started: ");
+        VerifyPromptKeepsTheTask("do it", "the backend of claude");
         // The window and roostd are alive, and roostd answers.
         QVERIFY(Window()->isVisible());
         QCOMPARE(Daemon_->state(), QProcess::Running);
@@ -1295,6 +1295,63 @@ private slots:
                                  TIMEOUT_MS);
         QVERIFY(Notice().contains("Workspace not trusted"));
         QVERIFY(!Prompting());
+    }
+
+    void ADigitWhileTheStartRunsChangesNothing() {
+        FailOnWarnings();
+        Start(QJsonObject{{"categories", QJsonObject{{KeyOf(BETA), "Ops"}}}});
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        QVERIFY(Put("bg.agents", AgentsWithStarted()));
+        QVERIFY(Put("bg.hold", ""));
+        MoveTo(ALPHA);
+
+        TypeNewSession("do it");
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptProblem(), QString("Starting…"),
+                                  TIMEOUT_MS);
+        // The category of the session under the cursor is empty: a digit
+        // would pick the first known one.
+        QCOMPARE(PromptText(), QString());
+        Press(Qt::Key_1);
+        Type("x");
+
+        QCOMPARE(PromptText(), QString());
+        QVERIFY(Prompting());
+
+        QVERIFY(QFile::remove(BinPath("bg.hold")));
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QCOMPARE(Runs(), 1);
+    }
+
+    void AReasonIsWrappedByWordsAtTheLeastWidthOfTheList() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString reason =
+            "Workspace not trusted. Run it by hand once, accept the trust "
+            "dialog of the folder, and start the session again from here, "
+            "then wait for the final word of this long reason: LASTWORD";
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", reason.toUtf8() + "\n"));
+        // The panel at its minimum width.
+        QCOMPARE(PanelOf(LIST)->property("minimumWidth").toInt(), 200);
+        Window()->resize(Window()->width() / 6, Window()->height());
+        QTRY_COMPARE_WITH_TIMEOUT(PanelOf(LIST)->width(), qreal(200),
+                                  TIMEOUT_MS);
+
+        TypeNewSession("do it");
+
+        VerifyPromptKeepsTheTask("do it", "LASTWORD");
+        const QQuickItem* const problem = Part("sessionsPromptProblem");
+        QVERIFY(!problem->property("truncated").toBool());
+        QVERIFY(problem->property("lineCount").toInt() > 1);
     }
 
     void ThePromptTakesTextWithoutListKeysAndEscCancels() {

@@ -1188,7 +1188,7 @@ private slots:
         }
         QVERIFY(Put("bg.crash", ""));
         FillTheDraft();
-        VerifyFailureKeepsTheDraft("Not started: ");
+        VerifyFailureKeepsTheDraft("the backend of claude");
         // The window and roostd are alive, and roostd answers.
         QVERIFY(Window()->isVisible());
         QCOMPARE(Daemon_->state(), QProcess::Running);
@@ -1282,6 +1282,126 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Agent's own name"),
                                  TIMEOUT_MS);
         QVERIFY(!FormOpen());
+    }
+
+    void ALateSuccessDoesNotTakeTheKeyboardFromAnotherPanel() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        Click(CreateButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+
+        // The user goes to the terminal while the agent starts.
+        Terminal()->forceActiveFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(Terminal()->hasActiveFocus(), TIMEOUT_MS);
+        QVERIFY(FormOpen());
+        Release();
+
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!FormOpen(), TIMEOUT_MS);
+        WAIT_FOR_EFFECTS();
+        // The keys the user types now go to the terminal, not to the list.
+        QVERIFY(Terminal()->hasActiveFocus());
+        QVERIFY(!ListView()->hasActiveFocus());
+        // The list is what the panel gives the keyboard to when it gets it.
+        QVERIFY(ListView()->property("focus").toBool());
+        QVERIFY(ListView()->isVisible());
+    }
+
+    void AReasonIsWrappedByWordsAtTheLeastWidthOfTheList() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QString reason =
+            "Workspace not trusted. Run it by hand once, accept the trust "
+            "dialog of the folder, and start the session again from here, "
+            "then wait for the final word of this long reason: LASTWORD";
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", reason.toUtf8() + "\n"));
+        FillTheDraft();
+        // The panel at its minimum width.
+        QCOMPARE(PanelOf(LIST)->property("minimumWidth").toInt(), 200);
+        Window()->resize(Window()->width() / 6, Window()->height());
+        QTRY_COMPARE_WITH_TIMEOUT(PanelOf(LIST)->width(), qreal(200),
+                                  TIMEOUT_MS);
+
+        VerifyFailureKeepsTheDraft("LASTWORD");
+
+        const QQuickItem* const problem = Part("sessionsNewProblem");
+        QVERIFY(!problem->property("truncated").toBool());
+        QVERIFY(problem->property("lineCount").toInt() > 1);
+        QVERIFY(problem->property("contentWidth").toReal() <=
+                problem->width() + 1);
+    }
+
+    void ALostConnectionToRoostdSaysTheSessionMayHaveStarted() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        Click(CreateButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+
+        StopDaemon();
+        // The held start is not the fake's to finish any more.
+        Release();
+
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().startsWith("May have started: "),
+                                 TIMEOUT_MS);
+        QVERIFY(FormOpen());
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewName"), QString("Shipped"));
+        QCOMPARE(TextOf("sessionsNewCategoryName"), QString("Brand new"));
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        QVERIFY(Notice().isEmpty());
+    }
+
+    void ALateAnswerOfACancelledStartDoesNotTouchTheFormOpenedAgain() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        Click(CreateButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        Click(BackLink());
+        VerifyListShown();
+        OPEN_FORM();
+        Type("Second");
+
+        Release();
+
+        // The old start failed: its reason is for the footer, not the form.
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().startsWith("Not started: "),
+                                 TIMEOUT_MS);
+        WAIT_FOR_EFFECTS();
+        QVERIFY(FormOpen());
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Second"));
+        QVERIFY(Problem().isEmpty());
+        QVERIFY(CreateButton()->property("enabled").toBool());
+        QCOMPARE(TextOf("sessionsNewCreate"), QString("Create session"));
+        QCOMPARE(Runs(), 1);
     }
 
     void NStillStartsASessionFromThePrompt() {

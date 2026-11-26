@@ -164,21 +164,21 @@ bool SessionsWindow::LinkPlugins() const {
         manifest.insert("contributes", contributes);
     }
     const QByteArray manifestJson = QJsonDocument(manifest).toJson();
-    QString run =
-        QStringLiteral("exec '%1' --poll-ms %2").arg(adapter).arg(POLL_MS);
+    QString adapterCommand =
+        QStringLiteral("'%1' --poll-ms %2").arg(adapter).arg(POLL_MS);
     for (const QString& argument : AdapterArgs_) {
-        run += QStringLiteral(" '%1'").arg(argument);
+        adapterCommand += QStringLiteral(" '%1'").arg(argument);
     }
-    run += QStringLiteral(" \"$@\"");
+    adapterCommand += QStringLiteral(" \"$@\"");
+    QString run = QStringLiteral("exec ") + adapterCommand;
     if (AnswerWithoutSessionId_) {
         // The adapter answers a start without the id of the session: its
         // result is the one with an id followed by the title and nothing
         // else, which the lines of the list never are.
-        run = QStringLiteral(
-                  "'%1' --poll-ms %2 \"$@\" | perl -pe 'BEGIN { $| = 1 } "
-                  "s/\"id\":\"[^\"]*\",(\"title\":\"[^\"]*\"\\}\\})/$1/'")
-                  .arg(adapter)
-                  .arg(POLL_MS);
+        run = adapterCommand +
+              QStringLiteral(
+                  " | perl -pe 'BEGIN { $| = 1 } "
+                  "s/\"id\":\"[^\"]*\",(\"title\":\"[^\"]*\"\\}\\})/$1/'");
     }
     const QByteArray shell = ("#!/bin/sh\n" + run + "\n").toUtf8();
     QFile script(claude.filePath("backend/claude-adapter"));

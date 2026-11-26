@@ -359,13 +359,19 @@ FocusScope {
 
     // Cancel and Esc: the draft goes, the list has the keyboard. A start that
     // is still running goes on: a session it starts is listed, a failure of it
-    // comes to the footer.
-    function closeNewForm() {
+    // comes to the footer. `takeKeyboard` false (the answer of a start, which
+    // comes whenever): the list is only the focus of its panel, the keyboard
+    // stays where the user took it.
+    function closeNewForm(takeKeyboard = true) {
         newOpen = false;
         newStarting = false;
         newStart++;
         draftTarget = null;
-        list.forceActiveFocus();
+        if (takeKeyboard) {
+            list.forceActiveFocus();
+        } else {
+            list.focus = true;
+        }
     }
 
     function canCreate() {
@@ -402,7 +408,9 @@ FocusScope {
             }
             newStarting = false;
             if (problem === "") {
-                closeNewForm();
+                // The keyboard moves only if the form has it: the user may
+                // have gone to another panel while the agent started.
+                closeNewForm(root.activeFocus);
             } else {
                 newProblem = problem;
             }
@@ -415,6 +423,7 @@ FocusScope {
         promptKind = kind;
         promptRef = ref;
         promptStarting = false;
+        promptStart++;
         promptProblem = "";
         promptInput.text = text;
         promptInput.cursorPosition = text.length;
@@ -687,6 +696,10 @@ FocusScope {
     function runCommand(agent, verb, args, callback) {
         Roost.commands.run(agent + "." + verb, args, callback);
     }
+
+    // The code of the error of a command whose connection to roostd went away
+    // before the answer (protocol::EErrorCode::ConnectionLost).
+    readonly property int connectionLost: -32002
 
     function failure(error) {
         return error && error.message ? error.message : "the command failed";
@@ -991,7 +1004,9 @@ FocusScope {
                 "prompt": task
             }, (error, result) => {
                 if (error) {
-                    done("Not started: " + failure(error));
+                    // A connection lost under the command: the agent may have
+                    // started the session, and a second start would repeat it.
+                    done((error.code === connectionLost ? "May have started: " : "Not started: ") + failure(error));
                     return;
                 }
                 if (!result || typeof result.id !== "string" || result.id === "") {
@@ -2059,7 +2074,7 @@ FocusScope {
                         visible: root.newProblem !== ""
                         color: Roost.theme.error
                         font: Roost.theme.metaFont
-                        elide: Text.ElideRight
+                        wrapMode: Text.Wrap
                         text: root.newProblem
                     }
                 }
@@ -2223,6 +2238,9 @@ FocusScope {
                     color: root.textColor
                     selectionColor: Roost.theme.selection
                     selectByMouse: true
+                    // The task is on its way: what is typed now would not go
+                    // with it.
+                    readOnly: root.promptStarting
 
                     onAccepted: root.submitPrompt()
                     // A tap on the list takes the keyboard away: the prompt is
@@ -2243,7 +2261,7 @@ FocusScope {
                     Keys.onPressed: event => {
                         const index = event.key - Qt.Key_1;
                         const plain = (event.modifiers & ~Qt.KeypadModifier) === Qt.NoModifier;
-                        if (root.promptPicksCategory && text === "" && plain && index >= 0 && index < 9 && index < sessionsList.knownCategories.length) {
+                        if (!root.promptStarting && root.promptPicksCategory && text === "" && plain && index >= 0 && index < 9 && index < sessionsList.knownCategories.length) {
                             text = sessionsList.knownCategories[index];
                             root.submitPrompt();
                             event.accepted = true;
@@ -2262,7 +2280,7 @@ FocusScope {
                 visible: root.promptStarting || root.promptProblem !== ""
                 color: root.promptStarting ? Roost.theme.textMuted : Roost.theme.error
                 font: Roost.theme.metaFont
-                elide: Text.ElideRight
+                wrapMode: Text.Wrap
                 text: root.promptStarting ? "Starting…" : root.promptProblem
             }
 
