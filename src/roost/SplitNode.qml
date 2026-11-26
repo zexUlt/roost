@@ -110,28 +110,96 @@ SplitView {
         return -1;
     }
 
-    // The pixels of the children that are not "fill" (set by recount), and
-    // the share of each "fill" child in what is left.
+    // The direction decides which side of a child counts as the length.
+    onHorizontalChanged: split.recount()
+
+    // The pixels of the children that are not "fill" (set by recount), each
+    // counted as its document size or its minimum, whichever is more: that is
+    // what is shown. `minimums` is the minimum along the split of every child
+    // (0 for one that is not shown), also set by recount.
     property real fixedTotal: 0
-    readonly property real fillShare: {
-        if (split.fillCount < 2 || split.shownCount < 1) {
-            return -1;
+    property var minimums: []
+
+    // The share of each "fill" child in what is left, by index of the child
+    // (-1 for the others): equal, but not under the minimum of the child; a
+    // child whose minimum is above the equal share keeps its minimum, and the
+    // others share the rest equally.
+    readonly property var fillShares: {
+        const shares = [];
+        const total = split.node !== null ? split.node.children.length : 0;
+        for (let i = 0; i < total; ++i) {
+            shares.push(-1);
         }
-        const room = (split.horizontal ? split.width : split.height) - split.fixedTotal - (split.shownCount - 1) * split.handleSize;
-        return Math.max(40, Math.floor(room / split.fillCount));
+        if (split.fillCount < 2 || split.shownCount < 1) {
+            return shares;
+        }
+        let room = (split.horizontal ? split.width : split.height) - split.fixedTotal - (split.shownCount - 1) * split.handleSize;
+        let open = [];
+        for (let i = 0; i < total; ++i) {
+            if (split.shownAt(i) && (split.node.sizes[i] ?? 0) <= 0) {
+                open.push(i);
+            }
+        }
+        let settled = false;
+        while (!settled && open.length > 0) {
+            settled = true;
+            const equal = Math.floor(room / open.length);
+            for (const i of open) {
+                const least = Math.max(40, split.minimums[i] ?? 0);
+                if (least > equal) {
+                    shares[i] = least;
+                    room -= least;
+                    open = open.filter(j => j !== i);
+                    settled = false;
+                    break;
+                }
+            }
+            if (settled) {
+                for (const i of open) {
+                    shares[i] = Math.max(40, equal);
+                }
+            }
+        }
+        return shares;
     }
 
+    // What the children that are shown need, with the handles between them:
+    // the sum along the split, the largest across it. A child takes the room
+    // its own minimum says (LayoutNode); the sizes of the document are kept.
+    property real minimumWidth: 40
+    property real minimumHeight: 40
+
     function recount() {
+        let along = 0;
+        let across = 40;
+        let shown = 0;
+        for (let i = 0; i < children.count; ++i) {
+            const child = children.objectAt(i);
+            if (child === null || child.gone || child.collapsed) {
+                continue;
+            }
+            along += split.horizontal ? child.minWidth : child.minHeight;
+            across = Math.max(across, split.horizontal ? child.minHeight : child.minWidth);
+            ++shown;
+        }
+        along += Math.max(0, shown - 1) * split.handleSize;
+        split.minimumWidth = split.horizontal ? Math.max(40, along) : across;
+        split.minimumHeight = split.horizontal ? across : Math.max(40, along);
+
         let total = 0;
+        const minimums = [];
         for (let i = 0; i < children.count; ++i) {
             const child = children.objectAt(i);
             // Not created yet (the Instantiator builds several delegates), or
             // removed and waiting to be deleted.
             if (child === null || child.gone || child.collapsed) {
+                minimums.push(0);
                 continue;
             }
+            minimums.push(split.horizontal ? child.minWidth : child.minHeight);
             total += child.fixedPx;
         }
+        split.minimums = minimums;
         split.fixedTotal = total;
     }
 
@@ -149,7 +217,7 @@ SplitView {
         // user dragged a divider between "fill" children.
         let moved = false;
         for (let i = 0; i < children.count; ++i) {
-            if (split.shownAt(i) && children.objectAt(i).fills && i !== split.lastFill && Math.abs(pixelsOf(i) - split.fillShare) > 1) {
+            if (split.shownAt(i) && children.objectAt(i).fills && i !== split.lastFill && Math.abs(pixelsOf(i) - split.fillShares[i]) > 1) {
                 moved = true;
             }
         }
@@ -210,8 +278,13 @@ SplitView {
             // last one shown if none is); the "fill" ones of its kind have a
             // share.
             readonly property bool filler: !collapsed && index === split.lastFill
-            readonly property real fixedPx: fills || collapsed ? 0 : (stepped > 0 ? stepped : size)
+            // A child that is not "fill" shows its size, or its minimum if that
+            // is more.
+            readonly property real fixedPx: fills || collapsed ? 0 : Math.max(stepped > 0 ? stepped : size, split.horizontal ? minWidth : minHeight)
             onFixedPxChanged: split.recount()
+            onMinWidthChanged: split.recount()
+            onMinHeightChanged: split.recount()
+            onCollapsedChanged: split.recount()
 
             node: modelData
             view: split.view
@@ -224,12 +297,12 @@ SplitView {
             onSizeChanged: stepped = 0
             onNodeChanged: stepped = 0
 
-            readonly property real preferred: filler ? -1 : (fills ? split.fillShare : fixedPx)
+            readonly property real preferred: filler ? -1 : (fills ? split.fillShares[index] ?? -1 : fixedPx)
 
             SplitView.preferredWidth: split.node.horizontal ? preferred : -1
             SplitView.preferredHeight: !split.node.horizontal ? preferred : -1
-            SplitView.minimumWidth: 40
-            SplitView.minimumHeight: 40
+            SplitView.minimumWidth: minWidth
+            SplitView.minimumHeight: minHeight
         }
     }
 }
