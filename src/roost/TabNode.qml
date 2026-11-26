@@ -106,16 +106,19 @@ PanelCard {
     function recountMinimum() {
         let width = 40;
         let height = 40;
+        let shown = false;
         for (let i = 0; i < made.count; ++i) {
             const page = made.objectAt(i);
             if (page === null || page.node === null || page.node.hidden === true) {
                 continue;
             }
+            shown = true;
             width = Math.max(width, page.minWidth);
             height = Math.max(height, page.minHeight);
         }
+        // A stack with no page shown has no bar to keep either.
         stack.minimumWidth = width;
-        stack.minimumHeight = bar.height + height;
+        stack.minimumHeight = shown ? bar.height + height : height;
     }
 
     // The user chose a tab: the shell stores it, and the keyboard goes to the

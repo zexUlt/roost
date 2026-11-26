@@ -32,14 +32,15 @@ FocusScope {
 
     // How narrow and how low the panel may get: its optional properties
     // `minimumWidth` and `minimumHeight`, 40 when it declares none, a value
-    // that is not a number, or one under 40: no panel goes below 40. The split of the layout keeps the slot at
-    // least this big; the size in the document is not changed.
+    // that is not a finite number, or one under 40: no panel goes below 40.
+    // The split of the layout keeps the slot at least this big; the size in
+    // the document changes only when a drag of a divider writes the shown sizes.
     readonly property real minimumWidth: root.declared("minimumWidth")
     readonly property real minimumHeight: root.declared("minimumHeight")
 
     function declared(name) {
         const value = root.panel !== null ? root.panel[name] : undefined;
-        return typeof value === "number" && value > 40 ? value : 40;
+        return typeof value === "number" && Number.isFinite(value) && value > 40 ? value : 40;
     }
 
     // The user pressed the right button at (x, y) of the slot, and the panel

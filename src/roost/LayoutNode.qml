@@ -66,7 +66,7 @@ Item {
     // minimum the panel declares.
     readonly property int widthStep: 20
     readonly property int widthMin: Math.ceil(root.minWidth)
-    readonly property int widthMax: 560
+    readonly property int widthMax: Math.max(560, root.widthMin)
     // The width the user stepped to, 0 if none. SplitNode takes it before the
     // size of the layout, and drops it when the layout gives a new size; it is
     // a property of its own, so that the binding of SplitNode to the layout
