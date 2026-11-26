@@ -12,9 +12,12 @@ name: Package
 #
 # The smoke jobs (smoke-macos, smoke-linux) run the packages on machines that
 # did not build them and have no Qt; the release job makes a draft release of
-# the packages that passed, on a `v*` tag and on a dispatch with draft_release
-# (a dry run: the draft is named dryrun-<run id>, no git tag is made, and the
-# draft is deleted after review). Publishing is a manual step.
+# the packages that passed: on a `v*` tag pushed by hand; on the night run and
+# on a dispatch with `release`, when some product change lies after the last
+# `v*` tag (the run makes the tag itself, once everything is green); on a
+# dispatch with draft_release (a dry run: the draft is named dryrun-<run id>,
+# no git tag is made, and the draft is deleted after review). Publishing is a
+# manual step. The plan of a run, its version included, is tools/package_plan.sh.
 #
 # Runs on `v*` tags, on dispatch, on pushes to trunk that change the
 # packaging and once a night on trunk, not on pull requests: a macOS runner
@@ -25,7 +28,9 @@ name: Package
 # night run (and with it every other job) when nothing that reaches a package
 # changed since the last run of this workflow on trunk, whatever that run
 # ended with: a red night is not retried on the same commit, a dispatch
-# retries it. Only documentation (docs/, .claude/, *.md, issue templates) does
+# retries it. A night that has a release to make is never skipped: a red night
+# followed by a day of documentation must not leave a product change without a
+# release. Only documentation (docs/, .claude/, *.md, issue templates) does
 # not reach a package. The path list is the files that rarely change and
 # shape a package or its check; the build and the tests of the code run in
 # ci.yml on every pull request. QML of the plugins and the project version
@@ -59,12 +64,18 @@ on:
         description: "Also make a draft release (dryrun-<run id>, no git tag) of the packages"
         type: boolean
         default: false
+      release:
+        description: "Release now: if some product change lies after the last v* tag, tag the next version on this commit (trunk only) and make its draft release"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# Runs that may release never overlap (a dispatch during the night would
+# choose the same version), and none is cancelled: a pending run waits.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ (github.event_name == 'schedule' || inputs.release) && format('{0}-release', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 # Keep in step with ci.yml.
@@ -78,9 +89,11 @@ defaults:
     shell: bash
 
 jobs:
-  # Decides whether the jobs below run. Only a night run can be skipped: tags,
-  # dispatches and pushes always package. The base of a night run is the head
-  # of the last other run of this workflow on trunk (any event, any result).
+  # Decides whether the jobs below run and what version they build, by
+  # tools/package_plan.sh (its header has the rules). Only a night run can be
+  # skipped: tags, dispatches and pushes always package, and so does a night
+  # that has a release to make. The base of a night run is the head of the
+  # last other run of this workflow on trunk (any event, any result).
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -88,43 +101,36 @@ jobs:
       actions: read
       contents: read
     outputs:
-      needed: ${{ steps.decide.outputs.needed }}
+      needed: ${{ steps.plan.outputs.needed }}
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      patch: ${{ steps.plan.outputs.patch }}
+      last: ${{ steps.plan.outputs.last }}
     steps:
+      # All the tags and the history: the plan reads both.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Decide
-        id: decide
+      - name: Plan
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RELEASE: ${{ inputs.release || 'false' }}
+          DRAFT: ${{ inputs.draft_release || 'false' }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          if [ "$EVENT" != schedule ]; then
-            echo "event $EVENT: packaged"
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          BASE=
+          if [ "$EVENT" = schedule ]; then
+            BASE=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&per_page=20" \
+              --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0].head_sha // empty")
           fi
-          head=$(git rev-parse HEAD)
-          base=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&per_page=20" \
-            --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0].head_sha // empty")
-          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-            echo "base ${base:-none} (not found or not in history) head $head: needed"
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # What does not reach a package: documentation and its tooling.
-          files=$(git diff --no-renames --name-only "$base" "$head" |
-            grep -v -E '^(docs/|\.claude/|\.github/ISSUE_TEMPLATE/)|\.md$' || true)
-          if [ -n "$files" ]; then
-            echo "base $base head $head: needed, first of the files: $(echo "$files" | head -n 5 | paste -sd' ' -)"
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "base $base head $head: not needed, no change reaches a package"
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-          fi
+          export BASE
+          set -o pipefail
+          tools/package_plan.sh | tee -a "$GITHUB_OUTPUT"
 
   # The release build, its tests, then the .app and .dmg and their checks. The
   # Qt, zig and caches are those of the macOS release job of ci.yml.
@@ -178,8 +184,12 @@ jobs:
         with:
           key: release
 
+      # The patch of the version, when the plan has one (a tag, a release, a
+      # dry run); otherwise the project's own, 0.
       - name: Configure
-        run: cmake --preset release
+        run: cmake --preset release ${PATCH:+-DROOST_VERSION_PATCH="$PATCH"}
+        env:
+          PATCH: ${{ needs.changes.outputs.patch }}
 
       - name: Build
         run: cmake --build --preset release
@@ -195,15 +205,17 @@ jobs:
       - name: Package
         run: tools/package_macos.sh build/release "$RUNNER_TEMP/package"
 
-      # A tag names the version of the release: it must be the version of the
-      # project, which the app carries.
+      # The version of the plan (the tag, or the next one of a release or a
+      # dry run) is the version of the project, which the app carries.
       - name: The tag is the version of the app
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: needs.changes.outputs.version != ''
+        env:
+          PLANNED: ${{ needs.changes.outputs.version }}
         run: |
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             "$RUNNER_TEMP/package/stage/roost.app/Contents/Info.plist")
-          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
-            echo "::error::the tag $GITHUB_REF_NAME is not the version $version of the app"
+          if [ "$PLANNED" != "$version" ]; then
+            echo "::error::the planned version $PLANNED is not the version $version of the app"
             exit 1
           fi
 
@@ -307,8 +319,13 @@ jobs:
         with:
           key: ${{ env.PRESET }}
 
+      # The patch of the version, as in the macOS job. The version of the
+      # AppImage is not compared with the plan: only the .dmg is (its app
+      # carries the same project version).
       - name: Configure
-        run: cmake --preset ${{ env.PRESET }}
+        run: cmake --preset ${{ env.PRESET }} ${PATCH:+-DROOST_VERSION_PATCH="$PATCH"}
+        env:
+          PATCH: ${{ needs.changes.outputs.patch }}
 
       - name: Build
         run: cmake --build --preset ${{ env.PRESET }}
@@ -471,17 +488,30 @@ jobs:
           ROOST_SMOKE_QPA: xcb
 
   # A draft release of the packages that passed their smoke: the .dmg, the two
-  # AppImages and SHA256SUMS. On a dispatch it is a dry run: the tag name is
-  # dryrun-<run id> and the draft makes no git tag (a draft does not, until it
-  # is published). Never published here: that is by hand, after the notes and
-  # the assets are read. The only job with the right to write.
+  # AppImages and SHA256SUMS. Three kinds of run:
+  #   - a pushed tag v*: the tag is there, the real key signs;
+  #   - a release (the night, or a dispatch with `release`, planned by the job
+  #     `changes`): the real key signs, and when the assets and the signature
+  #     are ready the job makes the annotated tag v<version> on this commit
+  #     (REST API: git/tags, git/refs) and then the draft. A tag pushed with
+  #     GITHUB_TOKEN starts no workflow, so package.yml does not run again on
+  #     it. The notes get the changes since the last tag;
+  #   - a dry run (dispatch with draft_release): the tag name is dryrun-<run
+  #     id>, a throwaway key signs, no git tag is made (a draft does not make
+  #     one, until it is published).
+  # Never published, no release or tag deleted here: that is by hand, after the
+  # notes and the assets are read. The only job with the right to write.
   release:
     name: release (draft)
-    needs: [smoke-macos, smoke-linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.draft_release)
+    needs: [changes, smoke-macos, smoke-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.release == 'true' || (github.event_name == 'workflow_dispatch' && inputs.draft_release)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      # What the release is called, and whether it is a real one (the real key).
+      TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.changes.outputs.release == 'true' && format('v{0}', needs.changes.outputs.version) || format('dryrun-{0}', github.run_id) }}
+      IS_REAL: ${{ startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.release == 'true' }}
     steps:
       # Only the public key: the signature is checked against the committed one.
       - uses: actions/checkout@v4
@@ -518,22 +548,21 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends minisign
 
       # SHA256SUMS gets a minisign signature whose trusted comment names the
-      # tag. On a tag the secret key signs and packaging/minisign.pub verifies.
-      # A dry run signs with a throwaway pair, so the real key signs only tags
-      # (the "release key check" step proves the pair separately). The key file
+      # tag. On a tag and on a release the secret key signs and
+      # packaging/minisign.pub verifies. A dry run signs with a throwaway pair,
+      # so the real key signs only what is released (the "release key check"
+      # step proves the pair separately). The key file
       # lives in a private directory that goes away on any exit. The secret
       # comes in through env only and is never printed.
       - name: Sign SHA256SUMS
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
-          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
           umask 077
           keydir=$(mktemp -d "$RUNNER_TEMP/minisign.XXXXXX")
           trap 'rm -rf "$keydir"' EXIT
-          if [ "$IS_TAG" = true ]; then
+          if [ "$IS_REAL" = true ]; then
             if [ -z "$MINISIGN_SECRET_KEY" ]; then
               echo "::error::the secret MINISIGN_SECRET_KEY is empty"
               exit 1
@@ -559,9 +588,10 @@ jobs:
 
       # A dry run never signs with the real key; this proves, before the first
       # tag, that the secret and packaging/minisign.pub are one pair. The probe
-      # and its signature are not released.
+      # and its signature are not released. A release dispatch signs with the
+      # real key anyway.
       - name: Release key check
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.release
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
@@ -583,8 +613,7 @@ jobs:
       # The source of the Qt of the packages must be where the notes say.
       - name: Notes
         env:
-          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
-          KEYSRC: ${{ startsWith(github.ref, 'refs/tags/v') && 'packaging/minisign.pub in the repository' || 'a dry run, so a throwaway key and not the release key' }}
+          KEYSRC: ${{ env.IS_REAL == 'true' && 'packaging/minisign.pub in the repository' || 'a dry run, so a throwaway key and not the release key' }}
         run: |
           src="https://download.qt.io/official_releases/qt/${QT_VERSION%.*}/${QT_VERSION}/single/qt-everywhere-src-${QT_VERSION}.tar.xz"
           curl -fsIL --retry 3 "$src" >/dev/null || { echo "::error::$src does not exist"; exit 1; }
@@ -624,19 +653,41 @@ jobs:
           printf '%s\n' "$notes" >"$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
+      # The tag is made after everything else is ready (the packages passed
+      # their smoke, the signature checked): a red run leaves no tag. Annotated,
+      # on the commit of this run, through the API: the job has no git
+      # checkout to push from. An existing tag fails the call (422), the job
+      # does not move it.
+      - name: Tag the release
+        if: needs.changes.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          object=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" \
+            -f tag="$TAG" -f message="roost $TAG" -f object="$GITHUB_SHA" -f type=commit \
+            --jq .sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" -f sha="$object" --jq .ref
+
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dryrun-{0}', github.run_id) }}
-          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          LAST: ${{ needs.changes.outputs.last }}
+          RELEASE: ${{ needs.changes.outputs.release }}
         run: |
           args=(--repo "$GITHUB_REPOSITORY" --draft --notes-file "$RUNNER_TEMP/notes.md")
-          if [ "$IS_TAG" = true ]; then
+          if [ "$IS_REAL" = true ]; then
             args+=(--verify-tag --title "roost $TAG")
           else
             # A name that is no release, on the commit of the run; the draft
             # makes no git tag.
             args+=(--target "$GITHUB_SHA" --title "dry run $TAG (delete me)")
+          fi
+          # With a start tag gh appends the generated list of changes to the
+          # text of the notes file.
+          if [ "$RELEASE" = true ] && [ -n "$LAST" ]; then
+            args+=(--generate-notes --notes-start-tag "$LAST")
           fi
           gh release create "$TAG" "${args[@]}" "$RUNNER_TEMP"/release/*
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName,assets \
