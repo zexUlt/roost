@@ -61,10 +61,12 @@ const QString STARTED = "bg-4e5f6071";
 
 // A fake `claude`, steered by the files next to it: `agents` prints
 // agents.json with the cwds of /work moved into this directory, which it
-// makes, and adds a line to agents.polls; `attach` runs fake_tui; `--bg` writes
-// the directory it runs in and its arguments, each whole in brackets, to
-// bg.ran, puts bg.agents in place of agents.json when it is there and prints
-// bg.stdout.
+// makes, and adds a line to agents.polls; `attach` runs fake_tui; `--bg` adds
+// a line to bg.runs, writes the directory it runs in and its arguments, each
+// whole in brackets, to bg.ran, waits while bg.hold is there, kills its parent
+// (the adapter) when bg.crash is there, fails with the exit code in bg.exit
+// and the text of bg.stderr, else puts bg.agents in place of agents.json when
+// it is there and prints bg.stdout.
 constexpr const char* FORM_CLAUDE = R"sh(#!/bin/sh
 dir=$(dirname "$0")
 verb=$1
@@ -80,7 +82,14 @@ attach)
   cd / && FAKE_TUI_GREETING=$2 exec "$dir/fake_tui"
   ;;
 bg)
+  echo run >> "$dir/bg.runs"
   printf '%s\n%s\n' "$(pwd -P)" "$argv" > "$dir/bg.ran"
+  while [ -f "$dir/bg.hold" ]; do sleep 0.05; done
+  if [ -f "$dir/bg.crash" ]; then kill -9 $PPID; sleep 5; exit 1; fi
+  if [ -f "$dir/bg.exit" ]; then
+    cat "$dir/bg.stderr" >&2
+    exit $(cat "$dir/bg.exit")
+  fi
   if [ -f "$dir/bg.agents" ]; then mv "$dir/bg.agents" "$dir/agents.json"; fi
   cat "$dir/bg.stdout"
   ;;
@@ -116,6 +125,16 @@ private:
     static QString Canonical(const QString& path) {
         return QFileInfo(path).canonicalFilePath();
     }
+
+    // How many times the fake claude was asked to start a session.
+    int Runs() const {
+        return static_cast<int>(QString::fromUtf8(ReadFile(BinPath("bg.runs")))
+                                    .split('\n', Qt::SkipEmptyParts)
+                                    .size());
+    }
+
+    // The fake claude's start waits until this is called.
+    void Release() { QVERIFY(QFile::remove(BinPath("bg.hold"))); }
 
     // How many times the fake claude was asked for the list of the agents.
     int Polls() const {
@@ -212,6 +231,14 @@ private:
     QString Notice() {
         return Part("sessionsNotice")->isVisible() ? TextOf("sessionsNotice")
                                                    : QString();
+    }
+
+    // Why the start failed, as the form shows it next to Create.
+    QString Problem() {
+        const QQuickItem* const problem = Part("sessionsNewProblem");
+        return problem != nullptr && problem->isVisible()
+                   ? problem->property("text").toString()
+                   : QString();
     }
 
     void Type(const QString& text) {
@@ -351,7 +378,8 @@ private:
     }
 
     void VerifyListShown() {
-        QVERIFY(!FormOpen());
+        // Create closes the form when the agent has answered.
+        QTRY_VERIFY_WITH_TIMEOUT(!FormOpen(), TIMEOUT_MS);
         QVERIFY(!Form()->isVisible());
         QVERIFY(Part("sessionsHead")->isVisible());
         QVERIFY(ListView()->isVisible());
@@ -359,6 +387,38 @@ private:
     }
 
     void Snap(const QString& step) { QVERIFY(SaveSnapshot(Window(), step)); }
+
+    // A draft of every field: the task, the name, a new category.
+    void FillTheDraft() {
+        OPEN_FORM();
+        Type("Ship it");
+        TO_NAME();
+        Type("Shipped");
+        Tab();
+        ChooseNewCategory();
+        Type("Brand new");
+    }
+
+    // Create on the draft, and the form after a failure: open, the draft as it
+    // was, the reason next to Create, Create usable again.
+    void VerifyFailureKeepsTheDraft(const QString& reason) {
+        Click(CreateButton());
+        QTRY_VERIFY_WITH_TIMEOUT(Problem().contains(reason), TIMEOUT_MS);
+        QVERIFY(FormOpen());
+        QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
+        QCOMPARE(TextOf("sessionsNewName"), QString("Shipped"));
+        QVERIFY(CategoryName()->isVisible());
+        QCOMPARE(TextOf("sessionsNewCategoryName"), QString("Brand new"));
+        QCOMPARE(CategoryBox()->property("currentText").toString(),
+                 QString("New category…"));
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        QCOMPARE(TextOf("sessionsNewCreate"), QString("Create session"));
+        // The footer does not say it a second time.
+        QVERIFY(Notice().isEmpty());
+        QVERIFY(Problem().startsWith("Not started: ") || Problem() == reason);
+        Snap("1-failed");
+    }
 
 private slots:
     void init() {
@@ -1058,6 +1118,170 @@ private slots:
         Click(entry);
 
         QTRY_VERIFY_WITH_TIMEOUT(CategoryName()->hasActiveFocus(), TIMEOUT_MS);
+    }
+
+    void NoAgentThatCanStartKeepsTheDraft() {
+        FailOnWarnings();
+        WithoutCommands_ = {"claude.newSession"};
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        FillTheDraft();
+        VerifyFailureKeepsTheDraft("No agent can start a session");
+        QCOMPARE(Runs(), 0);
+    }
+
+    void ARefusedStartKeepsTheDraft() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+        FillTheDraft();
+        VerifyFailureKeepsTheDraft("Workspace not trusted");
+        QVERIFY(Problem().startsWith("Not started: "));
+        QCOMPARE(Runs(), 1);
+
+        // The same draft starts once the cause is gone.
+        QVERIFY(QFile::remove(BinPath("bg.exit")));
+        ArmStart();
+        Click(CreateButton());
+        VerifyListShown();
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QCOMPARE(Runs(), 2);
+    }
+
+    void AStartThatTimesOutKeepsTheDraft() {
+        FailOnWarnings();
+        // The adapter's own limit of a start: the window has none.
+        AdapterArgs_ = {"--new-session-timeout-ms", "300"};
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        VerifyFailureKeepsTheDraft("did not finish in 300 ms");
+    }
+
+    void AnAnswerWithoutAnIdKeepsTheDraft() {
+        FailOnWarnings();
+        AnswerWithoutSessionId_ = true;
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        FillTheDraft();
+        VerifyFailureKeepsTheDraft("answered without a session id");
+        QCOMPARE(Runs(), 1);
+    }
+
+    void ABackendThatExitsDuringTheStartKeepsTheDraft() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.crash", ""));
+        FillTheDraft();
+        VerifyFailureKeepsTheDraft("Not started: ");
+        // The window and roostd are alive, and roostd answers.
+        QVERIFY(Window()->isVisible());
+        QCOMPARE(Daemon_->state(), QProcess::Running);
+        WAIT_FOR_EFFECTS();
+        QVERIFY(FormOpen());
+    }
+
+    void CreateWaitsForTheAnswerAndASecondStartIsRefused() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+
+        Click(CreateButton());
+
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        // The start is under way: the form is open, Create is off and says so.
+        QVERIFY(FormOpen());
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+        QCOMPARE(TextOf("sessionsNewCreate"), QString("Starting…"));
+        QVERIFY(Problem().isEmpty());
+        // Another click and Enter start nothing.
+        Click(CreateButton());
+        Press(Qt::Key_Return);
+        QVERIFY(FormOpen());
+
+        Release();
+        VerifyListShown();
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        // Barrier: two more polls of the agents, one of which began after the
+        // second click and the Enter; a start they had made would have run.
+        const int polls = Polls();
+        QTRY_VERIFY_WITH_TIMEOUT(Polls() >= polls + 2, TIMEOUT_MS);
+        QCOMPARE(Runs(), 1);
+    }
+
+    void CancelWhileStartingClosesTheFormAndAFailureComesToTheFooter() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.exit", "1"));
+        QVERIFY(Put("bg.stderr", "Workspace not trusted. Run it by hand.\n"));
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        // Create with the keyboard: the button that has it goes off, and Esc
+        // must still reach the form.
+        Tab();
+        QTRY_VERIFY_WITH_TIMEOUT(CreateButton()->hasActiveFocus(), TIMEOUT_MS);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+
+        Press(Qt::Key_Escape);
+        VerifyListShown();
+        Release();
+
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().startsWith("Not started: "),
+                                 TIMEOUT_MS);
+        QVERIFY(Notice().contains("Workspace not trusted"));
+        // The form did not come back for it.
+        QVERIFY(!FormOpen());
+    }
+
+    void CancelWhileStartingStillListsASessionThatStarts() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        QVERIFY(Put("bg.hold", ""));
+        FillTheDraft();
+        Click(CreateButton());
+        QTRY_COMPARE_WITH_TIMEOUT(Runs(), 1, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!CreateButton()->property("enabled").toBool(),
+                                 TIMEOUT_MS);
+
+        Click(BackLink());
+        VerifyListShown();
+        Release();
+
+        QTRY_VERIFY_WITH_TIMEOUT(Ids().contains(STARTED), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Notice().contains("Agent's own name"),
+                                 TIMEOUT_MS);
+        QVERIFY(!FormOpen());
     }
 
     void NStillStartsASessionFromThePrompt() {

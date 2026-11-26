@@ -315,6 +315,12 @@ public:
 protected:
     QStringList Changes_;
     bool WithoutTerminal_ = false;
+    // What a case changes in the Claude plugin it runs: more arguments for
+    // the adapter, commands the manifest does not contribute, and a result of
+    // `claude.newSession` without the id of the session.
+    QStringList AdapterArgs_;
+    QStringList WithoutCommands_;
+    bool AnswerWithoutSessionId_ = false;
     // OpenWindow makes the loader and the shell only after roostd has told
     // the plugins, as a window does whose QML took long to load.
     bool PluginsFirst_ = false;

@@ -68,6 +68,9 @@ void SessionsWindow::Teardown() {
     CloseWindow();
     StopDaemon();
     WithoutTerminal_ = false;
+    AdapterArgs_.clear();
+    WithoutCommands_.clear();
+    AnswerWithoutSessionId_ = false;
     PluginsFirst_ = false;
     SpySelected_ = false;
     ListType_ = LIST;
@@ -137,25 +140,47 @@ bool SessionsWindow::LinkPlugins() const {
     if (!claude.mkpath("backend") || !built.open(QIODevice::ReadOnly)) {
         return false;
     }
-    // The manifest is kept as built; the script stands in for the program
-    // it runs, so a manifest that runs another one is not one this helper
-    // can speed up.
-    const QByteArray manifest = built.readAll();
-    const QJsonArray command = QJsonDocument::fromJson(manifest)
-                                   .object()
-                                   .value("backend")
-                                   .toObject()
-                                   .value("command")
-                                   .toArray();
+    // The manifest is kept as built, but for the commands the case takes
+    // away; the script stands in for the program it runs, so a manifest that
+    // runs another one is not one this helper can speed up.
+    QJsonObject manifest = QJsonDocument::fromJson(built.readAll()).object();
+    const QJsonArray command =
+        manifest.value("backend").toObject().value("command").toArray();
     if (command.isEmpty() || command.first().toString() !=
                                  QStringLiteral("backend/claude-adapter")) {
         return false;
     }
-    const QByteArray shell =
-        QStringLiteral("#!/bin/sh\nexec '%1' --poll-ms %2 \"$@\"\n")
-            .arg(adapter)
-            .arg(POLL_MS)
-            .toUtf8();
+    if (!WithoutCommands_.isEmpty()) {
+        QJsonObject contributes = manifest.value("contributes").toObject();
+        QJsonArray kept;
+        for (const QJsonValue& entry :
+             contributes.value("commands").toArray()) {
+            if (!WithoutCommands_.contains(
+                    entry.toObject().value("id").toString())) {
+                kept.append(entry);
+            }
+        }
+        contributes.insert("commands", kept);
+        manifest.insert("contributes", contributes);
+    }
+    const QByteArray manifestJson = QJsonDocument(manifest).toJson();
+    QString run =
+        QStringLiteral("exec '%1' --poll-ms %2").arg(adapter).arg(POLL_MS);
+    for (const QString& argument : AdapterArgs_) {
+        run += QStringLiteral(" '%1'").arg(argument);
+    }
+    run += QStringLiteral(" \"$@\"");
+    if (AnswerWithoutSessionId_) {
+        // The adapter answers a start without the id of the session: its
+        // result is the one with an id followed by the title and nothing
+        // else, which the lines of the list never are.
+        run = QStringLiteral(
+                  "'%1' --poll-ms %2 \"$@\" | perl -pe 'BEGIN { $| = 1 } "
+                  "s/\"id\":\"[^\"]*\",(\"title\":\"[^\"]*\"\\}\\})/$1/'")
+                  .arg(adapter)
+                  .arg(POLL_MS);
+    }
+    const QByteArray shell = ("#!/bin/sh\n" + run + "\n").toUtf8();
     QFile script(claude.filePath("backend/claude-adapter"));
     QFile json(claude.filePath("plugin.json"));
     return script.open(QIODevice::WriteOnly) &&
@@ -163,7 +188,7 @@ bool SessionsWindow::LinkPlugins() const {
            script.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
                                  QFile::ExeOwner) &&
            json.open(QIODevice::WriteOnly) &&
-           json.write(manifest) == manifest.size();
+           json.write(manifestJson) == manifestJson.size();
 }
 
 bool SessionsWindow::StartDaemon() {
