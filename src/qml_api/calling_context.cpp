@@ -1,5 +1,7 @@
 #include "qml_api/calling_context.hpp"
 
+#include <QFileInfo>
+#include <QUrl>
 #include <QtLogging>
 
 // The only file that includes private Qt headers. Qt has no public way to ask
@@ -9,6 +11,7 @@
 // roost_call_owner_test breaks if a Qt update changes this behaviour.
 #include <private/qqmlcontextdata_p.h>
 #include <private/qv4engine_p.h>
+#include <private/qv4stackframe_p.h>
 
 namespace roost {
 
@@ -19,6 +22,31 @@ QQmlContext* callingContext(QJSEngine& engine) {
     }
     const auto data = v4->callingQmlContext();
     return data ? data->asQQmlContext() : nullptr;
+}
+
+QList<QQmlContext*> callingContexts(QJSEngine& engine) {
+    QList<QQmlContext*> contexts;
+    QV4::ExecutionEngine* v4 = engine.handle();
+    if (v4 == nullptr) {
+        return contexts;
+    }
+    // callingQmlContext reads the frame the engine is at: step it up the
+    // chain of the JS frames, and put it back whatever happens.
+    struct Restore {
+        QV4::ExecutionEngine* Engine;
+        QV4::CppStackFrame* Frame;
+        ~Restore() { Engine->currentStackFrame = Frame; }
+    } restore{v4, v4->currentStackFrame};
+    for (QV4::CppStackFrame* frame = restore.Frame; frame != nullptr;
+         frame = frame->parentFrame()) {
+        v4->currentStackFrame = frame;
+        const auto data = v4->callingQmlContext();
+        QQmlContext* context = data ? data->asQQmlContext() : nullptr;
+        if (context != nullptr && !contexts.contains(context)) {
+            contexts.append(context);
+        }
+    }
+    return contexts;
 }
 
 CallOwners::CallOwners(QObject* parent) : QObject(parent) {}
@@ -65,6 +93,59 @@ QObject* CallOwners::add(QQmlContext* context, const QString& plugin) {
                 [this, owner] { Plugins_.remove(owner); });
     }
     return owner;
+}
+
+QString CallOwners::pluginAbove(QQmlContext* context) const {
+    for (QQmlContext* above = context; above != nullptr;
+         above = above->parentContext()) {
+        const auto found = Owners_.constFind(above);
+        if (found != Owners_.constEnd() && !found.value().isNull()) {
+            const QString plugin = Plugins_.value(found.value().data());
+            if (!plugin.isEmpty()) {
+                return plugin;
+            }
+        }
+    }
+    // The file the code is in: baseUrl is the file of the nearest context
+    // that has one.
+    if (context == nullptr || Directories_.isEmpty()) {
+        return {};
+    }
+    const QUrl url = context->baseUrl();
+    if (!url.isLocalFile()) {
+        return {};
+    }
+    const QString path = QFileInfo(url.toLocalFile()).canonicalFilePath();
+    for (auto it = Directories_.constBegin(); it != Directories_.constEnd();
+         ++it) {
+        if (path.startsWith(it.value())) {
+            return it.key();
+        }
+    }
+    return {};
+}
+
+void CallOwners::addPluginDirectory(const QString& plugin,
+                                    const QString& directory) {
+    const QString canonical = QFileInfo(directory).canonicalFilePath();
+    if (canonical.isEmpty()) {
+        return;
+    }
+    Directories_.insert(plugin, canonical + u'/');
+}
+
+void CallOwners::dropPluginDirectory(const QString& plugin) {
+    Directories_.remove(plugin);
+}
+
+QString CallOwners::callingPlugin(QJSEngine& engine) const {
+    for (QQmlContext* context : callingContexts(engine)) {
+        const QString plugin = pluginAbove(context);
+        if (!plugin.isEmpty()) {
+            return plugin;
+        }
+    }
+    return {};
 }
 
 QObject* CallOwners::contextFor(QJSEngine& engine, QObject* fallback,

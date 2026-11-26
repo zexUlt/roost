@@ -226,11 +226,14 @@ private slots:
         QVERIFY(Call("keymap.get", QJsonObject{{"platform", own}}));
     }
 
-    // The window sets any command; a plugin sets its own (`<id>.*`) and is
-    // refused for another's, with the file untouched.
+    // The window sets any command; a plugin sets the commands it declares and
+    // is refused for another's, with the file untouched.
     void APluginSetsTheKeysOfItsOwnCommandsOnly() {
         QVERIFY(StartDaemon());
         QVERIFY(ConnectApi());
+        // What a plugin declares is known once the list is loaded, as it is
+        // for any code of a plugin that the window runs.
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Plugins().IsLoaded(), TIMEOUT_MS);
         const QString file = Daemon_->ConfigPath() + "/keymap.json";
         const QJsonObject set{
             {"command", "fixture.echo"},
@@ -276,6 +279,86 @@ private slots:
         QVERIFY2(window, qPrintable(Why(window)));
         QVERIFY(written.open(QIODevice::ReadOnly));
         QCOMPARE(QJsonDocument::fromJson(written.readAll()).array().size(), 1);
+    }
+
+    // A plugin manages the commands of its own `contributes.commands`, not the
+    // ones whose id begins with its id: `a` is not `a.b`, a plugin may declare
+    // a command outside `<id>.*` (the builtin shell has terminal.copy), and a
+    // plugin whose id is the prefix of another's command does not get it.
+    void APluginIsJudgedByTheCommandsItDeclares() {
+        const auto declare = [&](const QString& id,
+                                 const QStringList& commands) {
+            QJsonArray list;
+            for (const QString& command : commands) {
+                list.append(QJsonObject{{"id", command}, {"title", command}});
+            }
+            const QJsonObject manifest{
+                {"id", id},
+                {"version", "1"},
+                {"api", "0"},
+                {"contributes", QJsonObject{{"commands", list}}}};
+            const QString directory = Daemon_->PluginsPath() + u'/' + id;
+            QFile file(directory + "/plugin.json");
+            return QDir().mkpath(directory) &&
+                   file.open(QIODevice::WriteOnly) &&
+                   file.write(QJsonDocument(manifest).toJson()) > 0;
+        };
+        QVERIFY(Daemon_->IsValid());
+        // `a` declares one command under its prefix and one outside it; `a.b`
+        // is another plugin whose commands also begin with `a.`; `terminal`
+        // declares nothing but its id is the prefix of a command of `shell`.
+        QVERIFY(declare("a", {"a.one", "zed.own"}));
+        QVERIFY(declare("a.b", {"a.b.two"}));
+        QVERIFY(declare("terminal", {}));
+        QVERIFY(declare("shell", {"shell.go", "terminal.copy"}));
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        QTRY_VERIFY_WITH_TIMEOUT(Api_->Plugins().IsLoaded(), TIMEOUT_MS);
+        const QString file = Daemon_->ConfigPath() + "/keymap.json";
+        const auto set = [](const QString& command) {
+            return QJsonObject{
+                {"command", command},
+                {"entries", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+Z"}}}}};
+        };
+
+        // Refused: the id of the plugin is a prefix of the command, the
+        // command is another plugin's.
+        for (const auto& [plugin, command] :
+             {std::pair<QString, QString>{"a", "a.b.two"},
+              std::pair<QString, QString>{"terminal", "terminal.copy"},
+              std::pair<QString, QString>{"a.b", "a.one"},
+              std::pair<QString, QString>{"a", "no.such"}}) {
+            for (const auto& [method, params] : {
+                     std::pair<QString, QJsonObject>{"keymap.setCommand",
+                                                     set(command)},
+                     std::pair<QString, QJsonObject>{
+                         "keymap.resetCommand",
+                         QJsonObject{{"command", command}}},
+                 }) {
+                const rpc::Result refused =
+                    Call(method, params, nullptr, plugin);
+                QVERIFY2(!refused, qPrintable(plugin + " " + command));
+                QCOMPARE(refused.error().Code, INVALID_PARAMS);
+                QVERIFY2(refused.error().Message.contains(command) &&
+                             refused.error().Message.contains(plugin),
+                         qPrintable(refused.error().Message));
+            }
+        }
+        QVERIFY(!QFileInfo::exists(file));
+
+        // Passes: its own command, under its prefix or outside it.
+        for (const auto& [plugin, command] :
+             {std::pair<QString, QString>{"a", "a.one"},
+              std::pair<QString, QString>{"a", "zed.own"},
+              std::pair<QString, QString>{"a.b", "a.b.two"},
+              std::pair<QString, QString>{"shell", "terminal.copy"}}) {
+            const rpc::Result own =
+                Call("keymap.setCommand", set(command), nullptr, plugin);
+            QVERIFY2(own, qPrintable(plugin + " " + command + ": " + Why(own)));
+        }
+        QFile written(file);
+        QVERIFY(written.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(written.readAll()).array().size(), 4);
     }
 
     // What is wrong with the params is InvalidParams and does not reach roostd.

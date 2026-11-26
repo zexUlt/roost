@@ -27,12 +27,13 @@ class StoreService;
 //
 // Exposed: sessions.list, plugins.list, store.get, store.set, store.patch,
 // commands.run, keymap.get, keymap.setCommand, keymap.resetCommand,
-// bus.publish. keymap.setCommand and keymap.resetCommand take the commands of
-// the calling plugin only (`<plugin id>.*`); the window, which calls with no
-// plugin, takes any. Not exposed: hello and session.open,
-// session.resize and session.close, which belong to the window itself.
-// Subscribing takes a callback, so it is a pair of methods here and not a
-// by-name call.
+// bus.publish. keymap.setCommand and keymap.resetCommand take the commands
+// that the calling plugin declares in its `contributes.commands` (as
+// plugins.list says them), not the commands whose id merely begins with its
+// id; the window, which calls with no plugin, takes any. Not exposed: hello and
+// session.open, session.resize and session.close, which belong to the window
+// itself. Subscribing takes a callback, so it is a pair of methods here and not
+// a by-name call.
 //
 // The methods that have a cache go through its service: sessions.list always
 // asks roostd and refreshes the rows, store.get answers from the documents

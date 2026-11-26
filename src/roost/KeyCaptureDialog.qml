@@ -7,7 +7,8 @@ import Roost.Api
 // user presses the combination, and the dialog says it by `captured`; the
 // window decides what follows. Escape and Cancel decline. While `conflict`
 // is set the dialog does not capture: it shows the warning with Confirm and
-// Cancel, and `confirmed` is Confirm. The look is the one of the other dialogs
+// Cancel, and `confirmed` is Confirm (the dialog stays until the window
+// closes it). The look is the one of the other dialogs
 // (a card, the accepting button primary), see docs/design/18-style.md.
 //
 // A dialog, not a mode of the row: a key that is caught by the window's table
@@ -24,10 +25,13 @@ Dialog {
     // What roostd refused with, or the window found wrong with the key; empty
     // when nothing is.
     property string problem: ""
+    // A write of the window is under way: no key is taken (the window drops it,
+    // and the dialog says why), Confirm waits.
+    property bool busy: false
 
     // The user pressed a chord; `chord` is its text, as the table writes it.
     signal captured(string chord)
-    // The user confirmed the warning; the dialog closes after it.
+    // The user confirmed the warning; the window closes the dialog.
     signal confirmed
 
     objectName: "keyCaptureDialog"
@@ -91,14 +95,19 @@ Dialog {
             Accessible.role: Accessible.EditableText
             Accessible.name: "Press the new key for " + root.commandTitle
             Keys.onPressed: event => {
-                if (event.key === Qt.Key_Escape) {
+                // Escape is left to the popup, which closes. Tab and Shift+Tab
+                // are the way to the buttons: they are no key a command could
+                // be given (without Cmd, Ctrl or Alt it is refused), so
+                // nothing is lost.
+                const navigates = (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & ~Qt.ShiftModifier) === 0;
+                if (event.key === Qt.Key_Escape || navigates) {
                     event.accepted = false;
                     return;
                 }
                 // Nothing reaches a control of the window: the key is the
                 // user's answer, not a command.
                 event.accepted = true;
-                if (root.conflict !== "" || event.isAutoRepeat) {
+                if (root.conflict !== "" || root.busy || event.isAutoRepeat) {
                     return;
                 }
                 const chord = chords.chordOf(event);
@@ -114,7 +123,7 @@ Dialog {
                 width: parent.width
                 wrapMode: Text.Wrap
                 color: Roost.theme.textSecondary
-                text: root.conflict === "" ? "Press the new key for " + root.commandTitle + ". Esc cancels." : ""
+                text: root.busy ? "Saving the key\u2026" : (root.conflict === "" ? "Press the new key for " + root.commandTitle + ". Tab goes to the buttons, Esc cancels." : "")
             }
         }
 
@@ -125,6 +134,15 @@ Dialog {
             wrapMode: Text.Wrap
             color: Roost.theme.warning
             text: root.conflict
+            // A warning that the user must hear when it appears: the focus is
+            // on Cancel, not on the text.
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: text
+            onTextChanged: shown => {
+                if (shown !== "") {
+                    Accessible.announce(shown, Accessible.Assertive);
+                }
+            }
         }
 
         Label {
@@ -134,6 +152,13 @@ Dialog {
             wrapMode: Text.Wrap
             color: Roost.theme.error
             text: root.problem
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: text
+            onTextChanged: shown => {
+                if (shown !== "") {
+                    Accessible.announce(shown, Accessible.Assertive);
+                }
+            }
         }
     }
 
@@ -148,11 +173,11 @@ Dialog {
             text: "Confirm"
             primary: true
             visible: root.conflict !== ""
-            DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            onClicked: {
-                root.confirmed();
-                root.close();
-            }
+            enabled: !root.busy
+            // Not AcceptRole, which closes the dialog: the window closes it
+            // when the write has ended, or says in it why it failed.
+            DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+            onClicked: root.confirmed()
         }
 
         FormButton {

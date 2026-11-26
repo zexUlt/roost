@@ -154,7 +154,11 @@ void RoostSingleton::call(const QString& method, const QJSValue& params,
         return;
     }
     callMethod(*Api_, Engine_, context, method, toJson(Engine_, params),
-               callback, {}, Owners_.pluginOf(context));
+               callback, {}, Owners_.callingPlugin(Engine_));
+}
+
+QString RoostSingleton::callerPlugin() const {
+    return Owners_.callingPlugin(Engine_);
 }
 
 void RoostSingleton::UpdateKeymapProblems() {

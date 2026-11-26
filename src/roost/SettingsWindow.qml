@@ -41,6 +41,25 @@ ApplicationWindow {
     property string error
     // Why the document or the table could not be read; empty when they were.
     property string readError
+    // The last failed write of the keys; empty when none.
+    property string keysError
+    // A write of the keys that the window made is under way: from the call
+    // until the table that follows it has arrived (the first one after the
+    // answer; roostd writes the file, and its watcher publishes the table 100 ms
+    // after), or the call fails, or `keysWriteTimeout` passes. The controls of
+    // the keys wait for it (as the prompt of the sessions panel waits for the
+    // start, `promptStarting`), so that no second write is made from a table
+    // that does not have the first yet. A write that changes nothing is
+    // answered and has no table after it: the timeout ends it.
+    property bool keysWriting: false
+    // The write was answered without an error, and its table is awaited.
+    property bool keysAnswered: false
+    // The longest wait for the answer, and then for the table, in ms.
+    property int keysWriteTimeout: 3000
+    // What to do when the write ends: done(error), error being null.
+    property var afterWrite: null
+    // Numbers the writes: the answer of one that was given up on is ignored.
+    property int keysWriteId: 0
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
     // The families of the terminal font box. The list of the installed ones is
@@ -281,15 +300,19 @@ ApplicationWindow {
 
     function applyKeymap(bindings) {
         keymap = bindings ?? [];
+        // The table that follows the write: the first after its answer.
+        if (keysWriting && keysAnswered) {
+            endWrite(null);
+        }
     }
 
     function sameArgs(a, b) {
         return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     }
 
-    // The key that a plugin's keybinding gives on this platform, "" for none.
-    function contributedKey(binding) {
-        if (platformName === "mac") {
+    // The key that a plugin's keybinding gives on a platform, "" for none.
+    function contributedKey(binding, platform) {
+        if (platform === "mac") {
             if (typeof binding.mac === "string") {
                 return binding.mac;
             }
@@ -347,7 +370,7 @@ ApplicationWindow {
         };
         for (const plugin of pluginList) {
             for (const binding of plugin.contributes?.keybindings ?? []) {
-                const text = contributedKey(binding);
+                const text = contributedKey(binding, platformName);
                 if (text !== "" && binding.command in commands) {
                     groupOf(commands[binding.command], undefined, binding.when).contributed.push(text);
                 }
@@ -441,69 +464,181 @@ ApplicationWindow {
         return params;
     }
 
-    // Sets the whole set of the keys of a command in one keymap.setCommand:
-    // `own` are its keys on this platform, those of the other platform are
-    // read now and sent as they are, so that the file keeps them. done(error).
-    function setKeys(command, args, when, own, done) {
-        Roost.call("keymap.get", {
-            "platform": otherPlatformName
-        }, (err, result) => {
-            if (err) {
-                done(err);
-                return;
-            }
-            const params = targetOf(command, args, when);
-            params.entries = entriesOf(own, keysIn(result.bindings ?? [], command, args, when));
-            Roost.call("keymap.setCommand", params, done);
-        });
+    // The refusal for a caller that is a plugin's code: the helpers of the
+    // window that write keys are the window's own. A plugin sets the keys of
+    // the commands it declares with Roost.call (which is judged by the
+    // dispatcher). Null for the window's own code.
+    function pluginRefusal() {
+        const plugin = Roost.callerPlugin();
+        if (plugin === "") {
+            return null;
+        }
+        return {
+            "message": "The keys are set by the settings window itself; plugin " + plugin + " sets the keys of its own commands with Roost.call(\"keymap.setCommand\")"
+        };
+    }
+
+    function messageOf(err) {
+        return err.message ?? String(err);
     }
 
     function showWrite(err) {
-        error = err ? (err.message ?? String(err)) : "";
+        keysError = err ? messageOf(err) : "";
+    }
+
+    // The write of the keys ends: with `error` or, when its table has arrived
+    // (or the wait has run out), without. What was waiting for it goes on.
+    function endWrite(err) {
+        keysWriteTimer.stop();
+        keysWriting = false;
+        keysAnswered = false;
+        const next = afterWrite;
+        afterWrite = null;
+        if (next) {
+            next(err);
+        }
+    }
+
+    // One write of the keys, alone: `send(answered)` makes the call (or the
+    // calls) and says answered(error) with the answer to the one that writes;
+    // done(error) follows when the write has ended, see keysWriting. A second
+    // write while one is under way is refused, not queued: the controls are
+    // off meanwhile, so it is a caller that does not look at them.
+    function writeKeys(send, done) {
+        if (keysWriting) {
+            done({
+                "message": "The previous change of the keys is still being saved"
+            });
+            return;
+        }
+        const id = ++keysWriteId;
+        keysWriting = true;
+        keysAnswered = false;
+        afterWrite = done;
+        // No answer is waited for longer than this either: a call that is
+        // never answered must not leave the controls off.
+        keysWriteTimer.restart();
+        send(err => {
+            if (id !== keysWriteId || !keysWriting) {
+                return;
+            }
+            if (err) {
+                endWrite(err);
+            } else {
+                keysAnswered = true;
+                keysWriteTimer.restart();
+            }
+        });
+    }
+
+    // Sets the whole set of the keys of a command in one keymap.setCommand:
+    // `change(keys)` makes its keys on this platform from the keys it has
+    // when the write is made (the table as it is then, not as it was when
+    // the user began: the table may have moved on), those of the other
+    // platform are read now and sent as they are, so that the file keeps them.
+    // done(error), when the table that follows the write has arrived.
+    function setKeys(command, args, when, change, done) {
+        const refusal = pluginRefusal();
+        if (refusal !== null) {
+            done(refusal);
+            return;
+        }
+        writeKeys(answered => {
+            Roost.call("keymap.get", {
+                "platform": otherPlatformName
+            }, (err, result) => {
+                if (err) {
+                    answered(err);
+                    return;
+                }
+                const params = targetOf(command, args, when);
+                params.entries = entriesOf(change(keysIn(keymap, command, args, when)), keysIn(result.bindings ?? [], command, args, when));
+                Roost.call("keymap.setCommand", params, answered);
+            });
+        }, done);
+    }
+
+    function withoutKey(keys, text) {
+        return keys.filter(k => keyChords.sameKey(k) !== keyChords.sameKey(text));
+    }
+
+    function withKey(keys, text) {
+        return withoutKey(keys, text).concat([text]);
     }
 
     function removeKey(row, text) {
-        setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).filter(t => t !== text), showWrite);
+        setKeys(row.command, row.args, row.when, keys => withoutKey(keys, text), showWrite);
     }
 
     function resetKeys(row) {
-        Roost.call("keymap.resetCommand", targetOf(row.command, row.args, row.when), showWrite);
+        const refusal = pluginRefusal();
+        if (refusal !== null) {
+            showWrite(refusal);
+            return;
+        }
+        writeKeys(answered => Roost.call("keymap.resetCommand", targetOf(row.command, row.args, row.when), answered), showWrite);
     }
 
     function addKey(row) {
+        if (keysWriting) {
+            return;
+        }
         capturing = row;
         held = null;
         captureDialog.commandTitle = row.title;
         captureDialog.open();
     }
 
+    // The write of a capture has failed: the dialog says why and stays for
+    // another key, and the keys section keeps the text after it closes.
+    function captureFailed(err, prefix) {
+        const text = prefix + messageOf(err);
+        keysError = text;
+        held = null;
+        captureDialog.problem = text;
+        captureDialog.conflict = "";
+    }
+
+    // Gives the command of the row the chord, from the keys it has now; the
+    // dialog closes when the write has ended.
+    function addChord(row, chord) {
+        setKeys(row.command, row.args, row.when, keys => withKey(keys, chord), err => {
+            if (err) {
+                captureFailed(err, "");
+            } else {
+                keysError = "";
+                captureDialog.close();
+            }
+        });
+    }
+
     // A chord was pressed in the dialog. A key that the command has is no
     // news; one that another command holds in the same panel type waits for
-    // Confirm; any other is written.
+    // Confirm; any other is written. While a write is under way the chord is
+    // dropped: the dialog says so.
     function captureChord(chord) {
         const row = capturing;
+        if (row === null || keysWriting) {
+            return;
+        }
         captureDialog.problem = "";
-        if (row.keys.some(k => keyChords.sameKey(k.text) === keyChords.sameKey(chord))) {
+        if (keysIn(keymap, row.command, row.args, row.when).some(k => keyChords.sameKey(k) === keyChords.sameKey(chord))) {
             captureDialog.problem = chord + " is already a key of " + row.title;
             return;
         }
         const holder = keyChords.holder(chord, row.when);
         if (holder.command === undefined) {
-            setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).concat([chord]), err => {
-                if (err) {
-                    captureDialog.problem = err.message ?? String(err);
-                } else {
-                    error = "";
-                    captureDialog.close();
-                }
-            });
+            addChord(row, chord);
             return;
         }
+        warnOf(chord, holder);
+    }
+
+    function warnOf(chord, holder) {
         held = {
             "chord": chord,
             "command": holder.command,
-            "args": holder.args,
-            "keys": keysIn(keymap, holder.command, holder.args, row.when).filter(k => keyChords.sameKey(k) !== keyChords.sameKey(chord))
+            "args": holder.args
         };
         captureDialog.conflict = chord + " is bound to " + titleOf(holder.command) + "; it will lose this key";
     }
@@ -511,16 +646,47 @@ ApplicationWindow {
     // The user confirmed: this command gets the key first (the lower entry of
     // the file wins, so the table has the key on it from then on), then the
     // other gives it up, so that it does not take the key back when this one
-    // is reset. If the second write fails the table is right all the same.
+    // is reset. Each set is made from the table as it is at that moment, and
+    // the second waits for the table that follows the first. If the second
+    // write fails the table is right all the same, and the dialog says so.
     function confirmHeld() {
         const row = capturing;
         const key = held;
-        setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).concat([key.chord]), err => {
+        if (row === null || key === null || keysWriting) {
+            return;
+        }
+        // The command has the key now (the file gave it meanwhile): nothing
+        // to take from another.
+        if (keysIn(keymap, row.command, row.args, row.when).some(k => keyChords.sameKey(k) === keyChords.sameKey(key.chord))) {
+            held = null;
+            captureDialog.conflict = "";
+            captureDialog.problem = key.chord + " is already a key of " + row.title;
+            return;
+        }
+        // Who holds the key now: a change meanwhile (another window, the
+        // file) is warned of anew, not overwritten by the old warning.
+        const now = keyChords.holder(key.chord, row.when);
+        if (now.command === undefined) {
+            addChord(row, key.chord);
+            return;
+        }
+        if (now.command !== key.command || !sameArgs(now.args, key.args)) {
+            warnOf(key.chord, now);
+            return;
+        }
+        setKeys(row.command, row.args, row.when, keys => withKey(keys, key.chord), err => {
             if (err) {
-                showWrite(err);
+                captureFailed(err, "");
                 return;
             }
-            setKeys(key.command, key.args, row.when, key.keys, showWrite);
+            setKeys(key.command, key.args, row.when, keys => withoutKey(keys, key.chord), err2 => {
+                if (err2) {
+                    captureFailed(err2, row.title + " has " + key.chord + " now, but " + titleOf(key.command) + " could not give it up: ");
+                } else {
+                    keysError = "";
+                    captureDialog.close();
+                }
+            });
         });
     }
 
@@ -730,11 +896,28 @@ ApplicationWindow {
         id: keyChords
     }
 
+    // The longest a write of the keys is waited for: it ends the wait even if
+    // the table that follows never comes (a write that changes nothing has
+    // none, an event can be lost).
+    Timer {
+        id: keysWriteTimer
+
+        interval: root.keysWriteTimeout
+        onTriggered: root.endWrite(root.keysAnswered ? null : {
+            "message": "roostd did not answer the change of the keys"
+        })
+    }
+
     KeyCaptureDialog {
         id: captureDialog
 
+        busy: root.keysWriting
         onCaptured: chord => root.captureChord(chord)
         onConfirmed: root.confirmHeld()
+        onClosed: {
+            root.capturing = null;
+            root.held = null;
+        }
     }
 
     Rectangle {
@@ -1296,6 +1479,25 @@ ApplicationWindow {
                 }
             }
 
+            Label {
+                objectName: "keysStatus"
+                Layout.fillWidth: true
+                visible: root.keysWriting
+                color: Roost.theme.textMuted
+                text: "Saving the keys\u2026"
+            }
+
+            Label {
+                objectName: "keysError"
+                Layout.fillWidth: true
+                visible: text !== ""
+                wrapMode: Text.Wrap
+                color: Roost.theme.error
+                text: root.keysError
+                Accessible.role: Accessible.AlertMessage
+                Accessible.name: text
+            }
+
             Repeater {
                 model: root.keyRows
 
@@ -1365,6 +1567,7 @@ ApplicationWindow {
                                     leftPadding: 0
                                     rightPadding: 0
                                     text: "\u00d7"
+                                    enabled: !root.keysWriting
                                     Accessible.name: "Remove " + keyChip.modelData.text + " from " + keyRow.modelData.title
                                     onClicked: root.removeKey(keyRow.modelData, keyChip.modelData.text)
                                 }
@@ -1376,6 +1579,7 @@ ApplicationWindow {
                         objectName: "addKeyButton"
                         Layout.alignment: Qt.AlignTop
                         text: "Add key"
+                        enabled: !root.keysWriting
                         Accessible.name: "Add a key to " + keyRow.modelData.title
                         onClicked: root.addKey(keyRow.modelData)
                     }
@@ -1384,6 +1588,7 @@ ApplicationWindow {
                         objectName: "resetKeysButton"
                         Layout.alignment: Qt.AlignTop
                         visible: keyRow.modelData.changed
+                        enabled: !root.keysWriting
                         Accessible.name: "Reset the keys of " + keyRow.modelData.title
                         onClicked: root.resetKeys(keyRow.modelData)
                     }

@@ -19,6 +19,7 @@
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <memory>
@@ -80,6 +81,13 @@ QtObject {
                                          message: e ? e.message : null}))
         })
     }
+    // A call that goes through a function of another object, as a plugin's
+    // page that calls a helper of the window: the keys are set there, with the
+    // panel's frame still below on the stack.
+    property var relay: null
+    function through(method, command, t) { relay.keys(method, command, t) }
+    // The plugin that the window's own code sees as its caller.
+    function caller() { return Roost.callerPlugin() }
     function setPins(n) { Roost.store.set("fixture", {pins: n}, callbackFor(tag)) }
     function hang(cb) { Roost.commands.run("fixture.hang", undefined, cb) }
     // A call from an object created inside the panel.
@@ -410,6 +418,112 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("reset-own-shell"), 1,
                                   TIMEOUT_MS);
         QCOMPARE(answer("reset-own-shell").first, QJsonValue::Null);
+    }
+
+    // The shell's function that a plugin's panel calls is judged as the
+    // panel's: the call it makes while the panel's frame is on the stack is a
+    // call of the plugin, and a call from the shell alone is not.
+    void APluginThatCallsAShellFunctionIsStillThePlugin() {
+        QVERIFY(Setup());
+        const QString file = Daemon_->ConfigPath() + "/keymap.json";
+        QVERIFY(MakePanel("other"));
+        QVERIFY(
+            Panel_->setProperty("relay", QVariant::fromValue(Shell_.data())));
+
+        QVariant seen;
+        QVERIFY(QMetaObject::invokeMethod(Shell_, "caller",
+                                          Q_RETURN_ARG(QVariant, seen)));
+        QCOMPARE(seen.toString(), QString());
+        QVERIFY(QMetaObject::invokeMethod(Panel_, "caller",
+                                          Q_RETURN_ARG(QVariant, seen)));
+        QCOMPARE(seen.toString(), QString("other"));
+
+        QVERIFY(QMetaObject::invokeMethod(
+            Panel_, "through", Q_ARG(QVariant, QString("keymap.setCommand")),
+            Q_ARG(QVariant, QString("fixture.echo")),
+            Q_ARG(QVariant, QString("through-other"))));
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("through-other"), 1, TIMEOUT_MS);
+        const QJsonObject refused =
+            QJsonDocument::fromJson(Probe_.Last.value("through-other").toUtf8())
+                .object();
+        QCOMPARE(refused.value("code"), QJsonValue(-32602));
+        QVERIFY(!QFileInfo::exists(file));
+
+        // The control: the same helper of the shell, called by the shell.
+        QVERIFY(QMetaObject::invokeMethod(
+            Shell_, "keys", Q_ARG(QVariant, QString("keymap.resetCommand")),
+            Q_ARG(QVariant, QString("fixture.echo")),
+            Q_ARG(QVariant, QString("through-shell"))));
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("through-shell"), 1, TIMEOUT_MS);
+        QVERIFY(
+            QJsonDocument::fromJson(Probe_.Last.value("through-shell").toUtf8())
+                .object()
+                .value("code")
+                .isNull());
+    }
+
+    // A singleton of a plugin's own QML module is made in the root context of
+    // the engine, below no panel: it is the plugin's by the file it is written
+    // in, once the loader says where the plugin is.
+    void ASingletonOfThePluginsModuleIsThePlugin() {
+        QVERIFY(Setup());
+        QTemporaryDir modules;
+        QVERIFY(modules.isValid());
+        const QString module = modules.filePath("PluginSing");
+        QVERIFY(QDir().mkpath(module));
+        const auto write = [](const QString& path, const QByteArray& text) {
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly) && file.write(text) > 0;
+        };
+        QVERIFY(write(module + "/qmldir",
+                      "module PluginSing\nsingleton Sing 1.0 Sing.qml\n"));
+        QVERIFY(write(module + "/Sing.qml", R"(
+pragma Singleton
+import QtQml
+import Roost.Api
+QtObject {
+    function keys(method, command, t) {
+        Roost.call(method, {command: command}, function (e, r) {
+            probe.Hit(t, JSON.stringify({code: e ? e.code : null}))
+        })
+    }
+}
+)"));
+        Engine_->addImportPath(modules.path());
+        QQmlComponent user(Engine_.get());
+        user.setData(
+            "import QtQml\nimport PluginSing 1.0\nQtObject {"
+            " function go(t) { Sing.keys('keymap.resetCommand', "
+            "'fixture.echo', t) } }",
+            QUrl());
+        QObject* caller = user.create(Engine_->rootContext());
+        QVERIFY2(caller != nullptr, qPrintable(user.errorString()));
+        QJSEngine::setObjectOwnership(caller, QJSEngine::CppOwnership);
+        // The code of the answer, "timed out" when none came.
+        const auto go = [&](const QString& tag) -> QJsonValue {
+            if (!QMetaObject::invokeMethod(caller, "go",
+                                           Q_ARG(QVariant, tag)) ||
+                !QTest::qWaitFor([&] { return Probe_.Count(tag) == 1; },
+                                 TIMEOUT_MS)) {
+                return QStringLiteral("timed out");
+            }
+            return QJsonDocument::fromJson(Probe_.Last.value(tag).toUtf8())
+                .object()
+                .value("code");
+        };
+
+        // Nobody knows whose file it is: the window's.
+        QCOMPARE(go("unknown"), QJsonValue::Null);
+        // The loader says the directory is plugin "other"'s.
+        Singleton_->addPluginDirectory("other", modules.path());
+        QCOMPARE(go("known"), QJsonValue(-32602));
+        // The plugin goes: the file is no one's again.
+        Singleton_->dropPluginDirectory("other");
+        QCOMPARE(go("dropped"), QJsonValue::Null);
+        // The plugin that declares the command is let through by its files.
+        Singleton_->addPluginDirectory("fixture", modules.path());
+        QCOMPARE(go("own"), QJsonValue::Null);
+        delete caller;
     }
 
     void ALiveNestedCallIsAnswered() {
