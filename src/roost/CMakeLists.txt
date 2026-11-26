@@ -56,11 +56,12 @@ qt_add_library(roost_shell STATIC)
 qt_add_qml_module(roost_shell
     URI Roost.Shell
     VERSION 1.0
-    QML_FILES BugReportDialog.qml CommandPalette.qml ConfirmDialog.qml FormButton.qml
+    QML_FILES AboutWindow.qml BugReportDialog.qml CommandPalette.qml ConfirmDialog.qml FormButton.qml
         FormComboBox.qml FormField.qml LayoutNode.qml LayoutView.qml LinkEditor.qml Main.qml MenuRow.qml
         MenuSeparatorRow.qml PanelCard.qml PanelMenu.qml PanelSlot.qml RoostMenu.qml
         SessionMain.qml SettingsWindow.qml SplitNode.qml TabNode.qml ToolbarButton.qml
-    SOURCES bug_report_controller.cpp bug_report_controller.hpp
+    SOURCES about_info.cpp about_info.hpp
+            bug_report_controller.cpp bug_report_controller.hpp
             palette_model.cpp palette_model.hpp
     NO_CACHEGEN
 )

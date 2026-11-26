@@ -337,13 +337,26 @@ QList<BugReportFile> SettingsFiles(const QString& configDirectory) {
     return files;
 }
 
+namespace {
+
+QString AboutLine(const QString& key, const QString& value) {
+    return key + QStringLiteral(": ") + value + u'\n';
+}
+
+}  // namespace
+
+QString VersionLines() {
+    return AboutLine(QStringLiteral("roost"),
+                     QString::fromStdString(VersionString())) +
+           AboutLine(QStringLiteral("Qt (runtime)"),
+                     QString::fromLatin1(qVersion()));
+}
+
 QString AboutText(const QString& socketPath, const QString& graphicsApi) {
-    QString text;
+    QString text = VersionLines();
     const auto line = [&text](const QString& key, const QString& value) {
-        text += key + QStringLiteral(": ") + value + u'\n';
+        text += AboutLine(key, value);
     };
-    line(QStringLiteral("roost"), QString::fromStdString(VersionString()));
-    line(QStringLiteral("Qt (runtime)"), QString::fromLatin1(qVersion()));
     line(QStringLiteral("OS"), QSysInfo::prettyProductName());
     line(QStringLiteral("Kernel"),
          QSysInfo::kernelType() + u' ' + QSysInfo::kernelVersion());

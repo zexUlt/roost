@@ -125,6 +125,14 @@ ApplicationWindow {
         settingsWindow.open();
     }
 
+    // Shows the "About roost" window, or raises it; macOS calls it from the
+    // first item of the roost menu (the native menu puts an item whose text
+    // starts with "About" in the application menu), other platforms from the
+    // toolbar button, and both from the command shell.about.
+    function openAbout() {
+        aboutWindow.open();
+    }
+
     // The limits of settings.terminalFont.size: MIN_FONT_SIZE and MAX_FONT_SIZE
     // of src/core/theme_source.hpp (a test holds the two in step).
     readonly property real minFontSize: 6
@@ -239,6 +247,8 @@ ApplicationWindow {
         // The item "Settings…" has no role in Qt Quick Controls;
         // the Cocoa menu takes it for the application's settings by its text
         // ("Setting", "Preferences", ...) and moves it to the application menu.
+        // Likewise "About roost" (a text that starts with "About"; not verified
+        // on a live window).
         Loader {
             objectName: "menuBarLoader"
             active: Qt.platform.os === "osx"
@@ -255,6 +265,12 @@ ApplicationWindow {
             sourceComponent: MenuBar {
                 Menu {
                     title: "roost"
+
+                    MenuItem {
+                        objectName: "aboutMenuItem"
+                        text: "About roost"
+                        onTriggered: root.openAbout()
+                    }
 
                     MenuItem {
                         objectName: "settingsMenuItem"
@@ -337,6 +353,12 @@ ApplicationWindow {
                     objectName: "reportBugButton"
                     text: "Report a Bug…"
                     onClicked: root.reportBug()
+                }
+
+                ToolbarButton {
+                    objectName: "aboutButton"
+                    text: "About…"
+                    onClicked: root.openAbout()
                 }
             }
         }
@@ -537,6 +559,7 @@ ApplicationWindow {
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
             Roost.commands.registerCommand("shell.palette", () => root.openPalette());
             Roost.commands.registerCommand("shell.settings", () => root.openSettings());
+            Roost.commands.registerCommand("shell.about", () => root.openAbout());
             Roost.commands.registerCommand("terminal.fontBigger", () => root.changeFontSize(1));
             Roost.commands.registerCommand("terminal.fontSmaller", () => root.changeFontSize(-1));
             Roost.commands.registerCommand("terminal.fontDefault", () => root.resetFontSize());
@@ -577,5 +600,9 @@ ApplicationWindow {
 
     SettingsWindow {
         id: settingsWindow
+    }
+
+    AboutWindow {
+        id: aboutWindow
     }
 }

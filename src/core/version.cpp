@@ -13,8 +13,10 @@ std::string GhosttyVtVersion() {
     return {reinterpret_cast<const char*>(version.ptr), version.len};
 }
 
+std::string RoostVersion() { return ROOST_VERSION; }
+
 std::string VersionString() {
-    std::string result = ROOST_VERSION;
+    std::string result = RoostVersion();
     result += " (libghostty-vt ";
     result += GhosttyVtVersion();
     result += ")";
