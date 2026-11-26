@@ -125,6 +125,27 @@ ApplicationWindow {
         themeBox.currentIndex = themeIds.indexOf(settingsDocument.theme ?? "default");
     }
 
+    // Scrolls the form so that the control with the keyboard is in view, with
+    // its ring. Only for a control of the form.
+    function revealFocused(scrollView) {
+        const item = root.activeFocusItem;
+        const flick = scrollView.contentItem;
+        let inForm = false;
+        for (let up = item; up !== null && !inForm; up = up.parent) {
+            inForm = up === flick.contentItem;
+        }
+        if (!inForm) {
+            return;
+        }
+        const top = item.mapToItem(flick.contentItem, 0, 0).y - root.ringSpace;
+        const bottom = top + item.height + 2 * root.ringSpace;
+        if (top < flick.contentY) {
+            flick.contentY = Math.max(0, top);
+        } else if (bottom > flick.contentY + flick.height) {
+            flick.contentY = Math.min(bottom - flick.height, flick.contentHeight - flick.height);
+        }
+    }
+
     function applyDocument(document) {
         settingsDocument = document;
         showDocument(false);
@@ -316,10 +337,23 @@ ApplicationWindow {
     }
 
     ScrollView {
+        id: scroll
+
         objectName: "settingsScroll"
         anchors.fill: parent
         anchors.margins: Roost.theme.windowMargin + Roost.theme.panelPadding
         contentWidth: availableWidth
+
+        // The form is taller than the window at the default size, and the
+        // keyboard goes to a control that is below the visible part: scroll
+        // to it, with room for its ring.
+        Connections {
+            function onActiveFocusItemChanged() {
+                root.revealFocused(scroll);
+            }
+
+            target: root
+        }
 
         ColumnLayout {
             x: root.ringSpace

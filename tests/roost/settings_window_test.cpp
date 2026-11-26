@@ -264,17 +264,25 @@ private:
         return Daemon_->ConfigPath() + "/keymap.json";
     }
 
-    // What a user does to a switch: a click at its middle.
+    // What a user does to a control: Tab to it, which scrolls the form to it
+    // when it is below the visible part (what a font of another size does to
+    // the layout), and a click at its middle.
     static void Click(const SettingsWindow& window, QQuickItem* item) {
-        // The layout gives the switch its place after the window is shown.
-        QTRY_VERIFY(item->width() > 0 && item->height() > 0 &&
-                    QRectF(QPointF(0, 0), QSizeF(window.Window()->size()))
-                        .contains(item->mapToScene(
-                            QPointF(item->width() / 2, item->height() / 2))));
-        QTest::mouseClick(
-            window.Window(), Qt::LeftButton, Qt::NoModifier,
-            item->mapToScene(QPointF(item->width() / 2, item->height() / 2))
-                .toPoint());
+        // The layout gives the control its place after the window is shown.
+        QTRY_VERIFY(item->width() > 0 && item->height() > 0);
+        item->forceActiveFocus(Qt::TabFocusReason);
+        QQuickItem* scroll = window.Find("settingsScroll");
+        QVERIFY(scroll != nullptr);
+        const auto middle = [&] {
+            return item->mapToScene(
+                QPointF(item->width() / 2, item->height() / 2));
+        };
+        QTRY_VERIFY(scroll
+                        ->mapRectToScene(
+                            QRectF(0, 0, scroll->width(), scroll->height()))
+                        .contains(middle()));
+        QTest::mouseClick(window.Window(), Qt::LeftButton, Qt::NoModifier,
+                          middle().toPoint());
     }
 
     // What another program, or a hand edit, leaves in the document: a patch
@@ -396,6 +404,39 @@ private slots:
                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(ringIsInside(last), TIMEOUT_MS);
         QVERIFY(testing::SaveSnapshot(window->Window(), "ring-bottom"));
+    }
+
+    // The form scrolls: a control below the visible part is reached with the
+    // keyboard, which brings it into view with its ring, and then with the
+    // mouse.
+    void AControlBelowTheVisiblePartIsReached() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
+                                 TIMEOUT_MS);
+        QQuickItem* scroll = window->Find("settingsScroll");
+        QQuickItem* check = window->Find("updatesCheckSwitch");
+        QVERIFY(scroll != nullptr && check != nullptr);
+        window->Window()->setHeight(300);
+        QTRY_VERIFY_WITH_TIMEOUT(scroll->height() < 260, TIMEOUT_MS);
+        const auto view = [&] {
+            return scroll->mapRectToScene(
+                QRectF(0, 0, scroll->width(), scroll->height()));
+        };
+        const auto outer = [&] {
+            constexpr qreal ring = 4;
+            return check
+                ->mapRectToScene(QRectF(0, 0, check->width(), check->height()))
+                .adjusted(-ring, -ring, ring, ring);
+        };
+        // Below the visible part to begin with.
+        QVERIFY(!view().contains(outer()));
+
+        check->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_VERIFY_WITH_TIMEOUT(view().contains(outer()), TIMEOUT_MS);
+        Click(*window, check);
+        QTRY_VERIFY(
+            Document("settings").value("updates").toObject().contains("check"));
     }
 
     void APluginWithoutAPageHasNoSection() {
