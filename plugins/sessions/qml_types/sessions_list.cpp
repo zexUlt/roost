@@ -634,6 +634,7 @@ void SessionsList::edit(const std::function<bool()>& apply) {
         return;
     }
     changing([&] {
+        CursorOnFirstByDefault_ = false;
         const bool changed = apply();
         publish(false, holding());
         if (changed) {
@@ -756,14 +757,19 @@ void SessionsList::setCursor(const QString& key) {
     if (key == CursorKey_) {
         return;
     }
-    changing([&] { CursorKey_ = key; });
+    changing([&] {
+        CursorKey_ = key;
+        CursorOnFirstByDefault_ = false;
+    });
 }
 
 // The cursor after the rows changed. A kept stop stays. Otherwise: in a reset,
 // the opened session, else the first stop; a header that was unfolded, its
 // first session; a session folded away, its folded header; a session or
 // header that is gone from the list, the stop that took its place (the
-// previous if it was the last); anything else, the first stop.
+// previous if it was the last); anything else, the first stop. Rows that come
+// into an empty list put the cursor on the first stop, and while the user has
+// not touched the list it stays on the first stop, whatever rows come above.
 void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
                                    bool reset) {
     const std::vector<QString> now = stops();
@@ -772,12 +778,19 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
     };
     if (now.empty()) {
         CursorKey_.clear();
-        return;
-    }
-    if (!CursorKey_.isEmpty() && isStop(CursorKey_)) {
+        CursorOnFirstByDefault_ = false;
         return;
     }
     const QString first = now.front();
+    if (!CursorKey_.isEmpty() && isStop(CursorKey_)) {
+        if (reset) {
+            CursorOnFirstByDefault_ = false;
+        } else if (CursorOnFirstByDefault_) {
+            CursorKey_ = first;
+        }
+        return;
+    }
+    CursorOnFirstByDefault_ = false;
     if (reset) {
         const QString opened = State_.View().Opened;
         CursorKey_ = isStop(opened) ? opened : first;
@@ -785,6 +798,7 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
     }
     if (CursorKey_.isEmpty()) {
         CursorKey_ = first;
+        CursorOnFirstByDefault_ = true;
         return;
     }
     const auto samePlace = [&] {

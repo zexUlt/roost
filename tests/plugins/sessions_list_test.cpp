@@ -379,6 +379,7 @@ private slots:
     void ARemovedSessionMovesTheCursorToTheNextStop();
     void AResetPutsTheCursorBackElseOnTheOpenedElseFirst();
     void RowsInAnEmptyListPutTheCursorOnTheFirst();
+    void RowsThatComeInPartsToAnEmptyListKeepTheCursorOnTheFirst();
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
     void AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead();
@@ -688,6 +689,43 @@ void SessionsListTest::RowsInAnEmptyListPutTheCursorOnTheFirst() {
     Settle();
     QCOMPARE(env.List.cursorRow(), 1);
     QCOMPARE(env.List.cursorSession().toMap(), Ref("a"));
+}
+
+// 06-panels.md:128. The rows of one fill reach the list in more than one sync;
+// an unread session is listed above the one that came first.
+void SessionsListTest::
+    RowsThatComeInPartsToAnEmptyListKeepTheCursorOnTheFirst() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 3);
+    QCOMPARE(env.List.cursorRow(), 1);
+    QCOMPARE(Cur(env.List), Key("b"));
+
+    // Once the user has moved the cursor, it stays on its session.
+    env.CursorTo(Key("a"));
+    env.Source.Add({"d", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+
+    // An emptied list starts over.
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    Settle();
+    QCOMPARE(env.List.cursorRow(), -1);
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
 }
 
 void SessionsListTest::NothingIsWrittenBeforeTheDocumentIsRead() {

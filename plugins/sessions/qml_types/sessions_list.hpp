@@ -241,6 +241,10 @@ private:
     std::optional<QVariant> EarlyOpened_;
 
     QString CursorKey_;
+    // The cursor was put on the first stop by sessions that appeared in an
+    // empty list and the user has not touched the list since: it stays on the
+    // first stop while more rows come in above it.
+    bool CursorOnFirstByDefault_ = false;
 
     bool InFlight_ = false;
     // The key paths where our document differs from the last one of the store:
