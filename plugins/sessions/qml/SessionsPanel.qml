@@ -29,7 +29,7 @@ FocusScope {
     property var selected: null
 
     // The narrowest the window may make the list: the width its rows and head
-    // are laid out for (the shell reads it; the same number bounds `<`).
+    // are laid out for (the shell reads it, and `<` stops at it too).
     readonly property int minimumWidth: 200
 
     // The id of this panel in the layout of the window, set by the window

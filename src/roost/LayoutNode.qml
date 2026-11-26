@@ -62,9 +62,10 @@ Item {
     }
 
     // The width of the panel is stepped by the panel itself (`<`, `>`): by
-    // `widthStep` pixels, and not past these bounds.
+    // `widthStep` pixels, and not past these bounds: the narrowest is the
+    // minimum the panel declares.
     readonly property int widthStep: 20
-    readonly property int widthMin: 200
+    readonly property int widthMin: Math.ceil(root.minWidth)
     readonly property int widthMax: 560
     // The width the user stepped to, 0 if none. SplitNode takes it before the
     // size of the layout, and drops it when the layout gives a new size; it is

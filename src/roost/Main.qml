@@ -213,7 +213,14 @@ ApplicationWindow {
         fontProblemAt = at;
     }
 
+    // The window is no smaller than its layout: no panel goes out of it. The
+    // column adds the margins of the layout and the rows above and below it.
+    minimumWidth: column.Layout.minimumWidth
+    minimumHeight: column.Layout.minimumHeight
+
     ColumnLayout {
+        id: column
+
         anchors.fill: parent
         spacing: 0
 
@@ -399,6 +406,8 @@ ApplicationWindow {
             Layout.margins: Roost.theme.windowMargin
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumWidth: layoutView.minimumWidth
+            Layout.minimumHeight: layoutView.minimumHeight
             tree: root.layoutTree
             listTypes: root.listPanelTypes
             onSlotCreated: slot => root.slotCreated(slot)

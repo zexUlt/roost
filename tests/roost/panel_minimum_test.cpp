@@ -89,6 +89,13 @@ private:
         return split;
     }
 
+    static LayoutNode LinkedTerminal(const QString& instance) {
+        LayoutNode terminal = Leaf(instance, TERMINAL);
+        terminal.Links.insert(
+            "session", {.From = "list", .Output = "selected", .Problem = {}});
+        return terminal;
+    }
+
     double Wide(const QString& instance) {
         return SlotByInstance(instance)->width();
     }
@@ -317,24 +324,179 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Wide("shell"), LIST_MINIMUM, TIMEOUT_MS);
     }
 
-    void ATinyWindowStaysUsable() {
+    void AFillChildrenShareWhatAFixedChildLeavesAtItsMinimum() {
         BootList(320);
         if (QTest::currentTestFailed()) {
             return;
         }
-        Window()->resize(150, Window()->height());
-        QTRY_COMPARE_WITH_TIMEOUT(static_cast<int>(Window()->width()), 150,
-                                  TIMEOUT_MS);
-        QTest::qWait(200);
-        QVERIFY(Wide("list") >= LIST_MINIMUM);
-        QVERIFY(Wide("terminal") >= DEFAULT_MINIMUM);
-        qInfo() << "tiny window: list" << Wide("list") << "terminal"
-                << Wide("terminal") << "left of terminal"
-                << SlotByInstance("terminal")->mapToScene(QPointF(0, 0)).x();
-        // It grows back: the sizes are where they were.
-        Window()->resize(900, Window()->height());
+        // The list is 100 px in the layout and shows 200, its minimum; the two
+        // "fill" terminals share what is left of that, equally.
+        Layout layout;
+        layout.Root = Split(
+            true,
+            {Leaf("list", LIST), LinkedTerminal("terminal"),
+             LinkedTerminal("terminal-2")},
+            {LayoutSize::Px(100), LayoutSize::Rest(), LayoutSize::Rest()});
+        Shell_->SetLayout(layout);
+        WaitForLayout({{"list", "terminal"}}, false);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list"), LIST_MINIMUM, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            SlotByInstance("terminal-2") != nullptr &&
+                SlotByInstance("terminal-2")->isVisible() &&
+                Wide("terminal-2") > 100,
+            TIMEOUT_MS);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            qAbs(Wide("terminal") - Wide("terminal-2")) <= 2,
+            qPrintable(QStringLiteral("terminal %1, terminal-2 %2")
+                           .arg(Wide("terminal"))
+                           .arg(Wide("terminal-2"))),
+            TIMEOUT_MS);
+    }
+
+    void AFillListSqueezedToItsMinimumLeavesTheFixedChildrenTheirSizes() {
+        BootList(320);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The fixed children take 740 px, more than the window leaves for the
+        // list that takes the rest: it keeps its minimum, and the children
+        // before the last are as the layout says.
+        Layout layout;
+        layout.Root = Split(true,
+                            {Leaf("list", LIST), LinkedTerminal("terminal"),
+                             LinkedTerminal("terminal-2"), Leaf("list2", LIST)},
+                            {LayoutSize::Rest(), LayoutSize::Px(300),
+                             LayoutSize::Px(180), LayoutSize::Px(260)});
+        Shell_->SetLayout(layout);
+        WaitForLayout({{"list", "terminal"}}, false);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list"), LIST_MINIMUM, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal"), 300.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 180.0, TIMEOUT_MS);
+        // The window is 928 px wide inside its margins, the three gaps take
+        // 36: the room for the list is 152, 48 short of its minimum, and the
+        // last child gives them up.
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 212.0, TIMEOUT_MS);
+    }
+
+    // Every slot lies inside the window.
+    bool SlotsInsideTheWindow(const QStringList& instances) {
+        const QRectF window(QPointF(0, 0), QSizeF(Window()->size()));
+        for (const QString& instance : instances) {
+            const QQuickItem* slot = SlotByInstance(instance);
+            if (slot == nullptr ||
+                !window.contains(
+                    QRectF(slot->mapToScene(QPointF(0, 0)), slot->size()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Writes the document `settings`, as the settings window does.
+    void WriteSettings(const QJsonObject& settings) {
+        const QFuture<rpc::Result> writing =
+            Api_->Store().Set(QStringLiteral("settings"), settings);
+        QTRY_VERIFY_WITH_TIMEOUT(writing.isFinished(), TIMEOUT_MS);
+        QVERIFY(writing.result());
+    }
+
+    // The stack of tabs that holds the slot: the first item above it that
+    // has a minimum height of its own.
+    QQuickItem* StackOf(const QString& instance) {
+        for (QQuickItem* item = SlotByInstance(instance)->parentItem();
+             item != nullptr; item = item->parentItem()) {
+            if (item->property("minimumHeight").isValid()) {
+                return item;
+            }
+        }
+        return nullptr;
+    }
+
+    void AStackOfTabsFollowsTheHeightOfItsBar() {
+        BootList(320);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        LayoutNode tabs;
+        tabs.Kind = ELayoutNodeKind::Tabs;
+        tabs.Children = {Leaf("list", LIST), LinkedTerminal("shell")};
+        Layout layout;
+        layout.Root = Split(true, {tabs, Leaf("other", TERMINAL)},
+                            {LayoutSize::Px(300), LayoutSize::Rest()});
+        Shell_->SetLayout(layout);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            SlotByInstance("list") != nullptr && StackOf("list") != nullptr,
+            TIMEOUT_MS);
+        const QQuickItem* stack = StackOf("list");
+        const double before = stack->property("minimumHeight").toDouble();
+        // A larger font of the interface makes the bar of tabs higher.
+        WriteSettings({{"uiFontSize", 36}});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            stack->property("minimumHeight").toDouble() > before + 10,
+            TIMEOUT_MS);
+        WriteSettings({});
+        QTRY_COMPARE_WITH_TIMEOUT(stack->property("minimumHeight").toDouble(),
+                                  before, TIMEOUT_MS);
+    }
+
+    void ALayoutOfAnotherDirectionIsCountedAlongItsOwnAxis() {
+        BootList(320);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // Two pairs one under the other replace the pair side by side: the
+        // window needs 40 + 12 + 40 high for them (and 200 + 12 + 40 wide),
+        // not what the old direction made of them.
+        Shell_->SetLayout(
+            Stacked({Pair("list", "terminal"), Pair("list2", "terminal-2")}));
+        WaitForLayout({{"list", "terminal"}, {"list2", "terminal-2"}});
         QTRY_COMPARE_WITH_TIMEOUT(Wide("list"), 320.0, TIMEOUT_MS);
-        QTRY_VERIFY_WITH_TIMEOUT(Wide("terminal") > 500, TIMEOUT_MS);
+        const QQuickItem* view = Root()->findChild<QQuickItem*>("layoutView");
+        QTRY_COMPARE_WITH_TIMEOUT(view->property("minimumHeight").toDouble(),
+                                  40.0 + 12 + 40, TIMEOUT_MS);
+        QCOMPARE(view->property("minimumWidth").toDouble(), 200.0 + 12 + 40);
+    }
+
+    void TheWindowIsNoSmallerThanTheMinimumOfItsLayout() {
+        BootList(320);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The list and a terminal side by side: 200 and 40, the gap of 12
+        // between them and the margin of 16 round them.
+        constexpr int pairMinimum = 200 + 40 + 12 + 2 * 16;
+        QTRY_COMPARE_WITH_TIMEOUT(Window()->minimumWidth(), pairMinimum,
+                                  TIMEOUT_MS);
+        Window()->resize(pairMinimum + 20, 600);
+        QTRY_COMPARE_WITH_TIMEOUT(Window()->width(), pairMinimum + 20,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotsInsideTheWindow({"list", "terminal"}),
+                                 TIMEOUT_MS);
+
+        // A layout that needs more than the window has makes the window
+        // grow: two lists and two terminals, 200 + 40 + 40 + 200, three gaps
+        // and the margins. (The offscreen platform has no window manager that
+        // refuses a smaller size; Qt itself raises a window that is under a
+        // new minimum.)
+        constexpr int fourMinimum = 200 + 40 + 40 + 200 + 3 * 12 + 2 * 16;
+        Layout layout;
+        layout.Root = Split(true,
+                            {Leaf("list", LIST), LinkedTerminal("terminal"),
+                             LinkedTerminal("terminal-2"), Leaf("list2", LIST)},
+                            {LayoutSize::Px(100), LayoutSize::Px(100),
+                             LayoutSize::Px(100), LayoutSize::Px(100)});
+        Shell_->SetLayout(layout);
+        WaitForLayout({{"list", "terminal"}}, false);
+        QTRY_COMPARE_WITH_TIMEOUT(Window()->minimumWidth(), fourMinimum,
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(Window()->width() >= fourMinimum, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SlotByInstance("list2") != nullptr &&
+                                     SlotByInstance("list2")->isVisible() &&
+                                     Wide("list2") >= LIST_MINIMUM,
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            SlotsInsideTheWindow({"list", "terminal", "terminal-2", "list2"}),
+            TIMEOUT_MS);
     }
 };
 

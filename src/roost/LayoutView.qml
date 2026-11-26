@@ -12,6 +12,10 @@ Item {
     // active, children} or {kind: "leaf", instance, panel}. A size is a
     // number of pixels, 0 for the rest. null: nothing is built.
     property var tree: null
+    // How narrow and how low the layout may get: what the root node needs
+    // (docs/design/06-panels.md); the window takes it as its own minimum.
+    readonly property real minimumWidth: rootNode.minWidth
+    readonly property real minimumHeight: rootNode.minHeight
     // The lists of sessions are hidden: collapsed, not closed. Read-only; the
     // command `layout.toggleLists` hides them and shows them again.
     readonly property bool listsHidden: view.tree !== null && view.tree.listsHidden === true
@@ -431,6 +435,8 @@ Item {
     }
 
     LayoutNode {
+        id: rootNode
+
         anchors.fill: parent
         node: view.tree
         view: view

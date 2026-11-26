@@ -42,6 +42,8 @@ PanelCard {
         anchors.right: parent.right
         anchors.margins: stack.bare ? 0 : Roost.theme.cornerInset
         focusPolicy: Qt.NoFocus
+        // A bigger font makes the bar higher, and the stack needs more.
+        onHeightChanged: stack.recountMinimum()
         // The strip the tabs lie on: the `canvas`, so that the current tab,
         // a `surface` one, stands out (derived, no mockup: docs/design/18-style.md).
         background: Rectangle {

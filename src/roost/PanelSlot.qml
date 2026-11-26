@@ -31,8 +31,8 @@ FocusScope {
     property var resolveSource: instance => null
 
     // How narrow and how low the panel may get: its optional properties
-    // `minimumWidth` and `minimumHeight`, 40 when it declares none (or a
-    // value that is not a number). The split of the layout keeps the slot at
+    // `minimumWidth` and `minimumHeight`, 40 when it declares none, a value
+    // that is not a number, or one under 40: no panel goes below 40. The split of the layout keeps the slot at
     // least this big; the size in the document is not changed.
     readonly property real minimumWidth: root.declared("minimumWidth")
     readonly property real minimumHeight: root.declared("minimumHeight")

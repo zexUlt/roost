@@ -101,6 +101,8 @@ private slots:
         QTest::newRow("another animation driver message")
             << "QUnifiedTimer::stopAnimationDriver: driver is already running"
             << true;
+        QTest::newRow("size hints on the offscreen platform")
+            << "This plugin does not support propagateSizeHints()" << false;
         QTest::newRow("anything else") << "qml: something" << true;
         QTest::newRow("allowed message on the second line")
             << "qml: something\n"
