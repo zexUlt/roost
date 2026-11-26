@@ -45,7 +45,7 @@ ComboBox {
         Rectangle {
             anchors.fill: parent
             anchors.margins: -(2 + Roost.theme.cursorRingWidth)
-            visible: control.visualFocus
+            visible: control.visualFocus || (control.editable && control.contentItem.activeFocus)
             radius: Roost.theme.radiusControl + 2 + Roost.theme.cursorRingWidth
             color: "transparent"
             border.width: Roost.theme.cursorRingWidth

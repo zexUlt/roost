@@ -7,6 +7,7 @@
 #include <QFont>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <array>
 #include <atomic>
@@ -35,6 +36,17 @@ bool IsFixedPitch(const QFont& font);
 // fixed pitch, else the first monospace face found. Cheap, but not free: call
 // it once, not per frame.
 QFont DefaultTerminalFont();
+
+// Whether `family` is installed and fixed pitch: a family a terminal can be
+// set to. The generic name "monospace" is not a family of the database and is
+// not one here.
+bool IsInstalledMonospaceFamily(const QString& family);
+
+// The installed families that are fixed pitch, sorted, for the list of the
+// settings. A hidden family (a name with a leading dot, such as macOS's
+// ".SF NS Mono") is left out. Slow with many fonts: call it when the list is
+// opened, not at startup.
+QStringList InstalledMonospaceFamilies();
 
 // A stretch of one row drawn in one style. It starts at its exact column and
 // spans Width cells; the renderer places it at Column * cell width, so a
