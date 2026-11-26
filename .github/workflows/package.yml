@@ -16,15 +16,24 @@ name: Package
 # (a dry run: the draft is named dryrun-<run id>, no git tag is made, and the
 # draft is deleted after review). Publishing is a manual step.
 #
-# Runs on `v*` tags, on dispatch and on pushes to trunk that change the
-# packaging, not on pull requests: a macOS runner per pull request is too
-# much, and a change to packaging proves itself by the dispatch above. The
-# path list is the files that rarely change and shape a package or its
+# Runs on `v*` tags, on dispatch, on pushes to trunk that change the
+# packaging and once a night on trunk, not on pull requests: a macOS runner
+# per pull request is too much, and a change to packaging proves itself by
+# the dispatch above. The night run exists so that a release is tagged on a
+# trunk commit whose packaging has already passed: a flaky test found by the
+# packaging of the tag itself is too late. The job `changes` skips the
+# night run (and with it every other job) when nothing that reaches a package
+# changed since the last run of this workflow on trunk, whatever that run
+# ended with: a red night is not retried on the same commit, a dispatch
+# retries it. Only documentation (docs/, .claude/, *.md, issue templates) does
+# not reach a package. The path list is the files that rarely change and shape a package or its
 # check; the build and the tests of the code run in ci.yml on every pull
 # request. QML of the plugins and the project version are left out: they
 # change often, and the smoke and the version check of a tag catch them.
 # GitHub does not apply path filters to tags.
 on:
+  schedule:
+    - cron: "17 2 * * *"
   push:
     tags: ["v*"]
     branches: [trunk]
@@ -68,10 +77,60 @@ defaults:
     shell: bash
 
 jobs:
+  # Decides whether the jobs below run. Only a night run can be skipped: tags,
+  # dispatches and pushes always package. The base of a night run is the head
+  # of the last other run of this workflow on trunk (any event, any result).
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      needed: ${{ steps.decide.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$EVENT" != schedule ]; then
+            echo "event $EVENT: packaged"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(git rev-parse HEAD)
+          base=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0].head_sha // empty")
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "base ${base:-none} (not found or not in history) head $head: needed"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # What does not reach a package: documentation and its tooling.
+          files=$(git diff --no-renames --name-only "$base" "$head" |
+            grep -v -E '^(docs/|\.claude/|\.github/ISSUE_TEMPLATE/)|\.md$' || true)
+          if [ -n "$files" ]; then
+            echo "base $base head $head: needed, first of the files: $(echo "$files" | head -n 5 | paste -sd' ' -)"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "base $base head $head: not needed, no change reaches a package"
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # The release build, its tests, then the .app and .dmg and their checks. The
   # Qt, zig and caches are those of the macOS release job of ci.yml.
   macos:
     name: macos
+    needs: changes
+    if: needs.changes.outputs.needed == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +228,8 @@ jobs:
   # else. The Qt, zig and clang versions are those of ci.yml.
   linux:
     name: linux (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.needed == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
