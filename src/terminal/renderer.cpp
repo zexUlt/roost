@@ -138,6 +138,23 @@ QFont DefaultTerminalFont() {
     return system;
 }
 
+bool IsInstalledMonospaceFamily(const QString& family) {
+    return QFontDatabase::hasFamily(family) && IsFixedPitch(QFont(family));
+}
+
+QStringList InstalledMonospaceFamilies() {
+    QStringList families;
+    // A family is listed when the one-family check takes it: fontconfig also
+    // lists its aliases ("Monospace", "Sans Serif"), which hasFamily refuses,
+    // and the default entry of the settings stands for the system monospace.
+    for (const QString& family : QFontDatabase::families()) {
+        if (!family.startsWith(u'.') && IsInstalledMonospaceFamily(family)) {
+            families.append(family);
+        }
+    }
+    return families;
+}
+
 QList<Run> SplitRow(const VtRenderState::Row& row, Rgb defaultForeground,
                     Rgb defaultBackground, Rgb selection) {
     const auto& cells = row.Cells;

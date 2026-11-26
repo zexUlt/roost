@@ -245,6 +245,13 @@ public:
     // The size of a font as a text for the settings: "13 pt" ("13.5 pt" for a
     // fraction, never "13.0 pt"), or "17 px" for a font sized in pixels.
     Q_INVOKABLE static QString sizeText(const QFont& font);
+    // The families the terminal font can be set to, for the list of the
+    // settings (InstalledMonospaceFamilies): built at each call, so QML calls
+    // it when the list opens.
+    Q_INVOKABLE static QStringList monospaceFamilies();
+    // Whether the family is one of them (IsInstalledMonospaceFamily); the
+    // generic "monospace" is not.
+    Q_INVOKABLE static bool isMonospaceFamily(const QString& family);
     QFont titleFont() const;
     QFont headingFont() const;
     QFont rowFont() const;
