@@ -1531,6 +1531,19 @@ FocusScope {
             // with the second line under the cursor.
             height: isHeader ? Math.max(34, headerText.implicitHeight + 8) : sessionsList.compact ? lines.implicitHeight + 2 * textPadding : Math.max(Roost.theme.rowHeight, lines.implicitHeight + 2 * textPadding)
 
+            // The line between the pinned categories and the rest: on the
+            // top edge of the first unpinned header, declared before the
+            // background and the ring so they cover it, and it takes no height.
+            Rectangle {
+                objectName: "pinnedRule"
+                visible: row.isHeader && row.model.startsUnpinned
+                x: 12
+                y: 0
+                width: parent.width - 24
+                height: 1
+                color: Roost.theme.line
+            }
+
             // The ground of the row: the open one is `selectedBackground`
             // whether the cursor is on it or not; the cursor is the focused or
             // unfocused tone of the list; a row under the mouse is lighter.
