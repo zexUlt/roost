@@ -7,6 +7,7 @@
 // engines against one real roostd; ROOST_CONFIG is the directory of roostd's
 // own temporary tree, so the settings of the user are never read.
 
+#include <QAccessible>
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -17,6 +18,7 @@
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -138,6 +140,16 @@ struct FocusWindow {
                QMetaObject::invokeMethod(box, "activated", Q_ARG(int, index));
     }
 
+    // The swatch of the ring colour at `index` (null if there is none), and
+    // whether it is the one marked as the colour in force.
+    QQuickItem* Swatch(int index) const {
+        return Find(QStringLiteral("focusSwatch%1").arg(index));
+    }
+    bool InForce(int index) const {
+        QQuickItem* swatch = Swatch(index);
+        return swatch != nullptr && swatch->property("inForce").toBool();
+    }
+
     // What the user does to a text field: types, then leaves it.
     bool Edit(const QString& field, const QString& text) const {
         QQuickItem* item = Find(field);
@@ -203,6 +215,29 @@ private:
                                TIMEOUT_MS)
                    ? std::move(window)
                    : nullptr;
+    }
+
+    // The middle of a swatch in the window, once the form has been scrolled to
+    // it by the keyboard focus (the swatches are below the visible part at the
+    // default size).
+    static QPoint Reveal(const FocusWindow& window, QQuickItem* item) {
+        item->forceActiveFocus(Qt::TabFocusReason);
+        QQuickItem* scroll = window.Find("settingsScroll");
+        const auto middle = [&] {
+            return item->mapToScene(
+                QPointF(item->width() / 2, item->height() / 2));
+        };
+        const auto visible = [&] {
+            return item->width() > 0 && item->height() > 0 &&
+                   scroll
+                       ->mapRectToScene(
+                           QRectF(0, 0, scroll->width(), scroll->height()))
+                       .contains(middle());
+        };
+        if (!QTest::qWaitFor(visible, TIMEOUT_MS)) {
+            return {-1, -1};
+        }
+        return middle().toPoint();
     }
 
     QJsonObject Settings() const {
@@ -653,6 +688,204 @@ private slots:
         // the colours of the terminal and the fonts did not change.
         QCOMPARE(changed.count(), 1);
         QCOMPARE(colors.count(), 0);
+    }
+
+    // The swatches are the documented set (FOCUS_SWATCHES): the two presets
+    // first, every one a colour, every one holds every pair of the focus
+    // contrast on the default theme (so a swatch alone never brings the
+    // warning), and the window shows one for each, with the hex as its name,
+    // for every preset of the box.
+    void TheSwatchesAreTheDocumentedSetAndHoldTheContrast() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto window = OpenReadWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        const QStringList swatches = theme->focusSwatches();
+        QCOMPARE(swatches.size(), 10);
+        QCOMPARE(swatches.at(0), theme->focusBaseText());
+        QCOMPARE(swatches.at(1), theme->focusContrastText());
+        QCOMPARE(QSet<QString>(swatches.begin(), swatches.end()).size(),
+                 swatches.size());
+        const std::pair<QColor, double> pairs[] = {
+            {theme->surface(), 4.5},
+            {CANVAS, 3.0},
+            {theme->cursorFocused(), 3.0},
+            {theme->selectedBackground(), 4.5}};
+        for (const QString& text : swatches) {
+            const QColor color(text);
+            QVERIFY2(color.isValid() && text == text.toLower(),
+                     qPrintable(text));
+            for (const auto& [back, least] : pairs) {
+                QVERIFY2(Contrast(color, back) >= least, qPrintable(text));
+            }
+        }
+        for (int preset : {PRESET_BASE, PRESET_CONTRAST, PRESET_CUSTOM}) {
+            QVERIFY(window->Choose(preset));
+            for (int i = 0; i < swatches.size(); ++i) {
+                QQuickItem* swatch = window->Swatch(i);
+                QVERIFY(swatch != nullptr);
+                QTRY_VERIFY_WITH_TIMEOUT(swatch->isVisible(), TIMEOUT_MS);
+                QCOMPARE(swatch->property("modelData").toString(),
+                         swatches.at(i));
+                // The name for a screen reader is the hex.
+                QAccessibleInterface* accessible =
+                    QAccessible::queryAccessibleInterface(swatch);
+                QVERIFY(accessible != nullptr);
+                QCOMPARE(accessible->text(QAccessible::Name), swatches.at(i));
+            }
+        }
+        QVERIFY(window->Swatch(static_cast<int>(swatches.size())) == nullptr);
+    }
+
+    // A click on a swatch while the preset is not Custom is one patch: the
+    // preset and the colour together. The token changes in every window, the
+    // swatch is marked in each, and the field takes the colour.
+    void AClickOnASwatchWritesTheCustomColourInOnePatch() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto first = OpenReadWindow();
+        auto second = OpenReadWindow();
+        QVERIFY(first);
+        QVERIFY(second);
+        QVERIFY(first->Choose(PRESET_CONTRAST));
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), CONTRAST, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(first->InForce(1), TIMEOUT_MS);
+        QVERIFY(!first->InForce(5));
+        const qsizetype before = second->Read->count();
+
+        QQuickItem* swatch = first->Swatch(5);
+        QVERIFY(swatch != nullptr);
+        const QString color = swatch->property("modelData").toString();
+        const QPoint at = Reveal(*first, swatch);
+        QVERIFY(at.x() >= 0);
+        QTest::mouseClick(first->Window(), Qt::LeftButton, Qt::NoModifier, at);
+
+        QTRY_COMPARE_WITH_TIMEOUT(first->Focus(), QColor(color), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor(color), TIMEOUT_MS);
+        QCOMPARE(Settings().value("focusColor").toObject(),
+                 (QJsonObject{{"preset", "custom"}, {"custom", color}}));
+        QTRY_VERIFY_WITH_TIMEOUT(first->InForce(5) && second->InForce(5),
+                                 TIMEOUT_MS);
+        QVERIFY(!first->InForce(1));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            first->Find("focusPresetBox")->property("currentIndex"),
+            QVariant(PRESET_CUSTOM), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            first->Find("focusCustomField")->property("text"), QVariant(color),
+            TIMEOUT_MS);
+        QVERIFY(first->Problems().isEmpty());
+
+        // A write of the field after it is the barrier: the window of the
+        // second engine has seen the pick as one document and this one.
+        QVERIFY(first->Edit("focusCustomField", "#6a1b9a"));
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), PURPLE, TIMEOUT_MS);
+        QCOMPARE(second->Read->count() - before, qsizetype{2});
+        QVERIFY(!second->InForce(5));
+    }
+
+    // The keyboard: Right moves along the row, Space and Enter pick. With the
+    // preset on Custom a pick writes the colour alone.
+    void TheKeyboardPicksASwatch() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto first = OpenReadWindow();
+        auto second = OpenReadWindow();
+        QVERIFY(first);
+        QVERIFY(second);
+        QVERIFY(first->Choose(PRESET_CUSTOM));
+        QTRY_VERIFY_WITH_TIMEOUT(first->Find("focusCustomField")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(first->Edit("focusCustomField", "#6a1b9a"));
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), PURPLE, TIMEOUT_MS);
+        const qsizetype before = second->Read->count();
+
+        // The window with the keyboard is the active one (two are open).
+        first->Window()->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(first->Window(), TIMEOUT_MS));
+        QQuickItem* start = first->Swatch(2);
+        QVERIFY(start != nullptr);
+        QVERIFY(Reveal(*first, start).x() >= 0);
+        QTRY_VERIFY_WITH_TIMEOUT(start->property("visualFocus").toBool(),
+                                 TIMEOUT_MS);
+        QTest::keyClick(first->Window(), Qt::Key_Right);
+        QQuickItem* next = first->Swatch(3);
+        QTRY_VERIFY_WITH_TIMEOUT(next->property("visualFocus").toBool(),
+                                 TIMEOUT_MS);
+        QTest::keyClick(first->Window(), Qt::Key_Space);
+        const QString space = next->property("modelData").toString();
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), QColor(space), TIMEOUT_MS);
+        QCOMPARE(Settings().value("focusColor").toObject(),
+                 (QJsonObject{{"preset", "custom"}, {"custom", space}}));
+
+        QTest::keyClick(first->Window(), Qt::Key_Left);
+        QTest::keyClick(first->Window(), Qt::Key_Left);
+        QQuickItem* before2 = first->Swatch(1);
+        QTRY_VERIFY_WITH_TIMEOUT(before2->property("visualFocus").toBool(),
+                                 TIMEOUT_MS);
+        QTest::keyClick(first->Window(), Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), CONTRAST, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(second->InForce(1), TIMEOUT_MS);
+        // Two picks, two documents: no preset write of its own.
+        QVERIFY(first->Edit("focusCustomField", "#6a1b9a"));
+        QTRY_COMPARE_WITH_TIMEOUT(second->Focus(), PURPLE, TIMEOUT_MS);
+        QCOMPARE(second->Read->count() - before, qsizetype{3});
+    }
+
+    // The set has no colour below the contrast, so the warning for a low
+    // colour is the one of the field (ACustomColourBelowTheContrast...); what a
+    // swatch does with it is to clear it, the colour of a swatch holds every
+    // pair.
+    void ASwatchClearsTheWarningOfALowColour() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto window = OpenReadWindow();
+        QVERIFY(window);
+        QVERIFY(window->Choose(PRESET_CUSTOM));
+        QTRY_VERIFY_WITH_TIMEOUT(window->Find("focusCustomField")->isVisible(),
+                                 TIMEOUT_MS);
+        QVERIFY(window->Edit("focusCustomField", "#f0f0f0"));
+        QTRY_COMPARE_WITH_TIMEOUT(window->Problems().size(), 1, TIMEOUT_MS);
+        QCOMPARE(window->Focus(), QColor("#f0f0f0"));
+
+        QQuickItem* swatch = window->Swatch(7);
+        QVERIFY(swatch != nullptr);
+        const QString color = swatch->property("modelData").toString();
+        const QPoint at = Reveal(*window, swatch);
+        QVERIFY(at.x() >= 0);
+        QTest::mouseClick(window->Window(), Qt::LeftButton, Qt::NoModifier, at);
+        QTRY_COMPARE_WITH_TIMEOUT(window->Focus(), QColor(color), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(window->Problems().isEmpty(), TIMEOUT_MS);
+    }
+
+    // The field and the marked swatch show the same colour after roostd
+    // restarts.
+    void TheFieldAndTheSwatchAgreeAfterARestart() {
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QString color;
+        {
+            auto window = OpenReadWindow();
+            QVERIFY(window);
+            QQuickItem* swatch = window->Swatch(8);
+            QVERIFY(swatch != nullptr);
+            color = swatch->property("modelData").toString();
+            const QPoint at = Reveal(*window, swatch);
+            QVERIFY(at.x() >= 0);
+            QTest::mouseClick(window->Window(), Qt::LeftButton, Qt::NoModifier,
+                              at);
+            QTRY_COMPARE_WITH_TIMEOUT(
+                Settings().value("focusColor").toObject(),
+                (QJsonObject{{"preset", "custom"}, {"custom", color}}),
+                TIMEOUT_MS);
+        }
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        auto window = OpenReadWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(window->Focus(), QColor(color), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Find("focusCustomField")->property("text"), QVariant(color),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(window->InForce(8), TIMEOUT_MS);
+        for (int i = 0; i < 10; ++i) {
+            QCOMPARE(window->InForce(i), i == 8);
+        }
     }
 };
 

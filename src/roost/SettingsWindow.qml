@@ -100,6 +100,24 @@ ApplicationWindow {
         });
     }
 
+    // A swatch of the ring colour is picked: the colour is the custom one, in
+    // the same patch as the preset when that is not Custom yet (as the box
+    // does for Custom). The colour that is stored already is not written again.
+    function pickFocusColor(color) {
+        if (focusColor.preset === "custom") {
+            if (focusColor.custom !== color) {
+                patchFocusColor("custom", color);
+            }
+            return;
+        }
+        patchSettings({
+            "focusColor": {
+                "preset": "custom",
+                "custom": color
+            }
+        });
+    }
+
     function isObject(value) {
         return typeof value === "object" && value !== null && !Array.isArray(value);
     }
@@ -568,6 +586,75 @@ ApplicationWindow {
                     onClicked: root.patchSettings({
                         "focusColor": null
                     })
+                }
+            }
+
+            // The swatches of the ring colour, in the column of the fields and
+            // always shown with the preset box: a click on one is the whole
+            // choice, whichever preset is on (it makes the preset Custom).
+            // The colour in force is marked; the field above takes any other.
+            Flow {
+                objectName: "focusSwatches"
+                Layout.fillWidth: true
+                Layout.leftMargin: 160 + 12
+                spacing: 8 + Roost.theme.cursorRingWidth
+
+                Repeater {
+                    id: swatches
+
+                    model: Roost.theme.focusSwatches
+
+                    delegate: AbstractButton {
+                        id: swatch
+
+                        required property int index
+                        required property string modelData
+                        readonly property bool inForce: Qt.colorEqual(Roost.theme.focus, modelData)
+
+                        objectName: "focusSwatch" + index
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        activeFocusOnTab: true
+                        // Left and right move along the row.
+                        KeyNavigation.left: index > 0 ? swatches.itemAt(index - 1) : null
+                        KeyNavigation.right: index < swatches.count - 1 ? swatches.itemAt(index + 1) : null
+                        Keys.onReturnPressed: clicked()
+                        Keys.onEnterPressed: clicked()
+                        Accessible.role: Accessible.RadioButton
+                        Accessible.name: modelData
+                        Accessible.checkable: true
+                        Accessible.checked: inForce
+                        onClicked: root.pickFocusColor(modelData)
+
+                        background: Rectangle {
+                            radius: width / 2
+                            color: swatch.modelData
+                            border.width: 1
+                            border.color: Roost.theme.line
+
+                            // The colour in force: a ring of the surface inside.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                visible: swatch.inForce
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Roost.theme.surface
+                            }
+
+                            // The ring of the focus, outside with a gap of 2 px.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                                visible: swatch.visualFocus
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: Roost.theme.cursorRingWidth
+                                border.color: Roost.theme.focus
+                            }
+                        }
+                    }
                 }
             }
 
