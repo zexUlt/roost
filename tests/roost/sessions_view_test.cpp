@@ -435,6 +435,10 @@ private slots:
         for (const QString& id : {BETA, DELTA, ALPHA}) {
             QVERIFY(!ruleShown(id));
         }
+        // The header that will get the line and the row under it, before.
+        const double headerHeight = ViewItem(ViewRowOf(DELTA) - 1)->height();
+        const double nextOffset = ViewItem(ViewRowOf(DELTA))->y() -
+                                  ViewItem(ViewRowOf(DELTA) - 1)->y();
         MoveTo(BETA);
 
         // One pinned, the rest not: the line is above the first unpinned.
@@ -442,8 +446,12 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(ruleShown(DELTA), TIMEOUT_MS);
         QVERIFY(!ruleShown(BETA));
         QVERIFY(!ruleShown(ALPHA));
-        // It takes no height: the header is as high as without it.
-        QCOMPARE(InRow(ViewRowOf(DELTA) - 1, "pinnedRule")->height(), 1.0);
+        // It takes no height: the header is as high as before and the next
+        // row is at the same distance under it (the list itself moved).
+        QCOMPARE(ViewItem(ViewRowOf(DELTA) - 1)->height(), headerHeight);
+        QCOMPARE(ViewItem(ViewRowOf(DELTA))->y() -
+                     ViewItem(ViewRowOf(DELTA) - 1)->y(),
+                 nextOffset);
 
         // Pinning another category moves the line down.
         MoveTo(DELTA);

@@ -336,13 +336,30 @@ void SessionsRowsTest::
     folded.Folded = {QStringLiteral("gamma")};
     QCOMPARE(StartsUnpinned(BuildRows(sessions, folded)),
              QStringList{QStringLiteral("alpha")});
-    // A tab or a query that hides the pinned side, or the other one.
+    // A tab that hides the pinned side: no line.
+    const std::vector<SessionEntry> byState = {Make("a", "alpha", "working"),
+                                               Make("g", "gamma", "done")};
+    ViewState tab;
+    tab.Pinned = {QStringLiteral("gamma")};
+    tab.Tab = ETab::Active;
+    QCOMPARE(Headers(BuildRows(byState, tab)),
+             QStringList{QStringLiteral("alpha")});
+    QVERIFY(StartsUnpinned(BuildRows(byState, tab)).isEmpty());
+    // A tab that hides the unpinned side: no line.
+    tab.Pinned = {QStringLiteral("alpha")};
+    QCOMPARE(Headers(BuildRows(byState, tab)),
+             QStringList{QStringLiteral("alpha")});
+    QVERIFY(StartsUnpinned(BuildRows(byState, tab)).isEmpty());
+    // A query that hides the pinned side, or the other one.
     ViewState query = pinned({"gamma"});
     query.Query = QStringLiteral("alpha");
     QVERIFY(StartsUnpinned(BuildRows(sessions, query)).isEmpty());
     query.Query = QStringLiteral("gamma");
     QVERIFY(StartsUnpinned(BuildRows(sessions, query)).isEmpty());
-    // A pinned category with no session left has no header: no line.
+    // A pinned category with no session has no header and does not move the
+    // line: it is still above the first unpinned header, below the real one.
+    QCOMPARE(StartsUnpinned(BuildRows(sessions, pinned({"gone", "gamma"}))),
+             QStringList{QStringLiteral("alpha")});
     QVERIFY(StartsUnpinned(BuildRows(sessions, pinned({"gone"}))).isEmpty());
 }
 
