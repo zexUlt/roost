@@ -6,7 +6,10 @@
 # From the build system, not from the text of CMakeLists.txt: the CMake File
 # API (codemodel-v2) gives target -> sources, `ctest --show-only=json-v1` gives
 # test -> command. A test is selected when its command runs the executable of
-# a target that has one of the files among its sources.
+# a target that has one of the files among its sources. When that executable
+# is used by anything else — another target depends on it, a define or a test
+# property names its path (a test that runs another test's binary as a fake,
+# e.g. FAKE_CODEX_PATH) — the answer is unknown: the whole suite runs.
 #
 # The build directory must have been configured with the query file in place:
 #   mkdir -p BUILD/.cmake/api/v1/query && touch BUILD/.cmake/api/v1/query/codemodel-v2
@@ -45,7 +48,9 @@ missing=$(jq -r '[.[] | select(.command == null) | .name] | join(" ")' <<<"$test
 targets=$(
     jq -r '.configurations[0].targets[].jsonFile' "$codemodel" | while IFS= read -r file; do
         jq -c --arg build "$build" '{
-            name, type,
+            id, name, type,
+            deps: [(.dependencies // [])[].id],
+            defines: [(.compileGroups // [])[] | (.defines // [])[] | .define],
             exe: ((.artifacts // [])[0].path // "" | if . == "" then "" else $build + "/" + . end),
             sources: [(.sources // [])[] | select(.isGenerated | not) | .path]
         }' "$reply/$file"
@@ -61,6 +66,17 @@ for file in "$@"; do
     if [ "$(jq '[.[] | select(.type != "EXECUTABLE")] | length' <<<"$owners")" -gt 0 ]; then
         die "$file is compiled into a library, not only into executables"
     fi
+    # The executable used elsewhere: a dependency of another target, or its
+    # path in a define or in a test property (ENVIRONMENT and the like).
+    users=$(jq -r --argjson owners "$owners" '
+        [ .[] | . as $t | select(any($owners[]; . as $o | $o.id != $t.id and
+            (any($t.deps[]; . == $o.id) or ($o.exe != "" and any($t.defines[]; contains($o.exe)))))) | .name ]
+        | join(" ")' <<<"$targets")
+    [ -z "$users" ] || die "$file builds an executable that other targets use: $users"
+    prop_users=$(jq -r --argjson owners "$owners" '
+        [ .[] | select(any(.properties[]?.value | tostring; . as $v | any($owners[]; . as $o | $o.exe != "" and ($v | contains($o.exe))))) | .name ]
+        | join(" ")' <<<"$tests")
+    [ -z "$prop_users" ] || die "$file builds an executable that the properties of tests name: $prop_users"
     names=$(jq -r --argjson owners "$owners" '
         [ .[] | select(.command | any(. as $word | $owners | any(.exe == $word))) | .name ]
         | .[]' <<<"$tests")
