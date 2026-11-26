@@ -417,6 +417,59 @@ private slots:
                                   QJsonArray{}, TIMEOUT_MS);
     }
 
+    void ALineSeparatesThePinnedCategoriesFromTheRest() {
+        FailOnWarnings();
+        // Ops (BETA), Dev (DELTA), then the uncategorized ALPHA and GAMMA.
+        BootWith(
+            Document({{"categories", QJsonObject{{KeyOf(BETA), "Ops"},
+                                                 {KeyOf(DELTA), "Dev"}}}}));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // The header of a session's category is the row above the session.
+        auto ruleShown = [&](const QString& id) {
+            QQuickItem* rule = InRow(ViewRowOf(id) - 1, "pinnedRule");
+            return rule != nullptr && rule->isVisible();
+        };
+        // Nothing is pinned: no line.
+        for (const QString& id : {BETA, DELTA, ALPHA}) {
+            QVERIFY(!ruleShown(id));
+        }
+        // The header that will get the line and the row under it, before.
+        const double headerHeight = ViewItem(ViewRowOf(DELTA) - 1)->height();
+        const double nextOffset = ViewItem(ViewRowOf(DELTA))->y() -
+                                  ViewItem(ViewRowOf(DELTA) - 1)->y();
+        MoveTo(BETA);
+
+        // One pinned, the rest not: the line is above the first unpinned.
+        Press(Qt::Key_P);
+        QTRY_VERIFY_WITH_TIMEOUT(ruleShown(DELTA), TIMEOUT_MS);
+        QVERIFY(!ruleShown(BETA));
+        QVERIFY(!ruleShown(ALPHA));
+        // It takes no height: the header is as high as before and the next
+        // row is at the same distance under it (the list itself moved).
+        QCOMPARE(ViewItem(ViewRowOf(DELTA) - 1)->height(), headerHeight);
+        QCOMPARE(ViewItem(ViewRowOf(DELTA))->y() -
+                     ViewItem(ViewRowOf(DELTA) - 1)->y(),
+                 nextOffset);
+
+        // Pinning another category moves the line down.
+        MoveTo(DELTA);
+        Press(Qt::Key_P);
+        QTRY_VERIFY_WITH_TIMEOUT(ruleShown(ALPHA), TIMEOUT_MS);
+        QVERIFY(!ruleShown(BETA));
+        QVERIFY(!ruleShown(DELTA));
+
+        // The last one pinned: nothing is left below, no line.
+        MoveTo(ALPHA);
+        Press(Qt::Key_P);
+        QTRY_VERIFY_WITH_TIMEOUT(Role(ViewRowOf(ALPHA) - 1, "pinned").toBool(),
+                                 TIMEOUT_MS);
+        for (const QString& id : {BETA, DELTA, ALPHA}) {
+            QVERIFY(!ruleShown(id));
+        }
+    }
+
     void ZFoldsAndShiftZUnfolds() {
         FailOnWarnings();
         // Rows: Ops, DELTA, "" (uncategorized), ALPHA, BETA, GAMMA.

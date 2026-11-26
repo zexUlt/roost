@@ -117,6 +117,7 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
         return sortKey(a) < sortKey(b);
     });
 
+    bool afterPinned = false;
     for (const auto* entry : order) {
         const QString& category = entry->first;
         const Group& group = entry->second;
@@ -130,6 +131,8 @@ RowsResult BuildRows(const std::vector<SessionEntry>& sessions,
         header.UnreadCount = group.Unread;
         header.Folded = folded;
         header.Pinned = pins.contains(category);
+        header.StartsUnpinned = afterPinned && !header.Pinned;
+        afterPinned = header.Pinned;
         result.Rows.push_back(std::move(header));
 
         if (folded) {
