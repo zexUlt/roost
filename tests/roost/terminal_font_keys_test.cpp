@@ -337,9 +337,13 @@ private slots:
         Press(Qt::Key_Minus, FONT_MODIFIERS);
         Press(Qt::Key_Minus, FONT_MODIFIERS);
         Press(Qt::Key_Equal, FONT_MODIFIERS);
-        QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), 15.0, TIMEOUT_MS);
+        // The size does not tell the last write: 15 is the first write's too
+        // (15, 14, 15), and the window shows it as soon as that one is
+        // announced. The announcements come in the order roostd sent them, so
+        // the fifth is the last key's.
+        QTRY_COMPARE_WITH_TIMEOUT(SettingsWrites(*writes), 5, TIMEOUT_MS);
+        QCOMPARE(SizeOf(Singleton_), 15.0);
         QCOMPARE(Stored(), TerminalFont({{"size", 15}}));
-        QCOMPARE(SettingsWrites(*writes), 5);
     }
 
     // One below the maximum, two keys in a row: one write, then the refusal,
@@ -472,12 +476,14 @@ private slots:
 
     // The keys as the US layout sends the shifted symbols: Ctrl+Shift+= is a
     // press of "+" with Shift, Ctrl+Shift+- one of "_". On macOS Cmd+Shift+=
-    // (people press Cmd++) is the second key of the bigger command.
+    // (people press Cmd++) is the second key of the bigger command, Cmd+Shift+-
+    // the second key of the smaller one.
     void TheShiftedSymbolKeysRunTheCommands_data() {
         QTest::addColumn<int>("key");
         QTest::addColumn<double>("step");
 #ifdef Q_OS_MACOS
         QTest::newRow("Cmd+Shift+=") << int(Qt::Key_Plus) << 1.0;
+        QTest::newRow("Cmd+Shift+-") << int(Qt::Key_Underscore) << -1.0;
 #else
         QTest::newRow("Ctrl+Shift+= is Plus") << int(Qt::Key_Plus) << 1.0;
         QTest::newRow("Ctrl+Shift+- is Underscore")
