@@ -43,6 +43,7 @@ struct Item {
     QString Id;
     QString State = QStringLiteral("working");
     QString Title = QString();
+    QString Agent = AGENT;
 };
 
 // A source with the roles and the changes of Roost.sessions: an insert at the
@@ -60,7 +61,7 @@ public:
         const Item& item = Items_[static_cast<std::size_t>(index.row())];
         switch (role - Qt::UserRole) {
             case 0:
-                return AGENT;
+                return item.Agent;
             case 1:
                 return item.Id;
             case 2:
@@ -379,6 +380,14 @@ private slots:
     void ARemovedSessionMovesTheCursorToTheNextStop();
     void AResetPutsTheCursorBackElseOnTheOpenedElseFirst();
     void RowsInAnEmptyListPutTheCursorOnTheFirst();
+    void RowsThatComeInPartsToAnEmptyListKeepTheCursorOnTheFirst();
+    void AfterTheEndOfTheListingANewUnreadSessionDoesNotTakeTheCursor();
+    void RowsInPartsBeforeTheEndOfTheListingKeepTheCursorOnTheFirst();
+    void TheEndOfTheListingOfAnAgentWithNoSessionsDoesNotEndTheDefault();
+    void TheEndOfTheListingOfTheSameSyncEndsTheDefault();
+    void AnArchivedSessionOfAnotherAgentDoesNotHoldTheDefault();
+    void AResetOfTheSourceInTheMiddleOfTheListingKeepsTheDefault();
+    void TheEndOfTheListingAfterTheDefaultIsOverSchedulesNothing();
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
     void AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead();
@@ -688,6 +697,179 @@ void SessionsListTest::RowsInAnEmptyListPutTheCursorOnTheFirst() {
     Settle();
     QCOMPARE(env.List.cursorRow(), 1);
     QCOMPARE(env.List.cursorSession().toMap(), Ref("a"));
+}
+
+// 06-panels.md:128. The rows of one fill reach the list in more than one sync;
+// an unread session is listed above the one that came first.
+void SessionsListTest::
+    RowsThatComeInPartsToAnEmptyListKeepTheCursorOnTheFirst() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 3);
+    QCOMPARE(env.List.cursorRow(), 1);
+    QCOMPARE(Cur(env.List), Key("b"));
+
+    // Once the user has moved the cursor, it stays on its session.
+    env.CursorTo(Key("a"));
+    env.Source.Add({"d", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+
+    // An emptied list starts over.
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    env.Source.Remove(0);
+    Settle();
+    QCOMPARE(env.List.cursorRow(), -1);
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// 06-panels.md:128. The listing that filled the list is over: a session that
+// comes now is a new one, listed above the cursor but not taking it.
+void SessionsListTest::
+    AfterTheEndOfTheListingANewUnreadSessionDoesNotTakeTheCursor() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 2);
+    QCOMPARE(Cur(env.List), Key("a"));
+    QCOMPARE(env.List.cursorRow(), 2);
+}
+
+// The marker comes after the rows of the listing, which reach the list in
+// parts: the cursor stays on the first row until then and after.
+void SessionsListTest::
+    RowsInPartsBeforeTheEndOfTheListingKeepTheCursorOnTheFirst() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    QCOMPARE(env.List.cursorRow(), 1);
+    // A later listing has its own rows.
+    env.Source.Add({"d", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// Only the agent that has sessions in the list ends the default.
+void SessionsListTest::
+    TheEndOfTheListingOfAnAgentWithNoSessionsDoesNotEndTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.List.sourceListed(QStringLiteral("codex"));
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"c", "done"});
+    env.Source.Add({"d"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// The sync that fills the list reads the rows that came before the marker:
+// they are one listing.
+void SessionsListTest::TheEndOfTheListingOfTheSameSyncEndsTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    env.List.sourceListed(AGENT);
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+}
+
+// 06-panels.md:128. The sessions the list does not show do not count: an
+// archived session of an agent that never sends the marker (a backend that is
+// down, a plugin that has none) does not hold the default.
+void SessionsListTest::AnArchivedSessionOfAnotherAgentDoesNotHoldTheDefault() {
+    const QString other = QStringLiteral("codex");
+    Env env;
+    env.Open({});
+    env.Source.Add({"x", "done", QString(), other});
+    Settle();
+    env.List.setArchived(QVariantMap{{"agent", other}, {"id", "x"}}, true);
+    Settle();
+    QVERIFY(Rows(env.List).isEmpty());
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 2);
+    QCOMPARE(Cur(env.List), Key("a"));
+}
+
+// A reset of the source comes from the source, not from the user: the rows of
+// the parts after it still go above the cursor until the listing ends.
+void SessionsListTest::
+    AResetOfTheSourceInTheMiddleOfTheListingKeepsTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.Reset({{"a"}}, true);
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// The marker comes every few seconds from an adapter: once the default is over
+// it asks for no sync.
+void SessionsListTest::
+    TheEndOfTheListingAfterTheDefaultIsOverSchedulesNothing() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.List.sourceListed(AGENT);
+    Settle();
+    QVERIFY(!env.List.saving());
+    env.List.sourceListed(AGENT);
+    QVERIFY(!env.List.saving());
 }
 
 void SessionsListTest::NothingIsWrittenBeforeTheDocumentIsRead() {

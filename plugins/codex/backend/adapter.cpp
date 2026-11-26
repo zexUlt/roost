@@ -320,6 +320,11 @@ void Adapter::Publish() {
             }
         }
     }
+    // The listing is told whole: the end of it follows the changes.
+    Send_(QJsonDocument(QJsonObject{{"jsonrpc", "2.0"},
+                                    {"method", "session.listed"},
+                                    {"params", QJsonObject{{"agent", AGENT}}}})
+              .toJson(QJsonDocument::Compact));
     Error_.clear();
     Sessions_ = std::move(PendingSessions_);
     Rows_ = std::move(PendingRows_);

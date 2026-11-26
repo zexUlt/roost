@@ -448,6 +448,9 @@ void Adapter::OnPolled(std::expected<Listing, QString> listing) {
                 }
             }
         }
+        // The listing is told whole: the end of it follows the changes.
+        Notify(QStringLiteral("session.listed"),
+               QJsonObject{{QStringLiteral("agent"), AGENT}});
         KnownIds_ = std::move(ids);
         Known_ = std::move(states);
         Last_ = std::move(listing->Sessions);

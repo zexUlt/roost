@@ -68,6 +68,12 @@ QJsonObject StateChanged(const QJsonObject& session) {
             {"params", QJsonObject{{"agent", AGENT}, {"session", session}}}};
 }
 
+QJsonObject Listed() {
+    return {{"jsonrpc", "2.0"},
+            {"method", "session.listed"},
+            {"params", QJsonObject{{"agent", AGENT}}}};
+}
+
 const char* const QML = R"(
 import QtQuick
 import Roost.Api
@@ -295,6 +301,18 @@ private slots:
         QCOMPARE(Model_->rowCount(), 3);
         QCOMPARE(Role(2, "id"), QVariant("s3"));
         QCOMPARE(changed.size(), 1);
+    }
+
+    void TheEndOfAListingIsTheSignalListedOfTheModel() {
+        QVERIFY(Prepare());
+        QVERIFY(ConnectApi());
+        QSignalSpy listed(Model_, &SessionsModel::listed);
+        QSignalSpy inserted(Model_, &QAbstractItemModel::rowsInserted);
+        QVERIFY(Notify({StateChanged(Row("s3", "blocked", "new")), Listed()}));
+        QTRY_COMPARE_WITH_TIMEOUT(listed.size(), 1, TIMEOUT_MS);
+        QCOMPARE(listed[0][0].toString(), AGENT);
+        // The rows it changed came first.
+        QCOMPARE(inserted.size(), 1);
     }
 
     void ARemovalIsARowRemoval() {
