@@ -2,6 +2,7 @@
 
 #include <QFuture>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QObject>
@@ -65,6 +66,30 @@ public:
     // finishes in the IO thread when roostd is asked, so attach a
     // continuation with a context.
     QFuture<rpc::Result> Get();
+
+    // keymap.setCommand: roostd sets the whole set of the user's keys of one
+    // command in keymap.json, in one write (design.md §16). `entries` are
+    // {key?, mac?} (as in the file): all the keys the command must have
+    // afterwards, those of the plugins that it keeps too; to add a key, pass
+    // the keys it has now and the new one. Empty removes every key. `args` and
+    // `when` name which keys of the command are meant: those with the same
+    // ones. Answers null when the file is written; the table follows by
+    // keymap.changed, as for a hand edit, and this call does not touch the
+    // cache. roostd's errors (InvalidParams for a key that does not parse or
+    // an entry with another field, StoreFailed for a file that cannot be
+    // used) pass unchanged. The future finishes in the IO thread: attach a
+    // continuation with a context.
+    QFuture<rpc::Result> SetCommand(
+        const QString& command, const QJsonArray& entries,
+        const QString& when = {},
+        const QJsonValue& args = QJsonValue::Undefined);
+
+    // keymap.resetCommand: takes out of the file what SetCommand wrote for
+    // the command (for this `when` and `args`), so the keys of the plugins
+    // apply. The same as SetCommand otherwise.
+    QFuture<rpc::Result> ResetCommand(
+        const QString& command, const QString& when = {},
+        const QJsonValue& args = QJsonValue::Undefined);
 
     bool IsLoaded() const;
 
