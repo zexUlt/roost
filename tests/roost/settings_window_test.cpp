@@ -63,6 +63,13 @@ import Roost.Api
 Item {
     id: root
     property string pluginId
+    // What the last Roost.call for keys was answered.
+    property string answer: ""
+    function setKeys(command) {
+        Roost.call("keymap.setCommand",
+                   {command: command, entries: [{key: "Ctrl+Alt+Y"}]},
+                   (error, result) => { answer = error ? error.message : "ok" })
+    }
     implicitHeight: field.implicitHeight
     TextField {
         id: field
@@ -1517,6 +1524,41 @@ private slots:
                    : QStringList{"Cmd+Alt+L", "Ctrl+Alt+J"};
         expected.sort();
         QCOMPARE(theirs, expected);
+    }
+
+    // The page of a plugin is a plugin's code: through the loader it calls
+    // with the id of its plugin, and may set the keys of its own commands
+    // only. The window itself sets any (the tests above).
+    void APluginPageSetsItsOwnKeysOnly() {
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(AddPlugin(*Daemon_, "second", "", {}));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(window->Find("fixtureField") != nullptr,
+                                 TIMEOUT_MS);
+        QQuickItem* page = window->Find("fixtureField")->parentItem();
+        QVERIFY(page != nullptr);
+        QCOMPARE(page->property("pluginId").toString(), FIXTURE);
+
+        QVERIFY(QMetaObject::invokeMethod(page, "setKeys",
+                                          Q_ARG(QVariant, "second.hello")));
+        QTRY_VERIFY_WITH_TIMEOUT(!page->property("answer").toString().isEmpty(),
+                                 TIMEOUT_MS);
+        const QString refusal = page->property("answer").toString();
+        QVERIFY2(refusal.contains("second.hello") && refusal.contains(FIXTURE),
+                 qPrintable(refusal));
+        QCOMPARE(KeymapFile(), QJsonDocument::fromJson(KEYMAP).array());
+
+        QVERIFY(page->setProperty("answer", ""));
+        QVERIFY(
+            QMetaObject::invokeMethod(page, "setKeys", Q_ARG(QVariant, OTHER)));
+        KeymapEdited_ = true;
+        QTRY_COMPARE_WITH_TIMEOUT(page->property("answer").toString(),
+                                  QString("ok"), TIMEOUT_MS);
+        QVERIFY(EntriesOf(OTHER).contains(
+            QJsonObject{{"command", OTHER}, {"key", "Ctrl+Alt+Y"}}));
+        QCOMPARE(KeymapFile().size(), 2);
     }
 
     // The key pressed in the dialog is the dialog's: the matcher of the window,
