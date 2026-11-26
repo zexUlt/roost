@@ -71,7 +71,7 @@
 | `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md) |
 | `terminal.copy` | `Ctrl+Shift+C`, `mac`: `Cmd+C`, `when` `terminal.view` | `TerminalPanel.qml`: копирует выделение терминала |
 | `terminal.fontBigger` | `Ctrl+Shift+=`, `mac`: `Cmd+=` и `Cmd+Shift+=` (вторая запись вклада: люди жмут `Cmd++`), без `when` (вклад плагина `terminal`) | `Main.qml`: размер шрифта терминала на 1 больше, не выше 72 |
-| `terminal.fontSmaller` | `Ctrl+Shift+-`, `mac`: `Cmd+-`, без `when` (вклад плагина `terminal`) | `Main.qml`: размер на 1 меньше, не ниже 6 |
+| `terminal.fontSmaller` | `Ctrl+Shift+-`, `mac`: `Cmd+-` и `Cmd+Shift+-` (вторая запись вклада, как у `terminal.fontBigger`), без `when` (вклад плагина `terminal`) | `Main.qml`: размер на 1 меньше, не ниже 6 |
 | `terminal.fontDefault` | `Ctrl+Shift+0`, `mac`: `Cmd+0`, без `when` (вклад плагина `terminal`) | `Main.qml`: убирает `size` из `settings.terminalFont` |
 | `layout.splitRight`, `layout.splitDown` | нет | `LayoutView.qml`: делит панель (аргумент `panel` — тип новой) |
 | `layout.intoTabs`, `layout.outOfTabs` | нет | `LayoutView.qml`: панель в стопку вкладок и обратно |

@@ -476,12 +476,14 @@ private slots:
 
     // The keys as the US layout sends the shifted symbols: Ctrl+Shift+= is a
     // press of "+" with Shift, Ctrl+Shift+- one of "_". On macOS Cmd+Shift+=
-    // (people press Cmd++) is the second key of the bigger command.
+    // (people press Cmd++) is the second key of the bigger command, Cmd+Shift+-
+    // the second key of the smaller one.
     void TheShiftedSymbolKeysRunTheCommands_data() {
         QTest::addColumn<int>("key");
         QTest::addColumn<double>("step");
 #ifdef Q_OS_MACOS
         QTest::newRow("Cmd+Shift+=") << int(Qt::Key_Plus) << 1.0;
+        QTest::newRow("Cmd+Shift+-") << int(Qt::Key_Underscore) << -1.0;
 #else
         QTest::newRow("Ctrl+Shift+= is Plus") << int(Qt::Key_Plus) << 1.0;
         QTest::newRow("Ctrl+Shift+- is Underscore")
