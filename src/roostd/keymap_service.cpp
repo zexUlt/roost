@@ -520,24 +520,30 @@ Chords ChordsOfTarget(const Resolver& resolve,
     return chords;
 }
 
+// The bindings of each platform's table that the plugins give alone.
+using Contributions = std::array<QJsonArray, 2>;
+
 // An entry with "command": null whose only effect, on each platform, is to
-// remove bindings of the target (and which removes one on some platform): it
-// was written to unbind the target's own keys. What it removes is what the
-// table loses when it is taken out of the file. An entry that removes a key
-// of another command, or nothing at all, is not it: the user wrote that.
-bool UnbindsOnlyTarget(const Resolver& resolve, const QJsonArray& file,
-                       qsizetype index, const Target& target) {
-    const QJsonValue value = file.at(index);
-    if (!value.isObject() ||
+// remove contributed bindings of the target (and which removes one on some
+// platform): it was written to unbind the target's own keys. What it removes
+// is judged on the contributions alone: the table of the plugins with the
+// entry, against the table without it. A key that another entry of the file
+// holds does not matter: the removal is the same whether it is there or not.
+// An entry that removes a binding of another command, or none of the target's,
+// is not it, nor is one that removes the key of an entry above it in the file:
+// the user wrote that.
+bool UnbindsOnlyTarget(const Resolver& resolve,
+                       const Contributions& contributions,
+                       const QJsonValue& value, bool takesFileKey,
+                       const Target& target) {
+    if (takesFileKey || !value.isObject() ||
         !value.toObject().value(QStringLiteral("command")).isNull()) {
         return false;
     }
-    QJsonArray without = file;
-    without.removeAt(index);
     bool removed = false;
-    for (const EPlatform platform : PLATFORMS) {
-        const QJsonArray with = resolve(platform, file);
-        for (const QJsonValue& binding : resolve(platform, without)) {
+    for (std::size_t index = 0; index < PLATFORMS.size(); ++index) {
+        const QJsonArray with = resolve(PLATFORMS[index], QJsonArray{value});
+        for (const QJsonValue& binding : contributions[index]) {
             if (with.contains(binding)) {
                 continue;
             }
@@ -551,19 +557,46 @@ bool UnbindsOnlyTarget(const Resolver& resolve, const QJsonArray& file,
 }
 
 // The file without what a call for the target replaces: its own entries, and
-// the entries that unbound its keys.
-QJsonArray WithoutTarget(const Resolver& resolve, const QJsonArray& file,
-                         const Target& target) {
-    QJsonArray own;
-    for (const QJsonValue& value : file) {
-        if (!BindsTarget(value, target)) {
-            own.append(value);
-        }
+// the entries that unbound its keys. One resolve of the plugins for each
+// platform, then one pass over the file.
+QJsonArray WithoutTarget(const Resolver& resolve, const PluginRegistry& plugins,
+                         const QJsonArray& file, const Target& target) {
+    Contributions contributions;
+    for (std::size_t index = 0; index < PLATFORMS.size(); ++index) {
+        contributions[index] = resolve(PLATFORMS[index], std::nullopt);
     }
+    // The pairs (chord, when) that entries of the file above bind, by
+    // platform.
+    std::array<std::set<QString>, 2> above;
     QJsonArray kept;
-    for (qsizetype index = 0; index < own.size(); ++index) {
-        if (!UnbindsOnlyTarget(resolve, own, index, target)) {
-            kept.append(own.at(index));
+    for (const QJsonValue& value : file) {
+        if (BindsTarget(value, target)) {
+            continue;
+        }
+        bool takesFileKey = false;
+        std::array<std::optional<QString>, 2> keys;
+        std::array<bool, 2> binds{};
+        for (std::size_t index = 0; index < PLATFORMS.size(); ++index) {
+            const auto parsed = ParseEntry(value, PLATFORMS[index], plugins);
+            if (!parsed) {
+                continue;
+            }
+            if (const auto* entry = std::get_if<Entry>(&*parsed)) {
+                keys[index] = KeyOf(entry->Chord, entry->When);
+                binds[index] = entry->Command.has_value();
+                takesFileKey =
+                    takesFileKey ||
+                    (!binds[index] && above[index].contains(*keys[index]));
+            }
+        }
+        if (!UnbindsOnlyTarget(resolve, contributions, value, takesFileKey,
+                               target)) {
+            kept.append(value);
+        }
+        for (std::size_t index = 0; index < PLATFORMS.size(); ++index) {
+            if (keys[index] && binds[index]) {
+                above[index].insert(*keys[index]);
+            }
         }
     }
     return kept;
@@ -710,7 +743,7 @@ rpc::Result KeymapService::SetCommand(const QJsonObject& params) {
                                     const std::optional<QJsonArray>& entries) {
         return ResolveWith(platform, entries, QString()).Bindings;
     };
-    const QJsonArray kept = WithoutTarget(resolve, *current, *target);
+    const QJsonArray kept = WithoutTarget(resolve, Plugins_, *current, *target);
 
     // What the plugins give the command, for each platform (a key that lost
     // a conflict to another plugin is not there), whatever the file has: a
@@ -818,7 +851,7 @@ rpc::Result KeymapService::ResetCommand(const QJsonObject& params) {
                                     const std::optional<QJsonArray>& entries) {
         return ResolveWith(platform, entries, QString()).Bindings;
     };
-    const QJsonArray kept = WithoutTarget(resolve, *current, *target);
+    const QJsonArray kept = WithoutTarget(resolve, Plugins_, *current, *target);
     return kept == *current ? rpc::Result(QJsonValue())
                             : WriteEntries(Path_, kept);
 }

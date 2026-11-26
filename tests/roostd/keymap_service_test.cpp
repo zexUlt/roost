@@ -690,6 +690,68 @@ private slots:
         QCOMPARE(FileEntries(), QJsonArray{});
     }
 
+    // Another entry of the file holds the key that alpha.save gets from its
+    // plugin: setCommand removes it once, and a repeat writes nothing; reset
+    // takes the removal away, and when the other entry goes alpha.save has the
+    // key again.
+    void ARemovalIsJudgedByWhatItTakesFromThePlugins() {
+        const QJsonObject other{{"key", "Ctrl+S"}, {"command", "beta.new"}};
+        QVERIFY(SaveFile(QJsonArray{other}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        for (int round = 0; round < 3; ++round) {
+            QVERIFY(Set("alpha.save", QJsonArray{}).has_value());
+        }
+        const QJsonObject removal{
+            {"command", UNBIND}, {"key", "Ctrl+S"}, {"mac", "Ctrl+S"}};
+        QCOMPARE(FileEntries(), (QJsonArray{removal, other}));
+
+        QVERIFY(Reset("alpha.save").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{other});
+        QVERIFY(SaveFile(QJsonArray{}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Get("linux")
+                .value("bindings")
+                .toArray()
+                .contains(Binding("Ctrl+S", "alpha.save", "alpha")),
+            TIMEOUT_MS);
+    }
+
+    // Removals that were written twice (by an older roostd) go with one reset.
+    void AResetTakesRepeatedRemovals() {
+        const QJsonObject removal{
+            {"command", UNBIND}, {"key", "Ctrl+S"}, {"mac", "Ctrl+S"}};
+        const QJsonObject other{{"key", "Ctrl+S"}, {"command", "beta.new"}};
+        QVERIFY(SaveFile(QJsonArray{removal, removal, removal, other}));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+
+        QVERIFY(Reset("alpha.save").has_value());
+        QCOMPARE(FileEntries(), QJsonArray{other});
+    }
+
+    // A file of a thousand removals of the user's own is answered at once: the
+    // daemon does not stall on it, and the file stays as it is.
+    void AResetOverAThousandRemovalsAnswers() {
+        QJsonArray entries;
+        for (int i = 0; i < 1000; ++i) {
+            entries.append(QJsonObject{{"key", "Ctrl+K"},
+                                       {"command", UNBIND},
+                                       {"when", QString("panel.%1").arg(i)}});
+        }
+        QVERIFY(SaveFile(entries));
+        QVERIFY(Daemon_->Start(ROOSTD_PATH));
+        QVERIFY(Connect());
+        const QByteArray before = FileBytes();
+
+        QElapsedTimer timer;
+        timer.start();
+        QVERIFY(Reset("alpha.save").has_value());
+        qInfo() << "reset over 1000 removals, ms:" << timer.elapsed();
+        QCOMPARE(FileBytes(), before);
+    }
+
     // The directory that a write makes is the owner's, as the store's own are
     // (design.md §8), and so is the file; the permissions of a directory that
     // is there are not changed.
@@ -718,6 +780,27 @@ private slots:
         QCOMPARE((QFileInfo(KeymapPath()).permissions() & 0x7000).toInt(),
                  (QFile::ReadOwner | QFile::WriteOwner).toInt());
         QVERIFY(!others(KeymapPath()));
+
+        // A directory that is there keeps its permissions, and a file that is
+        // there is for the owner only after a write.
+        QVERIFY(QFile::setPermissions(Daemon_->ConfigPath(),
+                                      QFile::ReadOwner | QFile::WriteOwner |
+                                          QFile::ExeOwner | QFile::ReadGroup |
+                                          QFile::ExeGroup | QFile::ReadOther |
+                                          QFile::ExeOther));
+        QVERIFY(QFile::setPermissions(KeymapPath(),
+                                      QFile::ReadOwner | QFile::WriteOwner |
+                                          QFile::ReadGroup | QFile::ReadOther));
+        QVERIFY(
+            Set("alpha.save", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+D"}}})
+                .has_value());
+        // rwxr-xr-x and rw-------, as Qt numbers the bits (0x4000 is the
+        // owner's read, 0x0040 the group's, 0x0004 the others').
+        QCOMPARE(
+            (QFileInfo(Daemon_->ConfigPath()).permissions() & 0x7077).toInt(),
+            0x7055);
+        QCOMPARE((QFileInfo(KeymapPath()).permissions() & 0x7077).toInt(),
+                 0x6000);
     }
 
     // The limit is for what is written too: a file just under it that grows by
