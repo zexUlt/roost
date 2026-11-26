@@ -10,7 +10,7 @@ import Roost.Api
 ApplicationWindow {
     id: root
 
-    // Whether the link opens the browser. A test turns it off; linkOpened
+    // Whether "Project page" opens the browser. A test turns it off; linkOpened
     // follows either way.
     property bool opensUrls: true
     // The page of the project.
@@ -18,8 +18,15 @@ ApplicationWindow {
     // The C++ side; a test reads it.
     readonly property alias info: info
 
-    // The user pressed the link of the project page.
+    // The user pressed the button of the project page.
     signal linkOpened(url page)
+
+    function openProjectPage() {
+        root.linkOpened(root.projectPage);
+        if (root.opensUrls) {
+            Qt.openUrlExternally(root.projectPage);
+        }
+    }
 
     // Shows the window, or raises the one that is shown.
     function open() {
@@ -90,14 +97,18 @@ ApplicationWindow {
 
         Label {
             objectName: "aboutVersion"
-            Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
             text: info.version
             color: Roost.theme.text
         }
 
         Label {
             objectName: "aboutLibraries"
-            Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
             text: "libghostty-vt " + info.ghosttyVt + ", Qt " + info.qtVersion
             font: Roost.theme.smallFont
             color: Roost.theme.textMuted
@@ -105,32 +116,35 @@ ApplicationWindow {
 
         Label {
             objectName: "aboutLicense"
-            Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
             Layout.topMargin: 8
             text: "Apache-2.0"
             color: Roost.theme.textSecondary
         }
 
-        Text {
+        // The address in words; the button below opens it, so the keyboard
+        // reaches it as any other button.
+        Label {
             objectName: "aboutLink"
-            Layout.alignment: Qt.AlignHCenter
-            text: "<a href=\"" + root.projectPage + "\">" + root.projectPage + "</a>"
-            textFormat: Text.StyledText
-            linkColor: Roost.theme.accent
-            font: root.font
-            onLinkActivated: link => {
-                const page = Qt.resolvedUrl(link);
-                root.linkOpened(page);
-                if (root.opensUrls) {
-                    Qt.openUrlExternally(page);
-                }
-            }
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WrapAnywhere
+            text: String(root.projectPage)
+            color: Roost.theme.textSecondary
         }
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 12
             spacing: 8
+
+            FormButton {
+                objectName: "aboutPageButton"
+                text: "Project page"
+                onClicked: root.openProjectPage()
+            }
 
             FormButton {
                 objectName: "aboutCopyButton"

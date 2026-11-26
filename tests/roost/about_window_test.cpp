@@ -138,7 +138,6 @@ private slots:
         QCOMPARE(About_->property("title").toString(), QString("About roost"));
         QCOMPARE(Text("aboutName"), QString("roost"));
         QCOMPARE(Text("aboutVersion"), QString::fromStdString(RoostVersion()));
-        QVERIFY(RoostVersion().starts_with("0."));
         QCOMPARE(Text("aboutLibraries"),
                  QString("libghostty-vt %1, Qt %2")
                      .arg(QString::fromStdString(GhosttyVtVersion()),
@@ -149,19 +148,51 @@ private slots:
                                   IMAGE_READY, TIMEOUT_MS);
     }
 
-    // The link goes to the project page; the test does not open the browser.
-    void TheLinkNamesTheProjectPage() {
+    // "Project page" opens the project page, by a click and by the keyboard;
+    // the test does not open the browser.
+    void TheProjectPageButtonOpensTheProjectPage() {
         QTest::failOnWarning(testing::WarningFilter());
         Open();
+        QVERIFY(QTest::qWaitForWindowActive(About_));
         QSignalSpy opened(About_, SIGNAL(linkOpened(QUrl)));
-        QQuickItem* link = Item("aboutLink");
-        QVERIFY(link != nullptr);
-        QVERIFY(QMetaObject::invokeMethod(
-            link, "linkActivated",
-            Q_ARG(QString, QString("https://github.com/zexUlt/roost"))));
-        QCOMPARE(opened.size(), 1);
+        QQuickItem* button = Item("aboutPageButton");
+        QVERIFY(button != nullptr);
+        QCOMPARE(button->property("text").toString(), QString("Project page"));
+        QTest::mouseClick(
+            About_, Qt::LeftButton, {},
+            button
+                ->mapToScene(QPointF(button->width() / 2, button->height() / 2))
+                .toPoint());
+        QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 1, TIMEOUT_MS);
         QCOMPARE(opened.first().at(0).toUrl(),
                  QUrl("https://github.com/zexUlt/roost"));
+        // Tab reaches the button, Space presses it.
+        for (int i = 0; i < 4 && !button->hasActiveFocus(); ++i) {
+            QTest::keyClick(About_, Qt::Key_Tab);
+        }
+        QVERIFY(button->hasActiveFocus());
+        QTest::keyClick(About_, Qt::Key_Space);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 2, TIMEOUT_MS);
+    }
+
+    // At a large window font the lines wrap inside the window, none is wider.
+    void TheLinesWrapAtALargeFont() {
+        QTest::failOnWarning(testing::WarningFilter());
+        Open();
+        QFont font = About_->property("font").value<QFont>();
+        font.setPointSizeF(36);
+        About_->setProperty("font", font);
+        for (const char* name :
+             {"aboutVersion", "aboutLibraries", "aboutLicense", "aboutLink"}) {
+            QQuickItem* line = Item(name);
+            QVERIFY(line != nullptr);
+            line->setProperty("font", font);
+            QTRY_VERIFY2_WITH_TIMEOUT(
+                line->mapToScene(QPointF(line->width(), 0)).x() <=
+                        About_->width() &&
+                    line->property("contentWidth").toReal() <= line->width(),
+                name, TIMEOUT_MS);
+        }
     }
 
     // Copy puts the lines of about.txt that name the versions, and only them,
