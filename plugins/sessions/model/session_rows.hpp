@@ -79,6 +79,9 @@ struct Row {
     int UnreadCount = 0;
     bool Folded = false;
     bool Pinned = false;
+    // The first unpinned header right after a pinned category: the list draws
+    // a line above it.
+    bool StartsUnpinned = false;
 
     bool operator==(const Row&) const = default;
 };
