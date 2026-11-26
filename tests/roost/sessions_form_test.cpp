@@ -1771,9 +1771,14 @@ private slots:
     // Retypes the directory field: emptied by Backspace, then `text`; the
     // keyboard is on the field.
     void RetypeDirectory(const QString& text) {
-        while (!TextOf("sessionsNewDirectory").isEmpty()) {
+        const int limit =
+            static_cast<int>(TextOf("sessionsNewDirectory").size()) + 8;
+        for (int i = 0; i < limit && !TextOf("sessionsNewDirectory").isEmpty();
+             ++i) {
             Press(Qt::Key_Backspace);
         }
+        QVERIFY2(TextOf("sessionsNewDirectory").isEmpty(),
+                 "the directory field did not empty by Backspace");
         Type(text);
     }
 
@@ -1890,6 +1895,10 @@ private slots:
             QVERIFY(QFile::setPermissions(
                 locked, QFile::ReadOwner | QFile::WriteOwner));
             refuse(locked, locked + " cannot be entered");
+            // Enterable but not readable: the claude adapter refuses it too.
+            QVERIFY(QFile::setPermissions(locked,
+                                          QFile::WriteOwner | QFile::ExeOwner));
+            refuse(locked, locked + " cannot be read");
             QVERIFY(QFile::setPermissions(locked, open));
         }
         if (QTest::currentTestFailed()) {
@@ -1903,6 +1912,30 @@ private slots:
         VerifyListShown();
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+        QCOMPARE(Runs(), 1);
+    }
+
+    // A directory whose name ends with a blank is used as typed, not trimmed.
+    void ADirectoryWithATrailingBlankIsUsedAsTyped() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        ArmStart();
+        const QString blank = Dir_->filePath("projects/dir ");
+        QVERIFY(QDir().mkpath(blank));
+
+        OPEN_FORM();
+        Type("Ship it");
+        TO_NAME();
+        ToDirectory();
+        RetypeDirectory(blank);
+        Press(Qt::Key_Return);
+        VerifyListShown();
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(BgRan().value(0), Canonical(blank));
+        QVERIFY(BgRan().value(0).endsWith(u' '));
         QCOMPARE(Runs(), 1);
     }
 

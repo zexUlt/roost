@@ -14,15 +14,24 @@ bool IsUnder(const QString& path, const QString& home) {
            (path.size() == home.size() || path.at(home.size()) == u'/');
 }
 
+QString Expanded(const QString& path) {
+    if (path == u'~' || path.startsWith(QStringLiteral("~/"))) {
+        return QDir::homePath() + path.mid(1);
+    }
+    return path;
+}
+
 }  // namespace
 
 DirectoryCheck CheckDirectory(const QString& typed) {
-    QString path = typed.trimmed();
-    if (path.isEmpty()) {
-        return {path, QStringLiteral("No directory")};
+    if (typed.trimmed().isEmpty()) {
+        return {typed.trimmed(), QStringLiteral("No directory")};
     }
-    if (path == u'~' || path.startsWith(QStringLiteral("~/"))) {
-        path = QDir::homePath() + path.mid(1);
+    // The text as typed wins when it names an existing path, so that a
+    // directory whose name ends with a blank (a session's cwd) is usable.
+    QString path = Expanded(typed);
+    if (!QFileInfo::exists(path)) {
+        path = Expanded(typed.trimmed());
     }
     if (!QDir::isAbsolutePath(path)) {
         return {path, path + QStringLiteral(" is not an absolute path")};
@@ -33,6 +42,9 @@ DirectoryCheck CheckDirectory(const QString& typed) {
     }
     if (!info.isDir()) {
         return {path, path + QStringLiteral(" is not a directory")};
+    }
+    if (!info.isReadable()) {
+        return {path, path + QStringLiteral(" cannot be read")};
     }
     if (!info.isExecutable()) {
         return {path, path + QStringLiteral(" cannot be entered")};

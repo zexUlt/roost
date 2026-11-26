@@ -249,9 +249,12 @@ private:
 
     // The input of the prompt emptied by Backspace, then `text` typed.
     void Retype(const QString& text) {
-        while (!PromptText().isEmpty()) {
+        const int limit = static_cast<int>(PromptText().size()) + 8;
+        for (int i = 0; i < limit && !PromptText().isEmpty(); ++i) {
             Press(Qt::Key_Backspace);
         }
+        QVERIFY2(PromptText().isEmpty(),
+                 "the prompt input did not empty by Backspace");
         Type(text);
     }
 
@@ -1254,6 +1257,10 @@ private slots:
             QVERIFY(QFile::setPermissions(
                 locked, QFile::ReadOwner | QFile::WriteOwner));
             VerifyDirectoryRefused(locked, locked + " cannot be entered");
+            // Enterable but not readable: the claude adapter refuses it too.
+            QVERIFY(QFile::setPermissions(locked,
+                                          QFile::WriteOwner | QFile::ExeOwner));
+            VerifyDirectoryRefused(locked, locked + " cannot be read");
             QVERIFY(QFile::setPermissions(locked, open));
         }
 
@@ -1267,6 +1274,33 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
         QCOMPARE(Canonical(BgRan().value(0)), Canonical(project));
+        QCOMPARE(Runs(), 1);
+    }
+
+    // A directory whose name ends with a blank is used as typed, not trimmed.
+    void ADirectoryWithATrailingBlankIsUsedAsTyped() {
+        FailOnWarnings();
+        Start();
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(Put("bg.stdout",
+                    "backgrounded · " + STARTED.toUtf8() + " · Do it\n"));
+        const QString blank = Dir_->filePath("projects/dir ");
+        QVERIFY(QDir().mkpath(blank));
+        MoveTo(BETA);
+
+        OpenTheDirectoryStep("do it");
+        Retype(blank);
+        Press(Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(PromptLabel(), QString("Category:"),
+                                  TIMEOUT_MS);
+        QVERIFY(PromptProblem().isEmpty());
+        Press(Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(!Prompting(), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(BgRan().size(), 2, TIMEOUT_MS);
+        QCOMPARE(BgRan().value(0), Canonical(blank));
+        QVERIFY(BgRan().value(0).endsWith(u' '));
         QCOMPARE(Runs(), 1);
     }
 

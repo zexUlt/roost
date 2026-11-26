@@ -13,9 +13,11 @@ struct DirectoryCheck {
 };
 
 // The path must be absolute after the expansion and name an existing
-// directory the user can enter (exists, is a directory, executable for the
-// user). Surrounding blanks are not part of the path. One stat and one
-// access(2), so a slow mount costs one round trip.
+// directory the agent can use (exists, is a directory, readable and
+// executable for the user, as the claude adapter requires). The text as typed
+// is the path when it names an existing one, else the text without surrounding
+// blanks. A stat and access(2) checks run in the calling (GUI) thread on every
+// call, so a hung mount blocks the window for that time.
 DirectoryCheck CheckDirectory(const QString& typed);
 
 // The path as the input shows it: the home directory as `~`.

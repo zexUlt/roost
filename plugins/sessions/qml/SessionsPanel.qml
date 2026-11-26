@@ -303,9 +303,9 @@ FocusScope {
     // The directory of the session as typed (`~` allowed), prefilled with the
     // default of n; checked when Create is pressed.
     property string draftDirectory: ""
-    // The agent and the directory of the session, taken from the cursor when
-    // the form opens, as n does. The agent is the default of `draftAgent`, the
-    // directory of `draftDirectory`.
+    // The agent of the session under the cursor when the form opens, as n
+    // takes it: the default of `draftAgent`. The directory of the cursor goes
+    // to `draftDirectory`.
     property var draftTarget: null
     // The agent the form starts the session with: the one of the cursor if it
     // can start sessions, else the one chosen last in a form (kept in the
@@ -404,8 +404,7 @@ FocusScope {
             draftNewName = "";
             draftDirectory = sessionsList.shownDirectory(base.cwd);
             draftTarget = {
-                "agent": base.agent,
-                "cwd": base.cwd
+                "agent": base.agent
             };
             draftAgent = "";
             newAgents = [];
@@ -2402,7 +2401,7 @@ FocusScope {
         }
 
         // The prompt, one for the whole footer: the category and the name of a
-        // session, and the Task and the Category of a new one.
+        // session, and the Task, the Directory and the Category of a new one.
         // Enter submits, Esc cancels; the text is typed as it is, not through
         // bindingKey, so that any layout types its letters.
         Column {
