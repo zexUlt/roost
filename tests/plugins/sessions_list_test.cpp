@@ -43,6 +43,7 @@ struct Item {
     QString Id;
     QString State = QStringLiteral("working");
     QString Title = QString();
+    QString Agent = AGENT;
 };
 
 // A source with the roles and the changes of Roost.sessions: an insert at the
@@ -60,7 +61,7 @@ public:
         const Item& item = Items_[static_cast<std::size_t>(index.row())];
         switch (role - Qt::UserRole) {
             case 0:
-                return AGENT;
+                return item.Agent;
             case 1:
                 return item.Id;
             case 2:
@@ -384,6 +385,9 @@ private slots:
     void RowsInPartsBeforeTheEndOfTheListingKeepTheCursorOnTheFirst();
     void TheEndOfTheListingOfAnAgentWithNoSessionsDoesNotEndTheDefault();
     void TheEndOfTheListingOfTheSameSyncEndsTheDefault();
+    void AnArchivedSessionOfAnotherAgentDoesNotHoldTheDefault();
+    void AResetOfTheSourceInTheMiddleOfTheListingKeepsTheDefault();
+    void TheEndOfTheListingAfterTheDefaultIsOverSchedulesNothing();
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
     void AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead();
@@ -805,6 +809,67 @@ void SessionsListTest::TheEndOfTheListingOfTheSameSyncEndsTheDefault() {
     env.Source.Add({"b", "done"});
     Settle();
     QCOMPARE(Cur(env.List), Key("a"));
+}
+
+// 06-panels.md:128. The sessions the list does not show do not count: an
+// archived session of an agent that never sends the marker (a backend that is
+// down, a plugin that has none) does not hold the default.
+void SessionsListTest::AnArchivedSessionOfAnotherAgentDoesNotHoldTheDefault() {
+    const QString other = QStringLiteral("codex");
+    Env env;
+    env.Open({});
+    env.Source.Add({"x", "done", QString(), other});
+    Settle();
+    env.List.setArchived(QVariantMap{{"agent", other}, {"id", "x"}}, true);
+    Settle();
+    QVERIFY(Rows(env.List).isEmpty());
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 2);
+    QCOMPARE(Cur(env.List), Key("a"));
+}
+
+// A reset of the source comes from the source, not from the user: the rows of
+// the parts after it still go above the cursor until the listing ends.
+void SessionsListTest::
+    AResetOfTheSourceInTheMiddleOfTheListingKeepsTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.Reset({{"a"}}, true);
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// The marker comes every few seconds from an adapter: once the default is over
+// it asks for no sync.
+void SessionsListTest::
+    TheEndOfTheListingAfterTheDefaultIsOverSchedulesNothing() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.List.sourceListed(AGENT);
+    Settle();
+    QVERIFY(!env.List.saving());
+    env.List.sourceListed(AGENT);
+    QVERIFY(!env.List.saving());
 }
 
 void SessionsListTest::NothingIsWrittenBeforeTheDocumentIsRead() {

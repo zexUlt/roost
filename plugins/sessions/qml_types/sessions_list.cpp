@@ -338,6 +338,11 @@ void SessionsList::sourceListed(const QString& agent) {
     if (agent.isEmpty()) {
         return;
     }
+    // Nothing to end: the default is over, and no sync is on its way that
+    // could be the one to put the cursor there.
+    if (!CursorOnFirstByDefault_ && !SyncQueued_) {
+        return;
+    }
     PendingListed_.insert(agent);
     scheduleSync();
 }
@@ -638,16 +643,17 @@ void SessionsList::syncBody() {
     }
     publish(reset || (hold && !Rows_.empty()), hold);
     // The listings that ended are those of the rows just read. The cursor is
-    // no longer held on the first stop once each agent that has sessions in
-    // the list has ended its listing since the cursor was put there: a session
-    // that comes later is a new one.
+    // no longer held on the first stop once each agent of the sessions the
+    // list shows has ended its listing since the cursor was put there: a
+    // session that comes later is a new one. The sessions that are not shown
+    // (archived, filtered out) do not count: their agent may never say it.
     const QSet<QString> listed = std::exchange(PendingListed_, {});
     if (CursorOnFirstByDefault_ && !hold) {
         ListedAgents_.unite(listed);
-        const std::vector<SessionEntry> entries = State_.Entries();
         CursorOnFirstByDefault_ =
-            std::ranges::any_of(entries, [&](const SessionEntry& entry) {
-                return !ListedAgents_.contains(entry.Agent);
+            std::ranges::any_of(Rows_, [&](const Row& row) {
+                return row.Kind == ERowKind::Session &&
+                       !ListedAgents_.contains(row.Agent);
             });
     }
 }
@@ -806,12 +812,17 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
         return;
     }
     const QString first = now.front();
+    // A reset comes from the source, not from the user: while the default is
+    // held, rows of the parts that follow still go above the cursor.
+    const bool held = CursorOnFirstByDefault_;
     if (!CursorKey_.isEmpty() && isStop(CursorKey_)) {
-        if (reset) {
-            CursorOnFirstByDefault_ = false;
-        } else if (CursorOnFirstByDefault_) {
+        if (held) {
             CursorKey_ = first;
         }
+        return;
+    }
+    if (reset && held) {
+        CursorKey_ = first;
         return;
     }
     CursorOnFirstByDefault_ = false;

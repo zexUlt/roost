@@ -121,7 +121,7 @@ public:
     // row is no stop.
     // The source says that the listing of an agent is complete: the sessions
     // it changed have all been told. Ends the first-row default of the
-    // cursor once every agent that has sessions in the list has said so.
+    // cursor once every agent of the sessions the list shows has said so.
     Q_INVOKABLE void sourceListed(const QString& agent);
     Q_INVOKABLE void move(int step);
     Q_INVOKABLE bool setCursorRow(int row);
