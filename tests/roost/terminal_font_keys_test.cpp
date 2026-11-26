@@ -16,6 +16,7 @@
 #include <QSignalSpy>
 #include <QTest>
 
+#include <algorithm>
 #include <optional>
 
 #include "core/theme_source.hpp"
@@ -67,7 +68,7 @@ private:
             Api_->Store().Set(QStringLiteral("settings"), settings);
         QTRY_VERIFY_WITH_TIMEOUT(writing.isFinished(), TIMEOUT_MS);
         QVERIFY(writing.result());
-        QTRY_VERIFY_WITH_TIMEOUT(!announced.isEmpty(), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(SettingsWrites(announced) >= 1, TIMEOUT_MS);
     }
 
     // The document `settings` as the daemon keeps it.
@@ -108,12 +109,20 @@ private:
         QTRY_VERIFY_WITH_TIMEOUT(other.Api.IsConnected(), TIMEOUT_MS);
     }
 
-    // Counts what roostd announces for the document `settings` from now on:
-    // every `store.patch` is announced once, even one that changes nothing, so
-    // the count is the number of writes.
+    // Records what roostd announces from now on; `SettingsWrites` counts the
+    // announcements of the document `settings`: every `store.patch` is
+    // announced once, even one that changes nothing, so the count is the
+    // number of writes. Other documents (the layout the window settles after
+    // it starts) are announced too and are not counted.
     std::unique_ptr<QSignalSpy> CountWrites() {
         return std::make_unique<QSignalSpy>(&Api_->Store(),
                                             &api::StoreService::Changed);
+    }
+
+    static qsizetype SettingsWrites(const QSignalSpy& spy) {
+        return std::count_if(spy.begin(), spy.end(), [](const auto& args) {
+            return args.at(0).toString() == QStringLiteral("settings");
+        });
     }
 
     QStringList Shown() {
@@ -222,8 +231,10 @@ private slots:
                                       TIMEOUT_MS);
             QCOMPARE(Stored(), TerminalFont({{"size", expected}}));
             QVERIFY(Shown().isEmpty());
-            // The answer to Stored() came after everything the key wrote.
-            QCOMPARE(writes->count(), 1);
+            // Stored() answers from the window's cache, which only the
+            // announcements update, in the order roostd sent them: once it
+            // shows the key's size, every write announced before is counted.
+            QCOMPARE(SettingsWrites(*writes), 1);
         }
 
         Restart();
@@ -300,7 +311,7 @@ private slots:
         QVERIFY(Shown().isEmpty());
         QCOMPARE(Stored(), TerminalFont({{"size", other}}));
         // The two refusals wrote nothing: the one write is the barrier's.
-        QCOMPARE(writes->count(), 1);
+        QCOMPARE(SettingsWrites(*writes), 1);
     }
 
     // Keys that come faster than the size makes its way through roostd and
@@ -320,7 +331,7 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), 16.0, TIMEOUT_MS);
         QCOMPARE(Stored(), TerminalFont({{"size", 16}}));
-        QCOMPARE(writes->count(), 2);
+        QCOMPARE(SettingsWrites(*writes), 2);
 
         // And the other way, with the key between them that does the reverse.
         Press(Qt::Key_Minus, FONT_MODIFIERS);
@@ -328,7 +339,7 @@ private slots:
         Press(Qt::Key_Equal, FONT_MODIFIERS);
         QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), 15.0, TIMEOUT_MS);
         QCOMPARE(Stored(), TerminalFont({{"size", 15}}));
-        QCOMPARE(writes->count(), 5);
+        QCOMPARE(SettingsWrites(*writes), 5);
     }
 
     // One below the maximum, two keys in a row: one write, then the refusal,
@@ -358,7 +369,7 @@ private slots:
                                   TIMEOUT_MS);
         QVERIFY(Shown().isEmpty());
         QCOMPARE(Stored(), TerminalFont({{"size", MAX_FONT_SIZE - 1}}));
-        QCOMPARE(writes->count(), 2);
+        QCOMPARE(SettingsWrites(*writes), 2);
     }
 
     // The reason is the size's: a change from the Settings field takes it away
@@ -451,7 +462,7 @@ private slots:
 
         QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), standard + 1, TIMEOUT_MS);
         // The default key wrote nothing: the one write is the next key's.
-        QCOMPARE(writes->count(), 1);
+        QCOMPARE(SettingsWrites(*writes), 1);
         QCOMPARE(Stored(),
                  (QJsonObject{
                      {"uiFontSize", 14},
@@ -490,7 +501,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(SizeOf(Singleton_), START_SIZE + step,
                                   TIMEOUT_MS);
         QCOMPARE(Stored(), TerminalFont({{"size", START_SIZE + step}}));
-        QCOMPARE(writes->count(), 1);
+        QCOMPARE(SettingsWrites(*writes), 1);
     }
 
     // The keys are the window's: the program in the terminal gets no byte of
