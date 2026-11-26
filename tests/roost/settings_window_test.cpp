@@ -835,6 +835,123 @@ private slots:
         QCOMPARE(main->findChildren<QQuickWindow*>("settingsWindow").size(), 1);
         QVERIFY(settings->isVisible());
     }
+
+    // An empty size field says which size is in force, from the theme and not
+    // from a literal; a stored size is the text and has a Reset.
+    void TheSizeFieldsSayTheSizeInForce() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        const auto sizeText = [](const QFont& font) {
+            return Theme::sizeText(font);
+        };
+        QQuickItem* terminal = window->Find("terminalSizeField");
+        QQuickItem* ui = window->Find("uiSizeField");
+        QQuickItem* reset = window->Find("terminalSizeReset");
+        QVERIFY(terminal != nullptr && ui != nullptr && reset != nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            terminal->property("placeholderText"),
+            QVariant("default: " + sizeText(theme->terminalFont())),
+            TIMEOUT_MS);
+        QCOMPARE(ui->property("placeholderText"),
+                 QVariant("default: " + sizeText(theme->uiFont())));
+        QVERIFY(!reset->isVisible());
+
+        // A size that no system font has by default.
+        QVERIFY(window->Edit("terminalSizeField", "27.5"));
+        QTRY_COMPARE_WITH_TIMEOUT(theme->terminalFont().pointSizeF(), 27.5,
+                                  TIMEOUT_MS);
+        QCOMPARE(terminal->property("text"), QVariant("27.5"));
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+        QCOMPARE(ui->property("placeholderText"),
+                 QVariant("default: " + sizeText(theme->uiFont())));
+
+        // Reset is the empty field: the key goes.
+        Click(*window, reset);
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("terminalFont"),
+                                 TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(terminal->property("text"), QVariant(""),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!reset->isVisible(), TIMEOUT_MS);
+        QCOMPARE(terminal->property("placeholderText"),
+                 QVariant("default: " + sizeText(theme->terminalFont())));
+    }
+
+    // A size is said as the font has it: points without a trailing ".0", and
+    // pixels, with "px", when the font has no point size. The QML side cannot
+    // tell them apart (it has both for any font), so the text is made in C++.
+    void ASizeIsSaidInPointsOrPixels() {
+        QFont points;
+        points.setPointSizeF(13);
+        QCOMPARE(Theme::sizeText(points), QString("13 pt"));
+        points.setPointSizeF(13.5);
+        QCOMPARE(Theme::sizeText(points), QString("13.5 pt"));
+        QFont pixels;
+        pixels.setPixelSize(17);
+        QCOMPARE(Theme::sizeText(pixels), QString("17 px"));
+
+        // QML calls it by its name.
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QString text;
+        QVERIFY(QMetaObject::invokeMethod(
+            window->Singleton->theme(), "sizeText", Q_RETURN_ARG(QString, text),
+            Q_ARG(QFont, pixels)));
+        QCOMPARE(text, QString("17 px"));
+    }
+
+    // A family that is not installed stays in the field with its reason, and
+    // the placeholder is the font that the terminals use.
+    void ANotInstalledFamilyKeepsItsTextAndThePlaceholderIsTheFontInForce() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        const QString missing = "Roost No Such Family";
+        QQuickItem* family = window->Find("terminalFamilyField");
+        QQuickItem* problems = window->Find("terminalFontProblems");
+        QVERIFY(family != nullptr && problems != nullptr);
+        QVERIFY(window->Edit("terminalFamilyField", missing));
+        QTRY_VERIFY_WITH_TIMEOUT(problems->isVisible(), TIMEOUT_MS);
+        QVERIFY(problems->property("text").toString().contains(missing));
+        QCOMPARE(family->property("text"), QVariant(missing));
+        QVERIFY(theme->terminalFont().family() != missing);
+        QCOMPARE(family->property("placeholderText"),
+                 QVariant("default: " + theme->terminalFont().family()));
+        QVERIFY(window->Find("terminalFamilyReset")->isVisible());
+    }
+
+    // The two presets of the focus ring show their colour, taken from the
+    // theme; Custom has its field instead.
+    void TheFocusPresetsShowTheirColour() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        const Theme* theme = window->Singleton->theme();
+        QQuickItem* colour = window->Find("focusPresetColor");
+        QQuickItem* box = window->Find("focusPresetBox");
+        QQuickItem* reset = window->Find("focusColorReset");
+        QVERIFY(colour != nullptr && box != nullptr && reset != nullptr);
+        QVERIFY(colour->isVisible());
+        QCOMPARE(colour->property("text"), QVariant(theme->focusBase().name()));
+        QCOMPARE(theme->focusBase().name(), QString("#225fc2"));
+        QVERIFY(!reset->isVisible());
+
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 1)));
+        QTRY_COMPARE_WITH_TIMEOUT(colour->property("text"), QVariant("#1b2430"),
+                                  TIMEOUT_MS);
+        QCOMPARE(theme->focusContrast().name(), QString("#1b2430"));
+        // The ring has the colour, and Base is still the theme's own.
+        QCOMPARE(theme->focus().name(), QString("#1b2430"));
+        QCOMPARE(theme->focusBase().name(), QString("#225fc2"));
+        QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
+
+        QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 2)));
+        QTRY_VERIFY_WITH_TIMEOUT(!colour->isVisible(), TIMEOUT_MS);
+        Click(*window, reset);
+        QTRY_VERIFY_WITH_TIMEOUT(!Document("settings").contains("focusColor"),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(colour->isVisible(), TIMEOUT_MS);
+        QCOMPARE(colour->property("text"), QVariant("#225fc2"));
+    }
 };
 
 QTEST_MAIN(SettingsWindowTest)

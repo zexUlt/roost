@@ -91,6 +91,15 @@ QFont scaled(const QFont& base, double ratio, QFont::Weight weight) {
 
 }  // namespace
 
+QString Theme::sizeText(const QFont& font) {
+    if (font.pointSizeF() > 0) {
+        // 'g' drops the trailing zeros.
+        return QStringLiteral("%1 pt").arg(
+            QString::number(font.pointSizeF(), 'g', 6));
+    }
+    return QStringLiteral("%1 px").arg(font.pixelSize());
+}
+
 QFont Theme::withWeight(const QFont& font, int weight, bool tabularDigits) {
     QFont result = font;
     result.setWeight(static_cast<QFont::Weight>(std::clamp(weight, 1, 1000)));
@@ -113,6 +122,7 @@ Theme::Theme(QObject* parent)
     if (!load(theme.Tokens)) {
         qWarning("roost: the default theme is not valid");
     }
+    FocusBase_ = Focus_;
 }
 
 QString Theme::follow(const QJsonObject& settings) {
@@ -133,6 +143,7 @@ QString Theme::follow(const QJsonObject& settings) {
 bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
     const FocusSettings wanted = ResolveFocusSettings(settings);
     QList<SettingProblem> problems = wanted.Problems;
+    FocusBase_ = QColor::fromString(tokens.value("focus").toString());
     if (!wanted.Color.isEmpty()) {
         tokens.insert(QStringLiteral("focus"), wanted.Color);
     }
@@ -140,6 +151,10 @@ bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
         problems.append({.Setting = FOCUS_COLOR_KEY, .Text = *warning});
     }
     return setProblems(problems, true);
+}
+
+QColor Theme::focusContrast() const {
+    return QColor::fromString(FOCUS_CONTRAST_COLOR);
 }
 
 bool Theme::setProblems(const QList<SettingProblem>& fresh, bool focus) {
