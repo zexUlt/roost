@@ -784,11 +784,23 @@ private slots:
                     QAccessible::queryAccessibleInterface(swatch);
                 QVERIFY(accessible != nullptr);
                 QCOMPARE(accessible->text(QAccessible::Name), name);
-                QCOMPARE(accessible->text(QAccessible::Description),
-                         QStringLiteral("Picking it makes the preset Custom"));
+                // The note that a pick makes the preset Custom goes once it is.
+                QTRY_COMPARE_WITH_TIMEOUT(
+                    accessible->text(QAccessible::Description),
+                    preset == PRESET_CUSTOM
+                        ? QString()
+                        : QStringLiteral("Picking it makes the preset Custom"),
+                    TIMEOUT_MS);
             }
         }
         QVERIFY(window->Swatch(static_cast<int>(swatches.size())) == nullptr);
+        // The row is one group for a screen reader, named as its row.
+        QAccessibleInterface* row = QAccessible::queryAccessibleInterface(
+            window->Swatch(0)->parentItem());
+        QVERIFY(row != nullptr);
+        QCOMPARE(row->role(), QAccessible::Grouping);
+        QCOMPARE(row->text(QAccessible::Name),
+                 QStringLiteral("Focus ring color"));
     }
 
     // A click on a swatch while the preset is not Custom is one patch: the

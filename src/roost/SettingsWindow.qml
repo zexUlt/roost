@@ -775,6 +775,8 @@ ApplicationWindow {
                 }
 
                 objectName: "focusSwatches"
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "Focus ring color"
                 Layout.fillWidth: true
                 Layout.leftMargin: 160 + 12
                 spacing: 8 + Roost.theme.cursorRingWidth
@@ -809,11 +811,20 @@ ApplicationWindow {
                         Keys.onRightPressed: swatchRow.moveAlong(index, 1)
                         Keys.onUpPressed: swatchRow.moveRow(index, -1)
                         Keys.onDownPressed: swatchRow.moveRow(index, 1)
-                        Keys.onReturnPressed: clicked()
-                        Keys.onEnterPressed: clicked()
+                        // A held Enter repeats: one pick per press.
+                        Keys.onReturnPressed: event => {
+                            if (!event.isAutoRepeat) {
+                                clicked();
+                            }
+                        }
+                        Keys.onEnterPressed: event => {
+                            if (!event.isAutoRepeat) {
+                                clicked();
+                            }
+                        }
                         Accessible.role: Accessible.RadioButton
                         Accessible.name: presetName === "" ? modelData : presetName + " (" + modelData + ")"
-                        Accessible.description: "Picking it makes the preset Custom"
+                        Accessible.description: root.focusColor.preset === "custom" ? "" : "Picking it makes the preset Custom"
                         Accessible.checkable: true
                         Accessible.checked: inForce
                         onClicked: root.pickFocusColor(modelData)
