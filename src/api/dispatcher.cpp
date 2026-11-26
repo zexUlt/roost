@@ -156,7 +156,7 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
         });
     const bool keymapSetting = Register(
         QStringLiteral("keymap.setCommand"), [&keymap](const rpc::Call& call) {
-            static const QString method = QStringLiteral("keymap.setCommand");
+            const QString method = QStringLiteral("keymap.setCommand");
             const auto command = KeymapCommand(call, method);
             const auto when = KeymapWhen(call, method);
             const QJsonValue entries =
@@ -181,7 +181,7 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
     const bool keymapResetting = Register(
         QStringLiteral("keymap.resetCommand"),
         [&keymap](const rpc::Call& call) {
-            static const QString method = QStringLiteral("keymap.resetCommand");
+            const QString method = QStringLiteral("keymap.resetCommand");
             const auto command = KeymapCommand(call, method);
             const auto when = KeymapWhen(call, method);
             if (!command) {
