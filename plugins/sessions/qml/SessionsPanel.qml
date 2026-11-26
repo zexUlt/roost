@@ -1545,6 +1545,19 @@ FocusScope {
                 id: rowHover
             }
 
+            // The line between the pinned categories and the rest: on the
+            // top edge of the first unpinned header, under the ring and the
+            // background, so it takes no height.
+            Rectangle {
+                objectName: "pinnedRule"
+                visible: row.isHeader && row.model.startsUnpinned
+                x: 12
+                y: 0
+                width: parent.width - 24
+                height: 1
+                color: Roost.theme.line
+            }
+
             // The open session: a bar at the left edge, moved right of the
             // ring while the ring is drawn.
             Rectangle {

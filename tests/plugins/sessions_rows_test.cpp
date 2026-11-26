@@ -40,6 +40,17 @@ QStringList Headers(const RowsResult& result) {
     return out;
 }
 
+// The categories of the headers that start the unpinned part.
+QStringList StartsUnpinned(const RowsResult& result) {
+    QStringList out;
+    for (const Row& row : result.Rows) {
+        if (row.Kind == ERowKind::Header && row.StartsUnpinned) {
+            out << row.Category;
+        }
+    }
+    return out;
+}
+
 QStringList Ids(const RowsResult& result) {
     QStringList out;
     for (const Row& row : result.Rows) {
@@ -71,6 +82,7 @@ private slots:
     void SearchSplitsOnUnicodeWhitespace();
     void CountsIgnoreTheTabAndTheQuery();
     void AnOpenedArchivedSessionIsHiddenOutsideTheArchive();
+    void OnlyTheFirstUnpinnedHeaderAfterAPinnedOneStartsUnpinned();
 };
 
 void SessionsRowsTest::PinnedGoFirstInPinOrderAboveUnread() {
@@ -296,6 +308,42 @@ void SessionsRowsTest::AnOpenedArchivedSessionIsHiddenOutsideTheArchive() {
     view.Tab = ETab::Active;
     QCOMPARE(Ids(BuildRows({archived, Make("new")}, view)),
              QStringList{QStringLiteral("new")});
+}
+
+void SessionsRowsTest::
+    OnlyTheFirstUnpinnedHeaderAfterAPinnedOneStartsUnpinned() {
+    const std::vector<SessionEntry> sessions = {
+        Make("a", "alpha"), Make("b", "beta"), Make("c", "gamma")};
+    auto pinned = [](QStringList categories) {
+        ViewState view;
+        view.Pinned = std::move(categories);
+        return view;
+    };
+
+    // None pinned: no line.
+    QVERIFY(StartsUnpinned(BuildRows(sessions, {})).isEmpty());
+    // All pinned: nothing below the pinned ones.
+    QVERIFY(
+        StartsUnpinned(BuildRows(sessions, pinned({"alpha", "beta", "gamma"})))
+            .isEmpty());
+    // Mixed: the first unpinned header, and only it.
+    QCOMPARE(StartsUnpinned(BuildRows(sessions, pinned({"gamma"}))),
+             QStringList{QStringLiteral("alpha")});
+    QCOMPARE(StartsUnpinned(BuildRows(sessions, pinned({"beta", "gamma"}))),
+             QStringList{QStringLiteral("alpha")});
+    // A folded last pinned category is still the last pinned row.
+    ViewState folded = pinned({"gamma"});
+    folded.Folded = {QStringLiteral("gamma")};
+    QCOMPARE(StartsUnpinned(BuildRows(sessions, folded)),
+             QStringList{QStringLiteral("alpha")});
+    // A tab or a query that hides the pinned side, or the other one.
+    ViewState query = pinned({"gamma"});
+    query.Query = QStringLiteral("alpha");
+    QVERIFY(StartsUnpinned(BuildRows(sessions, query)).isEmpty());
+    query.Query = QStringLiteral("gamma");
+    QVERIFY(StartsUnpinned(BuildRows(sessions, query)).isEmpty());
+    // A pinned category with no session left has no header: no line.
+    QVERIFY(StartsUnpinned(BuildRows(sessions, pinned({"gone"}))).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(SessionsRowsTest)

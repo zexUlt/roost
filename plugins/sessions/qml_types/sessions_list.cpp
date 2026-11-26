@@ -29,6 +29,7 @@ enum class ERole : int {
     UnreadCount,
     Folded,
     Pinned,
+    StartsUnpinned,
 };
 
 constexpr int role(ERole value) { return static_cast<int>(value); }
@@ -137,6 +138,8 @@ QVariant SessionsList::data(const QModelIndex& index, int roleId) const {
             return session ? QVariant() : QVariant(row.Folded);
         case ERole::Pinned:
             return session ? QVariant() : QVariant(row.Pinned);
+        case ERole::StartsUnpinned:
+            return session ? QVariant() : QVariant(row.StartsUnpinned);
     }
     return {};
 }
@@ -159,7 +162,8 @@ QHash<int, QByteArray> SessionsList::roleNames() const {
             {role(ERole::Count), "count"},
             {role(ERole::UnreadCount), "unreadCount"},
             {role(ERole::Folded), "folded"},
-            {role(ERole::Pinned), "pinned"}};
+            {role(ERole::Pinned), "pinned"},
+            {role(ERole::StartsUnpinned), "startsUnpinned"}};
 }
 
 // Properties.
