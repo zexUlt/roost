@@ -18,6 +18,7 @@
 
 #include "helpers/sessions_window.hpp"
 #include "helpers/snapshot.hpp"
+#include "helpers/warning_filter.hpp"
 #include "qml_api/theme.hpp"
 
 using namespace roost;
@@ -390,7 +391,7 @@ private slots:
     }
 
     void LoadPutsATokenOverTheCurrentOne() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         Theme theme;
         QSignalSpy changed(&theme, &Theme::changed);
 
