@@ -1178,23 +1178,31 @@ private slots:
         const Theme* theme = window->Singleton->theme();
         QQuickItem* box = window->Find("terminalFamilyBox");
         QVERIFY(box != nullptr);
+        const QString installed = InstalledMonospaceFamilies().at(0);
         QVERIFY(window->Edit("terminalSizeField", "15"));
-        QVERIFY(window->TypeFamily(InstalledMonospaceFamilies().at(0)));
+        QVERIFY(window->TypeFamily(installed));
+        // The window's own copy, exactly: a count of keys is also true of a
+        // copy that has not heard the last write yet.
         QTRY_COMPARE_WITH_TIMEOUT(
-            window->Document().value("terminalFont").toObject().size(), 2,
-            TIMEOUT_MS);
+            window->Document().value("terminalFont").toObject(),
+            (QJsonObject{{"family", installed}, {"size", 15}}), TIMEOUT_MS);
         QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 0)));
         QTRY_COMPARE_WITH_TIMEOUT(
             Document("settings").value("terminalFont").toObject(),
+            (QJsonObject{{"size", 15}}), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Document().value("terminalFont").toObject(),
             (QJsonObject{{"size", 15}}), TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(box->property("currentText"),
                                   QVariant(DefaultFamilyEntry(*theme)),
                                   TIMEOUT_MS);
         // The default entry as typed text does the same.
-        QVERIFY(window->TypeFamily(InstalledMonospaceFamilies().at(0)));
+        QVERIFY(window->TypeFamily(installed));
+        // The window's own copy, exactly: a count of keys is also true of a
+        // copy that has not heard the last write yet.
         QTRY_COMPARE_WITH_TIMEOUT(
-            window->Document().value("terminalFont").toObject().size(), 2,
-            TIMEOUT_MS);
+            window->Document().value("terminalFont").toObject(),
+            (QJsonObject{{"family", installed}, {"size", 15}}), TIMEOUT_MS);
         QVERIFY(window->TypeFamily(DefaultFamilyEntry(*theme)));
         QTRY_COMPARE_WITH_TIMEOUT(
             Document("settings").value("terminalFont").toObject(),
