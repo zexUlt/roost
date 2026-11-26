@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +16,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "api/api.hpp"
 #include "api_test_support.hpp"
@@ -60,11 +62,12 @@ private:
     // The thread in which the future finished is recorded by a continuation
     // without a context: it runs in the thread that finishes the future.
     rpc::Result Call(const QString& method, const QJsonValue& params,
-                     QThread** finishedIn = nullptr) {
+                     QThread** finishedIn = nullptr,
+                     const QString& plugin = {}) {
         std::atomic<QThread*> thread{nullptr};
         const QFuture<rpc::Result> future =
             Api_->Dispatch()
-                .Call(method, params, this)
+                .Call(method, params, this, plugin)
                 .then([&thread](rpc::Result answer) {
                     thread = QThread::currentThread();
                     return answer;
@@ -93,6 +96,7 @@ private slots:
         Api_ = std::make_unique<api::Api>();
         QCOMPARE(Api_->Dispatch().Methods(),
                  (QStringList{"bus.publish", "commands.run", "keymap.get",
+                              "keymap.resetCommand", "keymap.setCommand",
                               "plugins.list", "sessions.list", "store.get",
                               "store.patch", "store.set"}));
     }
@@ -108,6 +112,10 @@ private slots:
             {"commands.run",
              {{"command", "fixture.echo"}, {"args", QJsonArray{1, "two"}}}},
             {"keymap.get", {}},
+            {"keymap.resetCommand", {{"command", "fixture.echo"}}},
+            {"keymap.setCommand",
+             {{"command", "fixture.echo"},
+              {"entries", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+Z"}}}}}},
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},
@@ -200,15 +208,98 @@ private slots:
             QVERIFY(table.value("problems")[0].toString().contains(
                 "keymap.json entry 1 is ignored"));
         }
-        // The platform of the window is the only one it answers for.
-        const QString other =
-            HostPlatform() == EPlatform::Mac ? "linux" : "mac";
-        const rpc::Result refused =
+        // The other platform is answered by roostd, in the form of that
+        // platform; a name that is no platform is refused.
+        const bool onMac = HostPlatform() == EPlatform::Mac;
+        const QString other = onMac ? "linux" : "mac";
+        const rpc::Result theirs =
             Call("keymap.get", QJsonObject{{"platform", other}});
+        QVERIFY2(theirs, qPrintable(Why(theirs)));
+        QCOMPARE(
+            theirs->toObject().value("bindings")[0].toObject().value("key"),
+            QJsonValue(onMac ? "Ctrl+Shift+Y" : "Cmd+Shift+Y"));
+        const rpc::Result refused =
+            Call("keymap.get", QJsonObject{{"platform", "plan9"}});
         QVERIFY(!refused);
         QCOMPARE(refused.error().Code, INVALID_PARAMS);
-        const QString own = HostPlatform() == EPlatform::Mac ? "mac" : "linux";
+        const QString own = onMac ? "mac" : "linux";
         QVERIFY(Call("keymap.get", QJsonObject{{"platform", own}}));
+    }
+
+    // The window sets any command; a plugin sets its own (`<id>.*`) and is
+    // refused for another's, with the file untouched.
+    void APluginSetsTheKeysOfItsOwnCommandsOnly() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        const QString file = Daemon_->ConfigPath() + "/keymap.json";
+        const QJsonObject set{
+            {"command", "fixture.echo"},
+            {"entries", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+Z"}}}}};
+        const QJsonObject reset{{"command", "fixture.echo"}};
+
+        // Another plugin: refused, for both methods, and nothing is written.
+        for (const auto& [method, params] :
+             {std::pair<QString, QJsonObject>{"keymap.setCommand", set},
+              std::pair<QString, QJsonObject>{"keymap.resetCommand", reset}}) {
+            const rpc::Result refused = Call(method, params, nullptr, "other");
+            QVERIFY2(!refused, qPrintable(method));
+            QCOMPARE(refused.error().Code, INVALID_PARAMS);
+            QVERIFY2(refused.error().Message.contains("fixture.echo") &&
+                         refused.error().Message.contains("other"),
+                     qPrintable(refused.error().Message));
+        }
+        // A plugin whose id only begins with the other's is another plugin.
+        QVERIFY(!Call("keymap.setCommand", set, nullptr, "fixtur"));
+        QVERIFY(!Call("keymap.setCommand", set, nullptr, "fixture.echo"));
+        QVERIFY(!QFileInfo::exists(file));
+
+        // Its own command: passes, and the file is written.
+        const rpc::Result own =
+            Call("keymap.setCommand", set, nullptr, "fixture");
+        QVERIFY2(own, qPrintable(Why(own)));
+        QFile written(file);
+        QVERIFY(written.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(written.readAll()).array(),
+                 (QJsonArray{QJsonObject{{"command", "fixture.echo"},
+                                         {"key", "Ctrl+Alt+Z"}}}));
+        written.close();
+        const rpc::Result back =
+            Call("keymap.resetCommand", reset, nullptr, "fixture");
+        QVERIFY2(back, qPrintable(Why(back)));
+        QVERIFY(written.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(written.readAll()).array(),
+                 QJsonArray{});
+        written.close();
+
+        // The window, with no plugin, sets any command.
+        const rpc::Result window = Call("keymap.setCommand", set);
+        QVERIFY2(window, qPrintable(Why(window)));
+        QVERIFY(written.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(written.readAll()).array().size(), 1);
+    }
+
+    // What is wrong with the params is InvalidParams and does not reach roostd.
+    void KeymapWritesWithBadParamsAreInvalid() {
+        QVERIFY(StartDaemon());
+        QVERIFY(ConnectApi());
+        const QJsonArray none;
+        for (const QJsonObject& params : {
+                 QJsonObject{{"entries", none}},
+                 QJsonObject{{"command", 1}, {"entries", none}},
+                 QJsonObject{{"command", "fixture.echo"}},
+                 QJsonObject{{"command", "fixture.echo"}, {"entries", 1}},
+                 QJsonObject{{"command", "fixture.echo"},
+                             {"entries", none},
+                             {"when", 3}},
+             }) {
+            const rpc::Result answer = Call("keymap.setCommand", params);
+            QVERIFY2(!answer, qPrintable(QJsonDocument(params).toJson()));
+            QCOMPARE(answer.error().Code, INVALID_PARAMS);
+        }
+        const rpc::Result noCommand =
+            Call("keymap.resetCommand", QJsonObject{});
+        QVERIFY(!noCommand);
+        QCOMPARE(noCommand.error().Code, INVALID_PARAMS);
     }
 
     void RegisterRefusesTakenAndReservedNames() {

@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 
+#include <expected>
 #include <utility>
 
 #include "api/command_service.hpp"
@@ -18,6 +19,52 @@ namespace {
 rpc::Result InvalidParams(const QString& message) {
     return std::unexpected(
         rpc::Error::FromCode(rpc::EErrorCode::InvalidParams, message));
+}
+
+// The command a keymap call names, or the refusal: a plugin sets the keys of
+// its own commands only, `<plugin id>.*`, so that one plugin cannot take the
+// keys of another's commands or the window's. An empty `plugin` is the
+// window, which sets any command.
+std::expected<QString, rpc::Error> KeymapCommand(const rpc::Call& call,
+                                                 const QString& method) {
+    const QJsonValue command =
+        call.Params.toObject().value(QStringLiteral("command"));
+    if (!command.isString()) {
+        return std::unexpected(rpc::Error::FromCode(
+            rpc::EErrorCode::InvalidParams,
+            QStringLiteral("%1 takes {command, args?, "
+                           "when?%2}: command is a "
+                           "command id")
+                .arg(method, method.endsWith(u"setCommand")
+                                 ? QStringLiteral(", entries")
+                                 : QString())));
+    }
+    if (!call.Plugin.isEmpty() &&
+        !command.toString().startsWith(call.Plugin + u'.')) {
+        return std::unexpected(rpc::Error::FromCode(
+            rpc::EErrorCode::InvalidParams,
+            QStringLiteral("%1 of plugin %2 is refused for %3: a plugin sets "
+                           "the keys of its own commands, %2.*")
+                .arg(method, call.Plugin, command.toString())));
+    }
+    return command.toString();
+}
+
+// The `when` of a keymap call: a string, empty if there is none.
+std::expected<QString, rpc::Error> KeymapWhen(const rpc::Call& call,
+                                              const QString& method) {
+    const QJsonValue when =
+        call.Params.toObject().value(QStringLiteral("when"));
+    if (when.isUndefined() || when.isNull()) {
+        return QString();
+    }
+    if (!when.isString()) {
+        return std::unexpected(rpc::Error::FromCode(
+            rpc::EErrorCode::InvalidParams,
+            QStringLiteral("%1: when is the type of a panel, a string")
+                .arg(method)));
+    }
+    return when.toString();
 }
 
 }  // namespace
@@ -96,14 +143,56 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
             // a choice here, as it is for roostd.
             const QJsonValue platform =
                 call.Params.toObject().value(QStringLiteral("platform"));
-            if (!platform.isUndefined() &&
-                platform != KeymapService::PlatformName()) {
-                return rpc::Ready(InvalidParams(
-                    QStringLiteral("keymap.get answers for the platform of "
-                                   "the window, \"%1\"; it takes no params")
-                        .arg(KeymapService::PlatformName())));
+            if (platform.isUndefined() ||
+                platform == KeymapService::PlatformName()) {
+                return keymap.Get();
             }
-            return keymap.Get();
+            if (platform == KeymapService::OtherPlatformName()) {
+                return keymap.GetOtherPlatform();
+            }
+            return rpc::Ready(InvalidParams(QStringLiteral(
+                "keymap.get takes {platform?}: \"mac\" or "
+                "\"linux\", the window's own if there is none")));
+        });
+    const bool keymapSetting = Register(
+        QStringLiteral("keymap.setCommand"), [&keymap](const rpc::Call& call) {
+            static const QString method = QStringLiteral("keymap.setCommand");
+            const auto command = KeymapCommand(call, method);
+            const auto when = KeymapWhen(call, method);
+            const QJsonValue entries =
+                call.Params.toObject().value(QStringLiteral("entries"));
+            if (!command) {
+                return rpc::Ready(std::unexpected(command.error()));
+            }
+            if (!when) {
+                return rpc::Ready(std::unexpected(when.error()));
+            }
+            if (!entries.isArray()) {
+                return rpc::Ready(InvalidParams(
+                    QStringLiteral("keymap.setCommand takes {command, args?, "
+                                   "when?, entries}: entries is an array of "
+                                   "all the keys of the command, each {key?, "
+                                   "mac?}; an empty array removes them all")));
+            }
+            return keymap.SetCommand(
+                *command, entries.toArray(), *when,
+                call.Params.toObject().value(QStringLiteral("args")));
+        });
+    const bool keymapResetting = Register(
+        QStringLiteral("keymap.resetCommand"),
+        [&keymap](const rpc::Call& call) {
+            static const QString method = QStringLiteral("keymap.resetCommand");
+            const auto command = KeymapCommand(call, method);
+            const auto when = KeymapWhen(call, method);
+            if (!command) {
+                return rpc::Ready(std::unexpected(command.error()));
+            }
+            if (!when) {
+                return rpc::Ready(std::unexpected(when.error()));
+            }
+            return keymap.ResetCommand(
+                *command, *when,
+                call.Params.toObject().value(QStringLiteral("args")));
         });
     const bool publishing =
         Register(QStringLiteral("bus.publish"), [this](const rpc::Call& call) {
@@ -118,7 +207,8 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
                                 params.value(QStringLiteral("payload")));
         });
     Q_ASSERT(listingSessions && getting && setting && patching && listing &&
-             running && keymapGetting && publishing);
+             running && keymapGetting && keymapSetting && keymapResetting &&
+             publishing);
     Q_UNUSED(listingSessions)
     Q_UNUSED(getting)
     Q_UNUSED(setting)
@@ -126,6 +216,8 @@ void Dispatcher::RegisterBuiltins(CommandService& commands,
     Q_UNUSED(listing)
     Q_UNUSED(running)
     Q_UNUSED(keymapGetting)
+    Q_UNUSED(keymapSetting)
+    Q_UNUSED(keymapResetting)
     Q_UNUSED(publishing)
 }
 
@@ -150,7 +242,7 @@ QStringList Dispatcher::Methods() const {
 
 QFuture<rpc::Result> Dispatcher::Call(const QString& method,
                                       const QJsonValue& params,
-                                      QObject* context) {
+                                      QObject* context, const QString& plugin) {
     if (!CheckThread(*this, "Dispatcher::Call")) {
         return rpc::Ready(std::unexpected(WrongThread()));
     }
@@ -166,7 +258,8 @@ QFuture<rpc::Result> Dispatcher::Call(const QString& method,
     return handler
         ->second(rpc::Call{
             .Method = method,
-            .Params = params.isNull() ? QJsonValue::Undefined : params})
+            .Params = params.isNull() ? QJsonValue::Undefined : params,
+            .Plugin = plugin})
         .then(context != nullptr ? context : this,
               [](rpc::Result answer) { return answer; });
 }

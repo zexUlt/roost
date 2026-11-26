@@ -4,16 +4,21 @@ import QtQuick.Layouts
 import Roost.Api
 
 // The settings window (design.md §5): the general section, the settings page
-// of each plugin that has one, and the keys, read-only. One top-level window,
-// made once by Main.qml and shown again by open(); closing it only hides it.
+// of each plugin that has one, and the keys. One top-level window, made once
+// by Main.qml and shown again by open(); closing it only hides it.
 //
 // The general section is the document `settings` of the store; every edit is
 // one `store.patch` of the one key that was edited, so that the edits of other
 // windows and of other keys stay. A plugin's page (`contributes.settings`) is
 // an Item that roost::SettingsPages makes with the loader and writes to
 // `settingsPages`; it keeps its values in the document of its plugin under the
-// key `settings`. The window never writes keymap.json: the button hands the
-// file to the system.
+// key `settings`.
+//
+// The keys are edited by asking roostd, which writes keymap.json (design.md
+// §16, "Запись из окна"): one `keymap.setCommand` carries the whole set of the
+// keys of a command, one `keymap.resetCommand` takes the user's keys of it
+// back. The window never writes the file itself; the button hands it to the
+// system.
 ApplicationWindow {
     id: root
 
@@ -29,6 +34,9 @@ ApplicationWindow {
     // The document `settings` as last seen, and the keys of the table.
     property var settingsDocument: ({})
     property var keymap: []
+    // The plugins as `plugins.list` says them: the commands and the keys that
+    // they contribute.
+    property var plugins: []
     // The last failed write; empty when none.
     property string error
     // Why the document or the table could not be read; empty when they were.
@@ -56,6 +64,14 @@ ApplicationWindow {
     // settings.updates.check as stored; on when the key is not a bool.
     readonly property bool updatesCheck: settingsDocument.updates?.check !== false
     readonly property string platformName: Qt.platform.os === "osx" ? "mac" : "linux"
+    readonly property string otherPlatformName: platformName === "mac" ? "linux" : "mac"
+    // The rows of the keys: one for each command and each (args, when) that
+    // its keys are for, from the commands of the plugins and the table.
+    readonly property var keyRows: buildKeyRows(plugins, keymap)
+    // The row the capture dialog is for, null when it is closed; and what a
+    // key that another command holds waits with until Confirm.
+    property var capturing: null
+    property var held: null
 
     // The user pressed "Open keymap.json".
     signal keymapFileRequested(url file)
@@ -267,6 +283,247 @@ ApplicationWindow {
         keymap = bindings ?? [];
     }
 
+    function sameArgs(a, b) {
+        return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    }
+
+    // The key that a plugin's keybinding gives on this platform, "" for none.
+    function contributedKey(binding) {
+        if (platformName === "mac") {
+            if (typeof binding.mac === "string") {
+                return binding.mac;
+            }
+            if (binding.mac === null) {
+                return "";
+            }
+        }
+        return typeof binding.key === "string" ? binding.key : "";
+    }
+
+    // The title of a command, its id when no plugin declares it.
+    function titleOf(command) {
+        for (const plugin of plugins) {
+            for (const item of plugin.contributes?.commands ?? []) {
+                if (item.id === command) {
+                    return item.title ?? command;
+                }
+            }
+        }
+        return command;
+    }
+
+    // One row for each command of the plugins (in their order) and for each
+    // (args, when) that it has keys for: those of the table, and where the
+    // plugins give it a key. A command with no key has one row, to give it
+    // one. `changed`: the user has a key of it in the file, or a key that the
+    // plugins give it is not in the table (the user took it off).
+    function buildKeyRows(pluginList, bindings) {
+        const commands = {};
+        const order = [];
+        for (const plugin of pluginList) {
+            for (const item of plugin.contributes?.commands ?? []) {
+                if (typeof item.id === "string" && !(item.id in commands)) {
+                    commands[item.id] = {
+                        "title": item.title ?? item.id,
+                        "groups": {},
+                        "names": []
+                    };
+                    order.push(item.id);
+                }
+            }
+        }
+        const groupOf = (command, args, when) => {
+            const name = JSON.stringify([args ?? null, when ?? ""]);
+            if (!(name in command.groups)) {
+                command.groups[name] = {
+                    "args": args,
+                    "when": when ?? "",
+                    "keys": [],
+                    "contributed": []
+                };
+                command.names.push(name);
+            }
+            return command.groups[name];
+        };
+        for (const plugin of pluginList) {
+            for (const binding of plugin.contributes?.keybindings ?? []) {
+                const text = contributedKey(binding);
+                if (text !== "" && binding.command in commands) {
+                    groupOf(commands[binding.command], undefined, binding.when).contributed.push(text);
+                }
+            }
+        }
+        for (const binding of bindings) {
+            if (binding.command in commands) {
+                groupOf(commands[binding.command], binding.args, binding.when).keys.push({
+                    "text": binding.key,
+                    "source": binding.source
+                });
+            }
+        }
+        const rows = [];
+        for (const id of order) {
+            const command = commands[id];
+            if (command.names.length === 0) {
+                groupOf(command, undefined, "");
+            }
+            for (const name of command.names) {
+                const group = command.groups[name];
+                const present = group.keys.map(k => keyChords.sameKey(k.text));
+                rows.push({
+                    "command": id,
+                    "title": command.title,
+                    "args": group.args,
+                    "when": group.when,
+                    "keys": group.keys,
+                    "changed": group.keys.some(k => k.source === "user") || group.contributed.some(c => !present.includes(keyChords.sameKey(c)))
+                });
+            }
+        }
+        return rows;
+    }
+
+    // The keys that a table has for one command with these args and `when`.
+    function keysIn(bindings, command, args, when) {
+        return bindings.filter(b => b.command === command && sameArgs(b.args, args) && (b.when ?? "") === (when ?? "")).map(b => b.key);
+    }
+
+    // The entries of keymap.setCommand for the keys of a command on this
+    // platform (`own`) and on the other (`other`), as the file has them
+    // (design.md §16): a key that both platforms have is one entry with `key`;
+    // one of this platform alone is `mac` on macOS and `key` with `"mac": null`
+    // on Linux, so that it applies here only; one of the other platform alone
+    // is kept the same way for it.
+    function entriesOf(own, other) {
+        const entries = [];
+        const rest = other.slice();
+        for (const key of own) {
+            const at = rest.findIndex(k => keyChords.sameKey(k) === keyChords.sameKey(key));
+            if (at >= 0) {
+                rest.splice(at, 1);
+                entries.push({
+                    "key": key
+                });
+            } else if (platformName === "mac") {
+                entries.push({
+                    "mac": key
+                });
+            } else {
+                entries.push({
+                    "key": key,
+                    "mac": null
+                });
+            }
+        }
+        for (const key of rest) {
+            entries.push(platformName === "mac" ? {
+                "key": key,
+                "mac": null
+            } : {
+                "mac": key
+            });
+        }
+        return entries;
+    }
+
+    // The params that name the keys of a command in keymap.setCommand and
+    // keymap.resetCommand.
+    function targetOf(command, args, when) {
+        const params = {
+            "command": command
+        };
+        if (args !== undefined && args !== null) {
+            params.args = args;
+        }
+        if (when !== "") {
+            params.when = when;
+        }
+        return params;
+    }
+
+    // Sets the whole set of the keys of a command in one keymap.setCommand:
+    // `own` are its keys on this platform, those of the other platform are
+    // read now and sent as they are, so that the file keeps them. done(error).
+    function setKeys(command, args, when, own, done) {
+        Roost.call("keymap.get", {
+            "platform": otherPlatformName
+        }, (err, result) => {
+            if (err) {
+                done(err);
+                return;
+            }
+            const params = targetOf(command, args, when);
+            params.entries = entriesOf(own, keysIn(result.bindings ?? [], command, args, when));
+            Roost.call("keymap.setCommand", params, done);
+        });
+    }
+
+    function showWrite(err) {
+        error = err ? (err.message ?? String(err)) : "";
+    }
+
+    function removeKey(row, text) {
+        setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).filter(t => t !== text), showWrite);
+    }
+
+    function resetKeys(row) {
+        Roost.call("keymap.resetCommand", targetOf(row.command, row.args, row.when), showWrite);
+    }
+
+    function addKey(row) {
+        capturing = row;
+        held = null;
+        captureDialog.commandTitle = row.title;
+        captureDialog.open();
+    }
+
+    // A chord was pressed in the dialog. A key that the command has is no
+    // news; one that another command holds in the same panel type waits for
+    // Confirm; any other is written.
+    function captureChord(chord) {
+        const row = capturing;
+        captureDialog.problem = "";
+        if (row.keys.some(k => keyChords.sameKey(k.text) === keyChords.sameKey(chord))) {
+            captureDialog.problem = chord + " is already a key of " + row.title;
+            return;
+        }
+        const holder = keyChords.holder(chord, row.when);
+        if (holder.command === undefined) {
+            setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).concat([chord]), err => {
+                if (err) {
+                    captureDialog.problem = err.message ?? String(err);
+                } else {
+                    error = "";
+                    captureDialog.close();
+                }
+            });
+            return;
+        }
+        held = {
+            "chord": chord,
+            "command": holder.command,
+            "args": holder.args,
+            "keys": keysIn(keymap, holder.command, holder.args, row.when).filter(k => keyChords.sameKey(k) !== keyChords.sameKey(chord))
+        };
+        captureDialog.conflict = chord + " is bound to " + titleOf(holder.command) + "; it will lose this key";
+    }
+
+    // The user confirmed: this command gets the key first (the lower entry of
+    // the file wins, so the table has the key on it from then on), then the
+    // other gives it up, so that it does not take the key back when this one
+    // is reset. If the second write fails the table is right all the same.
+    function confirmHeld() {
+        const row = capturing;
+        const key = held;
+        setKeys(row.command, row.args, row.when, row.keys.map(k => k.text).concat([key.chord]), err => {
+            if (err) {
+                showWrite(err);
+                return;
+            }
+            setKeys(key.command, key.args, row.when, key.keys, showWrite);
+        });
+    }
+
     // The text of a size field: a number, or empty for the default. A text
     // that is not a number is no edit: undefined.
     function sizeOf(text) {
@@ -342,6 +599,22 @@ ApplicationWindow {
                 applyKeymap(result.bindings);
             }
         });
+        readPlugins(generation, failed);
+    }
+
+    // The commands and the keys of the plugins; read at each opening too, as
+    // the plugins may have changed while the window was closed.
+    function readPlugins(generation, failed) {
+        Roost.call("plugins.list", undefined, (err, result) => {
+            if (generation !== readGeneration) {
+                return;
+            }
+            if (err) {
+                failed(err);
+            } else {
+                plugins = result.plugins ?? [];
+            }
+        });
     }
 
     onVisibleChanged: {
@@ -350,7 +623,15 @@ ApplicationWindow {
             // opening of the window.
             installedFamilies = [];
         }
-        if (!visible || shownOnce) {
+        if (!visible) {
+            return;
+        }
+        if (shownOnce) {
+            if (Roost.connected) {
+                readPlugins(readGeneration, err => {
+                    readError = "Could not read the settings: " + (err.message ?? err);
+                });
+            }
             return;
         }
         shownOnce = true;
@@ -442,6 +723,18 @@ ApplicationWindow {
 
             Layout.preferredWidth: 160
         }
+    }
+
+    // The chord of a key press and the holder of a key, from C++.
+    KeyChords {
+        id: keyChords
+    }
+
+    KeyCaptureDialog {
+        id: captureDialog
+
+        onCaptured: chord => root.captureChord(chord)
+        onConfirmed: root.confirmHeld()
     }
 
     Rectangle {
@@ -993,7 +1286,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     color: Roost.theme.textMuted
-                    text: "Read-only. Edit the file to change keys."
+                    text: "Add a key to a command, take one off, or reset the command to the keys of its plugin. The window asks roostd to write keymap.json: the file is rewritten as indented JSON, so its formatting is not kept, and a file that is not valid JSON is left alone."
                 }
 
                 FormButton {
@@ -1004,7 +1297,7 @@ ApplicationWindow {
             }
 
             Repeater {
-                model: root.keymap
+                model: root.keyRows
 
                 delegate: RowLayout {
                     id: keyRow
@@ -1015,21 +1308,84 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 12
 
-                    Label {
+                    ColumnLayout {
+                        Layout.preferredWidth: 180
+                        Layout.alignment: Qt.AlignTop
+                        spacing: 0
+
+                        Label {
+                            objectName: "keymapTitle"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: keyRow.modelData.title
+                        }
+
+                        Label {
+                            objectName: "keymapCommand"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            color: Roost.theme.textMuted
+                            font: Roost.theme.smallFont
+                            text: keyRow.modelData.command + (keyRow.modelData.when ? "  (" + keyRow.modelData.when + ")" : "")
+                        }
+                    }
+
+                    Flow {
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        text: keyRow.modelData.command
+                        Layout.alignment: Qt.AlignTop
+                        spacing: 8
+
+                        Repeater {
+                            model: keyRow.modelData.keys
+
+                            delegate: RowLayout {
+                                id: keyChip
+
+                                required property var modelData
+
+                                spacing: 4
+
+                                Label {
+                                    objectName: "keymapKey"
+                                    text: keyChip.modelData.text
+                                }
+
+                                Label {
+                                    objectName: "keymapSource"
+                                    visible: text !== ""
+                                    color: Roost.theme.textMuted
+                                    font: Roost.theme.smallFont
+                                    text: keyChip.modelData.source === "user" ? "user" : ""
+                                }
+
+                                FormButton {
+                                    objectName: "removeKeyButton"
+                                    implicitWidth: 28
+                                    implicitHeight: 28
+                                    leftPadding: 0
+                                    rightPadding: 0
+                                    text: "\u00d7"
+                                    Accessible.name: "Remove " + keyChip.modelData.text + " from " + keyRow.modelData.title
+                                    onClicked: root.removeKey(keyRow.modelData, keyChip.modelData.text)
+                                }
+                            }
+                        }
                     }
 
-                    Label {
-                        objectName: "keymapKey"
-                        text: keyRow.modelData.key + (keyRow.modelData.when ? "  (" + keyRow.modelData.when + ")" : "")
+                    FormButton {
+                        objectName: "addKeyButton"
+                        Layout.alignment: Qt.AlignTop
+                        text: "Add key"
+                        Accessible.name: "Add a key to " + keyRow.modelData.title
+                        onClicked: root.addKey(keyRow.modelData)
                     }
 
-                    Label {
-                        Layout.preferredWidth: 90
-                        color: Roost.theme.textMuted
-                        text: keyRow.modelData.source
+                    ResetButton {
+                        objectName: "resetKeysButton"
+                        Layout.alignment: Qt.AlignTop
+                        visible: keyRow.modelData.changed
+                        Accessible.name: "Reset the keys of " + keyRow.modelData.title
+                        onClicked: root.resetKeys(keyRow.modelData)
                     }
                 }
             }

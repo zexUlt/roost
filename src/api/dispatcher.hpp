@@ -26,7 +26,10 @@ class StoreService;
 // params, a future of rpc::Result.
 //
 // Exposed: sessions.list, plugins.list, store.get, store.set, store.patch,
-// commands.run, keymap.get, bus.publish. Not exposed: hello and session.open,
+// commands.run, keymap.get, keymap.setCommand, keymap.resetCommand,
+// bus.publish. keymap.setCommand and keymap.resetCommand take the commands of
+// the calling plugin only (`<plugin id>.*`); the window, which calls with no
+// plugin, takes any. Not exposed: hello and session.open,
 // session.resize and session.close, which belong to the window itself.
 // Subscribing takes a callback, so it is a pair of methods here and not a
 // by-name call.
@@ -35,8 +38,9 @@ class StoreService;
 // asks roostd and refreshes the rows, store.get answers from the documents
 // that are warm, store.set and store.patch leave the cache to the event that
 // follows them, and keymap.get answers from the table of the window's own
-// platform once it is loaded (it takes no params; a `platform` of another
-// platform is InvalidParams).
+// platform once it is loaded; a `platform` of the other platform is asked of
+// roostd, not cached, and any other name is InvalidParams. keymap.setCommand
+// and keymap.resetCommand go to roostd; the table follows by keymap.changed.
 //
 // Use it from the GUI thread.
 class Dispatcher : public QObject {
@@ -57,9 +61,11 @@ public:
     // The future finishes in the thread of `context` (this object's, if
     // null), and finishes canceled if the context is destroyed first. An
     // unknown name is MethodNotFound; errors of roostd, whatever their code,
-    // pass unchanged. Null params are no params.
+    // pass unchanged. Null params are no params. `plugin` is the id of the
+    // plugin whose code calls, empty for the window: what a plugin may ask is
+    // narrower for some methods (keymap.setCommand, keymap.resetCommand).
     QFuture<rpc::Result> Call(const QString& method, const QJsonValue& params,
-                              QObject* context);
+                              QObject* context, const QString& plugin = {});
 
     // BusService::Subscribe and BusService::Unsubscribe.
     std::expected<BusService::LocalId, rpc::Error> Subscribe(

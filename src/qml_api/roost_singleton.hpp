@@ -87,8 +87,12 @@ public:
         Owners_.bindPanel(owner, panel);
     }
 
-    QObject* registerCallOwner(QQmlContext* context) {
-        return Owners_.add(context);
+    // `plugin` is the id of the plugin whose panel the context is: the
+    // methods that a plugin may call only for its own (keymap.setCommand,
+    // keymap.resetCommand) are judged by it. Empty: no plugin.
+    QObject* registerCallOwner(QQmlContext* context,
+                               const QString& plugin = {}) {
+        return Owners_.add(context, plugin);
     }
 
     // Any method of the dispatcher by name, as host->call of the C SDK does.

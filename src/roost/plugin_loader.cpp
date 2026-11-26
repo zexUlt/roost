@@ -396,7 +396,7 @@ QQuickItem* PluginLoader::Instantiate(Plugin& plugin, QQmlComponent& component,
                                       const QString& instanceId,
                                       const QString& what, QString& error) {
     auto* context = new QQmlContext(plugin.Context.get());
-    QObject* owner = Roost_.registerCallOwner(context);
+    QObject* owner = Roost_.registerCallOwner(context, plugin.Id);
     QObject* object = component.beginCreate(context);
     if (object == nullptr) {
         error = component.errorString().trimmed();

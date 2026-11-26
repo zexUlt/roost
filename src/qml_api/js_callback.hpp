@@ -46,8 +46,11 @@ void answerLater(QJSEngine& engine, QObject* context, const QJSValue& callback,
 // in the GUI thread, never before the caller has returned. `context` must live
 // in the GUI thread: when it is destroyed, or the engine is, the answer is
 // dropped and the callback is not called. `latest` as in `answerLater`.
+// `plugin` is the id of the plugin whose code calls (empty for the window), as
+// in Dispatcher::Call.
 void callMethod(api::Api& api, QJSEngine& engine, QObject* context,
                 const QString& method, const QJsonValue& params,
-                const QJSValue& callback, LatestResult latest = {});
+                const QJSValue& callback, LatestResult latest = {},
+                const QString& plugin = {});
 
 }  // namespace roost

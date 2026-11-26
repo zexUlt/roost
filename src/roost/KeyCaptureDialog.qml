@@ -1,0 +1,167 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Roost.Api
+
+// The capture of a key for a command (design.md §16, "Запись из окна"): the
+// user presses the combination, and the dialog says it by `captured`; the
+// window decides what follows. Escape and Cancel decline. While `conflict`
+// is set the dialog does not capture: it shows the warning with Confirm and
+// Cancel, and `confirmed` is Confirm. The look is the one of the other dialogs
+// (a card, the accepting button primary), see docs/design/18-style.md.
+//
+// A dialog, not a mode of the row: a key that is caught by the window's table
+// does not reach a field of the window, but the matcher stands aside for the
+// focus inside a Popup, so that the pressed key is only captured and does not
+// run the command that has it.
+Dialog {
+    id: root
+
+    // The command the key is for, as the row names it.
+    property string commandTitle: ""
+    // The warning of a key that another command has; empty while capturing.
+    property string conflict: ""
+    // What roostd refused with, or the window found wrong with the key; empty
+    // when nothing is.
+    property string problem: ""
+
+    // The user pressed a chord; `chord` is its text, as the table writes it.
+    signal captured(string chord)
+    // The user confirmed the warning; the dialog closes after it.
+    signal confirmed
+
+    objectName: "keyCaptureDialog"
+    title: "Add key"
+    modal: true
+    width: 420
+    anchors.centerIn: Overlay.overlay
+    closePolicy: Popup.CloseOnEscape
+    padding: Roost.theme.panelPadding
+
+    background: Rectangle {
+        radius: Roost.theme.radiusCard
+        color: Roost.theme.surface
+        border.width: 1
+        border.color: Roost.theme.line
+    }
+
+    header: Label {
+        objectName: "keyCaptureTitle"
+        text: root.title
+        font: Roost.theme.headingFont
+        elide: Text.ElideRight
+        padding: Roost.theme.panelPadding
+        bottomPadding: 0
+    }
+
+    // The keyboard starts on the area that takes the pressed keys.
+    onAboutToShow: {
+        conflict = "";
+        problem = "";
+        capture.forceActiveFocus();
+    }
+
+    // The warning has the keyboard on Cancel: a key pressed by mistake does
+    // not do what it warns about.
+    onConflictChanged: {
+        if (conflict !== "") {
+            cancelButton.forceActiveFocus();
+        } else if (visible) {
+            capture.forceActiveFocus();
+        }
+    }
+
+    KeyChords {
+        id: chords
+    }
+
+    contentItem: ColumnLayout {
+        spacing: 8
+
+        // Takes every pressed key while capturing; Escape is left to the
+        // popup, which closes.
+        Item {
+            id: capture
+
+            objectName: "keyCapture"
+            Layout.fillWidth: true
+            implicitHeight: hint.implicitHeight
+            focus: true
+            activeFocusOnTab: true
+            Accessible.role: Accessible.EditableText
+            Accessible.name: "Press the new key for " + root.commandTitle
+            Keys.onPressed: event => {
+                if (event.key === Qt.Key_Escape) {
+                    event.accepted = false;
+                    return;
+                }
+                // Nothing reaches a control of the window: the key is the
+                // user's answer, not a command.
+                event.accepted = true;
+                if (root.conflict !== "" || event.isAutoRepeat) {
+                    return;
+                }
+                const chord = chords.chordOf(event);
+                if (chord !== "") {
+                    root.captured(chord);
+                }
+            }
+
+            Label {
+                id: hint
+
+                objectName: "keyCaptureHint"
+                width: parent.width
+                wrapMode: Text.Wrap
+                color: Roost.theme.textSecondary
+                text: root.conflict === "" ? "Press the new key for " + root.commandTitle + ". Esc cancels." : ""
+            }
+        }
+
+        Label {
+            objectName: "keyConflict"
+            Layout.fillWidth: true
+            visible: text !== ""
+            wrapMode: Text.Wrap
+            color: Roost.theme.warning
+            text: root.conflict
+        }
+
+        Label {
+            objectName: "keyProblem"
+            Layout.fillWidth: true
+            visible: text !== ""
+            wrapMode: Text.Wrap
+            color: Roost.theme.error
+            text: root.problem
+        }
+    }
+
+    footer: DialogButtonBox {
+        padding: Roost.theme.panelPadding
+        topPadding: 0
+        spacing: 8
+        background: null
+
+        FormButton {
+            objectName: "keyConflictConfirm"
+            text: "Confirm"
+            primary: true
+            visible: root.conflict !== ""
+            DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            onClicked: {
+                root.confirmed();
+                root.close();
+            }
+        }
+
+        FormButton {
+            id: cancelButton
+
+            objectName: "keyCaptureCancel"
+            text: "Cancel"
+            DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            onClicked: root.close()
+        }
+    }
+}

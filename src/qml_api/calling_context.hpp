@@ -28,8 +28,13 @@ public:
     // a child of `context`, so destroying the context destroys it too. The
     // owner may be deleted earlier to start unloading; calls made after that
     // are dropped. The entry goes when the context is destroyed. nullptr when
-    // `context` is null.
-    QObject* add(QQmlContext* context);
+    // `context` is null. `plugin` is the id of the plugin whose panel it is
+    // (empty for code that is not a plugin's): pluginOf says it back.
+    QObject* add(QQmlContext* context, const QString& plugin = {});
+
+    // The plugin whose panel `owner` serves, empty for the window and for an
+    // owner made with no plugin.
+    QString pluginOf(const QObject* owner) const;
 
     // Tells that `owner` serves the panel `panel` (the item made in the
     // context of `owner`). Weak: the panel may go first.
@@ -53,6 +58,7 @@ public:
 private:
     QHash<QQmlContext*, QPointer<QObject>> Owners_;
     QHash<const QObject*, QPointer<QObject>> Panels_;
+    QHash<const QObject*, QString> Plugins_;
 };
 
 }  // namespace roost

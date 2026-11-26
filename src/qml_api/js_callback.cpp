@@ -93,9 +93,10 @@ void answerLater(QJSEngine& engine, QObject* context, const QJSValue& callback,
 
 void callMethod(api::Api& api, QJSEngine& engine, QObject* context,
                 const QString& method, const QJsonValue& params,
-                const QJSValue& callback, LatestResult latest) {
+                const QJSValue& callback, LatestResult latest,
+                const QString& plugin) {
     api.Dispatch()
-        .Call(method, params, context)
+        .Call(method, params, context, plugin)
         .then(context, [engine = QPointer<QJSEngine>(&engine), context,
                         callback, method,
                         latest = std::move(latest)](const rpc::Result& result) {

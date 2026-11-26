@@ -41,7 +41,11 @@ QObject* CallOwners::panelOf(const QObject* owner) const {
     return Panels_.value(owner).data();
 }
 
-QObject* CallOwners::add(QQmlContext* context) {
+QString CallOwners::pluginOf(const QObject* owner) const {
+    return Plugins_.value(owner);
+}
+
+QObject* CallOwners::add(QQmlContext* context, const QString& plugin) {
     if (context == nullptr) {
         qWarning("roost: registerCallOwner needs a context");
         return nullptr;
@@ -54,6 +58,12 @@ QObject* CallOwners::add(QQmlContext* context) {
     }
     auto* owner = new QObject(context);
     Owners_.insert(context, owner);
+    if (!plugin.isEmpty()) {
+        Plugins_.insert(owner, plugin);
+        // The key only, as above: the owner is gone with the context.
+        connect(owner, &QObject::destroyed, this,
+                [this, owner] { Plugins_.remove(owner); });
+    }
     return owner;
 }
 

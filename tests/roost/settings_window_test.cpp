@@ -1,10 +1,13 @@
 // The settings window (SettingsWindow.qml, design.md §5), against the real
 // roostd: the general section (the document `settings`, edited by patches),
 // the settings page of a fixture plugin that a temporary directory holds (its
-// document, key `settings`), and the keys, read-only. ROOST_CONFIG is the
-// directory of roostd's own temporary tree, so the real settings and keymap
-// of the user are never read. No file is opened: the button of keymap.json is
-// asked to only say what it would open.
+// document, key `settings`), and the keys: a key is added to a command, taken
+// off it, a command is reset, and a key that another command holds asks for
+// confirmation, each by key presses and clicks in the window, and read back
+// from the table and from keymap.json. ROOST_CONFIG is the directory of
+// roostd's own temporary tree, so the real settings and keymap of the user are
+// never read. No file is opened: the button of keymap.json is asked to only
+// say what it would open.
 
 #include <QDir>
 #include <QFile>
@@ -34,6 +37,7 @@
 #include "qml_api/roost_singleton.hpp"
 #include "qml_api/theme.hpp"
 #include "roost/controls_style.hpp"
+#include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/settings_pages.hpp"
 #include "terminal/renderer.hpp"
@@ -86,6 +90,21 @@ const QByteArray KEYMAP =
     R"([{"key": "Ctrl+Alt+H", "command": "settings-fixture.hello"}])"
     "\n";
 
+const QString HELLO = FIXTURE + ".hello";
+const QString OTHER = FIXTURE + ".other";
+
+constexpr bool ON_MAC =
+#ifdef Q_OS_MACOS
+    true;
+#else
+    false;
+#endif
+
+// The modifier of a key event that is the physical Ctrl key: Qt's Control is
+// Command on macOS, its Meta the Control key.
+constexpr Qt::KeyboardModifier CTRL =
+    ON_MAC ? Qt::MetaModifier : Qt::ControlModifier;
+
 bool WriteFile(const QString& path, const QByteArray& content) {
     QFile file(path);
     return QDir().mkpath(QFileInfo(path).absolutePath()) &&
@@ -100,9 +119,12 @@ bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
                const QMap<QString, QByteArray>& files) {
     QJsonObject contributes{
         {"commands",
-         QJsonArray{QJsonObject{{"id", id + ".hello"}, {"title", "Hello"}}}},
-        {"keybindings", QJsonArray{QJsonObject{{"command", id + ".hello"},
-                                               {"key", "Ctrl+Alt+J"}}}}};
+         QJsonArray{QJsonObject{{"id", id + ".hello"}, {"title", "Hello"}},
+                    QJsonObject{{"id", id + ".other"}, {"title", "Other"}}}},
+        {"keybindings",
+         QJsonArray{
+             QJsonObject{{"command", id + ".hello"}, {"key", "Ctrl+Alt+J"}},
+             QJsonObject{{"command", id + ".other"}, {"key", "Ctrl+Alt+O"}}}}};
     if (!settings.isEmpty()) {
         contributes.insert("settings", settings);
     }
@@ -146,6 +168,12 @@ void FindItems(QQuickItem* root, const QString& name,
     for (QQuickItem* child : root->childItems()) {
         FindItems(child, name, found);
     }
+}
+
+QList<QQuickItem*> FindAll(QQuickItem* root, const QString& name) {
+    QList<QQuickItem*> found;
+    FindItems(root, name, found);
+    return found;
 }
 
 }  // namespace
@@ -382,7 +410,162 @@ private:
         return "In use: " + font.family() + " / " + Theme::sizeText(font);
     }
 
+    // The row of the keys of a command, null when there is none.
+    static QQuickItem* KeyRow(const SettingsWindow& window,
+                              const QString& command) {
+        for (QQuickItem* row : window.FindAll("keymapRow")) {
+            if (row->property("modelData").toMap().value("command") ==
+                command) {
+                return row;
+            }
+        }
+        return nullptr;
+    }
+
+    // The keys that the row of a command shows, sorted.
+    static QStringList KeysOf(const SettingsWindow& window,
+                              const QString& command) {
+        QQuickItem* row = KeyRow(window, command);
+        QStringList keys;
+        if (row != nullptr) {
+            for (QQuickItem* key : FindAll(row, "keymapKey")) {
+                keys.append(key->property("text").toString());
+            }
+        }
+        keys.sort();
+        return keys;
+    }
+
+    // What a user does to a button of a row: reaches it and clicks it.
+    static void ClickInRow(const SettingsWindow& window, const QString& command,
+                           const QString& button, int index = 0) {
+        QQuickItem* row = KeyRow(window, command);
+        QVERIFY(row != nullptr);
+        const QList<QQuickItem*> buttons = FindAll(row, button);
+        QVERIFY(index < buttons.size());
+        Click(window, buttons.at(index));
+    }
+
+    // The dialog of the capture, as an object (it is no item).
+    static QObject* CaptureDialog(const SettingsWindow& window) {
+        return window.Object->findChild<QObject*>("keyCaptureDialog");
+    }
+
+    static QString DialogText(const SettingsWindow& window,
+                              const QString& name) {
+        QQuickItem* label = window.Find(name);
+        return label == nullptr ? QString()
+                                : label->property("text").toString();
+    }
+
+    // The click on "Add key" of a command; true when the dialog has opened
+    // and the keyboard is in its capture area.
+    static bool OpenCapture(const SettingsWindow& window,
+                            const QString& command) {
+        QQuickItem* row = KeyRow(window, command);
+        if (row == nullptr || FindAll(row, "addKeyButton").isEmpty()) {
+            return false;
+        }
+        Click(window, FindAll(row, "addKeyButton").first());
+        const auto captures = [&] {
+            QQuickItem* capture = window.Find("keyCapture");
+            return capture != nullptr && capture->hasActiveFocus();
+        };
+        return QTest::qWaitFor(captures, TIMEOUT_MS);
+    }
+
+    // A key of the user's, as the keyboard sends it: Ctrl+Alt+<letter>.
+    static void PressCtrlAlt(const SettingsWindow& window, Qt::Key key) {
+        QTest::keyClick(window.Window(), key, CTRL | Qt::AltModifier);
+    }
+
+    static bool DialogIsOpen(const SettingsWindow& window) {
+        QObject* dialog = CaptureDialog(window);
+        return dialog != nullptr && dialog->property("visible").toBool();
+    }
+
+    // What the user did to the click of a button of the dialog.
+    static void ClickInDialog(const SettingsWindow& window,
+                              const QString& name) {
+        QQuickItem* button = window.Find(name);
+        QVERIFY(button != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(button->width() > 0 && button->isVisible(),
+                                 TIMEOUT_MS);
+        QTest::mouseClick(
+            window.Window(), Qt::LeftButton, Qt::NoModifier,
+            button
+                ->mapToScene(QPointF(button->width() / 2, button->height() / 2))
+                .toPoint());
+    }
+
+    // The entries of keymap.json as the daemon has written them.
+    QJsonArray KeymapFile() const {
+        QFile file(KeymapPath());
+        return file.open(QIODevice::ReadOnly)
+                   ? QJsonDocument::fromJson(file.readAll()).array()
+                   : QJsonArray{};
+    }
+
+    // The entries of the file for one command, those with a key (not the ones
+    // that take a key off).
+    QList<QJsonObject> EntriesOf(const QString& command) const {
+        QList<QJsonObject> entries;
+        for (const QJsonValue& value : KeymapFile()) {
+            const QJsonObject entry = value.toObject();
+            if (entry.value("command") == command) {
+                entries.append(entry);
+            }
+        }
+        return entries;
+    }
+
+    // The entries that take a key off (`command` null) with the key `chord`,
+    // for either platform.
+    qsizetype UnbindsOf(const QString& chord) const {
+        qsizetype found = 0;
+        for (const QJsonValue& value : KeymapFile()) {
+            const QJsonObject entry = value.toObject();
+            if (entry.value("command").isNull() &&
+                (entry.value("key") == chord || entry.value("mac") == chord)) {
+                ++found;
+            }
+        }
+        return found;
+    }
+
+    // How many keys of the window's table have this text: a key is on one
+    // command only.
+    static int HoldersOf(const SettingsWindow& window, const QString& chord) {
+        int held = 0;
+        for (const QVariant& binding :
+             window.Object->property("keymap").toList()) {
+            held += binding.toMap().value("key") == chord ? 1 : 0;
+        }
+        return held;
+    }
+
+    // The entry that sets one key of the window's platform alone: `mac` on
+    // macOS, `key` with "mac": null on Linux (it applies here only).
+    static QJsonObject OwnEntry(const QString& command, const QString& chord) {
+        return ON_MAC ? QJsonObject{{"command", command}, {"mac", chord}}
+                      : QJsonObject{{"command", command},
+                                    {"key", chord},
+                                    {"mac", QJsonValue::Null}};
+    }
+
+    // The entry that keeps a key for the platform that the window is not on:
+    // `key` with "mac": null (Linux alone) from a Mac, `mac` from Linux.
+    static QJsonObject OtherEntry(const QString& command,
+                                  const QString& chord) {
+        return ON_MAC ? QJsonObject{{"command", command},
+                                    {"key", chord},
+                                    {"mac", QJsonValue::Null}}
+                      : QJsonObject{{"command", command}, {"mac", chord}};
+    }
+
     std::unique_ptr<testing::RoostdProcess> Daemon_;
+    // A test that sets keys leaves keymap.json other than it began.
+    bool KeymapEdited_ = false;
     // The window finds keymap.json by ROOST_CONFIG, as roostd does.
     std::unique_ptr<testing::ScopedEnv> Config_;
 
@@ -401,12 +584,15 @@ private slots:
         QVERIFY(StartDaemon());
     }
 
-    // No path of the window writes keymap.json: after every test it is the
-    // file the test began with, byte for byte.
+    // Only a key set from the window writes keymap.json: after a test that
+    // sets none it is the file the test began with, byte for byte.
     void cleanup() {
         QFile file(KeymapPath());
         QVERIFY(file.open(QIODevice::ReadOnly));
-        QCOMPARE(file.readAll(), KEYMAP);
+        if (!KeymapEdited_) {
+            QCOMPARE(file.readAll(), KEYMAP);
+        }
+        KeymapEdited_ = false;
         Daemon_.reset();
         Config_.reset();
     }
@@ -925,6 +1111,7 @@ private slots:
                  QVariant("15"));
         QTRY_VERIFY(!window->Find("settingsError")->isVisible());
         QTRY_COMPARE(window->FindAll("keymapRow").size(), 2);
+        QTRY_COMPARE(window->FindAll("keymapKey").size(), 3);
     }
 
     // Text that is no number is no edit: the field goes back to the value.
@@ -939,24 +1126,27 @@ private slots:
         QCOMPARE(Document("settings").value("uiFontSize"), QJsonValue(14));
     }
 
-    // The keys: the table of roostd, read-only, with the user's file and the
-    // plugin's key among them; the button only says which file it opens.
+    // The keys: a row for each command of the plugins, with its keys from the
+    // table of roostd (the user's file and the plugin's among them); the
+    // button only says which file it opens.
     void TheKeysAreListedAndTheFileIsOnlyOffered() {
         auto window = OpenWindow();
         QVERIFY(window);
-        QTRY_COMPARE(window->FindAll("keymapRow").size(), 2);
-        QStringList rows;
-        for (QQuickItem* row : window->FindAll("keymapRow")) {
-            QStringList texts;
-            for (QQuickItem* child : row->childItems()) {
-                texts.append(child->property("text").toString());
-            }
-            rows.append(texts.join("|"));
+        QTRY_COMPARE_WITH_TIMEOUT(window->FindAll("keymapRow").size(), 2,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+        // The user's key says so; the plugin's does not.
+        QQuickItem* row = KeyRow(*window, HELLO);
+        QVERIFY(row != nullptr);
+        QStringList sources;
+        for (QQuickItem* source : FindAll(row, "keymapSource")) {
+            sources.append(source->property("text").toString());
         }
-        rows.sort();
-        QCOMPARE(rows, (QStringList{"settings-fixture.hello|Ctrl+Alt+H|user",
-                                    "settings-fixture.hello|Ctrl+Alt+J|"
-                                    "settings-fixture"}));
+        sources.sort();
+        QCOMPARE(sources, (QStringList{"", "user"}));
 
         QSignalSpy requested(window->Object.get(),
                              SIGNAL(keymapFileRequested(QUrl)));
@@ -966,6 +1156,397 @@ private slots:
         QCOMPARE(requested.size(), 1);
         QCOMPARE(requested.first().at(0).toUrl(),
                  QUrl::fromLocalFile(KeymapPath()));
+    }
+
+    // "Add key", the combination pressed in the dialog: one write sets the
+    // key and the keys the command had stay (the user's of the file, the
+    // plugin's, which the file does not repeat).
+    void AKeyIsAddedAndTheFirstStays() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        QVERIFY(window->Find("keyCaptureHint")
+                    ->property("text")
+                    .toString()
+                    .contains("Esc"));
+        PressCtrlAlt(*window, Qt::Key_K);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            KeysOf(*window, HELLO),
+            (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J", "Ctrl+Alt+K"}),
+            TIMEOUT_MS);
+        // The file: the user's key as it was, the new one for this platform,
+        // and nothing of the plugin's.
+        const QList<QJsonObject> entries = EntriesOf(HELLO);
+        QCOMPARE(entries.size(), 2);
+        QVERIFY(entries.contains(
+            QJsonObject{{"command", HELLO}, {"key", "Ctrl+Alt+H"}}));
+        QVERIFY(entries.contains(OwnEntry(HELLO, "Ctrl+Alt+K")));
+        QCOMPARE(KeymapFile().size(), 2);
+        // The command of another row is not touched.
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+    }
+
+    // The key of a plugin is taken off by a record that takes it off, and the
+    // user's own key stays; the row says it is changed.
+    void AKeyOfThePluginIsTakenOff() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        // The buttons are in the order of the keys of the table: the plugin's
+        // first, the file's after it.
+        QQuickItem* row = KeyRow(*window, HELLO);
+        QVERIFY(row != nullptr);
+        const QList<QQuickItem*> keys = FindAll(row, "keymapKey");
+        qsizetype plugins = -1;
+        for (qsizetype at = 0; at < keys.size(); ++at) {
+            if (keys.at(at)->property("text") == "Ctrl+Alt+J") {
+                plugins = at;
+            }
+        }
+        QVERIFY(plugins >= 0);
+        ClickInRow(*window, HELLO, "removeKeyButton",
+                   static_cast<int>(plugins));
+
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+H"}, TIMEOUT_MS);
+        QCOMPARE(UnbindsOf("Ctrl+Alt+J"), 1);
+        QVERIFY(EntriesOf(HELLO).contains(
+            QJsonObject{{"command", HELLO}, {"key", "Ctrl+Alt+H"}}));
+        // The key of the plugin's other command is still there.
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            FindAll(KeyRow(*window, HELLO), "resetKeysButton")
+                .first()
+                ->isVisible(),
+            TIMEOUT_MS);
+    }
+
+    // The user's own key is taken off here: no record of a plugin's, and the
+    // entry of the file stays for the platform that is not this one.
+    void AKeyOfTheFileIsTakenOff() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QQuickItem* row = KeyRow(*window, HELLO);
+        QVERIFY(row != nullptr);
+        const QList<QQuickItem*> keys = FindAll(row, "keymapKey");
+        qsizetype file = -1;
+        for (qsizetype at = 0; at < keys.size(); ++at) {
+            if (keys.at(at)->property("text") == "Ctrl+Alt+H") {
+                file = at;
+            }
+        }
+        QVERIFY(file >= 0);
+        ClickInRow(*window, HELLO, "removeKeyButton", static_cast<int>(file));
+
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        // The entry was one for both platforms; the other keeps its key.
+        QCOMPARE(KeymapFile(), QJsonArray{OtherEntry(HELLO, "Ctrl+Alt+H")});
+    }
+
+    // Reset: the keys the plugin gives come back and what the user set for the
+    // command goes; a command that has not been changed has no Reset.
+    void ResetReturnsTheKeysOfThePlugin() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        // The plugin's key is off, the file's key is on.
+        QQuickItem* row = KeyRow(*window, HELLO);
+        QVERIFY(row != nullptr);
+        qsizetype plugins = -1;
+        const QList<QQuickItem*> keys = FindAll(row, "keymapKey");
+        for (qsizetype at = 0; at < keys.size(); ++at) {
+            if (keys.at(at)->property("text") == "Ctrl+Alt+J") {
+                plugins = at;
+            }
+        }
+        QVERIFY(plugins >= 0);
+        ClickInRow(*window, HELLO, "removeKeyButton",
+                   static_cast<int>(plugins));
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+H"}, TIMEOUT_MS);
+        // No Reset for what is as the plugin has it.
+        QVERIFY(!FindAll(KeyRow(*window, OTHER), "resetKeysButton")
+                     .first()
+                     ->isVisible());
+
+        ClickInRow(*window, HELLO, "resetKeysButton");
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        QCOMPARE(KeymapFile().size(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !FindAll(KeyRow(*window, HELLO), "resetKeysButton")
+                 .first()
+                 ->isVisible(),
+            TIMEOUT_MS);
+    }
+
+    // Escape leaves the dialog and writes nothing: the file is as it was and
+    // the keys are the same.
+    void EscapeCancelsTheCapture() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        QVERIFY(DialogIsOpen(*window));
+        QTest::keyClick(window->Window(), Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        // The barrier: a request after the one that the dialog would have
+        // made is answered, so the file is what the daemon has.
+        const QFuture<rpc::Result> barrier =
+            window->Api->Keymap().GetOtherPlatform();
+        QVERIFY(WaitFor(barrier));
+        QCOMPARE(KeysOf(*window, HELLO),
+                 (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}));
+        // cleanup() compares the file with what it began with.
+    }
+
+    // A key that another command holds is warned of with its name; Cancel
+    // writes nothing.
+    void ACommandThatWouldLoseAKeyIsNamedAndCancelWritesNothing() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        PressCtrlAlt(*window, Qt::Key_O);
+
+        QTRY_COMPARE_WITH_TIMEOUT(
+            DialogText(*window, "keyConflict"),
+            QString("Ctrl+Alt+O is bound to Other; it will lose this key"),
+            TIMEOUT_MS);
+        QVERIFY(DialogIsOpen(*window));
+        QVERIFY(window->Find("keyConflictConfirm")->isVisible());
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+
+        ClickInDialog(*window, "keyCaptureCancel");
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        const QFuture<rpc::Result> barrier =
+            window->Api->Keymap().GetOtherPlatform();
+        QVERIFY(WaitFor(barrier));
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+        QCOMPARE(KeysOf(*window, HELLO),
+                 (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}));
+        QCOMPARE(HoldersOf(*window, "Ctrl+Alt+O"), 1);
+    }
+
+    // Confirm: the command has the key and the other gives it up, in the
+    // table and in the file; the key is on one command only.
+    void ConfirmingTheWarningMovesAKeyOfAPlugin() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        PressCtrlAlt(*window, Qt::Key_O);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogText(*window, "keyConflict").isEmpty(),
+                                 TIMEOUT_MS);
+        ClickInDialog(*window, "keyConflictConfirm");
+
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            KeysOf(*window, HELLO),
+            (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J", "Ctrl+Alt+O"}),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER), QStringList{},
+                                  TIMEOUT_MS);
+        QCOMPARE(HoldersOf(*window, "Ctrl+Alt+O"), 1);
+        // The file says it as well: this command has the key, the other has
+        // a record that takes it off, so that resetting this command does not
+        // give the key back to it.
+        QVERIFY(EntriesOf(HELLO).contains(OwnEntry(HELLO, "Ctrl+Alt+O")));
+        QCOMPARE(UnbindsOf("Ctrl+Alt+O"), 1);
+        QVERIFY(EntriesOf(OTHER).isEmpty());
+    }
+
+    // The same with a key that the user's file gave to the other command: its
+    // entry is gone from the file, and the table has the key on one command.
+    void ConfirmingTheWarningMovesAKeyOfTheFile() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, OTHER));
+        PressCtrlAlt(*window, Qt::Key_H);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            DialogText(*window, "keyConflict"),
+            QString("Ctrl+Alt+H is bound to Hello; it will lose this key"),
+            TIMEOUT_MS);
+        ClickInDialog(*window, "keyConflictConfirm");
+
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+O"}),
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        QCOMPARE(HoldersOf(*window, "Ctrl+Alt+H"), 1);
+        // The entry of the user was one for both platforms: the other keeps
+        // its key on the command that had it.
+        QCOMPARE(EntriesOf(HELLO),
+                 QList<QJsonObject>{OtherEntry(HELLO, "Ctrl+Alt+H")});
+        QCOMPARE(EntriesOf(OTHER).size(), 1);
+        QVERIFY(EntriesOf(OTHER).contains(OwnEntry(OTHER, "Ctrl+Alt+H")));
+    }
+
+    // A key that a command has needs no write: it is said so in the dialog.
+    void AKeyThatTheCommandHasIsSaidSo() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        PressCtrlAlt(*window, Qt::Key_J);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            DialogText(*window, "keyProblem"),
+            QString("Ctrl+Alt+J is already a key of Hello"), TIMEOUT_MS);
+        QVERIFY(DialogIsOpen(*window));
+        QVERIFY(DialogText(*window, "keyConflict").isEmpty());
+    }
+
+    void AKeyThatDoesNotParseIsRefusedWithTheReason_data() {
+        QTest::addColumn<int>("key");
+        QTest::addColumn<int>("modifiers");
+        QTest::addColumn<QString>("reason");
+        // No Ctrl, Alt or Cmd and no panel type: it would take the text typed
+        // into any panel.
+        QTest::newRow("a bare letter") << int(Qt::Key_X) << int(Qt::NoModifier)
+                                       << "has no Cmd, Ctrl or Alt";
+        // A letter of another script is no key of the table.
+        QTest::newRow("a letter of another script")
+            << 0x0416 << int(CTRL | Qt::AltModifier) << "Ctrl+Alt+\u0416";
+    }
+
+    // The refusal of roostd is shown in the dialog, which stays open for
+    // another key; nothing is written.
+    void AKeyThatDoesNotParseIsRefusedWithTheReason() {
+        QFETCH(int, key);
+        QFETCH(int, modifiers);
+        QFETCH(QString, reason);
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, HELLO));
+        QTest::keyClick(
+            window->Window(), static_cast<Qt::Key>(key),
+            Qt::KeyboardModifiers::fromInt(static_cast<unsigned>(modifiers)));
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            DialogText(*window, "keyProblem").contains(reason), TIMEOUT_MS);
+        QVERIFY(DialogIsOpen(*window));
+        QCOMPARE(KeysOf(*window, HELLO),
+                 (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}));
+        // The dialog still takes keys: the next one is set.
+        PressCtrlAlt(*window, Qt::Key_K);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        KeymapEdited_ = true;
+        QTRY_COMPARE_WITH_TIMEOUT(
+            KeysOf(*window, HELLO),
+            (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J", "Ctrl+Alt+K"}),
+            TIMEOUT_MS);
+        QVERIFY(DialogText(*window, "keyProblem").isEmpty());
+    }
+
+    // The file is shared by a Mac and a Linux machine: what the command has on
+    // the platform that the window is not on is sent as it is, so that a key
+    // set here does not take a key away there.
+    void TheKeysOfTheOtherPlatformStay() {
+        KeymapEdited_ = true;
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(WriteFile(KeymapPath(),
+                          R"([
+  {"key": "Ctrl+Alt+L", "mac": "Cmd+Alt+L", "command": "settings-fixture.hello"},
+  {"key": "Ctrl+Alt+P", "mac": null, "command": "settings-fixture.hello"}
+])"));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QStringList mine =
+            ON_MAC ? QStringList{"Cmd+Alt+L", "Ctrl+Alt+J"}
+                   : QStringList{"Ctrl+Alt+J", "Ctrl+Alt+L", "Ctrl+Alt+P"};
+        mine.sort();
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO), mine, TIMEOUT_MS);
+
+        QVERIFY(OpenCapture(*window, HELLO));
+        PressCtrlAlt(*window, Qt::Key_K);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        mine.append("Ctrl+Alt+K");
+        mine.sort();
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO), mine, TIMEOUT_MS);
+
+        // The other platform's table, as roostd resolves it: it has what it
+        // had, and not the key set here.
+        const QFuture<rpc::Result> other =
+            window->Api->Keymap().GetOtherPlatform();
+        QVERIFY(WaitFor(other));
+        QVERIFY(other.result());
+        QStringList theirs;
+        for (const QJsonValue& value :
+             other.result()->toObject().value("bindings").toArray()) {
+            const QJsonObject binding = value.toObject();
+            if (binding.value("command") == HELLO) {
+                theirs.append(binding.value("key").toString());
+            }
+        }
+        theirs.sort();
+        QStringList expected =
+            ON_MAC ? QStringList{"Ctrl+Alt+J", "Ctrl+Alt+L", "Ctrl+Alt+P"}
+                   : QStringList{"Cmd+Alt+L", "Ctrl+Alt+J"};
+        expected.sort();
+        QCOMPARE(theirs, expected);
+    }
+
+    // The key pressed in the dialog is the dialog's: the matcher of the window,
+    // which runs the command that a key is bound to, stands aside.
+    void ThePressedKeyDoesNotRunItsCommand() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(window->Api->Keymap().IsLoaded(), TIMEOUT_MS);
+        int ran = 0;
+        QObject owner;
+        QVERIFY(window->Api->Commands().Register(
+            HELLO, &owner, [&ran](const QJsonValue&) -> rpc::Result {
+                ++ran;
+                return QJsonValue();
+            }));
+        KeyMatcher matcher(window->Api->Keymap(), window->Api->Commands());
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
+        QVERIFY(OpenCapture(*window, OTHER));
+        // Ctrl+Alt+J is bound to Hello, which has a handler here.
+        PressCtrlAlt(*window, Qt::Key_J);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogText(*window, "keyConflict").isEmpty(),
+                                 TIMEOUT_MS);
+        QCOMPARE(ran, 0);
+        // The control: outside of the dialog the same key runs the command.
+        ClickInDialog(*window, "keyCaptureCancel");
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        window->Find("settingsScroll")->forceActiveFocus();
+        PressCtrlAlt(*window, Qt::Key_J);
+        QTRY_COMPARE_WITH_TIMEOUT(ran, 1, TIMEOUT_MS);
     }
 
     // Main.qml: the command shell.settings, the toolbar button (the menu item
