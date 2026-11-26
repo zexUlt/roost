@@ -40,7 +40,8 @@ ApplicationWindow {
 
     objectName: "aboutWindow"
     title: "About roost"
-    width: 360
+    // Wide enough for the row of buttons at any window font; the lines wrap.
+    width: Math.max(360, buttons.implicitWidth + 2 * Roost.theme.panelPadding)
     height: content.implicitHeight + 2 * Roost.theme.panelPadding
     visible: false
     // A window of its own, not a sheet of the main one.
@@ -136,6 +137,8 @@ ApplicationWindow {
         }
 
         RowLayout {
+            id: buttons
+
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 12
             spacing: 8

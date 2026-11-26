@@ -193,6 +193,16 @@ private slots:
                     line->property("contentWidth").toReal() <= line->width(),
                 name, TIMEOUT_MS);
         }
+        // The buttons do not wrap: the window widens for their row.
+        for (const char* name :
+             {"aboutPageButton", "aboutCopyButton", "aboutCloseButton"}) {
+            Item(name)->setProperty("font", font);
+        }
+        QQuickItem* close = Item("aboutCloseButton");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            close->mapToScene(QPointF(close->width(), 0)).x() <=
+                About_->width(),
+            TIMEOUT_MS);
     }
 
     // Copy puts the lines of about.txt that name the versions, and only them,
