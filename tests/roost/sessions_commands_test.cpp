@@ -204,6 +204,11 @@ private:
     bool Prompting() { return Shown("sessionsPrompt"); }
     QString PromptLabel() { return TextOf("sessionsPromptLabel"); }
     QString PromptText() { return TextOf("sessionsPromptInput"); }
+    // The number the panel gives each start of a session and each prompt it
+    // opens or ends (`promptStart`): it stays while the prompt only refuses.
+    int PromptStarts() {
+        return PanelOf(LIST)->property("promptStart").toInt();
+    }
 
     int Unread() {
         return List()->property("counts").toMap().value("unread").toInt();
@@ -262,10 +267,16 @@ private:
     // step with `reason` under the input, and the task is kept for the steps
     // that follow.
     void VerifyDirectoryRefused(const QString& typed, const QString& reason) {
+        const int starts = PromptStarts();
         Retype(typed);
         QCOMPARE(PromptText(), typed);
+        // Editing the text took the reason of the earlier refusal away.
+        QVERIFY(PromptProblem().isEmpty());
         Press(Qt::Key_Return);
         QTRY_VERIFY_WITH_TIMEOUT(PromptProblem().contains(reason), TIMEOUT_MS);
+        // No start was made for it: the panel numbers each start it sends.
+        QCOMPARE(PromptStarts(), starts);
+        QVERIFY(!PanelOf(LIST)->property("promptStarting").toBool());
         QVERIFY(Prompting());
         QCOMPARE(PromptLabel(), QString("Directory:"));
         QCOMPARE(PromptText(), typed);
@@ -1223,8 +1234,10 @@ private slots:
     }
 
     // What cannot be the directory of a session keeps the prompt on the step
-    // with the reason; nothing reaches the agent, until a good directory does:
-    // the one run at the end is the only one the fake has seen.
+    // with the reason and the panel sends no start (`promptStart` stays), until
+    // a good directory does: the fake claude has seen the one run at the end.
+    // The claude adapter refuses such a directory itself, so a start that
+    // leaked would not show in the runs of the fake.
     void ADirectoryThatCannotBeEnteredKeepsThePromptAndStartsNothing() {
         FailOnWarnings();
         Start();

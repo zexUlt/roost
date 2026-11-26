@@ -1847,8 +1847,10 @@ private slots:
     }
 
     // What cannot be the directory of a session leaves the form open with the
-    // draft and the reason under Create, and the agent gets nothing; the one
-    // run at the end is the only one the fake has seen.
+    // draft and the reason under Create, and the panel sends no start
+    // (`newStart` stays), until a good directory does: the fake claude has seen
+    // the one run at the end. The claude adapter refuses such a directory
+    // itself, so a start that leaked would not show in the runs of the fake.
     void ADirectoryThatCannotBeEnteredKeepsTheFormAndStartsNothing() {
         FailOnWarnings();
         Start();
@@ -1869,10 +1871,16 @@ private slots:
         Type("Ship it");
         TO_NAME();
         ToDirectory();
+        const auto starts = [&] {
+            return PanelOf(LIST)->property("newStart").toInt();
+        };
+        const int before = starts();
         const auto refuse = [&](const QString& typed, const QString& reason) {
             RetypeDirectory(typed);
             Press(Qt::Key_Return);
             QTRY_VERIFY_WITH_TIMEOUT(Problem().contains(reason), TIMEOUT_MS);
+            QCOMPARE(starts(), before);
+            QVERIFY(!PanelOf(LIST)->property("newStarting").toBool());
             QVERIFY(FormOpen());
             QCOMPARE(TextOf("sessionsNewDirectory"), typed);
             QCOMPARE(TextOf("sessionsNewTask"), QString("Ship it"));
