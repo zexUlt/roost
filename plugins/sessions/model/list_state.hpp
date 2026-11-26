@@ -27,8 +27,8 @@ public:
     // The instance of the panel the view belongs to: the view lives in the
     // document at `view.<instance>`. A document without that key gives the
     // instance the shared `view` of an older roost (query, tab, archive,
-    // compact, opened), read as its starting value and never written again.
-    // Empty: the view is the shared `view` itself. Set before the first
+    // compact, opened, newAgent), read as its starting value and never written
+    // again. Empty: the view is the shared `view` itself. Set before the first
     // Restore.
     void SetInstance(const QString& instance) { Instance_ = instance; }
     const QString& Instance() const { return Instance_; }
@@ -73,6 +73,8 @@ public:
     std::vector<SessionEntry> Entries() const;
     const ViewState& View() const { return View_; }
     bool Compact() const { return Compact_; }
+    // The agent last chosen in the form of a new session; empty before one.
+    const QString& NewAgent() const { return NewAgent_; }
 
     // The colour index of a category; -1 for "" and for a category with none.
     int ColorIndex(const QString& category) const;
@@ -93,6 +95,7 @@ public:
     bool SetTab(ETab tab);
     bool SetViewArchive(bool archive);
     bool SetCompact(bool compact);
+    bool SetNewAgent(const QString& agent);
     // Opening reads the session. Empty key: nothing is opened.
     bool SetOpened(const QString& key);
     // Drops everything the list knows of the session, as after its deletion,
@@ -120,6 +123,7 @@ private:
     QSet<QString> Ranked_;
     ViewState View_;
     bool Compact_ = false;
+    QString NewAgent_;
     bool Seeded_ = false;
     QString Instance_;
     QString Problem_;

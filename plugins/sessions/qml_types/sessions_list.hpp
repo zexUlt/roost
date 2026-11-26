@@ -46,9 +46,10 @@ class SessionsList : public QAbstractListModel {
     Q_PROPERTY(bool sourceLoaded READ sourceLoaded WRITE setSourceLoaded NOTIFY
                    sourceLoadedChanged)
     // The id of the panel in the window's layout: the view (query, tab,
-    // archive, compact, opened) lives in the document under it, so that two
-    // lists keep their own. Set before the document is read; a later change is
-    // ignored. Empty: the view is the one the document shares (`view`).
+    // archive, compact, opened, the last agent of the form) lives in the
+    // document under it, so that two lists keep their own. Set before the
+    // document is read; a later change is ignored. Empty: the view is the one
+    // the document shares (`view`).
     Q_PROPERTY(QString instanceId READ instanceId WRITE setInstanceId NOTIFY
                    instanceIdChanged)
     // The open session, {agent, id} or null: never unread, kept by the tabs.
@@ -67,6 +68,9 @@ class SessionsList : public QAbstractListModel {
     Q_PROPERTY(bool viewArchive READ viewArchive WRITE setViewArchive NOTIFY
                    viewArchiveChanged)
     Q_PROPERTY(bool compact READ compact WRITE setCompact NOTIFY compactChanged)
+    // The agent last chosen in the form of a new session, kept in the view.
+    Q_PROPERTY(
+        QString newAgent READ newAgent WRITE setNewAgent NOTIFY newAgentChanged)
     // {all, active, unread}: the sessions of the archive view, before the tab
     // and the query.
     Q_PROPERTY(QVariantMap counts READ counts NOTIFY countsChanged)
@@ -110,6 +114,8 @@ public:
     void setViewArchive(bool archive);
     bool compact() const;
     void setCompact(bool compact);
+    QString newAgent() const;
+    void setNewAgent(const QString& agent);
     QVariantMap counts() const;
     QStringList knownCategories() const;
     int cursorRow() const;
@@ -185,6 +191,7 @@ signals:
     void tabChanged();
     void viewArchiveChanged();
     void compactChanged();
+    void newAgentChanged();
     void countsChanged();
     void knownCategoriesChanged();
     void cursorChanged();
