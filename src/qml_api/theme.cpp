@@ -153,10 +153,6 @@ bool Theme::followFocus(const QJsonObject& settings, QJsonObject& tokens) {
     return setProblems(problems, true);
 }
 
-QColor Theme::focusContrast() const {
-    return QColor::fromString(FOCUS_CONTRAST_COLOR);
-}
-
 bool Theme::setProblems(const QList<SettingProblem>& fresh, bool focus) {
     QList<SettingProblem> next;
     if (!focus) {

@@ -471,7 +471,7 @@ ApplicationWindow {
                     objectName: "focusPresetColor"
                     visible: root.focusColor.preset !== "custom"
                     color: Roost.theme.textMuted
-                    text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrast : Roost.theme.focusBase)
+                    text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrastText : Roost.theme.focusBaseText)
                 }
 
                 // The project has no colour picker: a hex field. What is typed

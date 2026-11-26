@@ -85,10 +85,10 @@ class Theme : public QObject {
     // session).
     Q_PROPERTY(QColor focus READ focus NOTIFY changed)
     // The two presets of settings.focusColor: the `focus` of the theme itself
-    // (Base) and the fixed dark colour (Contrast), for the settings window to
-    // show what each one is.
-    Q_PROPERTY(QColor focusBase READ focusBase NOTIFY changed)
-    Q_PROPERTY(QColor focusContrast READ focusContrast CONSTANT)
+    // (Base) and the fixed dark colour (Contrast) as hex texts, not colour
+    // tokens, for the settings window to show what each one is.
+    Q_PROPERTY(QString focusBaseText READ focusBaseText NOTIFY changed)
+    Q_PROPERTY(QString focusContrastText READ focusContrastText CONSTANT)
     Q_PROPERTY(QColor attention READ attention NOTIFY changed)
     // The primary button: normal, hovered, and its text.
     Q_PROPERTY(QColor primary READ primary NOTIFY changed)
@@ -203,8 +203,8 @@ public:
     QColor selectedBackground() const { return SelectedBackground_; }
     QColor hoverBackground() const { return HoverBackground_; }
     QColor focus() const { return Focus_; }
-    QColor focusBase() const { return FocusBase_; }
-    QColor focusContrast() const;
+    QString focusBaseText() const { return FocusBase_.name(); }
+    QString focusContrastText() const { return FOCUS_CONTRAST_COLOR; }
     QColor attention() const { return Attention_; }
     QColor primary() const { return Primary_; }
     QColor primaryHover() const { return PrimaryHover_; }

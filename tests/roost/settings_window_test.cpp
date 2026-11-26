@@ -931,17 +931,17 @@ private slots:
         QQuickItem* reset = window->Find("focusColorReset");
         QVERIFY(colour != nullptr && box != nullptr && reset != nullptr);
         QVERIFY(colour->isVisible());
-        QCOMPARE(colour->property("text"), QVariant(theme->focusBase().name()));
-        QCOMPARE(theme->focusBase().name(), QString("#225fc2"));
+        QCOMPARE(colour->property("text"), QVariant(theme->focusBaseText()));
+        QCOMPARE(theme->focusBaseText(), QString("#225fc2"));
         QVERIFY(!reset->isVisible());
 
         QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 1)));
         QTRY_COMPARE_WITH_TIMEOUT(colour->property("text"), QVariant("#1b2430"),
                                   TIMEOUT_MS);
-        QCOMPARE(theme->focusContrast().name(), QString("#1b2430"));
+        QCOMPARE(theme->focusContrastText(), QString("#1b2430"));
         // The ring has the colour, and Base is still the theme's own.
         QCOMPARE(theme->focus().name(), QString("#1b2430"));
-        QCOMPARE(theme->focusBase().name(), QString("#225fc2"));
+        QCOMPARE(theme->focusBaseText(), QString("#225fc2"));
         QTRY_VERIFY_WITH_TIMEOUT(reset->isVisible(), TIMEOUT_MS);
 
         QVERIFY(QMetaObject::invokeMethod(box, "activated", Q_ARG(int, 2)));
