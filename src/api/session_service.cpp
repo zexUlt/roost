@@ -186,6 +186,14 @@ void SessionService::OnEvent(const QString& name, const QJsonValue& payload) {
         Refresh();
         return;
     }
+    if (name == QStringLiteral("session.listed")) {
+        // Before the first list the rows are not there to be told of.
+        const QString agent = payload.toObject().value(AGENT).toString();
+        if (Loaded_ && !agent.isEmpty()) {
+            emit Listed(agent);
+        }
+        return;
+    }
     const bool removed = name == QStringLiteral("session.removed");
     if (!removed && name != QStringLiteral("session.stateChanged")) {
         return;

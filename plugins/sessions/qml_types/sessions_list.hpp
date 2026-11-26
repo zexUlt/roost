@@ -119,6 +119,10 @@ public:
     // The cursor. move: to the stop `step` stops away, not past the first or
     // the last. setCursorRow: to the stop on the row (a tap), false if the
     // row is no stop.
+    // The source says that the listing of an agent is complete: the sessions
+    // it changed have all been told. Ends the first-row default of the
+    // cursor once every agent that has sessions in the list has said so.
+    Q_INVOKABLE void sourceListed(const QString& agent);
     Q_INVOKABLE void move(int step);
     Q_INVOKABLE bool setCursorRow(int row);
     // The row of a session {agent, id}, or -1; and the session of a row, null
@@ -242,9 +246,15 @@ private:
 
     QString CursorKey_;
     // The cursor was put on the first stop by sessions that appeared in an
-    // empty list and the user has not touched the list since: it stays on the
-    // first stop while more rows come in above it.
+    // empty list and the user has not touched the list since, nor has the
+    // listing that brought them ended: it stays on the first stop while more
+    // rows come in above it.
     bool CursorOnFirstByDefault_ = false;
+    // The agents whose listing ended since the cursor was put there, and those
+    // that ended and are not taken into account yet by a sync, which reads the
+    // rows that came before the end.
+    QSet<QString> ListedAgents_;
+    QSet<QString> PendingListed_;
 
     bool InFlight_ = false;
     // The key paths where our document differs from the last one of the store:

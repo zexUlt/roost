@@ -835,6 +835,31 @@ private slots:
                                  TIMEOUT_MS);
     }
 
+    // The listing that brought ALPHA is over (the adapter's session.listed
+    // follows its changes): the sessions that come with the next one are new,
+    // and the unread among them, listed above ALPHA, do not take the cursor.
+    void AfterTheListingEndsNewSessionsDoNotTakeTheCursor() {
+        FailOnWarnings();
+        Boot(0, FAKE_CLAUDE, true);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(ListWithout({BETA, GAMMA, DELTA}));
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Cursor(), 0, TIMEOUT_MS);
+        QCOMPARE(CursorId(), ALPHA);
+
+        QVERIFY(ListWithout({}));
+        QTRY_COMPARE_WITH_TIMEOUT(Count(), 4, TIMEOUT_MS);
+        WaitUntilSettled();
+        WAIT_FOR_EFFECTS();
+        // The unread are listed above ALPHA.
+        const int alpha = static_cast<int>(Ids().indexOf(ALPHA));
+        QVERIFY(alpha > 0);
+        QCOMPARE(CursorId(), ALPHA);
+        QCOMPARE(Cursor(), alpha);
+    }
+
     void BeforeTheFirstListThePanelSaysItIsLoading() {
         FailOnWarnings();
         // An API that is not connected: the model never loads.

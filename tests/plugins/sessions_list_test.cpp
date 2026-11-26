@@ -380,6 +380,10 @@ private slots:
     void AResetPutsTheCursorBackElseOnTheOpenedElseFirst();
     void RowsInAnEmptyListPutTheCursorOnTheFirst();
     void RowsThatComeInPartsToAnEmptyListKeepTheCursorOnTheFirst();
+    void AfterTheEndOfTheListingANewUnreadSessionDoesNotTakeTheCursor();
+    void RowsInPartsBeforeTheEndOfTheListingKeepTheCursorOnTheFirst();
+    void TheEndOfTheListingOfAnAgentWithNoSessionsDoesNotEndTheDefault();
+    void TheEndOfTheListingOfTheSameSyncEndsTheDefault();
     void NothingIsWrittenBeforeTheDocumentIsRead();
     void AFailedReadLeavesTheListReadOnly();
     void AFailedWriteIsNotSentAgainByASyncBeforeTheStoreIsRead();
@@ -726,6 +730,81 @@ void SessionsListTest::
     env.Source.Add({"b", "done"});
     Settle();
     QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// 06-panels.md:128. The listing that filled the list is over: a session that
+// comes now is a new one, listed above the cursor but not taking it.
+void SessionsListTest::
+    AfterTheEndOfTheListingANewUnreadSessionDoesNotTakeTheCursor() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Rows(env.List).indexOf(Key("a")), 2);
+    QCOMPARE(Cur(env.List), Key("a"));
+    QCOMPARE(env.List.cursorRow(), 2);
+}
+
+// The marker comes after the rows of the listing, which reach the list in
+// parts: the cursor stays on the first row until then and after.
+void SessionsListTest::
+    RowsInPartsBeforeTheEndOfTheListingKeepTheCursorOnTheFirst() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    env.Source.Add({"c", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    QCOMPARE(env.List.cursorRow(), 1);
+    // A later listing has its own rows.
+    env.Source.Add({"d", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// Only the agent that has sessions in the list ends the default.
+void SessionsListTest::
+    TheEndOfTheListingOfAnAgentWithNoSessionsDoesNotEndTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    Settle();
+    env.List.sourceListed(QStringLiteral("codex"));
+    Settle();
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+    env.List.sourceListed(AGENT);
+    Settle();
+    env.Source.Add({"c", "done"});
+    env.Source.Add({"d"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("b"));
+}
+
+// The sync that fills the list reads the rows that came before the marker:
+// they are one listing.
+void SessionsListTest::TheEndOfTheListingOfTheSameSyncEndsTheDefault() {
+    Env env;
+    env.Open({});
+    env.Source.Add({"a"});
+    env.List.sourceListed(AGENT);
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
+    env.Source.Add({"b", "done"});
+    Settle();
+    QCOMPARE(Cur(env.List), Key("a"));
 }
 
 void SessionsListTest::NothingIsWrittenBeforeTheDocumentIsRead() {

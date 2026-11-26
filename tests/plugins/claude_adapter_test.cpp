@@ -13,6 +13,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <csignal>
 
 #include <cstddef>
@@ -164,7 +165,19 @@ private:
                                            : response.value("error");
     }
 
+    // The changes the adapter told: session.stateChanged and session.removed.
     QList<QJsonObject> Notifications() {
+        QList<QJsonObject> found;
+        for (const QJsonObject& message : Methods()) {
+            if (message.value("method") != QJsonValue("session.listed")) {
+                found.append(message);
+            }
+        }
+        return found;
+    }
+
+    // Every notification, the ends of the listings included, in the order sent.
+    QList<QJsonObject> Methods() {
         Drain();
         QList<QJsonObject> found;
         for (const QJsonDocument& message : std::as_const(Received_)) {
@@ -173,6 +186,13 @@ private:
             }
         }
         return found;
+    }
+
+    qsizetype Listed() {
+        const QList<QJsonObject> all = Methods();
+        return std::ranges::count_if(all, [](const QJsonObject& message) {
+            return message.value("method") == QJsonValue("session.listed");
+        });
     }
 
     // The removals among the notifications, as {agent, session} lines.
@@ -579,6 +599,55 @@ private slots:
                  QJsonValue("s3"));
     }
 
+    // 07-agent-adapters.md: the end of a listing follows its changes, so a
+    // window that hears it has the whole listing.
+    void TheEndOfAListingIsSentAfterItsChanges() {
+        Put("agents.json",
+            Agents({Entry("s1", "working"), Entry("s2", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        // The first run sends no change, but it is a listing.
+        QTRY_VERIFY_WITH_TIMEOUT(Listed() >= 1, TIMEOUT_MS);
+        QCOMPARE(Methods().first(),
+                 (QJsonObject{{"jsonrpc", "2.0"},
+                              {"method", "session.listed"},
+                              {"params", QJsonObject{{"agent", "claude"}}}}));
+
+        Put("agents.json",
+            Agents({Entry("s1", "done"), Entry("s3", "working")}));
+        const auto methods = [&] {
+            QStringList names;
+            for (const QJsonObject& message : Methods()) {
+                const QString name = message.value("method").toString();
+                // The runs that change nothing end with the marker alone.
+                if (names.isEmpty() || name != names.last() ||
+                    name != "session.listed") {
+                    names.append(name);
+                }
+            }
+            return names;
+        };
+        const QStringList expected{"session.listed", "session.stateChanged",
+                                   "session.stateChanged", "session.removed",
+                                   "session.listed"};
+        QTRY_COMPARE_WITH_TIMEOUT(methods(), expected, TIMEOUT_MS);
+    }
+
+    void AFailedRunSendsNoEndOfAListing() {
+        Put("agents.json", Agents({Entry("s1", "working")}));
+        StartAdapter();
+        QVERIFY(ListSessions().isArray());
+        QTRY_VERIFY_WITH_TIMEOUT(Listed() >= 1, TIMEOUT_MS);
+        Put("exit", "1");
+        QVERIFY(WaitForRuns(2));
+        // The runs are one at a time: once a failed one is answered, every
+        // run before it has said what it had to.
+        QVERIFY(ListSessions().isObject());
+        const qsizetype before = Listed();
+        QVERIFY(WaitForRuns(2));
+        QCOMPARE(Listed(), before);
+    }
+
     void AFailedRunFailsRequestsUntilOneSucceeds() {
         Put("stderr", "Error: not logged in\nRun claude login\n");
         Put("exit", "2");
@@ -740,8 +809,9 @@ private slots:
         StartAdapter();
         Adapter_->write("\n  \n\t\n");
         QCOMPARE(ListSessions(), QJsonValue(QJsonArray{}));
-        // Only the answer came back: no error for the blank lines.
-        QCOMPARE(Received_.size(), 1);
+        // Only the answer and the end of the listing came back: no error for
+        // the blank lines.
+        QCOMPARE(Received_.size() - Listed(), 1);
     }
 
     void OutputThatIsNoArrayFailsTheRun() {

@@ -332,6 +332,16 @@ QVariant SessionsList::cursorCategory() const {
 
 // The cursor.
 
+// The marker is taken by the next sync, not here: the rows that came before it
+// are read by that sync, and they may not have been read yet.
+void SessionsList::sourceListed(const QString& agent) {
+    if (agent.isEmpty()) {
+        return;
+    }
+    PendingListed_.insert(agent);
+    scheduleSync();
+}
+
 void SessionsList::move(int step) {
     const std::vector<QString> all = stops();
     if (all.empty()) {
@@ -627,6 +637,19 @@ void SessionsList::syncBody() {
         ResetPending_ = false;
     }
     publish(reset || (hold && !Rows_.empty()), hold);
+    // The listings that ended are those of the rows just read. The cursor is
+    // no longer held on the first stop once each agent that has sessions in
+    // the list has ended its listing since the cursor was put there: a session
+    // that comes later is a new one.
+    const QSet<QString> listed = std::exchange(PendingListed_, {});
+    if (CursorOnFirstByDefault_ && !hold) {
+        ListedAgents_.unite(listed);
+        const std::vector<SessionEntry> entries = State_.Entries();
+        CursorOnFirstByDefault_ =
+            std::ranges::any_of(entries, [&](const SessionEntry& entry) {
+                return !ListedAgents_.contains(entry.Agent);
+            });
+    }
 }
 
 void SessionsList::edit(const std::function<bool()>& apply) {
@@ -769,7 +792,8 @@ void SessionsList::setCursor(const QString& key) {
 // header that is gone from the list, the stop that took its place (the
 // previous if it was the last); anything else, the first stop. Rows that come
 // into an empty list put the cursor on the first stop, and while the user has
-// not touched the list it stays on the first stop, whatever rows come above.
+// not touched the list and the listing that brought them has not ended
+// (sourceListed) it stays on the first stop, whatever rows come above.
 void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
                                    bool reset) {
     const std::vector<QString> now = stops();
@@ -799,6 +823,7 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
     if (CursorKey_.isEmpty()) {
         CursorKey_ = first;
         CursorOnFirstByDefault_ = true;
+        ListedAgents_.clear();
         return;
     }
     const auto samePlace = [&] {

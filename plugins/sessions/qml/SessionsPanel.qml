@@ -1004,6 +1004,10 @@ FocusScope {
     Connections {
         target: Roost.sessions
 
+        function onListed(agent) {
+            sessionsList.sourceListed(agent);
+        }
+
         function onModelAboutToBeReset() {
             root.resetting = true;
         }
