@@ -1064,8 +1064,11 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(
             Document("settings").value("terminalFont").toObject(),
             (QJsonObject{{"size", 15}}), TIMEOUT_MS);
-        QCOMPARE(window->Find("terminalFamilyField")->property("text"),
-                 QVariant(""));
+        // The file is written before the window hears of it: wait for the
+        // field, not only for the file.
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Find("terminalFamilyField")->property("text"), QVariant(""),
+            TIMEOUT_MS);
     }
 
     // A terminalFont that is no object is stored: both rows of the font
