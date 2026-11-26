@@ -40,6 +40,10 @@ namespace roost::api {
 // Refresh started by anyone cancels it: the answer of the last one out decides.
 // Use it from the GUI thread; the signals are emitted there.
 //
+// The session.listed {agent} events say that the listing of an agent is
+// complete: its changes of the rows have been told. Listed passes it on, once
+// the first list is in; a backend that never sends it breaks nothing.
+//
 // A restarted adapter does not tell what changed while it was down: roostd
 // announces the restart with session.adapterStarted, and the service lists
 // again, dropping the kept events that are older than the restart.
@@ -99,6 +103,10 @@ signals:
     // second is; the rows after it have moved up by one.
     void RowAboutToBeRemoved(int index);
     void RowRemoved(int index);
+    // The adapter of the agent told that its listing is complete: the rows it
+    // changed in it have all been told, and the next change is of a new
+    // listing.
+    void Listed(const QString& agent);
 
 private:
     using Key = std::pair<QString, QString>;

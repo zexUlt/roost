@@ -47,6 +47,9 @@ public:
 signals:
     void unavailableChanged();
     void loadedChanged();
+    // The adapter of the agent told that its listing is complete: the sessions
+    // it changed in it have all been told.
+    void listed(const QString& agent);
 
 private:
     api::Api& Api_;

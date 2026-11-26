@@ -336,6 +336,21 @@ QVariant SessionsList::cursorCategory() const {
 
 // The cursor.
 
+// The marker is taken by the next sync, not here: the rows that came before it
+// are read by that sync, and they may not have been read yet.
+void SessionsList::sourceListed(const QString& agent) {
+    if (agent.isEmpty()) {
+        return;
+    }
+    // Nothing to end: the default is over, and no sync is on its way that
+    // could be the one to put the cursor there.
+    if (!CursorOnFirstByDefault_ && !SyncQueued_) {
+        return;
+    }
+    PendingListed_.insert(agent);
+    scheduleSync();
+}
+
 void SessionsList::move(int step) {
     const std::vector<QString> all = stops();
     if (all.empty()) {
@@ -631,6 +646,20 @@ void SessionsList::syncBody() {
         ResetPending_ = false;
     }
     publish(reset || (hold && !Rows_.empty()), hold);
+    // The listings that ended are those of the rows just read. The cursor is
+    // no longer held on the first stop once each agent of the sessions the
+    // list shows has ended its listing since the cursor was put there: a
+    // session that comes later is a new one. The sessions that are not shown
+    // (archived, filtered out) do not count: their agent may never say it.
+    const QSet<QString> listed = std::exchange(PendingListed_, {});
+    if (CursorOnFirstByDefault_ && !hold) {
+        ListedAgents_.unite(listed);
+        CursorOnFirstByDefault_ =
+            std::ranges::any_of(Rows_, [&](const Row& row) {
+                return row.Kind == ERowKind::Session &&
+                       !ListedAgents_.contains(row.Agent);
+            });
+    }
 }
 
 void SessionsList::edit(const std::function<bool()>& apply) {
@@ -638,6 +667,7 @@ void SessionsList::edit(const std::function<bool()>& apply) {
         return;
     }
     changing([&] {
+        CursorOnFirstByDefault_ = false;
         const bool changed = apply();
         publish(false, holding());
         if (changed) {
@@ -760,14 +790,20 @@ void SessionsList::setCursor(const QString& key) {
     if (key == CursorKey_) {
         return;
     }
-    changing([&] { CursorKey_ = key; });
+    changing([&] {
+        CursorKey_ = key;
+        CursorOnFirstByDefault_ = false;
+    });
 }
 
 // The cursor after the rows changed. A kept stop stays. Otherwise: in a reset,
 // the opened session, else the first stop; a header that was unfolded, its
 // first session; a session folded away, its folded header; a session or
 // header that is gone from the list, the stop that took its place (the
-// previous if it was the last); anything else, the first stop.
+// previous if it was the last); anything else, the first stop. Rows that come
+// into an empty list put the cursor on the first stop, and while the user has
+// not touched the list and the listing that brought them has not ended
+// (sourceListed) it stays on the first stop, whatever rows come above.
 void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
                                    bool reset) {
     const std::vector<QString> now = stops();
@@ -776,12 +812,24 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
     };
     if (now.empty()) {
         CursorKey_.clear();
-        return;
-    }
-    if (!CursorKey_.isEmpty() && isStop(CursorKey_)) {
+        CursorOnFirstByDefault_ = false;
         return;
     }
     const QString first = now.front();
+    // A reset comes from the source, not from the user: while the default is
+    // held, rows of the parts that follow still go above the cursor.
+    const bool held = CursorOnFirstByDefault_;
+    if (!CursorKey_.isEmpty() && isStop(CursorKey_)) {
+        if (held) {
+            CursorKey_ = first;
+        }
+        return;
+    }
+    if (reset && held) {
+        CursorKey_ = first;
+        return;
+    }
+    CursorOnFirstByDefault_ = false;
     if (reset) {
         const QString opened = State_.View().Opened;
         CursorKey_ = isStop(opened) ? opened : first;
@@ -789,6 +837,8 @@ void SessionsList::reconcileCursor(const std::vector<QString>& oldStops,
     }
     if (CursorKey_.isEmpty()) {
         CursorKey_ = first;
+        CursorOnFirstByDefault_ = true;
+        ListedAgents_.clear();
         return;
     }
     const auto samePlace = [&] {

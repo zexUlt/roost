@@ -250,6 +250,20 @@ private:
         return {};
     }
 
+    // The changes among the events: session.stateChanged and session.removed.
+    QList<QJsonObject> Changes() const {
+        QList<QJsonObject> changes;
+        for (const QJsonObject& event : Events_) {
+            if (event.value("method") != QJsonValue("session.listed")) {
+                changes.append(event);
+            }
+        }
+        return changes;
+    }
+
+    // The ends of listings among the events.
+    qsizetype Listed() const { return Events_.size() - Changes().size(); }
+
     QTemporaryDir Project_;
     pid_t ChildPid_ = 0;
     QProcess Process_;
@@ -311,22 +325,58 @@ private slots:
                      .toInt(),
                  -32602);
 
-        while (Events_.size() < 3) {
+        while (Changes().size() < 3) {
             const QJsonObject event = Read();
             QVERIFY(!event.isEmpty());
             Events_.append(event);
         }
-        QCOMPARE(Events_[0].value("method"),
+        const QList<QJsonObject> changes = Changes();
+        QCOMPARE(changes[0].value("method"),
                  QJsonValue("session.stateChanged"));
         const auto changed =
-            Events_[0].value("params").toObject().value("session").toObject();
+            changes[0].value("params").toObject().value("session").toObject();
         QCOMPARE(changed.value("title"), QJsonValue("Renamed"));
         const auto added =
-            Events_[1].value("params").toObject().value("session").toObject();
+            changes[1].value("params").toObject().value("session").toObject();
         QCOMPARE(added.value("id"), QJsonValue("new"));
-        QCOMPARE(Events_[2].value("method"), QJsonValue("session.removed"));
-        QCOMPARE(Events_[2].value("params").toObject().value("session"),
+        QCOMPARE(changes[2].value("method"), QJsonValue("session.removed"));
+        QCOMPARE(changes[2].value("params").toObject().value("session"),
                  QJsonValue("old"));
+    }
+
+    // 07-agent-adapters.md: the end of a listing follows its changes, so a
+    // window that hears it has the whole listing. The first listing has no
+    // changes and ends all the same.
+    void TheEndOfAListingFollowsItsChanges() {
+        QVERIFY(Launch({}, QCoreApplication::applicationFilePath()));
+        QVERIFY(!Call("agent.listSessions").isEmpty());
+        QVERIFY(!Events_.isEmpty());
+        QCOMPARE(Events_.first(),
+                 (QJsonObject{{"jsonrpc", "2.0"},
+                              {"method", "session.listed"},
+                              {"params", QJsonObject{{"agent", "codex"}}}}));
+        // The marker of a run that changed nothing follows the one before.
+        const auto collapsed = [&] {
+            QStringList names;
+            for (const QJsonObject& event : std::as_const(Events_)) {
+                const QString name = event.value("method").toString();
+                if (names.isEmpty() || name != names.last() ||
+                    name != QStringLiteral("session.listed")) {
+                    names.append(name);
+                }
+            }
+            return names;
+        };
+        while (!collapsed().contains(QStringLiteral("session.removed")) ||
+               collapsed().last() != QStringLiteral("session.listed")) {
+            const QJsonObject event = Read();
+            QVERIFY(!event.isEmpty());
+            Events_.append(event);
+        }
+        const QStringList methods = collapsed();
+        QCOMPARE(methods, (QStringList{"session.listed", "session.stateChanged",
+                                       "session.stateChanged",
+                                       "session.removed", "session.listed"}));
     }
 
     void MissingCliIsOptional() {
@@ -348,7 +398,9 @@ private slots:
                     .value("message")
                     .toString()
                     .contains("invalid thread/list page"));
-        QVERIFY(Events_.isEmpty());
+        // Only the first listing was told: a failed one is not.
+        QVERIFY(Changes().isEmpty());
+        QCOMPARE(Listed(), 1);
         const QJsonObject known =
             Call("agent.attachCommand", {{"session", "old"}})
                 .value("result")
@@ -361,7 +413,7 @@ private slots:
         QVERIFY(Touch(QDir(WorkDirectory()).filePath("recover")));
         QTRY_COMPARE_WITH_TIMEOUT(
             Call("agent.listSessions").value("result").toArray(), rows, 5000);
-        QVERIFY(Events_.isEmpty());
+        QVERIFY(Changes().isEmpty());
     }
 
     void EachPageGetsItsOwnTimeout() {

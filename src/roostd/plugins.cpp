@@ -273,6 +273,8 @@ void PluginHost::OnNotified(const QString& pluginId, const QString& method,
         OnStateChanged(pluginId, params.toObject());
     } else if (method == QStringLiteral("session.removed")) {
         OnRemoved(pluginId, params.toObject());
+    } else if (method == QStringLiteral("session.listed")) {
+        OnListed(pluginId, params.toObject());
     }
 }
 
@@ -338,6 +340,19 @@ void PluginHost::OnRemoved(const QString& pluginId, const QJsonObject& params) {
         return;
     }
     Server_.Bus().Publish(event, payload);
+}
+
+void PluginHost::OnListed(const QString& pluginId, const QJsonObject& params) {
+    const QString agent = params.value(QStringLiteral("agent")).toString();
+    if (!ServesAgent(pluginId, agent)) {
+        qWarning(
+            "roostd: the backend of %s told the end of a listing of agent "
+            "\"%s\", which it does not serve",
+            qUtf8Printable(pluginId), qUtf8Printable(agent));
+        return;
+    }
+    Server_.Bus().Publish(QStringLiteral("session.listed"),
+                          QJsonObject{{QStringLiteral("agent"), agent}});
 }
 
 void PluginHost::StartBackend(const PluginManifest& plugin) {
