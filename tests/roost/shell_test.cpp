@@ -31,6 +31,7 @@
 #include "core/version.hpp"
 #include "helpers/refusing_server.hpp"
 #include "helpers/roostd_process.hpp"
+#include "helpers/warning_filter.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/controls_style.hpp"
@@ -319,7 +320,7 @@ private slots:
     }
 
     void TheListSelectionReachesTheTerminalAndSurvivesAReloadOfTheList() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
                             TERMINAL_PANEL));
         QTRY_VERIFY_WITH_TIMEOUT(BothPanelsShown(), TIMEOUT_MS);
@@ -371,7 +372,7 @@ private slots:
     }
 
     void ABrokenTerminalShowsItsErrorAndRoostdsProblemsAreInTheStrip() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         // The loader's own report of the broken file is expected.
         QTest::ignoreMessage(
             QtWarningMsg,
@@ -407,7 +408,7 @@ private slots:
     }
 
     void AKeymapThatIsNotJsonIsInTheStrip() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("roost: keymap.json is ignored: it is not "
@@ -419,7 +420,7 @@ private slots:
     }
 
     void AKeymapEntryWithAnUnknownCommandIsInTheStrip() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("roost: keymap.json entry 0 is ignored: no "
@@ -434,7 +435,7 @@ private slots:
     }
 
     void FixingKeymapJsonTakesItsProblemsOutOfTheStrip() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("roost: keymap.json is ignored: it is not "
@@ -453,7 +454,7 @@ private slots:
     // roostd's plugin problems hold the conflict, and so does the keymap
     // table: the strip shows it once.
     void AKeyConflictOfPluginsIsInTheStripOnce() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddKeyPlugin("pa", "Ctrl+Alt+K"));
         QVERIFY(AddKeyPlugin("pb", "Ctrl+Alt+K"));
         QVERIFY(BootPlugins(ListEntry(), ListPanel(), TerminalEntry(),
@@ -475,7 +476,7 @@ private slots:
     // A problem of keymap.json that stays when another one goes or comes is
     // not written to the log again.
     void AProblemOfKeymapJsonIsLoggedOnceWhileItStays() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         for (const char* entry : {"0", "1"}) {
             QTest::ignoreMessage(
                 QtWarningMsg,

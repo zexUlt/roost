@@ -276,8 +276,8 @@ private slots:
     }
 
     // The label of the list goes when it does not fit left of "+ New", and
-    // never runs under the button: the list is as narrow as the split lets it
-    // be, and the width in between is checked too.
+    // never runs under the button: the list is as narrow as its minimum lets
+    // it be (200), and the widths in between are checked too.
     void TheLabelOfTheListGoesInANarrowList() {
         BootPair();
         if (QTest::currentTestFailed()) {
@@ -285,7 +285,15 @@ private slots:
         }
         bool wasShown = false;
         bool wasHidden = false;
-        for (const int width : {320, 280, 240, 200, 160, 120}) {
+        // The list cannot be narrower than 200, and at the default font the
+        // label still fits there: a larger font of the interface makes the
+        // label and the button wider, so that the label goes at 240 and fits
+        // at 280.
+        WriteSettings({{"uiFontSize", 20}});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            LabelOf("list", "sessionsTitleColumn")->parentItem()->height() > 76,
+            TIMEOUT_MS);
+        for (const int width : {320, 280, 240, 200}) {
             ListWidthTo(width);
             Focus("list");
             QTRY_VERIFY_WITH_TIMEOUT(
@@ -312,7 +320,7 @@ private slots:
         QVERIFY(wasShown);
         QVERIFY(wasHidden);
         // Narrow: no label; wide again: it is back.
-        ListWidthTo(120);
+        ListWidthTo(200);
         Focus("list");
         QTRY_VERIFY_WITH_TIMEOUT(!Shown("list", "sessionsFocusLabel"),
                                  TIMEOUT_MS);

@@ -28,6 +28,10 @@ FocusScope {
     // A SessionRef, {agent, id}, or null; the output of the panel.
     property var selected: null
 
+    // The narrowest the window may make the list: the width its rows and head
+    // are laid out for (the shell reads it, and `<` stops at it too).
+    readonly property int minimumWidth: 200
+
     // The id of this panel in the layout of the window, set by the window
     // before Component.onCompleted: the view of the list (query, tab, archive,
     // compact, the open session) is kept in the document `sessions` under it,

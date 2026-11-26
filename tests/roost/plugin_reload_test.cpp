@@ -29,6 +29,7 @@
 #include "api/api.hpp"
 #include "api/api_test_support.hpp"
 #include "helpers/roostd_process.hpp"
+#include "helpers/warning_filter.hpp"
 #include "helpers/window_teardown.hpp"
 #include "qml_api/roost_singleton.hpp"
 #include "roost/controls_style.hpp"
@@ -318,7 +319,7 @@ private slots:
     }
 
     void EditingAFileInPlaceReloadsOnlyThatPlugin() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("b-two", {Entry("p", "q.qml")},
@@ -354,7 +355,7 @@ private slots:
     void ReplacingAFileByRenameReloadsAndTheNewFileIsWatchedAgain() {
         // On macOS (kqueue) this does not tell whether the watcher re-scans:
         // the path is kept. On Linux (inotify) it does.
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(Boot());
@@ -384,7 +385,7 @@ private slots:
     }
 
     void ABurstThatLastsLongerThanTheDebounceReloadsOnceAfterTheLastEvent() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v0")}}));
         // The burst (6 writes, 250 ms apart, 1250 ms) is longer than the
@@ -408,7 +409,7 @@ private slots:
     }
 
     void ANewFileInASubdirectoryIsWatchedAfterTheDirectoryEvent() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         const QByteArray helperV1 =
             "import QtQuick\nItem { property string value: \"h1\" }\n";
         const QByteArray helperV2 =
@@ -445,7 +446,7 @@ private slots:
     }
 
     void ABrokenEditMakesThePanelAProblemAndFixingItBringsItBack() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("b-two", {Entry("p", "q.qml")},
@@ -479,7 +480,7 @@ private slots:
     }
 
     void APendingCallOfAReloadedPanelNeverAnswers() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("b-two", {Entry("p", "q.qml")},
@@ -565,7 +566,7 @@ Item {
     }
 
     void APluginThatAppearsLaterIsWatched() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(Boot());
@@ -588,7 +589,7 @@ Item {
     }
 
     void OverThePathCapAWarningNamesTheUnwatchedAndTheWatchedStillReload() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         // Watched: the directory, its parent, a.qml, x.qml. Not: y.qml.
         QVERIFY(AddPlugin("a-one", {Entry("p", "a.qml")},
                           {{"a.qml", Panel("v1")},
@@ -612,7 +613,7 @@ Item {
     }
 
     void APluginWhoseNameStartsTheNameOfAnotherIsNotItsFile() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("a-one2", {Entry("p", "p.qml")},
@@ -628,7 +629,7 @@ Item {
     }
 
     void ThePendingTimerOfAPluginThatWentAwayIsGone() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(AddPlugin("b-two", {Entry("p", "q.qml")},
@@ -652,7 +653,7 @@ Item {
     }
 
     void DeletingAFileReloadsOnceAsAProblemAndWritingItAgainReloads() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(Boot());
@@ -673,7 +674,7 @@ Item {
     }
 
     void ADeletedPluginDirectoryMadeAgainLaterReloadsThePlugin() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}}));
         QVERIFY(Boot());
@@ -703,7 +704,7 @@ Item {
     }
 
     void ANewTopLevelSubdirectoryWithAFileIsPickedUp() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         const QByteArray helperV1 =
             "import QtQuick\nItem { property string value: \"h1\" }\n";
         const QByteArray helperV2 =
@@ -724,7 +725,7 @@ Item {
     }
 
     void EditingQmldirReloads() {
-        QTest::failOnWarning();
+        QTest::failOnWarning(roost::testing::WarningFilter());
         QVERIFY(AddPlugin("a-one", {Entry("p", "p.qml")},
                           {{"p.qml", Panel("v1")}, {"qmldir", "# v1\n"}}));
         QVERIFY(Boot());

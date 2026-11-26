@@ -19,10 +19,23 @@ Item {
     // of its own.
     property bool stacked: false
 
+    // How narrow and how low the node may get; the split that holds it takes
+    // them as the minimum of the child (docs/design/06-panels.md). A leaf: what
+    // its panel declares (PanelSlot), 40 when it declares none. A split or a
+    // stack of tabs: what its children need (SplitNode, TabNode).
+    readonly property int defaultMinimum: 40
+    readonly property real minWidth: root.node !== null && root.node.kind === "leaf" ? root.leafMinWidth : (structure.item?.minimumWidth ?? root.defaultMinimum)
+    readonly property real minHeight: root.node !== null && root.node.kind === "leaf" ? root.leafMinHeight : (structure.item?.minimumHeight ?? root.defaultMinimum)
+    // Written by the slot of the leaf (a Binding in the leaf component).
+    property real leafMinWidth: root.defaultMinimum
+    property real leafMinHeight: root.defaultMinimum
+
     // A split or a stack of tabs is loaded by file name: SplitNode and TabNode
     // use this type for their children, and a type that used them back would
     // be a cycle the QML engine refuses.
     Loader {
+        id: structure
+
         anchors.fill: parent
         source: {
             switch (root.node === null ? "" : root.node.kind) {
@@ -49,10 +62,11 @@ Item {
     }
 
     // The width of the panel is stepped by the panel itself (`<`, `>`): by
-    // `widthStep` pixels, and not past these bounds.
+    // `widthStep` pixels, and not past these bounds: the narrowest is the
+    // minimum the panel declares.
     readonly property int widthStep: 20
-    readonly property int widthMin: 200
-    readonly property int widthMax: 560
+    readonly property int widthMin: Math.ceil(root.minWidth)
+    readonly property int widthMax: Math.max(560, root.widthMin)
     // The width the user stepped to, 0 if none. SplitNode takes it before the
     // size of the layout, and drops it when the layout gives a new size; it is
     // a property of its own, so that the binding of SplitNode to the layout
@@ -94,6 +108,18 @@ Item {
                 instanceId: root.node.instance
                 panelType: root.node.panel
                 resolveSource: instance => root.view.slotOf(instance)
+
+                Binding {
+                    target: root
+                    property: "leafMinWidth"
+                    value: slot.minimumWidth
+                }
+
+                Binding {
+                    target: root
+                    property: "leafMinHeight"
+                    value: slot.minimumHeight
+                }
 
                 // The keyboard is where the layout commands act, and the menu
                 // takes it first: a right click chooses the panel.

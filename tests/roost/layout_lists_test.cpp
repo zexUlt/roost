@@ -97,14 +97,16 @@ Layout TerminalsBetweenLists() {
                        LayoutSize::Rest(), LayoutSize::Px(240)})};
 }
 
-// The same, the first list taking the room and the terminals in pixels.
+// The same, the first list taking the room and the terminals in pixels. The
+// lists are 200 wide or more (their minimum), and the room that is left for
+// the first one is not under it.
 Layout FillListFirst() {
     return {.Root =
                 Split(true,
                       {ListLeaf("list"), TerminalLeaf("terminal", "list"),
                        TerminalLeaf("terminal-2", "list"), ListLeaf("list2")},
                       {LayoutSize::Rest(), LayoutSize::Px(300),
-                       LayoutSize::Px(200), LayoutSize::Px(240)})};
+                       LayoutSize::Px(150), LayoutSize::Px(200)})};
 }
 
 }  // namespace
@@ -782,8 +784,8 @@ private slots:
             return;
         }
         QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal"), 300.0, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 200.0, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 150.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 200.0, TIMEOUT_MS);
         const std::vector<LayoutSize> sizes = RootSizes();
 
         // The last terminal is the one that is shown and takes the room.
@@ -810,8 +812,8 @@ private slots:
 
         Toggle("terminal");
         QTRY_VERIFY_WITH_TIMEOUT(Shown("list") && Shown("list2"), TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 240.0, TIMEOUT_MS);
-        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 200.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("list2"), 200.0, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Wide("terminal-2"), 150.0, TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(qAbs(Wide("terminal") - dragged) <= 1,
                                  TIMEOUT_MS);
         QVERIFY(Wide("list") > 100);
