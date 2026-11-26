@@ -14,10 +14,13 @@ name: Package
 # did not build them and have no Qt; the release job makes a draft release of
 # the packages that passed: on a `v*` tag pushed by hand; on the night run and
 # on a dispatch with `release`, when some product change lies after the last
-# `v*` tag (the run makes the tag itself, once everything is green); on a
+# `v*` tag (the run makes the tag itself, once everything is green; a product
+# change is any file outside docs/, tests/, .claude/, .github/ and *.md, and
+# .github/workflows/package.yml, where the Qt and zig versions live); on a
 # dispatch with draft_release (a dry run: the draft is named dryrun-<run id>,
-# no git tag is made, and the draft is deleted after review). Publishing is a
-# manual step. The plan of a run, its version included, is tools/package_plan.sh.
+# no git tag is made, and the draft is deleted after review). A rerun of the
+# failed job `release` finishes its draft. Publishing is a manual step. The
+# plan of a run, its version included, is tools/package_plan.sh.
 #
 # Runs on `v*` tags, on dispatch, on pushes to trunk that change the
 # packaging and once a night on trunk, not on pull requests: a macOS runner
@@ -27,11 +30,13 @@ name: Package
 # packaging of the tag itself is too late. The job `changes` skips the
 # night run (and with it every other job) when nothing that reaches a package
 # changed since the last run of this workflow on trunk, whatever that run
-# ended with: a red night is not retried on the same commit, a dispatch
-# retries it. A night that has a release to make is never skipped: a red night
-# followed by a day of documentation must not leave a product change without a
-# release. Only documentation (docs/, .claude/, *.md, issue templates) does
-# not reach a package. The path list is the files that rarely change and
+# ended with: a dispatch packages anyway. A night that has a release to make
+# is not skipped: a red night followed by a day of documentation must not
+# leave a product change without a release. But a night does not release on
+# the commit on which the previous night ended red (that would hide a flaky
+# test): it falls back to the rule above, and a release is made after the
+# fix, or by a dispatch with `release`. Only documentation (docs/, .claude/,
+# *.md, issue templates) does not reach a package. The path list is the files that rarely change and
 # shape a package or its check; the build and the tests of the code run in
 # ci.yml on every pull request. QML of the plugins and the project version
 # are left out: they change often, and the smoke and the version check of a
@@ -73,7 +78,10 @@ permissions:
   contents: read
 
 # Runs that may release never overlap (a dispatch during the night would
-# choose the same version), and none is cancelled: a pending run waits.
+# choose the same version). A running one is never cancelled. Only one run
+# waits in the group: a newer pending run replaces (cancels) the older pending
+# one, so of several nights and dispatches queued behind a long run, the last
+# one is made. The night is made again the next day, a dispatch by hand.
 concurrency:
   group: ${{ (github.event_name == 'schedule' || inputs.release) && format('{0}-release', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
@@ -92,8 +100,10 @@ jobs:
   # Decides whether the jobs below run and what version they build, by
   # tools/package_plan.sh (its header has the rules). Only a night run can be
   # skipped: tags, dispatches and pushes always package, and so does a night
-  # that has a release to make. The base of a night run is the head of the
-  # last other run of this workflow on trunk (any event, any result).
+  # that has a release to make, unless the previous night ended red on this very
+  # commit (then no release, and the night is skipped by the base rule). The
+  # base of a night run is the head of the last other run of this workflow on
+  # trunk (any event, any result).
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -124,11 +134,18 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           BASE=
+          PREV_NIGHT_SHA=
+          PREV_NIGHT_RED=false
           if [ "$EVENT" = schedule ]; then
             BASE=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&per_page=20" \
               --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0].head_sha // empty")
+            # The previous night: the head it ran on and whether it ended red.
+            prev=$(gh api "repos/$REPO/actions/workflows/package.yml/runs?branch=trunk&event=schedule&per_page=20" \
+              --jq "[.workflow_runs[] | select(.id != $RUN_ID)][0] // empty | \"\(.head_sha) \(.conclusion)\"")
+            read -r PREV_NIGHT_SHA prev_conclusion <<<"$prev"
+            if [ "${prev_conclusion:-}" = failure ]; then PREV_NIGHT_RED=true; fi
           fi
-          export BASE
+          export BASE PREV_NIGHT_SHA PREV_NIGHT_RED
           set -o pipefail
           tools/package_plan.sh | tee -a "$GITHUB_OUTPUT"
 
@@ -231,7 +248,7 @@ jobs:
           name: roost-macos-dmg
           path: ${{ runner.temp }}/package/*.dmg
           if-no-files-found: error
-          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 7 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.release == 'true') && 90 || 7 }}
 
   # The AppImage, on the machine of its arch: x86_64 on ubuntu-24.04, aarch64
   # on ubuntu-24.04-arm. Set up as the Linux jobs of ci.yml (same Qt, zig,
@@ -353,7 +370,7 @@ jobs:
           name: roost-${{ matrix.arch }}.AppImage
           path: build/package/roost-${{ matrix.arch }}.AppImage
           if-no-files-found: error
-          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 7 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.release == 'true') && 90 || 7 }}
 
   # The .dmg on a macOS with no Qt: the runner image, the .dmg artifact and the
   # script, nothing built here. It fails if a Qt is on the machine (the smoke
@@ -656,39 +673,80 @@ jobs:
       # The tag is made after everything else is ready (the packages passed
       # their smoke, the signature checked): a red run leaves no tag. Annotated,
       # on the commit of this run, through the API: the job has no git
-      # checkout to push from. An existing tag fails the call (422), the job
-      # does not move it.
+      # checkout to push from. A rerun of a failed job finds the tag it made
+      # before: on this commit it goes on, on another it fails. The job never
+      # moves or deletes a tag.
       - name: Tag the release
         if: needs.changes.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          object=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" \
-            -f tag="$TAG" -f message="roost $TAG" -f object="$GITHUB_SHA" -f type=commit \
-            --jq .sha)
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$TAG" -f sha="$object" --jq .ref
+          err="$RUNNER_TEMP/tag-lookup.err"
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '"\(.object.type) \(.object.sha)"' 2>"$err"); then
+            read -r type sha <<<"$existing"
+            if [ "$type" = tag ]; then
+              read -r type sha < <(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '"\(.object.type) \(.object.sha)"')
+            fi
+            [ "$type" = commit ] || { echo "::error::the tag $TAG points to a $type, not a commit"; exit 1; }
+            [ "$sha" = "$GITHUB_SHA" ] ||
+              { echo "::error::the tag $TAG is on $sha, not on $GITHUB_SHA of this run"; exit 1; }
+            echo "the tag $TAG is already on $GITHUB_SHA: going on"
+          elif grep -q 'HTTP 404' "$err"; then
+            object=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$TAG" -f message="roost $TAG" -f object="$GITHUB_SHA" -f type=commit \
+              --jq .sha)
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$object" --jq .ref
+          else
+            cat "$err"
+            exit 1
+          fi
 
+      # A draft of this tag from an earlier attempt of the run (the job failed
+      # after it made the draft, or on the upload) is finished: the assets
+      # are uploaded over it (--clobber) and the notes set. A published release
+      # of the tag fails the job. The job never deletes and never publishes.
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
           LAST: ${{ needs.changes.outputs.last }}
-          RELEASE: ${{ needs.changes.outputs.release }}
         run: |
-          args=(--repo "$GITHUB_REPOSITORY" --draft --notes-file "$RUNNER_TEMP/notes.md")
-          if [ "$IS_REAL" = true ]; then
-            args+=(--verify-tag --title "roost $TAG")
-          else
-            # A name that is no release, on the commit of the run; the draft
-            # makes no git tag.
-            args+=(--target "$GITHUB_SHA" --title "dry run $TAG (delete me)")
-          fi
-          # With a start tag gh appends the generated list of changes to the
-          # text of the notes file.
-          if [ "$RELEASE" = true ] && [ -n "$LAST" ]; then
-            args+=(--generate-notes --notes-start-tag "$LAST")
-          fi
-          gh release create "$TAG" "${args[@]}" "$RUNNER_TEMP"/release/*
+          set -euo pipefail
+          state=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | if .draft then \"draft\" else \"published\" end")
+          case "$state" in
+            published*)
+              echo "::error::a published release of $TAG exists: nothing to make"
+              exit 1
+              ;;
+            draft*)
+              echo "a draft of $TAG exists from an earlier attempt: uploading the assets over it, setting the notes"
+              if [ -n "$LAST" ]; then
+                # `gh release edit` has no --generate-notes: the same list from the API.
+                gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+                  -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f previous_tag_name="$LAST" \
+                  --jq .body >>"$RUNNER_TEMP/notes.md"
+              fi
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP"/release/*
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+              ;;
+            *)
+              args=(--repo "$GITHUB_REPOSITORY" --draft --notes-file "$RUNNER_TEMP/notes.md")
+              if [ "$IS_REAL" = true ]; then
+                args+=(--verify-tag --title "roost $TAG")
+              else
+                # A name that is no release, on the commit of the run; the draft
+                # makes no git tag.
+                args+=(--target "$GITHUB_SHA" --title "dry run $TAG (delete me)")
+              fi
+              # With a start tag gh appends the generated list of changes to the
+              # text of the notes file.
+              if [ -n "$LAST" ]; then
+                args+=(--generate-notes --notes-start-tag "$LAST")
+              fi
+              gh release create "$TAG" "${args[@]}" "$RUNNER_TEMP"/release/*
+              ;;
+          esac
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName,assets \
             --jq '"draft=\(.isDraft) tag=\(.tagName) assets: \([.assets[].name] | join(", "))"'

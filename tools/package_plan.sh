@@ -15,6 +15,9 @@
 #   RELEASE  the dispatch input `release` (true | false)
 #   DRAFT    the dispatch input `draft_release` (true | false)
 #   BASE     the head of the last other run of the workflow on trunk, or empty
+#   PREV_NIGHT_SHA  the head_sha of the previous schedule run on trunk (not this
+#            run), or empty
+#   PREV_NIGHT_RED  true when that run ended with failure
 #   HEAD_REV the commit to plan for, default HEAD
 #
 # The rules
@@ -24,10 +27,18 @@
 #     is made when some product change lies between the newest v* tag reachable
 #     from HEAD and HEAD, and HEAD has no v* tag yet (no tag at all: made). A
 #     product change is any file outside docs/, tests/, .claude/, .github/ and
-#     *.md. Its version is MAJOR.MINOR of CMakeLists.txt and the patch is one
-#     more than the highest patch among all the tags vMAJOR.MINOR.* (0 if none).
-#   - A dispatch with draft_release=true (the dry run) plans that version too,
-#     makes no release. release and draft_release together fail.
+#     *.md, and .github/workflows/package.yml (the Qt and zig versions live
+#     there). Its version is MAJOR.MINOR of CMakeLists.txt (read from HEAD) and
+#     the patch is one more than the highest patch among all the tags
+#     vMAJOR.MINOR.* (0 if none). A tag vMAJOR.MINOR.* that is not an ancestor
+#     of HEAD fails the plan: a run on an old commit must not tag a patch on
+#     the ancestor of an existing tag.
+#   - A red night is not retried on the same commit: when the previous night
+#     (PREV_NIGHT_*) ended red on this very HEAD, the night makes no release;
+#     a release after the fix, or a dispatch with release=true, makes it.
+#   - A dispatch with draft_release=true (the dry run) plans that version and
+#     the last tag (for the notes) too, makes no release. release and
+#     draft_release together fail.
 #   - Only the night is ever skipped: without a release it is skipped when no
 #     file but documentation and its tooling (docs/, .claude/, *.md, issue
 #     templates) changed since BASE, whatever the run at BASE ended with. A
@@ -43,6 +54,8 @@ ref=${REF:-refs/heads/trunk}
 release_input=${RELEASE:-false}
 draft_input=${DRAFT:-false}
 base=${BASE:-}
+prev_night_sha=${PREV_NIGHT_SHA:-}
+prev_night_red=${PREV_NIGHT_RED:-false}
 head_rev=${HEAD_REV:-HEAD}
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -53,13 +66,14 @@ fail() {
     exit 1
 }
 
-# What the project is called: the MAJOR.MINOR of CMakeLists.txt.
-cmake_version=$(sed -n -E 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+)\..*/\1/p' "$root/CMakeLists.txt" | head -n 1)
+head=$(git_ rev-parse "$head_rev^{commit}")
+
+# What the project is called: the MAJOR.MINOR of CMakeLists.txt at $head.
+cmake_version=$(git_ show "$head:CMakeLists.txt" |
+    sed -n -E 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+)\..*/\1/p' | head -n 1)
 [ -n "$cmake_version" ] || fail "no VERSION MAJOR.MINOR.<patch> in CMakeLists.txt"
 major=${cmake_version%.*}
 minor=${cmake_version#*.}
-
-head=$(git_ rev-parse "$head_rev^{commit}")
 
 needed=true
 release=false
@@ -69,18 +83,24 @@ last=
 
 is_product_change() {
     # Succeeds when a file changed between $1 and $2 is not documentation, tests
-    # or tooling of the repository. The list is read whole first: `grep -q`
-    # stops at the first match, and under pipefail git, cut off by SIGPIPE on a
-    # long list, would turn the match into a failure.
+    # or tooling of the repository. The workflow package.yml is a product file:
+    # the Qt and zig versions of the packages live there. The list is read whole
+    # first: `grep -q` stops at the first match, and under pipefail git, cut off
+    # by SIGPIPE on a long list, would turn the match into a failure.
     local files
     files=$(git_ diff --no-renames --name-only "$1" "$2")
-    [ -n "$files" ] && grep -q -v -E '^(docs/|tests/|\.claude/|\.github/)|\.md$' <<<"$files"
+    [ -n "$files" ] || return 1
+    grep -q -x '\.github/workflows/package\.yml' <<<"$files" ||
+        grep -q -v -E '^(docs/|tests/|\.claude/|\.github/)|\.md$' <<<"$files"
 }
 
 plan_release_version() {
     # The highest patch of all the tags vMAJOR.MINOR.*, plus one; 0 without a tag.
     local highest=-1 tag n
     while IFS= read -r tag; do
+        # A run on an old commit must not tag a patch on the ancestor of a tag.
+        git_ merge-base --is-ancestor "$tag^{commit}" "$head" ||
+            fail "the tag $tag is not an ancestor of $head: no release of $major.$minor from a commit before it"
         n=${tag##*.}
         if [ "$n" -gt "$highest" ]; then highest=$n; fi
     done < <(git_ tag --list "v$major.$minor.*" | grep -E "^v$major\.$minor\.(0|[1-9][0-9]*)$" || true)
@@ -107,8 +127,13 @@ else
         [ "$ref" = refs/heads/trunk ] || fail "a release is made on trunk only, this run is on $ref"
     fi
 
-    if [ "$wants_release" = true ]; then
+    # The newest tag before HEAD: the start of the notes of a release and of a
+    # dry run.
+    if [ "$wants_release" = true ] || [ "$draft_input" = true ]; then
         last=$(git_ describe --tags --abbrev=0 --match 'v[0-9]*' "$head" 2>/dev/null || true)
+    fi
+
+    if [ "$wants_release" = true ]; then
         if [ -z "$last" ]; then
             release=true
             why="no v* tag before $head"
@@ -119,6 +144,11 @@ else
             why="a product change since $last"
         else
             why="no product change since $last"
+        fi
+        if [ "$release" = true ] && [ "$event" = schedule ] &&
+            [ "$prev_night_red" = true ] && [ "$prev_night_sha" = "$head" ]; then
+            release=false
+            why="the night on this commit was red (a release after the fix, or a dispatch with release=true)"
         fi
         echo "release $release: $why" >&2
     fi
