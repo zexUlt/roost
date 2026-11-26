@@ -26,10 +26,11 @@ name: Package
 # changed since the last run of this workflow on trunk, whatever that run
 # ended with: a red night is not retried on the same commit, a dispatch
 # retries it. Only documentation (docs/, .claude/, *.md, issue templates) does
-# not reach a package. The path list is the files that rarely change and shape a package or its
-# check; the build and the tests of the code run in ci.yml on every pull
-# request. QML of the plugins and the project version are left out: they
-# change often, and the smoke and the version check of a tag catch them.
+# not reach a package. The path list is the files that rarely change and
+# shape a package or its check; the build and the tests of the code run in
+# ci.yml on every pull request. QML of the plugins and the project version
+# are left out: they change often, and the smoke and the version check of a
+# tag catch them.
 # GitHub does not apply path filters to tags.
 on:
   schedule:
