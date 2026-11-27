@@ -1056,6 +1056,95 @@ private slots:
         QVERIFY(presses > 5);
     }
 
+    // A window that has just opened has the keyboard in the list: Down
+    // chooses a category with nothing done to the focus first.
+    void TheListHasTheKeyboardWhenTheWindowOpens() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(ListHasKeyboard(*window), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "appearancePage"),
+                                 TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        QVERIFY(PageIsShown(*window, "keysPage"));
+        QVERIFY(ListHasKeyboard(*window));
+    }
+
+    // The keyboard was in a control of the page that a new choice hides: the
+    // list takes it, and Up and Down work with no Tab first.
+    void TheListTakesTheKeyboardWhenTheCategoryChanges() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            PageIsShown(*window, "appearancePage") &&
+                IsShown(*window, "terminalSizeField") &&
+                window->Find("terminalSizeField")->width() > 0,
+            TIMEOUT_MS);
+        QQuickItem* field = window->Find("terminalSizeField");
+        field->forceActiveFocus(Qt::TabFocusReason);
+        QCOMPARE(Focused(*window), field);
+        // A click on the row of Keys.
+        QQuickItem* keys = nullptr;
+        for (QQuickItem* row : window->FindAll("categoryItem")) {
+            if (row->property("text").toString() == "Keys") {
+                keys = row;
+            }
+        }
+        QVERIFY(keys != nullptr);
+        QTest::mouseClick(
+            window->Window(), Qt::LeftButton, Qt::NoModifier,
+            keys->mapToScene(QPointF(keys->width() / 2, keys->height() / 2))
+                .toPoint());
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ListHasKeyboard(*window), TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), QString("updates"));
+        QVERIFY(PageIsShown(*window, "updatesPage"));
+
+        // The same when shell.settings names the category of the window that
+        // is open, with the keyboard in the page.
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "appearance"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            PageIsShown(*window, "appearancePage") &&
+                window->Find("terminalSizeField")->width() > 0,
+            TIMEOUT_MS);
+        window->Find("terminalSizeField")->forceActiveFocus(Qt::TabFocusReason);
+        QCOMPARE(Focused(*window), window->Find("terminalSizeField"));
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "updates"}}));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("updates"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(ListHasKeyboard(*window), TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Up);
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        QVERIFY(PageIsShown(*window, "keysPage"));
+    }
+
+    // The list marks the category that the page shows after the window is
+    // hidden and shown again, when the plugins are read once more.
+    void TheHighlightFollowsThePageWhenTheWindowOpensAgain() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryTitles(*window).size() == 4,
+                                 TIMEOUT_MS);
+        Choose(*window, "keys");
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "keysPage"), TIMEOUT_MS);
+        window->Window()->hide();
+        QTRY_VERIFY_WITH_TIMEOUT(!window->Window()->isVisible(), TIMEOUT_MS);
+        // plugins.list is asked at the show: its answer is applied when the
+        // property `plugins` is set.
+        QSignalSpy applied(window->Object.get(), SIGNAL(pluginsChanged()));
+        QVERIFY(OpenAt(*window, QVariant()));
+        QTRY_VERIFY_WITH_TIMEOUT(!applied.isEmpty(), TIMEOUT_MS);
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        const QQuickItem* list = window->Find("categoryList");
+        QVERIFY(list != nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(list->property("currentIndex").toInt(), 1,
+                                  TIMEOUT_MS);
+        QVERIFY(PageIsShown(*window, "keysPage"));
+        QVERIFY(!PageIsShown(*window, "appearancePage"));
+    }
+
     // The command shell.settings opens on the category that its args name.
     void TheTargetOfShellSettingsOpensItsPage() {
         // A target for a window that was never shown: its page is made by
@@ -1063,32 +1152,38 @@ private slots:
         auto window = OpenWindow(false);
         QVERIFY(window);
         QVERIFY(OpenAt(*window, QVariantMap{{"plugin", FIXTURE}}));
-        QCOMPARE(ShownKey(*window), "plugin:" + FIXTURE);
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), "plugin:" + FIXTURE,
+                                  TIMEOUT_MS);
         QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "pluginSettings") &&
                                      IsShown(*window, "fixtureField"),
                                  TIMEOUT_MS);
         QVERIFY(!PageIsShown(*window, "appearancePage"));
         // A built-in one, on the window that is shown.
         QVERIFY(OpenAt(*window, QVariantMap{{"category", "keys"}}));
-        QCOMPARE(ShownKey(*window), QString("keys"));
-        QVERIFY(PageIsShown(*window, "keysPage"));
-        QVERIFY(!PageIsShown(*window, "pluginSettings"));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "keysPage") &&
+                                     !PageIsShown(*window, "pluginSettings"),
+                                 TIMEOUT_MS);
         // No args: the category chosen last.
         QVERIFY(OpenAt(*window, QVariant()));
-        QCOMPARE(ShownKey(*window), QString("keys"));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
+                                  TIMEOUT_MS);
         // A category that does not exist: one warning, the choice stays.
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("shell.settings: no such settings category"));
         QVERIFY(OpenAt(*window, QVariantMap{{"category", "nonsense"}}));
-        QCOMPARE(ShownKey(*window), QString("keys"));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
+                                  TIMEOUT_MS);
         // A plugin has no category named like a built-in one, and the other
         // way round.
         QTest::ignoreMessage(
             QtWarningMsg,
             QRegularExpression("shell.settings: no such settings category"));
         QVERIFY(OpenAt(*window, QVariantMap{{"plugin", "keys"}}));
-        QCOMPARE(ShownKey(*window), QString("keys"));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
+                                  TIMEOUT_MS);
     }
 
     // The command carries its args to the window: the one made by Main.qml.
@@ -1105,6 +1200,7 @@ private slots:
         QVERIFY(main != nullptr);
         auto* settings = main->findChild<QQuickWindow*>("settingsWindow");
         QVERIFY(settings != nullptr);
+        const auto hide = qScopeGuard([settings] { settings->hide(); });
         settings->setProperty("opensFiles", false);
         const QFuture<rpc::Result> run = api.Commands().Run(
             "shell.settings", QJsonObject{{"category", "keys"}});
@@ -1112,7 +1208,6 @@ private slots:
         QVERIFY2(run.result(), qPrintable(Why(run.result())));
         QVERIFY(settings->isVisible());
         QCOMPARE(settings->property("shownKey").toString(), QString("keys"));
-        settings->hide();
     }
 
     // The window with Appearance chosen, light and dark, for a person to look

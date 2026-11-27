@@ -171,6 +171,15 @@ ApplicationWindow {
         currentKey = key;
     }
 
+    function isInside(item, container) {
+        for (let up = item; up !== null && up !== undefined; up = up.parent) {
+            if (up === container) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Up (-1) or Down (1) in the list: the next category, none past the ends.
     function stepCategory(step) {
         const next = categoryIndex + step;
@@ -196,8 +205,16 @@ ApplicationWindow {
         return builtinCategories.concat(own);
     }
 
-    // A page opens at its top, whatever the one before was scrolled to.
-    onShownKeyChanged: scroll.contentItem.contentY = 0
+    // A page opens at its top, whatever the one before was scrolled to. The
+    // keyboard that was in a control of the page that goes is given to the
+    // list, so that Up and Down still work (a view with no focus item has no
+    // keys until Tab).
+    onShownKeyChanged: {
+        scroll.contentItem.contentY = 0;
+        if (isInside(root.activeFocusItem, scroll.contentItem.contentItem)) {
+            categoryList.forceActiveFocus(Qt.TabFocusReason);
+        }
+    }
 
     function openKeymap() {
         keymapFileRequested(keymapFile);
@@ -206,7 +223,7 @@ ApplicationWindow {
         }
     }
 
-    // Writes one key of the general section: the patch is what changed.
+    // Writes one key of the settings document: the patch is what changed.
     function patchSettings(patch) {
         if (Roost.store === null) {
             return;
