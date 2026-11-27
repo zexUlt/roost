@@ -16,7 +16,14 @@ import Roost.Api
 // (RFC 7386) replaces an array. A text is written when its editing finishes
 // (Enter, or the focus leaving the field), not at each key. The page follows
 // store.changed, the results of the backend and a second writer among them,
-// and does not touch the field that has the keyboard.
+// and does not touch a field whose text the user has changed and not yet
+// finished.
+//
+// A row is its command, not its place: a document is matched to the rows by
+// the name of the command, so that a row keeps its state (the text being
+// typed, the last Test, "Show all") when another writer adds or removes other
+// commands. A command is written as the object the document had, with the four
+// fields of the page set over it, so that what the page does not know survives.
 Item {
     id: root
 
@@ -29,6 +36,18 @@ Item {
     // is read meanwhile can be older than the last write: it is read again
     // when the last answer is in.
     property int writing: 0
+    // Counts the resets of `writing` (see writeWatchdog): an answer that comes
+    // after its write was given up on is not counted again.
+    property int writeEpoch: 0
+    // The id of the next row; a row keeps it as long as the page lives.
+    property int nextRowId: 1
+    // The commands as the document last had them, by row id: the page writes a
+    // command as its original with its own fields over it.
+    property var originals: ({})
+    // The items of the `commands` array of the document, in its order: {key:
+    // row id} for a command, {raw: value} for an item that is no object (kept
+    // in place, the page has no row for it).
+    property var order: []
 
     // What the backend takes for a missing field (backend/settings.hpp): the
     // desktop notification on, the events blocked and failed, no commands. A
@@ -65,35 +84,46 @@ Item {
     function rowOf(command) {
         const events = knownEvents(command.events) ?? eventNames;
         return {
-            "name": typeof command.name === "string" ? command.name : "",
+            "name": nameOf(command),
             "run": typeof command.run === "string" ? command.run : "",
             "blocked": events.includes("blocked"),
             "done": events.includes("done"),
             "failed": events.includes("failed"),
-            "isEnabled": typeof command.enabled === "boolean" ? command.enabled : true
+            "isEnabled": typeof command.enabled === "boolean" ? command.enabled : true,
+            "saved": true
         };
     }
 
-    function commandOf(row) {
-        return {
+    function nameOf(command) {
+        return typeof command.name === "string" ? command.name : "";
+    }
+
+    // The command of the row at `index` as the document keeps it: the object it
+    // had, the four fields of the page set over it. The events the page does
+    // not know stay behind the three it toggles.
+    function commandOf(index) {
+        const row = rows.get(index);
+        const original = originals[row.rowId] ?? {};
+        const unknown = Array.isArray(original.events) ? original.events.filter(name => !eventNames.includes(name)) : [];
+        return Object.assign({}, original, {
             "name": row.name,
             "run": row.run,
-            "events": eventNames.filter(name => row[name]),
+            "events": eventNames.filter(name => row[name]).concat(unknown),
             "enabled": row.isEnabled
-        };
+        });
+    }
+
+    function indexOfRow(rowId) {
+        for (let i = 0; i < rows.count; ++i) {
+            if (rows.get(i).rowId === rowId) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     function eventsOfSwitches() {
         return eventNames.filter(name => eventSwitches.itemAt(eventNames.indexOf(name)).checked);
-    }
-
-    // The commands of the list as the document keeps them.
-    function commandsValue() {
-        const commands = [];
-        for (let i = 0; i < rows.count; ++i) {
-            commands.push(commandOf(rows.get(i)));
-        }
-        return commands;
     }
 
     // Shows the document: the switches, the results and the rows. A field that
@@ -106,21 +136,68 @@ Item {
             eventSwitches.itemAt(i).checked = events.includes(eventNames[i]);
         }
         results = isObject(document?.results) ? document.results : ({});
-        const commands = Array.isArray(settings.commands) ? settings.commands.filter(isObject).map(rowOf) : [];
-        while (rows.count > commands.length) {
-            rows.remove(rows.count - 1);
-        }
-        for (let i = 0; i < commands.length; ++i) {
-            if (i >= rows.count) {
-                rows.append(commands[i]);
-                continue;
+        showCommands(Array.isArray(settings.commands) ? settings.commands : []);
+    }
+
+    // The rows follow the `commands` array: a command of the document goes to
+    // the row of the same name (a saved one), a new name makes a row, a name
+    // that is gone takes its row away. The rows that are not saved yet stay,
+    // after the others.
+    function showCommands(items) {
+        const taken = {};
+        const matches = items.map(item => {
+            if (!isObject(item)) {
+                return -1;
             }
-            for (const field in commands[i]) {
-                if (rows.get(i)[field] !== commands[i][field]) {
-                    rows.setProperty(i, field, commands[i][field]);
+            for (let i = 0; i < rows.count; ++i) {
+                const row = rows.get(i);
+                if (row.saved && !taken[row.rowId] && row.name === nameOf(item)) {
+                    taken[row.rowId] = true;
+                    return row.rowId;
                 }
             }
+            return 0;
+        });
+        for (let i = rows.count - 1; i >= 0; --i) {
+            const row = rows.get(i);
+            if (row.saved && !taken[row.rowId]) {
+                delete originals[row.rowId];
+                rows.remove(i);
+            }
         }
+        const nextOrder = [];
+        let place = 0;
+        items.forEach((item, n) => {
+            if (!isObject(item)) {
+                nextOrder.push({
+                    "raw": item
+                });
+                return;
+            }
+            const data = rowOf(item);
+            let rowId = matches[n];
+            if (rowId === 0) {
+                rowId = nextRowId++;
+                data.rowId = rowId;
+                rows.insert(place, data);
+            } else {
+                const at = indexOfRow(rowId);
+                if (at !== place) {
+                    rows.move(at, place, 1);
+                }
+                for (const field in data) {
+                    if (rows.get(place)[field] !== data[field]) {
+                        rows.setProperty(place, field, data[field]);
+                    }
+                }
+            }
+            originals[rowId] = item;
+            nextOrder.push({
+                "key": rowId
+            });
+            ++place;
+        });
+        order = nextOrder;
     }
 
     function read() {
@@ -134,21 +211,74 @@ Item {
     // One patch of `settings`. The answer of the last write of a run of them
     // reads the document again.
     function write(settings) {
-        ++writing;
-        Roost.store.patch(pluginId, {
+        const epoch = writeEpoch;
+        // A call that cannot be made (the page has no store to call) has no
+        // answer to wait for.
+        if (Roost.store.patch(pluginId, {
             "settings": settings
         }, error => {
+            if (epoch !== writeEpoch) {
+                return;
+            }
             --writing;
             if (writing === 0) {
+                writeWatchdog.stop();
                 read();
             }
+        }) === false) {
+            return;
+        }
+        ++writing;
+        writeWatchdog.restart();
+    }
+
+    // Writes the commands: the items of the document in their order (the
+    // commands the page has no row for, the rows that are gone left out), then
+    // the rows that are new and have a command. A row whose command is empty
+    // and never was written is not a command yet.
+    function writeCommands() {
+        const value = [];
+        const nextOrder = [];
+        const written = {};
+        for (const entry of order) {
+            if (entry.key === undefined) {
+                value.push(entry.raw);
+                nextOrder.push(entry);
+                continue;
+            }
+            const index = indexOfRow(entry.key);
+            if (index >= 0) {
+                value.push(commandOf(index));
+                nextOrder.push(entry);
+                written[entry.key] = true;
+            }
+        }
+        for (let i = 0; i < rows.count; ++i) {
+            const row = rows.get(i);
+            if (!written[row.rowId] && !row.saved && row.run !== "") {
+                value.push(commandOf(i));
+                nextOrder.push({
+                    "key": row.rowId
+                });
+                rows.setProperty(i, "saved", true);
+            }
+        }
+        order = nextOrder;
+        for (const entry of nextOrder) {
+            if (entry.key !== undefined) {
+                originals[entry.key] = value[nextOrder.indexOf(entry)];
+            }
+        }
+        write({
+            "commands": value
         });
     }
 
-    function writeCommands() {
-        write({
-            "commands": commandsValue()
-        });
+    // Whether a change of the row at `index` is a change of the document: it
+    // is for a command that is written, or one that has its command.
+    function isWritten(index) {
+        const row = rows.get(index);
+        return row.saved || row.run !== "";
     }
 
     // The text of the problem with a name for the row at `index`, "" for none.
@@ -174,25 +304,36 @@ Item {
         }
     }
 
+    // A new row is on the page only: it is written when it has a command.
     function addCommand() {
         rows.append({
+            "rowId": nextRowId++,
             "name": freeName(),
             "run": "",
             "blocked": true,
             "done": true,
             "failed": true,
-            "isEnabled": true
+            "isEnabled": true,
+            "saved": false
         });
-        writeCommands();
         commands.itemAt(rows.count - 1).focusName();
     }
 
-    // Takes the row out. The keyboard goes to Add command: the control that had
+    // Takes the row out. The keyboard goes to the name of the next row, of the
+    // previous one for the last, to Add command for none: the control that had
     // it goes with the row.
     function removeCommand(index) {
+        const wasWritten = isWritten(index);
         rows.remove(index);
-        writeCommands();
-        addButton.forceActiveFocus(Qt.TabFocusReason);
+        if (wasWritten) {
+            writeCommands();
+        }
+        const next = commands.itemAt(Math.min(index, rows.count - 1));
+        if (next) {
+            next.focusName();
+        } else {
+            addButton.forceActiveFocus(Qt.TabFocusReason);
+        }
     }
 
     // The line of the last run of a command: "exit 0 · 12:03", "timeout ·
@@ -480,6 +621,8 @@ Item {
 
                 objectName: "commandRow"
                 required property int index
+                required property int rowId
+                required property bool saved
                 required property string name
                 required property string run
                 required property bool blocked
@@ -494,6 +637,11 @@ Item {
                 property bool testing: false
                 property real testedAfter: 0
                 property bool showAll: false
+                // The user has typed in the field and not finished: only then
+                // the field is the user's, otherwise it follows the document,
+                // focus or not.
+                property bool nameEdited: false
+                property bool runEdited: false
                 readonly property var result: root.results[name]
 
                 function focusName() {
@@ -526,14 +674,15 @@ Item {
                 border.width: 1
                 border.color: Roost.theme.line
 
-                // A field that has the keyboard keeps what is typed.
+                // A field that the user is typing in keeps what is typed.
                 onNameChanged: {
-                    if (!nameField.activeFocus) {
+                    problem = "";
+                    if (!nameEdited) {
                         nameField.text = name;
                     }
                 }
                 onRunChanged: {
-                    if (!runField.activeFocus) {
+                    if (!runEdited) {
                         runField.text = run;
                     }
                 }
@@ -558,7 +707,9 @@ Item {
                 }
 
                 // A test that never gets its result must not leave the button
-                // off for ever: longer than the backend lets a command run.
+                // off for ever. It is longer than the 10 s the backend lets a
+                // command run, so that the result of a command that timed out
+                // is there before this one fires.
                 Timer {
                     id: testTimeout
 
@@ -584,7 +735,12 @@ Item {
                             Layout.preferredWidth: 160
                             placeholderText: "Name"
                             Accessible.name: "Name of command " + (row.index + 1)
+                            onTextEdited: row.nameEdited = true
                             onEditingFinished: {
+                                if (!row.nameEdited) {
+                                    return;
+                                }
+                                row.nameEdited = false;
                                 const text = nameField.text.trim();
                                 row.problem = root.nameProblem(row.index, text);
                                 if (row.problem !== "") {
@@ -594,7 +750,9 @@ Item {
                                 nameField.text = text;
                                 if (text !== row.name) {
                                     rows.setProperty(row.index, "name", text);
-                                    root.writeCommands();
+                                    if (root.isWritten(row.index)) {
+                                        root.writeCommands();
+                                    }
                                 }
                             }
                         }
@@ -607,10 +765,17 @@ Item {
                             font: Roost.theme.terminalFont
                             placeholderText: "Command, run by bash"
                             Accessible.name: "Command line of " + row.name
+                            onTextEdited: row.runEdited = true
                             onEditingFinished: {
+                                if (!row.runEdited) {
+                                    return;
+                                }
+                                row.runEdited = false;
                                 if (runField.text !== row.run) {
                                     rows.setProperty(row.index, "run", runField.text);
-                                    root.writeCommands();
+                                    if (root.isWritten(row.index)) {
+                                        root.writeCommands();
+                                    }
                                 }
                             }
                         }
@@ -627,7 +792,9 @@ Item {
                             text: root.eventTitles["blocked"]
                             onToggled: {
                                 rows.setProperty(row.index, "blocked", checked);
-                                root.writeCommands();
+                                if (root.isWritten(row.index)) {
+                                    root.writeCommands();
+                                }
                             }
                         }
 
@@ -638,7 +805,9 @@ Item {
                             text: root.eventTitles["done"]
                             onToggled: {
                                 rows.setProperty(row.index, "done", checked);
-                                root.writeCommands();
+                                if (root.isWritten(row.index)) {
+                                    root.writeCommands();
+                                }
                             }
                         }
 
@@ -649,7 +818,9 @@ Item {
                             text: root.eventTitles["failed"]
                             onToggled: {
                                 rows.setProperty(row.index, "failed", checked);
-                                root.writeCommands();
+                                if (root.isWritten(row.index)) {
+                                    root.writeCommands();
+                                }
                             }
                         }
 
@@ -660,7 +831,9 @@ Item {
                             text: "Enabled"
                             onToggled: {
                                 rows.setProperty(row.index, "isEnabled", checked);
-                                root.writeCommands();
+                                if (root.isWritten(row.index)) {
+                                    root.writeCommands();
+                                }
                             }
                         }
 
@@ -669,7 +842,7 @@ Item {
                             text: "Test"
                             // Not before the command is written: the backend
                             // runs what it has read.
-                            enabled: !row.testing && root.writing === 0
+                            enabled: !row.testing && root.writing === 0 && row.run !== ""
                             Accessible.name: "Test " + row.name
                             onClicked: row.runTest()
                         }
@@ -680,6 +853,15 @@ Item {
                             Accessible.name: "Remove " + row.name
                             onClicked: root.removeCommand(row.index)
                         }
+                    }
+
+                    Label {
+                        objectName: "commandUnsaved"
+                        Layout.fillWidth: true
+                        visible: !row.saved && row.run === ""
+                        text: visible ? "Not saved until it has a command" : ""
+                        color: Roost.theme.textMuted
+                        font: Roost.theme.smallFont
                     }
 
                     Label {
@@ -741,6 +923,21 @@ Item {
             objectName: "addCommand"
             text: "Add command"
             onClicked: root.addCommand()
+        }
+    }
+
+    // A write whose answer never comes must not keep the page from the
+    // document for ever: after this long the writes are given up on, and the
+    // document is read.
+    Timer {
+        id: writeWatchdog
+
+        interval: 10000
+        onTriggered: {
+            console.warn("notifications settings: no answer to", root.writing, "write(s) of the document; reading it again");
+            ++root.writeEpoch;
+            root.writing = 0;
+            root.read();
         }
     }
 

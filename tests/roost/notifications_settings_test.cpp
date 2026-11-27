@@ -306,9 +306,10 @@ private:
         return item == nullptr ? QString() : item->property("text").toString();
     }
 
-    // The window on the page, the commands that the user has already.
+    // The window on the page, the commands that the user has already; `shown`
+    // is how many rows it makes of them (all, unless some are no commands).
     std::unique_ptr<NotificationsWindow> OpenWithCommands(
-        const QJsonArray& commands) {
+        const QJsonArray& commands, int shown = -1) {
         if (!commands.isEmpty() && !PutCommands(commands)) {
             return nullptr;
         }
@@ -318,8 +319,9 @@ private:
                              TIMEOUT_MS) ||
             !QTest::qWaitFor(
                 [&] {
-                    return ShowsRows(*window,
-                                     static_cast<int>(commands.size()));
+                    return ShowsRows(
+                        *window,
+                        shown >= 0 ? shown : static_cast<int>(commands.size()));
                 },
                 TIMEOUT_MS)) {
             return nullptr;
@@ -597,6 +599,214 @@ private slots:
                                   QString("theirs"), TIMEOUT_MS);
         QCOMPARE(TextIn(*window, 0, "commandRun"), QString("mine"));
         QCOMPARE(Focused(*window), run);
+    }
+
+    // A field that has the keyboard but was not typed in follows the document;
+    // when the keyboard leaves it, it does not write its old text over what
+    // another writer put there.
+    void AFocusedFieldThatWasNotEditedFollowsTheDocument() {
+        auto window =
+            OpenWithCommands({QJsonObject{{"name", "one"}, {"run", "before"}}});
+        QVERIFY(window);
+        QQuickItem* run = InRow(*window, 0, "commandRun");
+        run->forceActiveFocus(Qt::TabFocusReason);
+
+        QVERIFY(PutCommands({QJsonObject{{"name", "one"}, {"run", "theirs"}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(TextIn(*window, 0, "commandRun"),
+                                  QString("theirs"), TIMEOUT_MS);
+        QCOMPARE(Focused(*window), run);
+
+        // The keyboard leaves the field, which is not an edit.
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QVERIFY(Focused(*window) != run);
+        // The barrier: a write of a switch is after whatever the field wrote.
+        ClickNamed(*window, "desktopSwitch");
+        QTRY_COMPARE_WITH_TIMEOUT(Settings().value("desktop"),
+                                  QJsonValue(false), TIMEOUT_MS);
+        QCOMPARE(Settings()
+                     .value("commands")
+                     .toArray()
+                     .at(0)
+                     .toObject()
+                     .value("run"),
+                 QJsonValue("theirs"));
+    }
+
+    // A row is its command: when another writer removes the first command, the
+    // row of the second stays the second, with the text typed in it, and the
+    // end of that edit writes to the second command.
+    void RowsKeepTheirCommandWhenAnotherWriterRemovesAnother() {
+        const QJsonObject first{{"name", "first"}, {"run", "true"}};
+        const QJsonObject second{{"name", "second"}, {"run", "true"}};
+        auto window = OpenWithCommands({first, second});
+        QVERIFY(window);
+        QQuickItem* run = InRow(*window, 1, "commandRun");
+        run->forceActiveFocus(Qt::TabFocusReason);
+        QMetaObject::invokeMethod(run, "selectAll");
+        TypeText(window->Window(), "mine");
+
+        QVERIFY(PutCommands({second}));
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 1), TIMEOUT_MS);
+        QCOMPARE(TextIn(*window, 0, "commandName"), QString("second"));
+        QCOMPARE(TextIn(*window, 0, "commandRun"), QString("mine"));
+        QCOMPARE(Focused(*window), InRow(*window, 0, "commandRun"));
+
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Settings().value("commands").toArray(),
+            (QJsonArray{
+                QJsonObject{{"name", "second"},
+                            {"run", "mine"},
+                            {"events", Events({"blocked", "done", "failed"})},
+                            {"enabled", true}}}),
+            TIMEOUT_MS);
+
+        // A command that another writer adds gets its row, in its place.
+        QVERIFY(
+            PutCommands({QJsonObject{{"name", "zero"}, {"run", "true"}},
+                         QJsonObject{{"name", "second"}, {"run", "mine"}}}));
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 2), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(TextIn(*window, 0, "commandName"),
+                                  QString("zero"), TIMEOUT_MS);
+        QCOMPARE(TextIn(*window, 1, "commandRun"), QString("mine"));
+    }
+
+    // A row that was added is on the page only: nothing is written before it
+    // has a command, then the command is written with its name and events.
+    void ACommandIsWrittenWhenItHasACommand() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsReady(*window), TIMEOUT_MS);
+        ClickNamed(*window, "addCommand");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 1), TIMEOUT_MS);
+        QCOMPARE(TextIn(*window, 0, "commandUnsaved"),
+                 QString("Not saved until it has a command"));
+        QVERIFY(!InRow(*window, 0, "commandTest")->isEnabled());
+
+        // The name is edited and an event is switched off: still not written.
+        QCOMPARE(FocusedName(*window), QString("commandName"));
+        TypeText(window->Window(), "phone");
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        ClickInRow(*window, 0, "commandDone");
+        // The barrier: a write of a switch is after whatever they would write.
+        ClickNamed(*window, "desktopSwitch");
+        QTRY_COMPARE_WITH_TIMEOUT(Settings().value("desktop"),
+                                  QJsonValue(false), TIMEOUT_MS);
+        QVERIFY(!Settings().contains("commands"));
+
+        InRow(*window, 0, "commandRun")->forceActiveFocus(Qt::TabFocusReason);
+        TypeText(window->Window(), "echo hi");
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            Settings().value("commands").toArray(),
+            (QJsonArray{QJsonObject{{"name", "phone"},
+                                    {"run", "echo hi"},
+                                    {"events", Events({"blocked", "failed"})},
+                                    {"enabled", true}}}),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            TextIn(*window, 0, "commandUnsaved").isEmpty() &&
+                InRow(*window, 0, "commandTest")->isEnabled(),
+            TIMEOUT_MS);
+
+        // A row that never had a command is removed without a write.
+        ClickNamed(*window, "addCommand");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 2), TIMEOUT_MS);
+        ClickInRow(*window, 1, "commandRemove");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 1), TIMEOUT_MS);
+        QCOMPARE(Settings().value("commands").toArray().size(), 1);
+    }
+
+    // Test pressed right after the command was typed runs it: the backend knows
+    // the command by the time the button is back.
+    void TestRightAfterTheCommandWasTypedRunsIt() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsReady(*window), TIMEOUT_MS);
+        ClickNamed(*window, "addCommand");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 1), TIMEOUT_MS);
+        InRow(*window, 0, "commandRun")->forceActiveFocus(Qt::TabFocusReason);
+        TypeText(window->Window(), WriteFile("fresh"));
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        ClickInRow(*window, 0, "commandTest");
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(Path("fresh")), TIMEOUT_MS);
+        QVERIFY(TextIn(*window, 0, "commandTestError").isEmpty());
+    }
+
+    // What the page does not understand stays in the document: the keys of a
+    // command, the events it does not know, the items that are no commands.
+    void WhatThePageDoesNotKnowIsKept() {
+        auto window = OpenWithCommands(
+            {QJsonObject{{"name", "mine"},
+                         {"run", "true"},
+                         {"events", Events({"done", "bogus"})},
+                         {"extra", QJsonObject{{"keep", 5}}}},
+             QJsonValue(7), QJsonObject{{"name", "other"}, {"run", "true"}},
+             QJsonValue(QStringLiteral("text"))},
+            2);
+        QVERIFY(window);
+        ClickInRow(*window, 0, "commandEnabled");
+        QTRY_COMPARE_WITH_TIMEOUT(Settings()
+                                      .value("commands")
+                                      .toArray()
+                                      .at(0)
+                                      .toObject()
+                                      .value("enabled"),
+                                  QJsonValue(false), TIMEOUT_MS);
+        const QJsonArray commands = Settings().value("commands").toArray();
+        QCOMPARE(commands.size(), 4);
+        QCOMPARE(commands.at(0).toObject(),
+                 (QJsonObject{{"name", "mine"},
+                              {"run", "true"},
+                              {"events", Events({"done", "bogus"})},
+                              {"enabled", false},
+                              {"extra", QJsonObject{{"keep", 5}}}}));
+        QCOMPARE(commands.at(1), QJsonValue(7));
+        QCOMPARE(commands.at(2).toObject().value("name"), QJsonValue("other"));
+        QCOMPARE(commands.at(3), QJsonValue(QStringLiteral("text")));
+    }
+
+    // Return on a button of the page clicks it once, not twice.
+    void ReturnOnAButtonClicksItOnce() {
+        auto window = OpenWithCommands({QJsonObject{
+            {"name", "loud"}, {"run", "printf 'a\nb\nc\nd\ne\n' >&2"}}});
+        QVERIFY(window);
+        // "Show all" toggles: twice would leave it as it was.
+        ClickInRow(*window, 0, "commandTest");
+        QTRY_VERIFY_WITH_TIMEOUT(
+            InRow(*window, 0, "commandStderrToggle") != nullptr &&
+                InRow(*window, 0, "commandStderrToggle")->isVisible(),
+            TIMEOUT_MS);
+        InRow(*window, 0, "commandStderrToggle")
+            ->forceActiveFocus(Qt::TabFocusReason);
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        QCOMPARE(TextIn(*window, 0, "commandStderrToggle"),
+                 QString("Show less"));
+        QTest::keyClick(window->Window(), Qt::Key_Enter);
+        QCOMPARE(TextIn(*window, 0, "commandStderrToggle"),
+                 QString("Show all"));
+
+        // Add command adds one row.
+        window->Find("addCommand")->forceActiveFocus(Qt::TabFocusReason);
+        QTest::keyClick(window->Window(), Qt::Key_Return);
+        QCOMPARE(Rows(*window).size(), 2);
+    }
+
+    // After Remove the keyboard goes to the name of the row that took its
+    // place, to the previous one for the last, to Add command for none.
+    void RemoveMovesTheKeyboardToANeighbourRow() {
+        auto window =
+            OpenWithCommands({QJsonObject{{"name", "a"}, {"run", "true"}},
+                              QJsonObject{{"name", "b"}, {"run", "true"}},
+                              QJsonObject{{"name", "c"}, {"run", "true"}}});
+        QVERIFY(window);
+        ClickInRow(*window, 1, "commandRemove");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 2), TIMEOUT_MS);
+        QCOMPARE(Focused(*window), InRow(*window, 1, "commandName"));
+        QCOMPARE(TextIn(*window, 1, "commandName"), QString("c"));
+        ClickInRow(*window, 1, "commandRemove");
+        QTRY_VERIFY_WITH_TIMEOUT(ShowsRows(*window, 1), TIMEOUT_MS);
+        QCOMPARE(Focused(*window), InRow(*window, 0, "commandName"));
     }
 
     // Tab goes through every control of a row, in reading order, and on to the
