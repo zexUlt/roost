@@ -15,6 +15,9 @@
 #include <QTest>
 #include <QTimer>
 
+#include <signal.h>
+
+#include <cerrno>
 #include <memory>
 
 #include "core/rpc_client.hpp"
@@ -71,6 +74,12 @@ bool IsRunning(qint64 pid) {
     const QByteArray state = ps.readAllStandardOutput().trimmed();
     // A zombie of a process nobody reaps is gone for this purpose.
     return !state.isEmpty() && !state.startsWith('Z');
+}
+
+// Is there no process left in the group? The group of a leader that has been
+// reaped lives on while any member does.
+bool GroupIsGone(qint64 group) {
+    return ::kill(-static_cast<pid_t>(group), 0) == -1 && errno == ESRCH;
 }
 
 }  // namespace
@@ -399,6 +408,65 @@ private slots:
         QCOMPARE(hang.value("event").toString(), "blocked");
         QTRY_VERIFY_WITH_TIMEOUT(!IsRunning(child) && !IsRunning(shell),
                                  TIMEOUT_MS);
+    }
+
+    void ACommandDiesWithTheBackendThatIsKilled() {
+        // The timeout is far away: only the backend's end can explain the
+        // death of the command.
+        const ScopedEnv timeout("ROOST_NOTIFICATIONS_TEST_TIMEOUT_MS", "60000");
+        QVERIFY(Start());
+        PutSettings(
+            {{"commands",
+              QJsonArray{QJsonObject{
+                  {"name", "hang"},
+                  {"run",
+                   QStringLiteral("sleep 600 & echo $! > '%1'; echo $$ > '%2'; "
+                                  "echo $PPID > '%3'; wait")
+                       .arg(Path("child.pid"), Path("shell.pid"),
+                            Path("backend.pid"))},
+                  {"events", QJsonArray{"blocked"}}}}}});
+        Reports({Report("s1", "working"), Report("s1", "blocked")});
+        QTRY_VERIFY_WITH_TIMEOUT(!Lines("child.pid").isEmpty() &&
+                                     !Lines("shell.pid").isEmpty() &&
+                                     !Lines("backend.pid").isEmpty(),
+                                 TIMEOUT_MS);
+        const qint64 child = Lines("child.pid").first().toLongLong();
+        const qint64 shell = Lines("shell.pid").first().toLongLong();
+        const qint64 backend = Lines("backend.pid").first().toLongLong();
+        QVERIFY(child > 1 && shell > 1 && backend > 1);
+        QVERIFY(IsRunning(child));
+
+        // The process is the backend roostd started: the parent of the shell
+        // is a child of this roostd and runs the plugin's binary.
+        QProcess ps;
+        ps.start("ps",
+                 {"-o", "ppid=,command=", "-p", QString::number(backend)});
+        QVERIFY(ps.waitForFinished(TIMEOUT_MS));
+        const QString line = QString::fromUtf8(ps.readAllStandardOutput());
+        QVERIFY2(line.trimmed().startsWith(
+                     QString::number(Roostd_->ProcessId()) + " "),
+                 qPrintable(line));
+        QVERIFY2(line.contains("notifications-backend"), qPrintable(line));
+
+        QCOMPARE(::kill(static_cast<pid_t>(backend), SIGKILL), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !IsRunning(child) && !IsRunning(shell) && GroupIsGone(shell), 2000);
+    }
+
+    void ACommandThatEndsLeavesNoProcessOfItsGroupBehind() {
+        QVERIFY(Start());
+        PutSettings({{"commands", QJsonArray{QJsonObject{
+                                      {"name", "quick"},
+                                      {"run", QStringLiteral("echo $$ > '%1'")
+                                                  .arg(Path("shell.pid"))},
+                                      {"events", QJsonArray{"blocked"}}}}}});
+        Reports({Report("s1", "working"), Report("s1", "blocked")});
+        QTRY_VERIFY_WITH_TIMEOUT(Results().contains("quick"), TIMEOUT_MS);
+        QVERIFY(!Lines("shell.pid").isEmpty());
+        const qint64 shell = Lines("shell.pid").first().toLongLong();
+        QVERIFY(shell > 1);
+        // The watchdog has seen the end of the command and left.
+        QTRY_VERIFY_WITH_TIMEOUT(GroupIsGone(shell), 1000);
     }
 
     void TheEventsOfTheSettingsAndOfACommandFilterTheRuns() {
