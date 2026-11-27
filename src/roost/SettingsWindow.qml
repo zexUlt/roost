@@ -209,6 +209,7 @@ ApplicationWindow {
     // keyboard that was in a control of the page that goes is given to the
     // list, so that Up and Down still work (a view with no focus item has no
     // keys until Tab).
+    onCategoryIndexChanged: categoryList.follow()
     onShownKeyChanged: {
         scroll.contentItem.contentY = 0;
         if (isInside(root.activeFocusItem, scroll.contentItem.contentItem)) {
@@ -1160,8 +1161,17 @@ ApplicationWindow {
             interactive: false
             keyNavigationEnabled: false
             boundsBehavior: Flickable.StopAtBounds
-            currentIndex: root.categoryIndex
             model: root.categories
+            // The row of the shown category. A view resets its current row to
+            // the first one when its model changes, while `categoryIndex`
+            // stays, so a binding is not enough: the row is set again at each
+            // change of the shown category and of the model.
+            function follow() {
+                currentIndex = root.categoryIndex;
+            }
+            Component.onCompleted: follow()
+            onModelChanged: follow()
+            onCountChanged: follow()
             Keys.onUpPressed: root.stepCategory(-1)
             Keys.onDownPressed: root.stepCategory(1)
             Accessible.role: Accessible.List
