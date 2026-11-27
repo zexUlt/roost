@@ -99,7 +99,7 @@ private:
         Host_ = std::make_unique<PluginHost>(*Server_);
         Host_->Load({PluginsPath()});
         Service_ = std::make_unique<StoreService>(Store(ConfigPath()), *Server_,
-                                                  Host_->Registry());
+                                                  *Host_);
         Client_ = Connect();
         return Client_ != nullptr;
     }
