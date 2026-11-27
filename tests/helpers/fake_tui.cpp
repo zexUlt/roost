@@ -23,8 +23,8 @@
 // waits to be killed.
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -38,8 +38,37 @@
 namespace {
 
 volatile std::sig_atomic_t RESIZED = 0;
+// The write end of a pipe the loop polls with its input: a resize wakes the
+// wait wherever it comes, before the wait or in it. -1 if there is no pipe.
+volatile std::sig_atomic_t RESIZE_WAKE = -1;
 
-void OnResize(int /*signal*/) { RESIZED = 1; }
+void OnResize(int /*signal*/) {
+    const int saved = errno;
+    RESIZED = 1;
+    if (RESIZE_WAKE != -1) {
+        const char byte = 0;
+        // Full pipe: a wake is already pending, nothing is lost.
+        [[maybe_unused]] const ssize_t n = ::write(RESIZE_WAKE, &byte, 1);
+    }
+    errno = saved;
+}
+
+// A pipe with both ends non-blocking and closed on exec.
+bool MakeWakePipe(int (&ends)[2]) {
+    if (::pipe(ends) != 0) {
+        return false;
+    }
+    for (const int end : ends) {
+        const int flags = ::fcntl(end, F_GETFL);
+        if (flags == -1 || ::fcntl(end, F_SETFL, flags | O_NONBLOCK) == -1 ||
+            ::fcntl(end, F_SETFD, FD_CLOEXEC) == -1) {
+            ::close(ends[0]);
+            ::close(ends[1]);
+            return false;
+        }
+    }
+    return true;
+}
 
 void Put(std::string_view bytes) {
     while (!bytes.empty()) {
@@ -180,34 +209,41 @@ int main(int argc, char** argv) {
     Line(4, "answers da1=0 cpr=0");
     Ask();
 
-    // SIGWINCH stays blocked except inside pselect(): a resize that comes
-    // between the check below and the wait is held until the wait begins and
-    // wakes it, so the redraw is never lost. If blocking fails, the wait runs
-    // with nothing blocked, as the old poll() loop did.
-    sigset_t resize;
-    sigemptyset(&resize);
-    sigaddset(&resize, SIGWINCH);
-    sigset_t duringWait;
-    sigemptyset(&duringWait);
-    if (::sigprocmask(SIG_BLOCK, &resize, &duringWait) == 0) {
-        sigdelset(&duringWait, SIGWINCH);
+    // Made after the descriptors are reported (line 3 lists any above 2). A
+    // resize before it has set RESIZED, which the loop checks first.
+    int wake[2] = {-1, -1};
+    if (MakeWakePipe(wake)) {
+        RESIZE_WAKE = wake[1];
     }
 
+    // A resize that comes between the check below and poll() has written to
+    // the wake pipe, so poll() returns at once and the redraw is not lost.
+    // (Not a signal mask with pselect(): ThreadSanitizer runs a handler late,
+    // outside a wait it does not know, and the wake was lost.) Without the
+    // pipe the wait is on the input alone, as before.
     for (;;) {
         if (RESIZED != 0) {
             RESIZED = 0;
             DrawSize();
         }
-        fd_set input;
-        FD_ZERO(&input);
-        FD_SET(STDIN_FILENO, &input);
-        if (::pselect(STDIN_FILENO + 1, &input, nullptr, nullptr, nullptr,
-                      &duringWait) == -1 &&
-            errno == EINTR) {
-            continue;  // a resize
+        pollfd waits[2] = {
+            {.fd = STDIN_FILENO, .events = POLLIN, .revents = 0},
+            {.fd = wake[0], .events = POLLIN, .revents = 0},
+        };
+        const nfds_t count = wake[0] != -1 ? 2 : 1;
+        if (::poll(waits, count, -1) == -1) {
+            if (errno == EINTR) {
+                continue;  // a resize
+            }
+            // Any other error is left to read(), which ends the loop below.
+        } else if (count == 2 && (waits[1].revents & POLLIN) != 0) {
+            char drained[64];
+            while (::read(wake[0], drained, sizeof(drained)) > 0) {
+            }
+            if ((waits[0].revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+                continue;  // a resize alone
+            }
         }
-        // Any other error of the wait (stdin closed) is left to read(), which
-        // fails the same way and ends the loop below.
         char buffer[4096];
         const ssize_t n = ::read(STDIN_FILENO, buffer, sizeof(buffer));
         if (n <= 0) {
