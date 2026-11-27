@@ -57,8 +57,15 @@ option(ROOST_WERROR "Treat warnings as errors" ON)
 # it needs GuiPrivate (Vulkan headers, XKB), missing in the Linux CI images, and
 # the test is built only where the module is found.
 set(QT_NO_PRIVATE_MODULE_WARNING ON)
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 QmlPrivate
-    OPTIONAL_COMPONENTS QuickPrivate)
+# DBus: the desktop notifications of Linux (org.freedesktop.Notifications,
+# src/roost/desktop_notifier_linux.cpp); required there, optional elsewhere,
+# where the same code is built only to be tested.
+set(_roost_qt_required Core Gui Network Qml Quick QuickControls2 QmlPrivate)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND _roost_qt_required DBus)
+endif()
+find_package(Qt6 6.8 REQUIRED COMPONENTS ${_roost_qt_required}
+    OPTIONAL_COMPONENTS QuickPrivate DBus)
 unset(QT_NO_PRIVATE_MODULE_WARNING)
 qt_standard_project_setup(REQUIRES 6.8)
 

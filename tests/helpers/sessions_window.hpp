@@ -29,6 +29,7 @@
 #include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/shell.hpp"
+#include "roost/window_notifications.hpp"
 #include "terminal/terminal_session.hpp"
 
 namespace roost::testing {
@@ -169,6 +170,11 @@ public:
     // Whether the list panel is loaded; with SpySelected_, the first time it
     // is, every change of its `selected` is recorded, before any list is in.
     bool WatchSelectedOnLoad();
+
+    // The desktop notifications of the window, as main() makes them, with a
+    // notifier of the test in place of the system's; for a case that runs
+    // after OpenWindow, since the window is focused by then.
+    WindowNotifications& AttachNotifications(DesktopNotifier& notifier);
 
     // The window goes, the daemon stays: the shell before the loader, the
     // loader before the engine, which holds the terminal that closes its
@@ -346,6 +352,7 @@ protected:
     // it: the keys of the built-in `shell` plugin (Ctrl+Backslash) are entries
     // of the table, not of a Shortcut.
     std::unique_ptr<KeyMatcher> KeyMatcher_;
+    std::unique_ptr<WindowNotifications> Notifications_;
 
 public:
     // Until the panel has nothing left to write: it writes the document by
