@@ -18,6 +18,7 @@
 #include "roostd/backend.hpp"
 #include "roostd/plugins.hpp"
 #include "roostd/server.hpp"
+#include "roostd/store_service.hpp"
 
 using namespace roost;
 using namespace std::chrono_literals;
@@ -91,6 +92,7 @@ class PluginBusTest : public QObject {
 
 private:
     QString PluginsPath() const { return Dir_->filePath("plugins"); }
+    QString ConfigPath() const { return Dir_->filePath("config"); }
 
     // A plugin whose backend is the fixture, serving the agent claude.
     void AddPlugin(const QString& id) {
@@ -121,6 +123,8 @@ private:
         }
         Host_ = std::make_unique<PluginHost>(*Server_, Fast());
         Host_->Load({PluginsPath()});
+        Store_ = std::make_unique<StoreService>(Store(ConfigPath()), *Server_,
+                                                *Host_);
         Client_ = std::make_unique<RpcClient>();
         const QFuture<rpc::Result> hello =
             Client_->Connect(Dir_->filePath("roostd.sock"));
@@ -213,6 +217,7 @@ private:
     std::unique_ptr<QTemporaryDir> Dir_;
     std::unique_ptr<Server> Server_;
     std::unique_ptr<PluginHost> Host_;
+    std::unique_ptr<StoreService> Store_;
     std::unique_ptr<RpcClient> Client_;
 
 private slots:
@@ -223,6 +228,7 @@ private slots:
 
     void cleanup() {
         Client_.reset();
+        Store_.reset();
         Host_.reset();
         Server_.reset();
     }
@@ -543,6 +549,138 @@ private slots:
             AnswerTo(received, 100).value("error").toObject();
         QCOMPARE(unknown.value("code").toInt(),
                  static_cast<int>(rpc::EErrorCode::MethodNotFound));
+    }
+
+    void ABackendReadsAndPatchesItsOwnDocument() {
+        AddPlugin("one");
+        AddPlugin("two");
+        QVERIFY(Start());
+        const int changes = BackendSubscribes(1, "store.changed");
+        QVERIFY(changes > 0);
+
+        // An empty document, asked for with and without its own id; the
+        // patch keeps what is in the other keys, as on the socket.
+        BackendSends(
+            {Request(2, "store.get", QJsonObject{}),
+             Request(3, "store.patch",
+                     QJsonObject{{"patch", QJsonObject{{"a", 1}}}}),
+             Request(4, "store.patch",
+                     QJsonObject{
+                         {"plugin", "one"},
+                         {"patch", QJsonObject{{"b", QJsonObject{{"c", 2}}}}}}),
+             Request(5, "store.get", QJsonObject{{"plugin", "one"}})});
+        const QJsonArray received = BackendReceived();
+        const QJsonObject document{{"a", 1}, {"b", QJsonObject{{"c", 2}}}};
+        QCOMPARE(AnswerTo(received, 2),
+                 ResultOf(2, QJsonObject{{"document", QJsonObject{}}}));
+        QCOMPARE(AnswerTo(received, 3), ResultOf(3, QJsonValue()));
+        QCOMPARE(AnswerTo(received, 4), ResultOf(4, QJsonValue()));
+        QCOMPARE(AnswerTo(received, 5),
+                 ResultOf(5, QJsonObject{{"document", document}}));
+
+        // The same events as a patch from the socket, one per patch, with
+        // the whole document.
+        const QJsonArray events = EventsNamed(received, {"store.changed"});
+        QCOMPARE(events.size(), 2);
+        QCOMPARE(events[0].toObject(),
+                 Event(changes, "store.changed",
+                       QJsonObject{{"plugin", "one"},
+                                   {"document", QJsonObject{{"a", 1}}}}));
+        QCOMPARE(events[1].toObject(),
+                 Event(changes, "store.changed",
+                       QJsonObject{{"plugin", "one"}, {"document", document}}));
+
+        // What the socket reads is the same document, and another plugin's
+        // is untouched.
+        const QFuture<rpc::Result> viaSocket =
+            Client_->Request("store.get", QJsonObject{{"plugin", "one"}});
+        QVERIFY(WaitFor(viaSocket) && viaSocket.result());
+        QCOMPARE(viaSocket.result()->toObject().value("document").toObject(),
+                 document);
+        const QFuture<rpc::Result> other =
+            Client_->Request("store.get", QJsonObject{{"plugin", "two"}});
+        QVERIFY(WaitFor(other) && other.result());
+        QCOMPARE(other.result()->toObject().value("document").toObject(),
+                 QJsonObject{});
+    }
+
+    void ABackendSeesTheChangesOfItsDocumentFromTheSocket() {
+        AddPlugin("one");
+        QVERIFY(Start());
+        const int changes = BackendSubscribes(1, "store.changed");
+        const QFuture<rpc::Result> set = Client_->Request(
+            "store.set",
+            QJsonObject{{"plugin", "one"},
+                        {"document", QJsonObject{{"settings", 7}}}});
+        QVERIFY(WaitFor(set) && set.result());
+        const QJsonArray events =
+            EventsNamed(BackendReceived(), {"store.changed"});
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(
+            events[0].toObject(),
+            Event(changes, "store.changed",
+                  QJsonObject{{"plugin", "one"},
+                              {"document", QJsonObject{{"settings", 7}}}}));
+    }
+
+    void ABackendDoesNotReachAnotherDocument() {
+        AddPlugin("one");
+        AddPlugin("two");
+        QVERIFY(Start());
+        const QFuture<rpc::Result> set = Client_->Request(
+            "store.set", QJsonObject{{"plugin", "two"},
+                                     {"document", QJsonObject{{"k", 1}}}});
+        QVERIFY(WaitFor(set) && set.result());
+
+        const QJsonObject patch{{"k", 2}};
+        BackendSends(
+            {Request(1, "store.get", QJsonObject{{"plugin", "two"}}),
+             Request(2, "store.get", QJsonObject{{"plugin", "layout"}}),
+             Request(3, "store.patch",
+                     QJsonObject{{"plugin", "two"}, {"patch", patch}}),
+             Request(4, "store.patch",
+                     QJsonObject{{"plugin", 5}, {"patch", patch}}),
+             Request(5, "store.set",
+                     QJsonObject{{"plugin", "one"},
+                                 {"document", QJsonObject{{"k", 3}}}}),
+             Request(6, "store.patch", QJsonObject{{"patch", 3}}),
+             Request(7, "store.get",
+                     QJsonObject{{"plugin", QJsonValue::Null}})});
+        const QJsonArray received = BackendReceived();
+        for (const int id : {1, 2, 3, 4, 7}) {
+            const QJsonObject error =
+                AnswerTo(received, id).value("error").toObject();
+            QCOMPARE(error.value("code").toInt(),
+                     static_cast<int>(rpc::EErrorCode::InvalidParams));
+            QVERIFY2(!error.value("message").toString().isEmpty(),
+                     qPrintable(QString::number(id)));
+        }
+        QVERIFY(AnswerTo(received, 1)
+                    .value("error")
+                    .toObject()
+                    .value("message")
+                    .toString()
+                    .contains("own plugin"));
+        // The patch of its own document must still be an object; the method
+        // the socket has and the backend has not is not found.
+        QCOMPARE(AnswerTo(received, 6)
+                     .value("error")
+                     .toObject()
+                     .value("code")
+                     .toInt(),
+                 static_cast<int>(rpc::EErrorCode::InvalidParams));
+        QCOMPARE(AnswerTo(received, 5)
+                     .value("error")
+                     .toObject()
+                     .value("code")
+                     .toInt(),
+                 static_cast<int>(rpc::EErrorCode::MethodNotFound));
+
+        const QFuture<rpc::Result> after =
+            Client_->Request("store.get", QJsonObject{{"plugin", "two"}});
+        QVERIFY(WaitFor(after) && after.result());
+        QCOMPARE(after.result()->toObject().value("document").toObject(),
+                 (QJsonObject{{"k", 1}}));
     }
 };
 
