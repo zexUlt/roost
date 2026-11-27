@@ -16,6 +16,11 @@ project(roost
     LANGUAGES C CXX
 )
 
+# Objective-C++ only for the macOS notifier (src/roost/desktop_notifier_macos.mm).
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
     message(FATAL_ERROR "In-source builds are not allowed. Use a preset: cmake --preset dev")
 endif()

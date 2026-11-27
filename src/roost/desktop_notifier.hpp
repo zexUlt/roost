@@ -10,8 +10,9 @@ namespace roost {
 // What the window needs of the operating system to show a notification: the
 // seam between WindowNotifications, which decides whether and what to show,
 // and the platform, which draws it. One implementation per platform is built
-// (CMake picks MakeDesktopNotifier's file): D-Bus on Linux, nothing elsewhere
-// for now. Tests install their own through the same interface.
+// (CMake picks MakeDesktopNotifier's file): D-Bus on Linux, UserNotifications
+// on macOS, nothing elsewhere. Tests install their own through the same
+// interface.
 //
 // GUI thread only. `id` is the window's own name of a notification: the
 // implementation gives it back in Activated and does not interpret it.
