@@ -885,6 +885,10 @@ roost_add_qt_test(sessions_state_test plugins/sessions_state_test.cpp sessions_l
 roost_add_qt_test(sessions_merge_patch_test plugins/sessions_merge_patch_test.cpp
     sessions_list_lib)
 
+# The directory typed for a new session: what can be one, and how `~` is shown.
+roost_add_qt_test(sessions_directory_test plugins/sessions_directory_test.cpp
+    sessions_list_lib roost_test_helpers)
+
 # SessionsList, the QML-facing model of the sessions list, over a fake source,
 # and the module RoostSessions loaded from the plugin directory as the window
 # does.

@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "sessions/model/agent_icon.hpp"
+#include "sessions/model/directory.hpp"
 #include "sessions/model/row_diff.hpp"
 
 namespace roost::sessions {
@@ -271,6 +272,16 @@ QUrl SessionsList::agentIcon(const QString& agent) {
 
 QUrl SessionsList::bundledAgentIcon(const QString& agent) const {
     return ResolveBundledAgentIcon(agent);
+}
+
+QVariantMap SessionsList::checkDirectory(const QString& typed) const {
+    const DirectoryCheck check = CheckDirectory(typed);
+    return {{QStringLiteral("path"), check.Path},
+            {QStringLiteral("problem"), check.Problem}};
+}
+
+QString SessionsList::shownDirectory(const QString& path) const {
+    return ShownDirectory(path);
 }
 
 QString SessionsList::query() const { return State_.View().Query; }
