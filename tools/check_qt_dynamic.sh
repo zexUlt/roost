@@ -39,7 +39,11 @@ check() {
     done
 }
 
-check roost Core Gui Qml Quick
+# The desktop notifications of Linux go over QtDBus (src/roost/desktop_notifier_linux.cpp).
+case $(uname -s) in
+    Linux) check roost Core Gui Qml Quick DBus ;;
+    *) check roost Core Gui Qml Quick ;;
+esac
 check roostd Core
 check ghostty_formatter_test Core Test
 

@@ -16,6 +16,7 @@ namespace {
 const QString PLUGIN = QStringLiteral("notifications");
 const QString TEST_COMMAND = QStringLiteral("notifications.test");
 const QString TEST_MESSAGE = QStringLiteral("Test notification from roost");
+const QString SHOW_EVENT = QStringLiteral("notifications.show");
 
 jsonrpc::Result InvalidParams(const QString& message) {
     return std::unexpected(
@@ -32,6 +33,20 @@ QString MessageFor(EEvent event, const QString& title) {
             return QStringLiteral("%1 failed").arg(title);
     }
     return title;
+}
+
+// The body of the desktop notification: what the session needs, without its
+// title, which the notification has on its own line.
+QString BodyFor(EEvent event) {
+    switch (event) {
+        case EEvent::Blocked:
+            return QStringLiteral("needs you");
+        case EEvent::Done:
+            return QStringLiteral("is done");
+        case EEvent::Failed:
+            return QStringLiteral("failed");
+    }
+    return {};
 }
 
 // The reason of an error response, for a warning.
@@ -242,13 +257,35 @@ void Notifier::Notify(EEvent event, const Session& session) {
         return;
     }
     const QString name = NameOf(event);
-    const QString message =
-        MessageFor(event, session.Title.isEmpty() ? session.Id : session.Title);
+    const QString title = session.Title.isEmpty() ? session.Id : session.Title;
+    const QString message = MessageFor(event, title);
+    if (Settings_.Desktop) {
+        PublishShow(title, BodyFor(event), session.Agent, session.Id);
+    }
     for (const CommandSpec& spec : Settings_.Commands) {
         if (spec.Enabled && (!spec.Events || spec.Events->contains(event))) {
             Runner_.Submit(MakeJob(spec, name, message, session));
         }
     }
+}
+
+void Notifier::PublishShow(const QString& title, const QString& body,
+                           const QString& agent, const QString& session) {
+    QJsonObject payload{{QStringLiteral("title"), title},
+                        {QStringLiteral("body"), body}};
+    if (!session.isEmpty()) {
+        payload.insert(QStringLiteral("agent"), agent);
+        payload.insert(QStringLiteral("session"), session);
+    }
+    Send_(QJsonDocument(
+              QJsonObject{
+                  {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                  {QStringLiteral("method"), QStringLiteral("bus.publish")},
+                  {QStringLiteral("params"),
+                   QJsonObject{{QStringLiteral("name"), SHOW_EVENT},
+                               {QStringLiteral("payload"), payload}}},
+              })
+              .toJson(QJsonDocument::Compact));
 }
 
 jsonrpc::Result Notifier::RunTest(const QJsonValue& args) {
@@ -271,6 +308,9 @@ jsonrpc::Result Notifier::RunTest(const QJsonValue& args) {
     if (name.isString() && chosen.empty()) {
         return InvalidParams(QStringLiteral("no command %1 in the settings")
                                  .arg(name.toString()));
+    }
+    if (Settings_.Desktop) {
+        PublishShow(QStringLiteral("roost"), TEST_MESSAGE, {}, {});
     }
     QJsonArray ran;
     for (const CommandSpec* spec : chosen) {

@@ -19,6 +19,7 @@
 #include "qml_api/terminal_item.hpp"
 #include "roost/controls_style.hpp"
 #include "roost/daemon_launcher.hpp"
+#include "roost/desktop_notifier.hpp"
 #include "roost/key_matcher.hpp"
 #include "roost/plugin_loader.hpp"
 #include "roost/plugin_watcher.hpp"
@@ -27,6 +28,7 @@
 #include "roost/single_session.hpp"
 #include "roost/window_icon.hpp"
 #include "roost/window_log.hpp"
+#include "roost/window_notifications.hpp"
 
 namespace {
 
@@ -245,6 +247,10 @@ int main(int argc, char* argv[]) {
     // The key presses of the window against the keymap table (design.md §16);
     // it uses the services of `api`, which outlives it.
     std::optional<roost::KeyMatcher> keyMatcher;
+    // The desktop notifications of the window; the controller goes before the
+    // notifier it uses.
+    std::unique_ptr<roost::DesktopNotifier> desktopNotifier;
+    std::optional<roost::WindowNotifications> windowNotifications;
     roost::RoostSingleton* roostSingleton = nullptr;
     if (!sessionMode) {
         // Created here, before any QML: the singleton installs the key filter
@@ -279,6 +285,11 @@ int main(int argc, char* argv[]) {
         }
         if (parser.isSet(devOption)) {
             watcher.emplace(*loader);
+        }
+        if (auto* window =
+                qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
+            desktopNotifier = roost::MakeDesktopNotifier();
+            windowNotifications.emplace(*api, *desktopNotifier, *window);
         }
     }
 
