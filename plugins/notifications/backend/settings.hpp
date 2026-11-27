@@ -28,7 +28,7 @@ struct CommandSpec {
 
 // The `settings` key of the document of the plugin.
 struct Settings {
-    // Only stored here: the window shows desktop notifications.
+    // Whether notifications.show is published for the windows.
     bool Desktop = true;
     EventSet Events{EEvent::Blocked, EEvent::Failed};
     std::vector<CommandSpec> Commands;

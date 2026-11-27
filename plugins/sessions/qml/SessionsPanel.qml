@@ -236,6 +236,34 @@ FocusScope {
         activated();
     }
 
+    // The command sessions.open {agent, id}, which the window runs when a
+    // desktop notification is clicked: the session becomes `selected` and is
+    // activated, as Enter on its row does, with the same guards: a confirmation
+    // is cancelled and nothing is opened; nothing while the list is replaced or
+    // the help is open. A session that is not listed is a warning and nothing
+    // else.
+    function openSession(args) {
+        if (confirm !== null) {
+            confirm = null;
+            return;
+        }
+        if (resetting || helpOpen) {
+            return;
+        }
+        const ref = {
+            "agent": args?.agent ?? "",
+            "id": args?.id ?? ""
+        };
+        if (!listed(ref)) {
+            console.warn("sessions.open: no session " + ref.agent + "/" + ref.id);
+            return;
+        }
+        if (!isSame(selected, ref)) {
+            selected = ref;
+        }
+        activated();
+    }
+
     // The ListView follows the cursor of the model, whatever it did itself; its
     // highlight keeps the row in view.
     function syncCursor() {
@@ -1200,7 +1228,11 @@ FocusScope {
         }
     }
 
+    // `Roost.commands` is null in a window that has no API (some tests).
     Component.onCompleted: {
+        if (Roost.commands !== null) {
+            Roost.commands.registerCommand("sessions.open", args => openSession(args));
+        }
         if (Roost.connected) {
             readStore();
         }

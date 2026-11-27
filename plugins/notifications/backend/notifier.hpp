@@ -37,7 +37,7 @@ struct NotifierOptions {
 // The document of the plugin has two keys. `settings` is written by the user
 // and read here, at the start and at each store.changed of the plugin:
 //
-//   {"desktop": true,                      only stored: the window shows it
+//   {"desktop": true,                      the window shows it (below)
 //    "events": ["blocked", "failed"],      the events that notify at all
 //    "commands": [{"name": "phone",        names are unique
 //                  "run": "my-notifier --text \"$ROOST_MESSAGE\"",
@@ -69,6 +69,11 @@ struct NotifierOptions {
 // When `settings` changes, the `results` of the commands that are no longer in
 // it are deleted.
 //
+// With `desktop` on, an event that is in `events` is also published on the bus
+// as `notifications.show` {title, body, agent, session}, for the windows: the
+// title is the title of the session (the id for one without), the body is
+// "needs you", "is done" or "failed". The commands run whatever `desktop` is.
+//
 // A command is `bash -c <run>`, never with data of the session in the text. It
 // gets the environment of the backend and
 //
@@ -85,8 +90,9 @@ struct NotifierOptions {
 // their events, with ROOST_EVENT=test and the message "Test notification from
 // roost", and answers {ran: [names]} at once: the commands that were started
 // or queued behind the running ones (a command dropped for a full queue is not
-// in it), not those that have run. A name that is not in the
-// settings is InvalidParams.
+// in it), not those that have run. With `desktop` on it also publishes
+// `notifications.show` {title: "roost", body: "Test notification from roost"},
+// with no session. A name that is not in the settings is InvalidParams.
 class Notifier : public QObject {
     Q_OBJECT
 
@@ -129,6 +135,10 @@ private:
     void ForgetResultsOfRemovedCommands(const QJsonValue& results);
     void ApplyDocument(const QJsonObject& document);
     void Notify(EEvent event, const Session& session);
+    // Publishes notifications.show; no agent and session in the payload when
+    // `session` is empty.
+    void PublishShow(const QString& title, const QString& body,
+                     const QString& agent, const QString& session);
     jsonrpc::Result RunTest(const QJsonValue& args);
     CommandJob MakeJob(const CommandSpec& spec, const QString& event,
                        const QString& message, const Session& session) const;
