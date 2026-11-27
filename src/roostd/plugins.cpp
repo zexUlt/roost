@@ -275,7 +275,67 @@ void PluginHost::OnNotified(const QString& pluginId, const QString& method,
         OnRemoved(pluginId, params.toObject());
     } else if (method == QStringLiteral("session.listed")) {
         OnListed(pluginId, params.toObject());
+    } else if (method == QStringLiteral("bus.publish")) {
+        OnPublish(pluginId, params.toObject());
     }
+}
+
+rpc::Result PluginHost::OnBackendRequest(const QString& pluginId,
+                                         Backend& backend,
+                                         const QString& method,
+                                         const QJsonValue& params) {
+    BusSubscriptions& subscribed = *Subscribed_.at(pluginId);
+    if (method == QStringLiteral("bus.subscribe")) {
+        // The listener lives as long as the subscription, which ends before
+        // the backend is deleted.
+        return subscribed.HandleSubscribe(
+            params, [&backend](EventBus::SubscriptionId id, const QString& name,
+                               const QJsonValue& payload) {
+                backend.Notify(QStringLiteral("bus.event"),
+                               QJsonObject{
+                                   {QStringLiteral("subscription"),
+                                    static_cast<qint64>(id)},
+                                   {QStringLiteral("name"), name},
+                                   {QStringLiteral("payload"), payload},
+                               });
+            });
+    }
+    if (method == QStringLiteral("bus.unsubscribe")) {
+        return subscribed.HandleUnsubscribe(params);
+    }
+    return std::unexpected(rpc::Error::FromCode(
+        rpc::EErrorCode::MethodNotFound,
+        QStringLiteral("Method not found: %1").arg(method)));
+}
+
+void PluginHost::OnPublish(const QString& pluginId, const QJsonObject& params) {
+    const QJsonValue given = params.value(QStringLiteral("name"));
+    if (!given.isString() || !EventBus::IsValidName(given.toString())) {
+        qWarning(
+            "roostd: the backend of %s published an event without a valid "
+            "name",
+            qUtf8Printable(pluginId));
+        return;
+    }
+    const QString name = given.toString();
+    if (!name.startsWith(pluginId + u'.')) {
+        qWarning(
+            "roostd: the backend of %s published event %s, which is not "
+            "under %s.",
+            qUtf8Printable(pluginId), qUtf8Printable(name),
+            qUtf8Printable(pluginId));
+        return;
+    }
+    const QJsonValue payload = params.value(QStringLiteral("payload"));
+    const QJsonValue published = payload.isUndefined() ? QJsonValue() : payload;
+    if (!Server::EventFitsAFrame(name, published)) {
+        qWarning(
+            "roostd: the backend of %s published event %s, too big for a "
+            "frame",
+            qUtf8Printable(pluginId), qUtf8Printable(name));
+        return;
+    }
+    Server_.Bus().Publish(name, published);
 }
 
 bool PluginHost::ServesAgent(const QString& pluginId,
@@ -374,6 +434,21 @@ void PluginHost::StartBackend(const PluginManifest& plugin) {
                         {QStringLiteral("restartInMs"), restartInMs},
                     });
             });
+    // Subscriptions of a process that is gone must not outlive it: the
+    // restarted one subscribes again, and would get each event twice.
+    auto subscribed = std::make_unique<BusSubscriptions>(Server_.Bus());
+    BusSubscriptions* const subscriptions = subscribed.get();
+    Subscribed_.emplace(id, std::move(subscribed));
+    connect(
+        backend.get(), &Backend::Crashed, this,
+        [subscriptions](const QString&, qint64) { subscriptions->Clear(); });
+    connect(backend.get(), &Backend::GaveUp, this,
+            [subscriptions](const QString&) { subscriptions->Clear(); });
+    backend->SetRequestHandler(
+        [this, id, raw = backend.get()](const QString& method,
+                                        const QJsonValue& params) {
+            return OnBackendRequest(id, *raw, method, params);
+        });
     connect(backend.get(), &Backend::GaveUp, this,
             [this, id](const QString& reason) {
                 qWarning("roostd: gave up on the backend of %s: %s",

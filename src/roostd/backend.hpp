@@ -11,6 +11,7 @@
 #include <QTimer>
 
 #include <chrono>
+#include <functional>
 #include <unordered_map>
 
 #include "core/rpc.hpp"
@@ -33,9 +34,9 @@ struct BackendOptions {
 // A plugin backend (design.md §5): a child process that speaks JSON-RPC 2.0
 // over stdio, one compact message per line. roostd sends requests and the
 // backend answers them; the backend's notifications come out as Notified, and
-// a request from it is answered with MethodNotFound until roostd serves
-// backends methods. Its stderr goes to roostd's. Its stdin closing means it
-// should exit.
+// a request from it is answered by the request handler, with MethodNotFound if
+// there is none or it knows no such method. Its stderr goes to roostd's. Its
+// stdin closing means it should exit.
 //
 // A backend that exits on its own, fails to start or breaks the protocol has
 // crashed: its pending requests fail with BackendUnavailable, Crashed is
@@ -50,6 +51,9 @@ class Backend : public QObject {
 
 public:
     static constexpr qsizetype MAX_LINE_LENGTH = 16LL * 1024 * 1024;
+    // Not read by the backend, and more than this waits to be written: the
+    // backend is broken, as a socket peer is closed (Server::MAX_UNSENT_BYTES).
+    static constexpr qint64 MAX_UNSENT_BYTES = 64LL * 1024 * 1024;
 
     // command: the program, then its arguments.
     Backend(QString name, QStringList command, QString workingDirectory,
@@ -68,6 +72,19 @@ public:
         const QString& method,
         const QJsonValue& params = QJsonValue::Undefined);
 
+    // Sends the backend a notification. False, and nothing sent, while it is
+    // down.
+    bool Notify(const QString& method,
+                const QJsonValue& params = QJsonValue::Undefined);
+
+    // Answers the requests of the backend, at once, from inside the read of
+    // its output: it must not wait, and it must not delete the backend. An
+    // error with the code MethodNotFound is the answer to a method it does not
+    // serve. Once, before Start().
+    using RequestHandler = std::function<rpc::Result(const QString& method,
+                                                     const QJsonValue& params)>;
+    void SetRequestHandler(RequestHandler handler);
+
     bool IsRunning() const;
     qint64 ProcessId() const;
 
@@ -82,9 +99,12 @@ private:
     void Launch();
     void Read();
     void Dispatch(const QByteArray& line);
-    void Answer(const QJsonValue& id);
+    void Answer(const QJsonValue& id, const QString& method,
+                const QJsonValue& params);
     // Kills the process; its exit then counts as a crash for this reason.
     void Break(const QString& reason);
+    // Every write to the process goes through it.
+    void Write(const QByteArray& line);
     void OnStopped(const QString& reason);
     void FailPending(const QString& reason);
 
@@ -97,6 +117,7 @@ private:
     QTimer RestartTimer_;
     QElapsedTimer Uptime_;
     QByteArray Buffer_;
+    RequestHandler RequestHandler_;
     QString BreakReason_;
     int CrashesInARow_ = 0;
     bool Stopping_ = false;
