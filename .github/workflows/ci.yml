@@ -267,11 +267,21 @@ jobs:
   # tests/qml_api/terminal_grid_tree_test.cpp (it needs Qt6::QuickPrivate,
   # which the Linux images lack), which are built on macOS only: the
   # pre-commit tidy on the Mac covers them.
-  tidy:
-    name: tidy
+  #
+  # The analyser runs in shards: a change that misses the clang-tidy cache for
+  # most files (a widely included header, .clang-tidy, a new clang-tidy) would
+  # otherwise run every file on one runner. A shard takes every N-th file of
+  # the sorted list; the job `tidy` below is the required check.
+  tidy-shard:
+    name: tidy (${{ matrix.shard }}/${{ matrix.shards }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shards: [3]
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -358,9 +368,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/ctcache
-          key: ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-${{ github.sha }}
+          key: ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-shard-${{ matrix.shard }}-of-${{ matrix.shards }}-${{ github.sha }}
           restore-keys: |
-            ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-
+            ctcache-${{ runner.os }}-${{ runner.arch }}-${{ env.CLANG_TIDY_VERSION }}-shard-${{ matrix.shard }}-of-${{ matrix.shards }}-
 
       # libghostty-vt takes about two minutes to build. Zig's own cache does
       # not hit on a fresh clone (touching the sources' mtimes alone is
@@ -396,12 +406,15 @@ jobs:
         env:
           CTCACHE_DIR: ${{ runner.temp }}/ctcache
           CTCACHE_KEEP_COMMENTS: "1"
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
         run: |
           clang-tidy-cache --zero-stats
           find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
             -not -path tests/bench/terminal_memory.cpp \
             -not -path src/qml_api/update_install_macos.cpp \
             -not -path tests/qml_api/terminal_grid_tree_test.cpp | sort |
+            awk -v n="$SHARDS" -v k="$SHARD" 'NR % n == k' |
             xargs -P "$(nproc)" -n 1 clang-tidy-cache "$(command -v clang-tidy)" \
               -p build/dev --quiet --warnings-as-errors='*'
 
@@ -419,6 +432,27 @@ jobs:
         with:
           path: ${{ runner.temp }}/ctcache
           key: ${{ steps.ctcache.outputs.cache-primary-key }}
+
+  # The required check. Passes when the shards are skipped for a change
+  # without code; fails when any shard failed or was cancelled.
+  tidy:
+    name: tidy
+    needs: [changes, tidy-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every shard passed
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          SHARDS: ${{ needs.tidy-shard.result }}
+        run: |
+          if [ "$CODE" = false ]; then
+            exit 0
+          fi
+          if [ "$SHARDS" != success ]; then
+            echo "tidy shards: $SHARDS"
+            exit 1
+          fi
 
   gates:
     name: gates
