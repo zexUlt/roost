@@ -7,6 +7,7 @@ add_library(roost_app STATIC
     controls_style.hpp
     daemon_launcher.cpp
     daemon_launcher.hpp
+    desktop_notifier.hpp
     key_matcher.cpp
     key_matcher.hpp
     layout_commands.cpp
@@ -29,8 +30,26 @@ add_library(roost_app STATIC
     window_icon.hpp
     window_log.cpp
     window_log.hpp
+    window_notifications.cpp
+    window_notifications.hpp
 )
 target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick Qt6::QuickControls2)
+
+# The notifier of the platform behind DesktopNotifier (one file makes it): D-Bus
+# on Linux, none elsewhere yet. The D-Bus one is a library of its own, so that
+# QtDBus is linked only by what uses it: the executable on Linux, and the test
+# of the class wherever Qt6::DBus is found (a development machine too).
+if(TARGET Qt6::DBus)
+    add_library(roost_notifier_linux STATIC
+        desktop_notifier_linux.cpp
+        desktop_notifier_linux.hpp
+        desktop_notifier_make_linux.cpp
+    )
+    target_link_libraries(roost_notifier_linux PUBLIC roost_app Qt6::DBus)
+endif()
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(roost_app PRIVATE desktop_notifier_none.cpp)
+endif()
 
 # The icon of the window: the PNGs of the Linux package, so that there is one
 # set of files to replace (tools/make_icons.sh). PNG, not SVG: no image plugin.
@@ -76,6 +95,10 @@ qt_add_executable(roost
 target_link_libraries(roost PRIVATE roost_core roost_app
     roost_shell roost_shellplugin roost_qml_apiplugin
     Qt6::Gui Qt6::Qml Qt6::Quick)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(roost PRIVATE roost_notifier_linux)
+endif()
 
 # Not a bundle in the build tree: build/<preset>/bin/roost stays a plain
 # executable. cmake/Install.cmake assembles roost.app at install time.

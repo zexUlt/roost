@@ -201,6 +201,14 @@ for size in 16 32 48 64 128 256 512; do
         fail "usr/share/icons/hicolor/${size}x${size}/apps/roost.png is missing"
 done
 
+# The window shows desktop notifications over D-Bus with QtDBus; libdbus-1
+# under it is a library of every desktop (packaging/linux/system-libraries.txt).
+if [ -e "$appdir/usr/lib/libQt6DBus.so.6" ]; then
+    ok "libQt6DBus.so.6 is in the AppImage (the desktop notifications)"
+else
+    fail "usr/lib/libQt6DBus.so.6 is missing (the desktop notifications)"
+fi
+
 # --- licences --------------------------------------------------------------
 licenses=$appdir/usr/share/licenses/roost
 for name in LICENSE NOTICE THIRD_PARTY_LICENSES LGPL-3.0.txt GPL-3.0.txt ICU-LICENSE.txt; do

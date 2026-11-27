@@ -312,10 +312,18 @@ bool SessionsWindow::WatchSelectedOnLoad() {
     return panel != nullptr;
 }
 
+WindowNotifications& SessionsWindow::AttachNotifications(
+    DesktopNotifier& notifier) {
+    Notifications_ =
+        std::make_unique<WindowNotifications>(*Api_, notifier, *Window());
+    return *Notifications_;
+}
+
 // The window goes, the daemon stays: the shell before the loader, the
 // loader before the engine, which holds the terminal that closes its
 // session through the API.
 void SessionsWindow::CloseWindow() {
+    Notifications_.reset();
     SelectedSpy_.reset();
     KeyMatcher_.reset();
     Shell_.reset();

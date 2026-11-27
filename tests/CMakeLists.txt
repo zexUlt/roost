@@ -244,6 +244,25 @@ target_compile_definitions(notifications_test PRIVATE
     NOTIFICATIONS_PLUGIN_DIR="${PROJECT_BINARY_DIR}/roost-plugins/notifications")
 add_dependencies(notifications_test roostd fixture_backend notifications-backend)
 
+# The Linux notifier of the window (D-Bus, org.freedesktop.Notifications): what
+# needs no session bus (its own private bus, if dbus-daemon is installed).
+# Built where Qt6::DBus is.
+if(TARGET roost_notifier_linux)
+    roost_add_qt_test(linux_notifier_test roost/linux_notifier_test.cpp
+        roost_notifier_linux)
+endif()
+
+# The windows' side of the desktop notifications: the real roostd, the real
+# notifications plugin and a fixture agent, with windows of the real controller
+# and a notifier that records.
+roost_add_qt_test(window_notifications_test roost/window_notifications_test.cpp
+    roost_app roost_qml_api roost_test_helpers Qt6::Gui)
+target_compile_definitions(window_notifications_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
+    NOTIFICATIONS_PLUGIN_DIR="${PROJECT_BINARY_DIR}/roost-plugins/notifications")
+add_dependencies(window_notifications_test roostd fixture_backend notifications-backend)
+
 # The runner of the commands of that plugin: the limits, on the real bash.
 roost_add_qt_test(notifications_runner_test plugins/notifications_runner_test.cpp
     notifications_backend_lib roost_test_helpers)
@@ -419,6 +438,19 @@ target_compile_definitions(sessions_panel_test PRIVATE
     ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins"
     SESSIONS_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/plugins/sessions")
 add_dependencies(sessions_panel_test roostd fake_tui claude-adapter sessions_qml)
+
+# The click on a desktop notification in the window: the session opens as with
+# Enter on its row (the command sessions.open of the sessions panel).
+roost_add_qt_test(sessions_open_test roost/sessions_open_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_sessions_window roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(sessions_open_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FAKE_TUI_PATH="$<TARGET_FILE:fake_tui>"
+    FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    ROOST_PLUGINS_DIR="${PROJECT_BINARY_DIR}/roost-plugins")
+add_dependencies(sessions_open_test roostd fake_tui claude-adapter sessions_qml
+    notifications-backend)
 
 # The view of the sessions panel: the head, the marks and the keys of the view.
 roost_add_qt_test(sessions_view_test roost/sessions_view_test.cpp
