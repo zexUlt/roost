@@ -5,10 +5,13 @@
 #include <QTimer>
 
 #include <signal.h>
+#include <unistd.h>
 
+#include <cerrno>
 #include <utility>
 
 #include "common/backend_process.hpp"
+#include "common/child_lifeline.hpp"
 #include "notifications/backend/diagnostics.hpp"
 
 namespace roost::notifications {
@@ -33,10 +36,9 @@ public:
             Process_.setWorkingDirectory(home);
         }
         Process_.setStandardOutputFile(QProcess::nullDevice());
-        // A session of its own, so that the group is the process and all it
-        // forked, and default signal handlers, as roostd gives its backends.
+        // Default signal handlers, as roostd gives its backends. The session
+        // is made in the modifier of Start, not with CreateNewSession.
         Process_.setUnixProcessParameters(
-            QProcess::UnixProcessFlag::CreateNewSession |
             QProcess::UnixProcessFlag::ResetSignalHandlers);
 
         connect(&Process_, &QProcess::started, this, [this] {
@@ -89,6 +91,36 @@ public:
     }
 
     void Start() {
+        // A session of its own, so that the group is the process and all it
+        // forked. Made here and not with CreateNewSession: Qt may apply that
+        // after the modifier, and the watchdog has to be in the group, whose
+        // id is the pid of the command. Async-signal-safe calls only: this
+        // runs between fork and exec. The command dies with the backend,
+        // however that ends: the watchdog kills its group when the backend
+        // closes the write end of the lifeline, which the system does too
+        // when the backend is killed.
+        if (!Lifeline_.Open()) {
+            End(std::nullopt, QStringLiteral("failed to start"),
+                QStringLiteral("no pipe for the lifeline of the command"));
+            return;
+        }
+        Process_.setChildProcessModifier([process = &Process_,
+                                          readEnd = Lifeline_.ReadEnd(),
+                                          writeEnd = Lifeline_.WriteEnd()] {
+            if (::setsid() == -1) {
+                process->failChildProcessModifier("setsid", errno);
+            }
+            if (!plugin::ChildLifeline::Guard(readEnd, writeEnd)) {
+                // Without the watchdog a killed backend would leave the
+                // command behind, so the start fails instead.
+                process->failChildProcessModifier("fork of the watchdog",
+                                                  errno);
+            }
+            // The watchdog has its own copy. This one would keep the pipe
+            // open for as long as the command has not exec'd, and then the
+            // lifeline would not end with the backend.
+            ::close(writeEnd);
+        });
         Timer_.start(Timeout_);
         Process_.start();
     }
@@ -127,6 +159,7 @@ private:
         }
         Timer_.stop();
         Process_.disconnect(this);
+        Lifeline_.Close();
         CommandResult result{.Name = Job_.Name,
                              .Event = Job_.Event,
                              .ExitCode = exitCode,
@@ -141,6 +174,7 @@ private:
     CommandRunner& Runner_;
     QProcess Process_;
     QTimer Timer_;
+    plugin::ChildLifeline Lifeline_;
     std::chrono::milliseconds Timeout_{};
     QByteArray Stderr_;
     bool TimedOut_ = false;
