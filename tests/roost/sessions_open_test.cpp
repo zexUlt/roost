@@ -49,6 +49,28 @@ private:
                agents.commit();
     }
 
+    // The notifications backend is subscribed to the sessions, and the window
+    // has shown the test notification it makes (the only call of `notifier`
+    // after this): roostd answers a command of the plugin only once the backend
+    // has read what it asked for at its start, so that a state change after
+    // this is seen.
+    bool BackendIsUp(RecordingNotifier& notifier) {
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            const QFuture<rpc::Result> ran =
+                Api_->Commands().Run("notifications.test", QJsonObject{});
+            if (!QTest::qWaitFor([&] { return ran.isFinished(); },
+                                 TIMEOUT_MS)) {
+                return false;
+            }
+            if (ran.result().has_value()) {
+                return QTest::qWaitFor(
+                    [&] { return notifier.Calls.size() == 1; }, TIMEOUT_MS);
+            }
+            QTest::qWait(50);
+        }
+        return false;
+    }
+
     // The session the terminal panel is given by the link, "<agent>/<id>".
     QString TerminalSession() {
         const QVariantMap ref = PanelOf(TERMINAL)->property("session").toMap();
@@ -74,6 +96,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(notifications.IsLastFocused(), TIMEOUT_MS);
         QVERIFY(SelectedId().isEmpty());
         QVERIFY(TerminalSession().isEmpty());
+        QVERIFY(BackendIsUp(notifier));
+        notifier.Calls.clear();
 
         QVERIFY(BlockTheFirst());
         QTRY_COMPARE_WITH_TIMEOUT(notifier.Calls.size(), size_t{1}, TIMEOUT_MS);
@@ -103,12 +127,8 @@ private slots:
             AttachNotifications(notifier);
         QTRY_VERIFY_WITH_TIMEOUT(notifications.IsLastFocused(), TIMEOUT_MS);
 
-        const QFuture<rpc::Result> ran =
-            Api_->Commands().Run("notifications.test", QJsonObject{});
-        QTRY_VERIFY_WITH_TIMEOUT(ran.isFinished(), TIMEOUT_MS);
-        QVERIFY(ran.result().has_value());
-        QTRY_COMPARE_WITH_TIMEOUT(notifier.Calls.size(), size_t{1}, TIMEOUT_MS);
-
+        // The test notification of the plugin: no session.
+        QVERIFY(BackendIsUp(notifier));
         QTest::ignoreMessage(QtWarningMsg,
                              "This plugin does not support raise()");
         notifier.Click(notifier.Calls[0].Id);

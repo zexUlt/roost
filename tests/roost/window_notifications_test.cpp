@@ -10,6 +10,8 @@
 #include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPointer>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -23,6 +25,7 @@
 #include "core/rpc_client.hpp"
 #include "helpers/recording_notifier.hpp"
 #include "helpers/roostd_process.hpp"
+#include "qml_api/terminal_item.hpp"
 #include "roost/desktop_notifier.hpp"
 #include "roost/window_notifications.hpp"
 
@@ -70,12 +73,12 @@ QJsonObject Report(const QString& id, const QString& state,
 
 // One window of the real code: a connection of its own, a notifier that
 // records, and a plain window (the platform of the tests is offscreen) that it
-// reacts to the focus of.
+// reacts to the focus of (a Quick window, so that it can hold a terminal).
 struct Window {
     explicit Window(const QString& socket)
         : Api(std::make_unique<api::Api>()),
           Notifier(std::make_unique<RecordingNotifier>()),
-          Surface(std::make_unique<QWindow>()),
+          Surface(std::make_unique<QQuickWindow>()),
           Notifications(std::make_unique<WindowNotifications>(*Api, *Notifier,
                                                               *Surface)) {
         Surface->resize(200, 100);
@@ -84,6 +87,7 @@ struct Window {
 
     ~Window() {
         Notifications.reset();
+        Other.reset();
         Surface.reset();
         Notifier.reset();
         Api.reset();
@@ -98,6 +102,28 @@ struct Window {
                 QTest::qWaitForWindowActive(Surface.get()));
     }
 
+    // The window shows the session in a terminal, as the terminal panel does.
+    void ShowSession(const QString& id) {
+        auto* terminal = new TerminalItem(Surface->contentItem());
+        terminal->setParentItem(Surface->contentItem());
+        terminal->setSize(QSizeF(100, 50));
+        terminal->setProperty("session",
+                              QVariantMap{{"agent", AGENT}, {"id", id}});
+        Terminal = terminal;
+    }
+
+    // The focus goes to a window that is not this one (the settings window,
+    // another application): this one is not the active window.
+    bool LoseFocus() {
+        Other = std::make_unique<QWindow>();
+        Other->resize(100, 100);
+        Other->show();
+        return QTest::qWaitForWindowExposed(Other.get()) &&
+               (Other->requestActivate(),
+                QTest::qWaitForWindowActive(Other.get())) &&
+               !Surface->isActive();
+    }
+
     // The titles of what was shown, in order.
     QStringList Titles() const {
         QStringList titles;
@@ -109,8 +135,10 @@ struct Window {
 
     std::unique_ptr<api::Api> Api;
     std::unique_ptr<RecordingNotifier> Notifier;
-    std::unique_ptr<QWindow> Surface;
+    std::unique_ptr<QQuickWindow> Surface;
     std::unique_ptr<WindowNotifications> Notifications;
+    std::unique_ptr<QWindow> Other;
+    QPointer<TerminalItem> Terminal;
 };
 
 }  // namespace
@@ -129,6 +157,11 @@ private:
             !Roostd_->Start(ROOSTD_PATH)) {
             return false;
         }
+        return Handshake();
+    }
+
+    // The test's own client of the running roostd, once the plugin answers.
+    bool Handshake() {
         Client_ = std::make_unique<RpcClient>();
         const QFuture<rpc::Result> hello =
             Client_->Connect(Roostd_->SocketPath());
@@ -296,6 +329,57 @@ private slots:
                                  TIMEOUT_MS);
         QCOMPARE(first->Titles(), (QStringList{"First"}));
         QCOMPARE(second->Titles(), (QStringList{"Second"}));
+    }
+
+    void ALastFocusedWindowThatLostTheFocusShowsAfterTheConnectionIsBack() {
+        QVERIFY(Start());
+        const auto window = OpenFocused();
+        QVERIFY(window);
+        // Another window has the focus; this one is still the last focused.
+        QVERIFY(window->LoseFocus());
+        QVERIFY(window->Notifications->IsLastFocused());
+
+        QVERIFY(Roostd_->Stop());
+        QTRY_VERIFY_WITH_TIMEOUT(!window->Api->IsConnected(), TIMEOUT_MS);
+        Client_.reset();
+        QVERIFY(Roostd_->Start(ROOSTD_PATH));
+        QTRY_VERIFY_WITH_TIMEOUT(window->Api->IsConnected(), TIMEOUT_MS);
+        // It has said so again, and heard of it.
+        QTRY_VERIFY_WITH_TIMEOUT(window->Notifications->IsLastFocused(),
+                                 TIMEOUT_MS);
+        QVERIFY(Handshake());
+        Reports({Report("r", "working"), Report("r", "blocked", "After")});
+        // (The handshake may have shown the test notification of the plugin.)
+        QTRY_VERIFY_WITH_TIMEOUT(window->Titles().contains("After"),
+                                 TIMEOUT_MS);
+    }
+
+    void NothingIsShownForTheSessionThatTheFocusedWindowShows() {
+        QVERIFY(Start());
+        const auto window = OpenFocused();
+        QVERIFY(window);
+        window->ShowSession("seen");
+        Reports({Report("seen", "working", "Seen"),
+                 Report("seen", "blocked", "Seen"),
+                 Report("other", "working", "Other"),
+                 Report("other", "blocked", "Other")});
+        // The one that is not shown is the barrier: it comes after the first.
+        QTRY_VERIFY_WITH_TIMEOUT(!window->Notifier->Calls.empty(), TIMEOUT_MS);
+        QCOMPARE(window->Titles(), (QStringList{"Other"}));
+    }
+
+    void TheSessionThatAWindowOutOfFocusShowsIsShown() {
+        QVERIFY(Start());
+        const auto window = OpenFocused();
+        QVERIFY(window);
+        window->ShowSession("seen");
+        QVERIFY(window->LoseFocus());
+        QVERIFY(window->Notifications->IsLastFocused());
+        Reports({Report("seen", "working", "Seen"),
+                 Report("seen", "blocked", "Seen")});
+        QTRY_COMPARE_WITH_TIMEOUT(window->Notifier->Calls.size(), size_t{1},
+                                  TIMEOUT_MS);
+        QCOMPARE(window->Titles(), (QStringList{"Seen"}));
     }
 
     void AWindowThatHeardOfNoFocusShowsNothing() {

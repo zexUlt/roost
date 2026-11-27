@@ -60,12 +60,16 @@ set(QT_NO_PRIVATE_MODULE_WARNING ON)
 # DBus: the desktop notifications of Linux (org.freedesktop.Notifications,
 # src/roost/desktop_notifier_linux.cpp); required there, optional elsewhere,
 # where the same code is built only to be tested.
+# A component is never both required and optional: find_package fails on that.
 set(_roost_qt_required Core Gui Network Qml Quick QuickControls2 QmlPrivate)
+set(_roost_qt_optional QuickPrivate)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND _roost_qt_required DBus)
+else()
+    list(APPEND _roost_qt_optional DBus)
 endif()
 find_package(Qt6 6.8 REQUIRED COMPONENTS ${_roost_qt_required}
-    OPTIONAL_COMPONENTS QuickPrivate DBus)
+    OPTIONAL_COMPONENTS ${_roost_qt_optional})
 unset(QT_NO_PRIVATE_MODULE_WARNING)
 qt_standard_project_setup(REQUIRES 6.8)
 

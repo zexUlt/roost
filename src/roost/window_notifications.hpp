@@ -40,14 +40,19 @@ namespace roost {
 // Only the main window counts; the focus in the settings window or the about
 // window does not.
 //
+// Not shown either: a notification of the session that a terminal panel of the
+// window shows, when the window has the focus (the user sees it already). Any
+// other case is shown as above, the window being out of focus or the session
+// another.
+//
 // A click: the window is raised and activated; if the notification names a
 // session, the command `sessions.open` {agent, id} runs in the window (the
 // sessions panel handles it, and selects the session as Enter in its list
 // does). A notification without one (the test of the plugin) only raises.
 //
 // When the connection to roostd is lost the last window heard of is forgotten
-// (events were missed), and a focused window says so again when the connection
-// is back.
+// (events were missed), and a window that is focused, or was the last focused
+// when the connection was lost, says so again when the connection is back.
 //
 // GUI thread only. The api, the notifier and the window must outlive it.
 class WindowNotifications : public QObject {
@@ -74,6 +79,8 @@ private:
 
     void OnFocusWindowChanged(QWindow* focused);
     void PublishFocus();
+    // Whether a terminal of the window shows the session now.
+    bool IsShown(const QString& agent, const QString& session) const;
     void OnShow(const QJsonValue& payload);
     void OnActivated(const QString& id);
     void Raise();
@@ -85,6 +92,9 @@ private:
     QString WindowId_;
     QString LastFocused_;
     bool Focused_ = false;
+    // This window was the last focused when the connection was lost: it says
+    // so again when the connection is back, though it has no focus now.
+    bool WasLast_ = false;
     quint64 NextId_ = 1;
     // What a click on a notification that names a session opens, by the id
     // given to the notifier; the oldest go first once there are too many.

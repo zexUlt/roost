@@ -5,6 +5,7 @@
 #include <QDBusPendingCall>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
+#include <QDBusServiceWatcher>
 #include <QFileInfo>
 #include <QVariantMap>
 
@@ -18,6 +19,8 @@ const QString SERVICE = QStringLiteral("org.freedesktop.Notifications");
 const QString PATH = QStringLiteral("/org/freedesktop/Notifications");
 const QString INTERFACE = QStringLiteral("org.freedesktop.Notifications");
 const QString APP_NAME = QStringLiteral("roost");
+const QString DESKTOP_ENTRY = QStringLiteral("roost");
+constexpr const char* ACTIVATION_TOKEN_VARIABLE = "XDG_ACTIVATION_TOKEN";
 const QString DEFAULT_ACTION = QStringLiteral("default");
 // The icon of the theme, when the file is not next to the executable.
 const QString THEME_ICON = QStringLiteral("roost");
@@ -33,10 +36,14 @@ QString NotificationIcon(const QString& applicationDir) {
 
 QVariantList NotifyArguments(const QString& title, const QString& body,
                              const QString& icon) {
-    return {APP_NAME,      QVariant::fromValue<quint32>(0),
-            icon,          title,
-            body,          QStringList{DEFAULT_ACTION, QStringLiteral("Open")},
-            QVariantMap{}, QVariant::fromValue<qint32>(-1)};
+    return {APP_NAME,
+            QVariant::fromValue<quint32>(0),
+            icon,
+            title,
+            body,
+            QStringList{DEFAULT_ACTION, QStringLiteral("Open")},
+            QVariantMap{{QStringLiteral("desktop-entry"), DESKTOP_ENTRY}},
+            QVariant::fromValue<qint32>(-1)};
 }
 
 LinuxDesktopNotifier::LinuxDesktopNotifier(Connect connect)
@@ -67,11 +74,18 @@ bool LinuxDesktopNotifier::EnsureReady() {
                      this, SLOT(OnActionInvoked(uint, QString))) &&
         Bus_.connect(SERVICE, PATH, INTERFACE,
                      QStringLiteral("NotificationClosed"), this,
-                     SLOT(OnClosed(uint, uint)));
+                     SLOT(OnClosed(uint, uint))) &&
+        Bus_.connect(SERVICE, PATH, INTERFACE,
+                     QStringLiteral("ActivationToken"), this,
+                     SLOT(OnActivationToken(uint, QString)));
     if (!connected) {
         Warn(QStringLiteral("cannot listen to %1").arg(SERVICE));
         return false;
     }
+    auto* watcher = new QDBusServiceWatcher(
+        SERVICE, Bus_, QDBusServiceWatcher::WatchForOwnerChange, this);
+    connect(watcher, &QDBusServiceWatcher::serviceOwnerChanged, this,
+            [this] { Forget(); });
     Ready_ = true;
     return true;
 }
@@ -98,15 +112,37 @@ void LinuxDesktopNotifier::Show(const QString& id, const QString& title,
             });
 }
 
+void LinuxDesktopNotifier::Forget() {
+    Ids_.clear();
+    Tokens_.clear();
+}
+
 void LinuxDesktopNotifier::OnActionInvoked(uint dbusId, const QString& action) {
     const auto shown = Ids_.constFind(dbusId);
-    if (action == DEFAULT_ACTION && shown != Ids_.constEnd()) {
-        emit Activated(*shown);
+    if (action != DEFAULT_ACTION || shown == Ids_.constEnd()) {
+        return;
+    }
+    // Set for the activation that Activated leads to, and no longer.
+    const QString token = Tokens_.take(dbusId);
+    if (!token.isEmpty()) {
+        qputenv(ACTIVATION_TOKEN_VARIABLE, token.toUtf8());
+    }
+    emit Activated(*shown);
+    if (!token.isEmpty()) {
+        qunsetenv(ACTIVATION_TOKEN_VARIABLE);
     }
 }
 
 void LinuxDesktopNotifier::OnClosed(uint dbusId, uint /*reason*/) {
     Ids_.remove(dbusId);
+    Tokens_.remove(dbusId);
+}
+
+void LinuxDesktopNotifier::OnActivationToken(uint dbusId,
+                                             const QString& token) {
+    if (Ids_.contains(dbusId)) {
+        Tokens_.insert(dbusId, token);
+    }
 }
 
 }  // namespace roost

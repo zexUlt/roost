@@ -2,10 +2,14 @@
 
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QUuid>
 #include <QtLogging>
 
 #include <utility>
+
+#include "qml_api/terminal_item.hpp"
 
 namespace roost {
 
@@ -18,7 +22,38 @@ const QString OPEN_COMMAND = QStringLiteral("sessions.open");
 // forgotten past this many.
 constexpr std::size_t MAX_TARGETS = 100;
 
+// Whether `item` or an item below it is a terminal that shows the session. The
+// terminal is the one the shell reads the session of its panel from
+// (roost/shell.cpp, OpeningOf): its `session` is the SessionRef the panel is
+// linked to; an item that is not visible shows nothing.
+bool ShowsSession(const QQuickItem& item, const QString& agent,
+                  const QString& session) {
+    if (!item.isVisible()) {
+        return false;
+    }
+    if (const auto* terminal = qobject_cast<const TerminalItem*>(&item)) {
+        const QVariantMap ref = terminal->sessionRef().toMap();
+        if (ref.value(QStringLiteral("agent")).toString() == agent &&
+            ref.value(QStringLiteral("id")).toString() == session) {
+            return true;
+        }
+    }
+    for (const QQuickItem* child : item.childItems()) {
+        if (ShowsSession(*child, agent, session)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
+
+bool WindowNotifications::IsShown(const QString& agent,
+                                  const QString& session) const {
+    const auto* quick = qobject_cast<const QQuickWindow*>(Window_.data());
+    return quick != nullptr && !agent.isEmpty() && !session.isEmpty() &&
+           ShowsSession(*quick->contentItem(), agent, session);
+}
 
 WindowNotifications::WindowNotifications(api::Api& api,
                                          DesktopNotifier& notifier,
@@ -45,12 +80,15 @@ WindowNotifications::WindowNotifications(api::Api& api,
     connect(qGuiApp, &QGuiApplication::focusWindowChanged, this,
             &WindowNotifications::OnFocusWindowChanged);
     connect(&Api_, &api::Api::Connected, this, [this] {
-        if (Focused_) {
+        const bool wasLast = std::exchange(WasLast_, false);
+        if (Focused_ || wasLast) {
             PublishFocus();
         }
     });
-    connect(&Api_, &api::Api::Disconnected, this,
-            [this] { LastFocused_.clear(); });
+    connect(&Api_, &api::Api::Disconnected, this, [this] {
+        WasLast_ = IsLastFocused();
+        LastFocused_.clear();
+    });
     connect(&Notifier_, &DesktopNotifier::Activated, this,
             &WindowNotifications::OnActivated);
     OnFocusWindowChanged(QGuiApplication::focusWindow());
@@ -76,9 +114,13 @@ void WindowNotifications::OnShow(const QJsonValue& payload) {
         return;
     }
     const QJsonObject shown = payload.toObject();
-    const quint64 id = NextId_++;
     const QString agent = shown.value(QStringLiteral("agent")).toString();
     const QString session = shown.value(QStringLiteral("session")).toString();
+    // The user is looking at that session in this window: nothing to tell.
+    if (Focused_ && IsShown(agent, session)) {
+        return;
+    }
+    const quint64 id = NextId_++;
     if (!agent.isEmpty() && !session.isEmpty()) {
         Targets_.emplace(id, Target{.Agent = agent, .Session = session});
         while (Targets_.size() > MAX_TARGETS) {

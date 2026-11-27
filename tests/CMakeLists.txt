@@ -245,9 +245,11 @@ target_compile_definitions(notifications_test PRIVATE
 add_dependencies(notifications_test roostd fixture_backend notifications-backend)
 
 # The Linux notifier of the window (D-Bus, org.freedesktop.Notifications): what
-# needs no session bus. Built where Qt6::DBus is.
-if(TARGET Qt6::DBus)
-    roost_add_qt_test(linux_notifier_test roost/linux_notifier_test.cpp roost_app)
+# needs no session bus (its own private bus, if dbus-daemon is installed).
+# Built where Qt6::DBus is.
+if(TARGET roost_notifier_linux)
+    roost_add_qt_test(linux_notifier_test roost/linux_notifier_test.cpp
+        roost_notifier_linux)
 endif()
 
 # The windows' side of the desktop notifications: the real roostd, the real
