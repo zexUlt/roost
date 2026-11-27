@@ -17,6 +17,9 @@
 //   fixture.empty    answers with neither a result nor an error
 //   fixture.lastWord answers only when its stdin closes, on the way out
 //   fixture.notify   sends each message of the args as it is, then answers
+//   fixture.received answers the messages roostd sent that are no command: the
+//                    answers to what fixture.notify sent and the notifications
+//                    (bus.event), in order, since this process started
 //   <agent>.newSession  adds {agent, args} as a line to newSession.runs in the
 //                    working directory, answers a session {id, agent, title}
 // An agent method such as agent.listSessions {agent, ...} is answered as
@@ -113,6 +116,12 @@ QJsonObject ReadMessage() {
     return {};
 }
 
+// What roostd sent that is no request of its own: answers and notifications.
+QJsonArray& Received() {
+    static QJsonArray received;
+    return received;
+}
+
 void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
          QJsonValue& lastWord) {
     if (command == "fixture.echo") {
@@ -174,6 +183,8 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
             Send(message.toObject());
         }
         Answer(id, true);
+    } else if (command == "fixture.received") {
+        Answer(id, Received());
     } else if (command.endsWith(".newSession")) {
         // One line in newSession.runs for each start, so that a test counts
         // them; the session is not listed afterwards.
@@ -259,6 +270,11 @@ int main(int argc, char** argv) {
         const QJsonObject message = ReadMessage();
         if (message.isEmpty()) {
             break;
+        }
+        if (!message.contains("method") || !message.contains("id")) {
+            // An answer, or a notification.
+            Received().append(message);
+            continue;
         }
         const QJsonValue id = message.value("id");
         const QString method = message.value("method").toString();

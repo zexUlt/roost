@@ -131,6 +131,25 @@ QFuture<rpc::Result> Backend::Request(const QString& method,
     return future;
 }
 
+bool Backend::Notify(const QString& method, const QJsonValue& params) {
+    if (!IsRunning()) {
+        return false;
+    }
+    QJsonObject notification{
+        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+        {QStringLiteral("method"), method},
+    };
+    if (!params.isUndefined()) {
+        notification.insert(QStringLiteral("params"), params);
+    }
+    Process_->write(Line(notification));
+    return true;
+}
+
+void Backend::SetRequestHandler(RequestHandler handler) {
+    RequestHandler_ = std::move(handler);
+}
+
 void Backend::Launch() {
     Buffer_.clear();
     BreakReason_.clear();
@@ -180,9 +199,9 @@ void Backend::Dispatch(const QByteArray& line) {
     const QJsonObject message = document.object();
     const QJsonValue method = message.value(QStringLiteral("method"));
     if (method.isString()) {
-        // A request gets the only answer there is for now.
         if (message.contains(QStringLiteral("id"))) {
-            Answer(message.value(QStringLiteral("id")));
+            Answer(message.value(QStringLiteral("id")), method.toString(),
+                   message.value(QStringLiteral("params")));
         } else {
             emit Notified(method.toString(),
                           message.value(QStringLiteral("params")));
@@ -224,19 +243,31 @@ void Backend::Dispatch(const QByteArray& line) {
     Settle(promise, result.isUndefined() ? QJsonValue() : result);
 }
 
-void Backend::Answer(const QJsonValue& id) {
-    const rpc::Error error = rpc::Error::FromCode(
-        rpc::EErrorCode::MethodNotFound,
-        QStringLiteral("Method not found: roostd serves backends nothing yet"));
-    Process_->write(Line(QJsonObject{
+void Backend::Answer(const QJsonValue& id, const QString& method,
+                     const QJsonValue& params) {
+    const rpc::Result result =
+        RequestHandler_
+            ? RequestHandler_(method, params)
+            : std::unexpected(rpc::Error::FromCode(
+                  rpc::EErrorCode::MethodNotFound,
+                  QStringLiteral("Method not found: %1").arg(method)));
+    QJsonObject response{
         {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
         {QStringLiteral("id"), id},
-        {QStringLiteral("error"),
-         QJsonObject{
-             {QStringLiteral("code"), error.Code},
-             {QStringLiteral("message"), error.Message},
-         }},
-    }));
+    };
+    if (result) {
+        response.insert(QStringLiteral("result"), *result);
+    } else {
+        QJsonObject error{
+            {QStringLiteral("code"), result.error().Code},
+            {QStringLiteral("message"), result.error().Message},
+        };
+        if (!result.error().Data.isUndefined()) {
+            error.insert(QStringLiteral("data"), result.error().Data);
+        }
+        response.insert(QStringLiteral("error"), error);
+    }
+    Process_->write(Line(response));
 }
 
 void Backend::Break(const QString& reason) {

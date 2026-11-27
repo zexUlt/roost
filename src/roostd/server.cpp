@@ -17,12 +17,12 @@
 #include <cerrno>
 #include <limits>
 #include <memory>
-#include <set>
 #include <utility>
 
 #include "core/frame.hpp"
 #include "core/protocol.hpp"
 #include "core/version.hpp"
+#include "roostd/bus_subscriptions.hpp"
 
 namespace roost {
 
@@ -65,18 +65,15 @@ public:
         : QObject(parent),
           Socket_(socket),
           Dispatcher_(dispatcher),
-          Bus_(bus),
+          Subscriptions_(bus),
           Id_(id) {
         Socket_->setParent(this);
         connect(Socket_, &QLocalSocket::readyRead, this, &Connection::Read);
         connect(Socket_, &QLocalSocket::disconnected, this, &Connection::Shut);
     }
 
-    ~Connection() override {
-        for (const EventBus::SubscriptionId id : Subscriptions_) {
-            Bus_.Unsubscribe(id);
-        }
-    }
+    // The subscriptions go with it.
+    ~Connection() override = default;
 
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
@@ -90,26 +87,16 @@ public:
     bool IsOpen() const { return !Closed_; }
     void Greet() { Greeted_ = true; }
 
-    std::optional<EventBus::SubscriptionId> Subscribe(const QString& pattern) {
-        // The listener needs its own id, which exists only after Subscribe.
-        auto self = std::make_shared<EventBus::SubscriptionId>(0);
-        const auto id = Bus_.Subscribe(
-            pattern,
-            [this, self](const QString& name, const QJsonValue& payload) {
-                Send(EventMessage(static_cast<qint64>(*self), name, payload));
+    rpc::Result Subscribe(const QJsonValue& params) {
+        return Subscriptions_.HandleSubscribe(
+            params, [this](EventBus::SubscriptionId id, const QString& name,
+                           const QJsonValue& payload) {
+                Send(EventMessage(static_cast<qint64>(id), name, payload));
             });
-        if (id) {
-            *self = *id;
-            Subscriptions_.insert(*id);
-        }
-        return id;
     }
 
-    bool Unsubscribe(EventBus::SubscriptionId id) {
-        if (Subscriptions_.erase(id) == 0) {
-            return false;
-        }
-        return Bus_.Unsubscribe(id);
+    rpc::Result Unsubscribe(const QJsonValue& params) {
+        return Subscriptions_.HandleUnsubscribe(params);
     }
 
     // A frame of any kind that the caller has made sure fits. False if the
@@ -205,9 +192,8 @@ private:
 
     QLocalSocket* Socket_;
     const rpc::Dispatcher& Dispatcher_;
-    EventBus& Bus_;
+    BusSubscriptions Subscriptions_;
     FrameDecoder Decoder_;
-    std::set<EventBus::SubscriptionId> Subscriptions_;
     Server::ConnectionId Id_;
     bool Greeted_ = false;
     bool Closed_ = false;
@@ -499,38 +485,17 @@ void Server::RegisterBuiltins() {
                               QString::fromStdString(VersionString()));
                 return rpc::Ready(answer);
             }) &&
-        Register(
-            QStringLiteral("bus.subscribe"),
-            [](const rpc::Call& call) {
-                auto* connection = qobject_cast<Connection*>(call.Peer);
-                const QJsonValue pattern =
-                    call.Params.toObject().value(QStringLiteral("pattern"));
-                const auto id = pattern.isString()
-                                    ? connection->Subscribe(pattern.toString())
-                                    : std::nullopt;
-                if (!id) {
-                    return rpc::Ready(InvalidParams(QStringLiteral(
-                        "bus.subscribe takes {pattern}: an event name, a "
-                        "prefix ending in \".*\" or \"*\"")));
-                }
-                return rpc::Ready(QJsonObject{
-                    {QStringLiteral("subscription"), static_cast<qint64>(*id)},
-                });
-            }) &&
+        Register(QStringLiteral("bus.subscribe"),
+                 [](const rpc::Call& call) {
+                     return rpc::Ready(
+                         qobject_cast<Connection*>(call.Peer)->Subscribe(
+                             call.Params));
+                 }) &&
         Register(QStringLiteral("bus.unsubscribe"),
                  [](const rpc::Call& call) {
-                     auto* connection = qobject_cast<Connection*>(call.Peer);
-                     const std::optional<qint64> id =
-                         ToInteger(call.Params.toObject().value(
-                             QStringLiteral("subscription")));
-                     if (!id || *id < 0 ||
-                         !connection->Unsubscribe(
-                             static_cast<EventBus::SubscriptionId>(*id))) {
-                         return rpc::Ready(InvalidParams(QStringLiteral(
-                             "bus.unsubscribe takes {subscription}: an id this "
-                             "connection got from bus.subscribe")));
-                     }
-                     return rpc::Ready(QJsonValue());
+                     return rpc::Ready(
+                         qobject_cast<Connection*>(call.Peer)->Unsubscribe(
+                             call.Params));
                  }) &&
         Register(QStringLiteral("bus.publish"), [this](const rpc::Call& call) {
             const QJsonObject params = call.Params.toObject();

@@ -2,6 +2,7 @@
 add_library(roostd_lib STATIC
     adapter_bridge.cpp
     backend.cpp
+    bus_subscriptions.cpp
     dump.cpp
     keymap_service.cpp
     manifest.cpp
