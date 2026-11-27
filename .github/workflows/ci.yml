@@ -427,7 +427,7 @@ jobs:
       # Also after a failed analyser step: ctcache does not remember failures,
       # so what it saved is only files that passed.
       - name: Save the clang-tidy cache
-        if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/trunk' && steps.ctcache.outputs.cache-primary-key != '' && steps.ctcache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && steps.ctcache.outputs.cache-primary-key != '' && steps.ctcache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/ctcache
