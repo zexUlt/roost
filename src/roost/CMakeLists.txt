@@ -16,6 +16,8 @@ add_library(roost_app STATIC
     layout_model.hpp
     login_environment.cpp
     login_environment.hpp
+    notification_ids.cpp
+    notification_ids.hpp
     plugin_loader.cpp
     plugin_loader.hpp
     plugin_watcher.cpp
@@ -53,7 +55,6 @@ if(APPLE)
     add_library(roost_notifier_macos STATIC
         desktop_notifier_macos.hpp
         desktop_notifier_macos.mm
-        desktop_notifier_macos_ids.cpp
         desktop_notifier_make_macos.cpp
     )
     target_compile_options(roost_notifier_macos PRIVATE -fobjc-arc)

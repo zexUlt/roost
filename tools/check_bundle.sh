@@ -187,8 +187,8 @@ echo "ok:   $count Mach-O files name only the bundle and the system"
 # The desktop notifications (src/roost/desktop_notifier_macos.mm) need
 # UserNotifications in the window; a build that drops the notifier for the
 # none one would still pass every check above.
-if otool -L "$app/Contents/MacOS/roost" |
-    grep -q '/System/Library/Frameworks/UserNotifications.framework/'; then
+roost_libs=$(otool -L "$app/Contents/MacOS/roost")
+if grep -q '/System/Library/Frameworks/UserNotifications.framework/' <<<"$roost_libs"; then
     echo "ok:   roost links UserNotifications"
 else
     fail "Contents/MacOS/roost does not link UserNotifications"

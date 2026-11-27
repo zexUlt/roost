@@ -6,10 +6,14 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QPointer>
+#include <QStringList>
+#include <QUuid>
 #include <QtLogging>
 
 #include <deque>
 #include <utility>
+
+#include "roost/notification_ids.hpp"
 
 namespace {
 
@@ -29,7 +33,7 @@ NSString* ToNSString(const QString& string) {
 // Called by the notification center on a thread of its own: it only hands the
 // click to the GUI thread (the callback is never given the notifier itself).
 @interface RoostNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
-@property(nonatomic, copy) void (^onActivated)(NSString* identifier, NSString* userInfoId);
+@property(atomic, copy) void (^onActivated)(NSString* identifier, NSString* userInfoId);
 @end
 
 @implementation RoostNotificationDelegate
@@ -49,11 +53,14 @@ NSString* ToNSString(const QString& string) {
     didReceiveNotificationResponse:(UNNotificationResponse*)response
              withCompletionHandler:(void (^)(void))completionHandler {
     (void)center;
+    // Read once: the destructor of the notifier may nil it on the GUI thread
+    // between a test and a call.
+    void (^onActivated)(NSString*, NSString*) = self.onActivated;
     if ([response.actionIdentifier isEqualToString:UNNotificationDefaultActionIdentifier] &&
-        self.onActivated != nil) {
+        onActivated != nil) {
         id roostId = response.notification.request.content.userInfo[ID_KEY];
-        self.onActivated(response.notification.request.identifier,
-                         [roostId isKindOfClass:[NSString class]] ? roostId : @"");
+        onActivated(response.notification.request.identifier,
+                    [roostId isKindOfClass:[NSString class]] ? roostId : @"");
     }
     completionHandler();
 }
@@ -65,6 +72,10 @@ namespace roost {
 namespace {
 
 enum class Authorization { Unknown, Requesting, Granted, Denied };
+
+// How many Shows wait for the answer to the permission request: older ones are
+// stale by the time it comes.
+constexpr size_t MAX_QUEUED = 3;
 
 struct Pending {
     QString Id;
@@ -80,6 +91,11 @@ struct MacDesktopNotifier::Impl {
     bool Warned = false;
     Authorization State = Authorization::Unknown;
     std::deque<Pending> Queue;
+    // Random per process: tells our requests from those of another run or
+    // another roost (NotificationIdentifier).
+    QString Token = QUuid::createUuid().toString(QUuid::Id128);
+    // The identifiers handed to the center, to take them out when we quit.
+    QStringList Issued;
     RoostNotificationDelegate* Delegate = nil;
 
     void Warn(const QString& message) {
@@ -102,17 +118,27 @@ struct MacDesktopNotifier::Impl {
             Qt::QueuedConnection);
     }
 
+    void Enqueue(Pending item) {
+        Queue.push_back(std::move(item));
+        while (Queue.size() > MAX_QUEUED) {
+            Queue.pop_front();
+        }
+    }
+
     void Post(const Pending& item) {
         UNMutableNotificationContent* content = [[UNMutableNotificationContent alloc] init];
         content.title = ToNSString(item.Title);
         content.body = ToNSString(item.Body);
         content.sound = nil;
         content.userInfo = @{ID_KEY : ToNSString(item.Id)};
-        UNNotificationRequest* request = [UNNotificationRequest
-            requestWithIdentifier:ToNSString(NotificationIdentifier(
-                                      QCoreApplication::applicationPid(), item.Id))
-                          content:content
-                          trigger:nil];
+        const QString identifier = NotificationIdentifier(Token, item.Id);
+        if (!Issued.contains(identifier)) {
+            Issued.push_back(identifier);
+        }
+        UNNotificationRequest* request =
+            [UNNotificationRequest requestWithIdentifier:ToNSString(identifier)
+                                                 content:content
+                                                 trigger:nil];
         const QPointer<MacDesktopNotifier> owner(Owner);
         [[UNUserNotificationCenter currentNotificationCenter]
             addNotificationRequest:request
@@ -130,8 +156,7 @@ struct MacDesktopNotifier::Impl {
         State = Authorization::Requesting;
         const QPointer<MacDesktopNotifier> owner(Owner);
         [[UNUserNotificationCenter currentNotificationCenter]
-            requestAuthorizationWithOptions:(UNAuthorizationOptionAlert |
-                                             UNAuthorizationOptionSound)
+            requestAuthorizationWithOptions:UNAuthorizationOptionAlert
                           completionHandler:^(BOOL granted, NSError* error) {
                             const QString text =
                                 error != nil ? ToQString(error.localizedDescription) : QString();
@@ -166,10 +191,10 @@ MacDesktopNotifier::MacDesktopNotifier() : Impl_(std::make_unique<Impl>()) {
         return;
     }
     const QPointer<MacDesktopNotifier> owner(this);
-    const qint64 pid = QCoreApplication::applicationPid();
+    const QString token = Impl_->Token;
     Impl_->Delegate = [[RoostNotificationDelegate alloc] init];
     Impl_->Delegate.onActivated = ^(NSString* identifier, NSString* userInfoId) {
-      const auto id = ActivatedNotificationId(ToQString(identifier), ToQString(userInfoId), pid);
+      const auto id = ActivatedNotificationId(ToQString(identifier), ToQString(userInfoId), token);
       if (id) {
           Impl::OnGuiThread(owner,
                             [id = *id](MacDesktopNotifier& self) { emit self.Activated(id); });
@@ -183,6 +208,16 @@ MacDesktopNotifier::~MacDesktopNotifier() {
         // The center holds its delegate weakly; the callback must not outlive
         // the notifier all the same.
         Impl_->Delegate.onActivated = nil;
+        // Nobody is left to hear a click: take our notifications away.
+        NSMutableArray<NSString*>* issued = [NSMutableArray array];
+        for (const QString& identifier : std::as_const(Impl_->Issued)) {
+            [issued addObject:ToNSString(identifier)];
+        }
+        if (issued.count > 0) {
+            UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
+            [center removeDeliveredNotificationsWithIdentifiers:issued];
+            [center removePendingNotificationRequestsWithIdentifiers:issued];
+        }
     }
 }
 
@@ -198,11 +233,11 @@ void MacDesktopNotifier::Show(const QString& id, const QString& title, const QSt
             Impl_->Post({id, title, body});
             return;
         case Authorization::Unknown:
-            Impl_->Queue.push_back({id, title, body});
+            Impl_->Enqueue({id, title, body});
             Impl_->Authorize();
             return;
         case Authorization::Requesting:
-            Impl_->Queue.push_back({id, title, body});
+            Impl_->Enqueue({id, title, body});
             return;
     }
 }

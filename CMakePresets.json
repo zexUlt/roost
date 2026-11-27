@@ -16,6 +16,7 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_C_COMPILER_LAUNCHER": "$env{ROOST_COMPILER_LAUNCHER}",
         "CMAKE_CXX_COMPILER_LAUNCHER": "$env{ROOST_COMPILER_LAUNCHER}",
+        "CMAKE_OBJCXX_COMPILER_LAUNCHER": "$env{ROOST_COMPILER_LAUNCHER}",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
@@ -36,6 +37,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "GHOSTTY_ZIG_BUILD_FLAGS": "-Doptimize=ReleaseSafe",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },
@@ -47,6 +49,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "GHOSTTY_ZIG_BUILD_FLAGS": "-Doptimize=ReleaseSafe",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
       }
     },
