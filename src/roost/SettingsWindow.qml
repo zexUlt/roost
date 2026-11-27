@@ -3,16 +3,18 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Roost.Api
 
-// The settings window (design.md §5): the general section, the settings page
-// of each plugin that has one, and the keys. One top-level window, made once
-// by Main.qml and shown again by open(); closing it only hides it.
+// The settings window (design.md §5): two panes. The list of the categories is
+// on the left: Appearance, Keys, Updates, then one for each plugin that has a
+// settings page, by title. The page of the chosen one is on the right, with a
+// scroll of its own. One top-level window, made once by Main.qml and shown
+// again by open(); closing it only hides it.
 //
-// The general section is the document `settings` of the store; every edit is
-// one `store.patch` of the one key that was edited, so that the edits of other
-// windows and of other keys stay. A plugin's page (`contributes.settings`) is
-// an Item that roost::SettingsPages makes with the loader and writes to
+// Appearance and Updates are the document `settings` of the store; every edit
+// is one `store.patch` of the one key that was edited, so that the edits of
+// other windows and of other keys stay. A plugin's page (`contributes.settings`)
+// is an Item that roost::SettingsPages makes with the loader and writes to
 // `settingsPages`; it keeps its values in the document of its plugin under the
-// key `settings`.
+// key `settings`, and the window shows it only while its category is chosen.
 //
 // The keys are edited by asking roostd, which writes keymap.json (design.md
 // §16, "Запись из окна"): one `keymap.setCommand` carries the whole set of the
@@ -102,18 +104,116 @@ ApplicationWindow {
     // key that another command holds waits with until Confirm.
     property var capturing: null
     property var held: null
+    // The category that the user chose last, kept while the window lives:
+    // "appearance", "keys", "updates" or "plugin:<id>". The window opens on it.
+    property string currentKey: "appearance"
+    // The built-in categories, in order. The list of #349 (plugins on and off)
+    // adds its entry here.
+    readonly property var builtinCategories: [
+        {
+            "key": "appearance",
+            "title": "Appearance"
+        },
+        {
+            "key": "keys",
+            "title": "Keys"
+        },
+        {
+            "key": "updates",
+            "title": "Updates"
+        }
+    ]
+    // What the list shows: the built-in ones, then a category for each plugin
+    // that has a page, by title.
+    readonly property var categories: buildCategories(settingsPages, plugins)
+    // The category in force: the chosen one, Appearance when its page is gone
+    // (the plugin was unloaded).
+    readonly property string shownKey: categories.some(c => c.key === currentKey) ? currentKey : "appearance"
+    readonly property int categoryIndex: categories.findIndex(c => c.key === shownKey)
 
     // The user pressed "Open keymap.json".
     signal keymapFileRequested(url file)
 
-    // Shows the window, or raises the one that is shown.
-    function open() {
+    // Shows the window, or raises the one that is shown. `target` is the
+    // args of shell.settings: {category: "appearance"|"keys"|"updates"} or
+    // {plugin: "<id>"}; without it the window keeps the category chosen last.
+    function open(target) {
         const shown = visible;
+        // The pages of the plugins are made by the first show.
         show();
+        chooseTarget(target);
         if (shown) {
             raise();
         }
         requestActivate();
+    }
+
+    // Chooses the category that `target` names. A target that names nothing
+    // that exists leaves the choice as it was, with one warning.
+    function chooseTarget(target) {
+        if (target === undefined || target === null) {
+            return;
+        }
+        let key = "";
+        if (isObject(target) && typeof target.plugin === "string" && target.category === undefined) {
+            key = "plugin:" + target.plugin;
+        } else if (isObject(target) && typeof target.category === "string" && target.plugin === undefined && builtinCategories.some(c => c.key === target.category)) {
+            key = target.category;
+        }
+        if (!categories.some(c => c.key === key)) {
+            console.warn("roost: shell.settings: no such settings category: " + JSON.stringify(target));
+            return;
+        }
+        chooseCategory(key);
+    }
+
+    function chooseCategory(key) {
+        currentKey = key;
+    }
+
+    function isInside(item, container) {
+        for (let up = item; up !== null && up !== undefined; up = up.parent) {
+            if (up === container) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Up (-1) or Down (1) in the list: the next category, none past the ends.
+    function stepCategory(step) {
+        const next = categoryIndex + step;
+        if (next >= 0 && next < categories.length) {
+            chooseCategory(categories[next].key);
+        }
+    }
+
+    // The title of the page of a plugin: `contributes.settings.title`, the id
+    // when the manifest has none (the string form has none).
+    function pluginTitle(pluginId) {
+        const plugin = plugins.find(p => p.id === pluginId);
+        const title = plugin?.contributes?.settings?.title;
+        return typeof title === "string" && title !== "" ? title : pluginId;
+    }
+
+    function buildCategories(pages, pluginList) {
+        const own = pages.map(page => ({
+                    "key": "plugin:" + page.pluginId,
+                    "title": pluginTitle(page.pluginId)
+                }));
+        own.sort((a, b) => a.title.localeCompare(b.title) || a.key.localeCompare(b.key));
+        return builtinCategories.concat(own);
+    }
+
+    // A page opens at its top, whatever the one before was scrolled to. The
+    // keyboard that was in a control of the page that goes is given to the
+    // list, so that Up and Down still work (a view with no focus item has no
+    // keys until Tab).
+    onShownKeyChanged: {
+        scroll.contentItem.contentY = 0;
+        if (isInside(root.activeFocusItem, scroll.contentItem.contentItem)) {
+            categoryList.forceActiveFocus(Qt.TabFocusReason);
+        }
     }
 
     function openKeymap() {
@@ -123,7 +223,7 @@ ApplicationWindow {
         }
     }
 
-    // Writes one key of the general section: the patch is what changed.
+    // Writes one key of the settings document: the patch is what changed.
     function patchSettings(patch) {
         if (Roost.store === null) {
             return;
@@ -1041,713 +1141,814 @@ ApplicationWindow {
         border.color: Roost.theme.line
     }
 
-    ScrollView {
-        id: scroll
-
-        objectName: "settingsScroll"
+    RowLayout {
         anchors.fill: parent
         anchors.margins: Roost.theme.windowMargin + Roost.theme.panelPadding
-        contentWidth: availableWidth
+        spacing: 12
 
-        // The form is taller than the window at the default size, and the
-        // keyboard goes to a control that is below the visible part: scroll
-        // to it, with room for its ring.
-        Connections {
-            function onActiveFocusItemChanged() {
-                root.revealFocused(scroll);
+        // The categories: Up and Down choose one and the page follows at
+        // once; Tab goes on into the page.
+        ListView {
+            id: categoryList
+
+            objectName: "categoryList"
+            Layout.preferredWidth: 150
+            Layout.fillHeight: true
+            focus: true
+            activeFocusOnTab: true
+            clip: true
+            interactive: false
+            keyNavigationEnabled: false
+            boundsBehavior: Flickable.StopAtBounds
+            currentIndex: root.categoryIndex
+            model: root.categories
+            Keys.onUpPressed: root.stepCategory(-1)
+            Keys.onDownPressed: root.stepCategory(1)
+            Accessible.role: Accessible.List
+            Accessible.name: "Settings categories"
+
+            delegate: ItemDelegate {
+                id: category
+
+                required property int index
+                required property var modelData
+
+                objectName: "categoryItem"
+                width: ListView.view.width
+                implicitHeight: 34
+                leftPadding: 12
+                rightPadding: 12
+                focusPolicy: Qt.NoFocus
+                highlighted: ListView.isCurrentItem
+                font: Roost.theme.rowFont
+                text: modelData.title
+                onClicked: root.chooseCategory(modelData.key)
+                Accessible.role: Accessible.ListItem
+                Accessible.name: modelData.title
+                Accessible.selectable: true
+                Accessible.selected: ListView.isCurrentItem
+
+                contentItem: Text {
+                    text: category.text
+                    font: category.font
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                    color: Roost.theme.text
+                }
+
+                background: Rectangle {
+                    radius: Roost.theme.radiusControl
+                    color: category.highlighted ? Roost.theme.selectedBackground : (category.hovered ? Roost.theme.hoverBackground : "transparent")
+
+                    // The ring of the keyboard, inside the row: the list clips.
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: category.highlighted && (category.activeFocus || categoryList.activeFocus)
+                        radius: Roost.theme.radiusControl
+                        color: "transparent"
+                        border.width: Roost.theme.cursorRingWidth
+                        border.color: Roost.theme.focus
+                    }
+                }
             }
-
-            target: root
         }
 
-        ColumnLayout {
-            x: root.ringSpace
-            width: parent.width - 2 * root.ringSpace
-            spacing: 8
+        ScrollView {
+            id: scroll
 
-            SectionTitle {
-                text: "General"
-            }
+            objectName: "settingsScroll"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            contentWidth: availableWidth
 
-            FieldRow {
-                label: "Theme"
-
-                FormComboBox {
-                    id: themeBox
-
-                    objectName: "themeBox"
-                    Layout.fillWidth: true
-                    model: root.themeIds
-                    onActivated: root.patchSettings({
-                        "theme": currentText
-                    })
-                }
-            }
-
-            SettingHelp {
-                text: "Colors of the window and the terminals."
-            }
-
-            FieldRow {
-                label: "Terminal font"
-
-                // A list of the installed monospace families, and a name can be
-                // typed: one that is not installed or not monospace keeps the
-                // line of the problem under the row.
-                FormComboBox {
-                    id: terminalFamilyBox
-
-                    objectName: "terminalFamilyBox"
-                    Layout.fillWidth: true
-                    editable: true
-                    onActivated: index => root.commitFamily(textAt(index))
-                    Keys.onEscapePressed: event => {
-                        // With the list open, Escape closes the list.
-                        event.accepted = !popup.visible;
-                        if (event.accepted) {
-                            root.revertFamily();
-                        }
-                    }
-                    Component.onCompleted: root.showFamily()
-
-                    Connections {
-                        function onAboutToShow() {
-                            root.openFamilies();
-                        }
-
-                        function onClosed() {
-                            // What came while the list was open shows now;
-                            // a text that is being typed stays.
-                            if (!(terminalFamilyBox.contentItem.activeFocus && terminalFamilyBox.editText !== terminalFamilyBox.currentText)) {
-                                root.showFamily();
-                            }
-                        }
-
-                        target: terminalFamilyBox.popup
-                    }
-
-                    // Leaving the box or Enter, as a field of the form.
-                    Connections {
-                        function onEditingFinished() {
-                            // An untouched text is not a choice: it may be of a
-                            // family the document no longer has; show the
-                            // document instead of writing the text back.
-                            if (terminalFamilyBox.editText === root.shownFamilyText) {
-                                root.showFamily();
-                            } else {
-                                root.commitFamily(terminalFamilyBox.editText);
-                            }
-                        }
-
-                        target: terminalFamilyBox.contentItem
-                        ignoreUnknownSignals: true
-                    }
+            // The form is taller than the window at the default size, and the
+            // keyboard goes to a control that is below the visible part: scroll
+            // to it, with room for its ring.
+            Connections {
+                function onActiveFocusItemChanged() {
+                    root.revealFocused(scroll);
                 }
 
-                ResetButton {
-                    objectName: "terminalFamilyReset"
-                    visible: root.terminalFont.family !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
-                    onClicked: root.patchTerminalFont("family", null)
-                }
+                target: root
             }
 
-            SettingHelp {
-                text: "Monospace font of the terminals."
-            }
+            // A page that is not chosen is not visible, so it takes no room
+            // and no key.
+            ColumnLayout {
+                x: root.ringSpace
+                width: parent.width - 2 * root.ringSpace
+                spacing: 8
 
-            FieldRow {
-                label: "Terminal font size"
-
-                FormField {
-                    id: terminalSizeField
-
-                    function shown() {
-                        return String(root.terminalFont.size ?? "");
-                    }
-
-                    objectName: "terminalSizeField"
-                    Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultTerminalFont)
-                    onEditingFinished: {
-                        const size = root.sizeOf(text);
-                        if (size === undefined) {
-                            text = shown();
-                        } else if (String(size ?? "") !== shown()) {
-                            root.patchTerminalFont("size", size);
-                        }
-                    }
-                }
-
-                ResetButton {
-                    objectName: "terminalSizeReset"
-                    visible: root.terminalFont.size !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
-                    onClicked: root.patchTerminalFont("size", null)
-                }
-            }
-
-            SettingHelp {
-                text: "Size of the text in terminals, 6-72."
-            }
-
-            SettingProblems {
-                objectName: "terminalFontProblems"
-                setting: "terminalFont"
-            }
-
-            SettingInUse {
-                objectName: "terminalFontInUse"
-                setting: "terminalFont"
-                inUse: Roost.theme.terminalFont
-            }
-
-            FieldRow {
-                label: "Interface font size"
-
-                FormField {
-                    id: uiSizeField
-
-                    function shown() {
-                        return String(root.settingsDocument.uiFontSize ?? "");
-                    }
-
-                    objectName: "uiSizeField"
-                    Layout.fillWidth: true
-                    placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultUiFont)
-                    onEditingFinished: {
-                        const size = root.sizeOf(text);
-                        if (size === undefined) {
-                            text = shown();
-                        } else if (String(size ?? "") !== shown()) {
-                            root.patchSettings({
-                                "uiFontSize": size
-                            });
-                        }
-                    }
-                }
-
-                ResetButton {
-                    objectName: "uiSizeReset"
-                    visible: root.settingsDocument.uiFontSize !== undefined
-                    onClicked: root.patchSettings({
-                        "uiFontSize": null
-                    })
-                }
-            }
-
-            SettingHelp {
-                text: "Size of the text of the window: lists, menus, settings. 6-72."
-            }
-
-            SettingProblems {
-                objectName: "uiFontSizeProblems"
-                setting: "uiFontSize"
-            }
-
-            SettingInUse {
-                objectName: "uiFontInUse"
-                setting: "uiFontSize"
-                inUse: Roost.theme.uiFont
-            }
-
-            FieldRow {
-                label: "Focus ring color"
-
-                FormComboBox {
-                    id: focusPresetBox
-
-                    objectName: "focusPresetBox"
-                    Layout.fillWidth: true
-                    model: ["Base", "Contrast", "Custom"]
-                    onActivated: index => {
-                        const preset = root.focusPresets[index];
-                        // Custom starts from the colour the ring has now.
-                        root.patchSettings({
-                            "focusColor": preset === "custom" && root.focusColor.custom === undefined ? {
-                                "preset": preset,
-                                "custom": String(Roost.theme.focus)
-                            } : {
-                                "preset": preset
-                            }
-                        });
-                    }
-                }
-
-                // The colour of the two presets, from the theme.
                 Label {
-                    objectName: "focusPresetColor"
-                    visible: root.focusColor.preset !== "custom"
-                    color: Roost.theme.textMuted
-                    text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrastText : Roost.theme.focusBaseText)
-                }
-
-                // Any colour that the swatches below do not have: a hex field.
-                // What is typed is written; a colour that is hard to read is a
-                // warning of the theme below the field, and what is not a
-                // colour a reason.
-                FormField {
-                    id: focusCustomField
-
-                    function shown() {
-                        return root.focusColor.custom ?? "";
-                    }
-
-                    objectName: "focusCustomField"
-                    visible: root.focusColor.preset === "custom"
-                    Layout.preferredWidth: 110
-                    placeholderText: "#rrggbb"
-                    onEditingFinished: {
-                        const color = text.trim() === "" ? null : text.trim();
-                        if ((color ?? "") !== shown()) {
-                            root.patchFocusColor("custom", color);
-                        }
-                    }
-                }
-
-                ResetButton {
-                    objectName: "focusColorReset"
-                    visible: root.isStored(root.settingsDocument.focusColor)
-                    onClicked: root.patchSettings({
-                        "focusColor": null
-                    })
-                }
-            }
-
-            // The swatches of the ring colour, in the column of the fields and
-            // always shown with the preset box: a click on one is the whole
-            // choice, whichever preset is on (it makes the preset Custom).
-            // The colour in force is marked; the field above takes any other.
-            Flow {
-                id: swatchRow
-
-                // The row is one stop of Tab, as a radio group: the swatch that
-                // has the keyboard is the stop while it has it, otherwise the
-                // colour in force (the first if none of the swatches is).
-                readonly property int entry: {
-                    for (let i = 0; i < swatches.count; ++i) {
-                        if (swatches.itemAt(i)?.inForce) {
-                            return i;
-                        }
-                    }
-                    return 0;
-                }
-                property int focused: -1
-
-                // Moves the keyboard to the swatch of the next row up (-1) or
-                // down (1), the nearest in x; nothing if there is no such row.
-                function moveRow(from, direction) {
-                    const here = swatches.itemAt(from);
-                    let rowY = null;
-                    for (let i = 0; i < swatches.count; ++i) {
-                        const y = swatches.itemAt(i).y;
-                        if ((y - here.y) * direction > 0 && (rowY === null || (y - rowY) * direction < 0)) {
-                            rowY = y;
-                        }
-                    }
-                    let best = null;
-                    for (let i = 0; i < swatches.count && rowY !== null; ++i) {
-                        const item = swatches.itemAt(i);
-                        if (item.y === rowY && (best === null || Math.abs(item.x - here.x) < Math.abs(best.x - here.x))) {
-                            best = item;
-                        }
-                    }
-                    if (best !== null) {
-                        best.forceActiveFocus(Qt.TabFocusReason);
-                    }
-                }
-
-                function moveAlong(from, step) {
-                    const item = swatches.itemAt(from + step);
-                    if (item) {
-                        item.forceActiveFocus(Qt.TabFocusReason);
-                    }
-                }
-
-                objectName: "focusSwatches"
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "Focus ring color"
-                Layout.fillWidth: true
-                Layout.leftMargin: 160 + 12
-                spacing: 8 + Roost.theme.cursorRingWidth
-
-                Repeater {
-                    id: swatches
-
-                    model: Roost.theme.focusSwatches
-
-                    delegate: AbstractButton {
-                        id: swatch
-
-                        required property int index
-                        required property string modelData
-                        readonly property bool inForce: Qt.colorEqual(Roost.theme.focus, modelData)
-                        // The presets are named as the box names them.
-                        readonly property string presetName: modelData.toLowerCase() === Roost.theme.focusBaseText.toLowerCase() ? "Base" : modelData.toLowerCase() === Roost.theme.focusContrastText.toLowerCase() ? "Contrast" : ""
-
-                        objectName: "focusSwatch" + index
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        activeFocusOnTab: swatchRow.focused === index || (swatchRow.focused < 0 && swatchRow.entry === index)
-                        onActiveFocusChanged: {
-                            if (activeFocus) {
-                                swatchRow.focused = index;
-                            } else if (swatchRow.focused === index) {
-                                swatchRow.focused = -1;
-                            }
-                        }
-                        // Arrows move inside the row; Space and Enter pick.
-                        Keys.onLeftPressed: swatchRow.moveAlong(index, -1)
-                        Keys.onRightPressed: swatchRow.moveAlong(index, 1)
-                        Keys.onUpPressed: swatchRow.moveRow(index, -1)
-                        Keys.onDownPressed: swatchRow.moveRow(index, 1)
-                        // A held Enter repeats: one pick per press.
-                        Keys.onReturnPressed: event => {
-                            if (!event.isAutoRepeat) {
-                                clicked();
-                            }
-                        }
-                        Keys.onEnterPressed: event => {
-                            if (!event.isAutoRepeat) {
-                                clicked();
-                            }
-                        }
-                        Accessible.role: Accessible.RadioButton
-                        Accessible.name: presetName === "" ? modelData : presetName + " (" + modelData + ")"
-                        Accessible.description: root.focusColor.preset === "custom" ? "" : "Picking it makes the preset Custom"
-                        Accessible.checkable: true
-                        Accessible.checked: inForce
-                        onClicked: root.pickFocusColor(modelData)
-
-                        background: Rectangle {
-                            radius: width / 2
-                            color: swatch.modelData
-                            border.width: 1
-                            border.color: Roost.theme.line
-
-                            // The colour in force: a ring of the surface inside.
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: 4
-                                visible: swatch.inForce
-                                radius: width / 2
-                                color: "transparent"
-                                border.width: 2
-                                border.color: Roost.theme.surface
-                            }
-
-                            // The ring of the focus, outside with a gap of 2 px.
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: -(2 + Roost.theme.cursorRingWidth)
-                                visible: swatch.visualFocus
-                                radius: width / 2
-                                color: "transparent"
-                                border.width: Roost.theme.cursorRingWidth
-                                border.color: Roost.theme.focus
-                            }
-                        }
-                    }
-                }
-            }
-
-            SettingHelp {
-                text: "Outline of the control that the keyboard is on."
-            }
-
-            SettingProblems {
-                objectName: "focusColorProblems"
-                setting: "focusColor"
-            }
-
-            FieldRow {
-                label: "Check for updates"
-
-                Switch {
-                    id: updatesCheckSwitch
-
-                    objectName: "updatesCheckSwitch"
-                    // The default until the document is read; showDocument()
-                    // sets it, a binding would not survive a click.
-                    checked: true
-                    implicitHeight: 38
-                    // The track and the knob in the tokens (derived, no mockup:
-                    // docs/design/18-style.md): `primary` on, `textMuted` off
-                    // (the white knob keeps its contrast).
-                    indicator: Rectangle {
-                        objectName: "switchTrack"
-                        x: updatesCheckSwitch.leftPadding
-                        y: (updatesCheckSwitch.height - height) / 2
-                        implicitWidth: 40
-                        implicitHeight: 22
-                        radius: height / 2
-                        color: updatesCheckSwitch.checked ? Roost.theme.primary : Roost.theme.textMuted
-
-                        // The ring of the focus around the track, outside with
-                        // a gap of 2 px, as at FormButton.
-                        Rectangle {
-                            objectName: "switchRing"
-                            anchors.fill: parent
-                            anchors.margins: -(2 + Roost.theme.cursorRingWidth)
-                            visible: updatesCheckSwitch.visualFocus
-                            radius: height / 2
-                            color: "transparent"
-                            border.width: Roost.theme.cursorRingWidth
-                            border.color: Roost.theme.focus
-                        }
-
-                        Rectangle {
-                            objectName: "switchKnob"
-                            x: updatesCheckSwitch.checked ? parent.width - width - 2 : 2
-                            y: 2
-                            width: parent.height - 4
-                            height: width
-                            radius: width / 2
-                            color: Roost.theme.surface
-                        }
-                    }
-                    background: null
-                    onToggled: root.patchSettings({
-                        "updates": {
-                            "check": checked
-                        }
-                    })
-                }
-            }
-
-            SettingHelp {
-                text: "Look for a new version of roost."
-            }
-
-            Label {
-                objectName: "settingsError"
-                Layout.fillWidth: true
-                visible: text !== ""
-                wrapMode: Text.Wrap
-                color: Roost.theme.error
-                text: [root.readError, root.error].filter(s => s !== "").join("\n")
-            }
-
-            Repeater {
-                model: root.settingsPages
-
-                delegate: ColumnLayout {
-                    id: section
-
-                    required property var modelData
-                    readonly property string pluginId: modelData.pluginId
-
-                    objectName: "pluginSettings"
+                    objectName: "settingsError"
                     Layout.fillWidth: true
+                    visible: text !== ""
+                    wrapMode: Text.Wrap
+                    color: Roost.theme.error
+                    text: [root.readError, root.error].filter(s => s !== "").join("\n")
+                }
+
+                ColumnLayout {
+                    objectName: "appearancePage"
+                    Layout.fillWidth: true
+                    visible: root.shownKey === "appearance"
                     spacing: 8
 
                     SectionTitle {
-                        text: section.pluginId
+                        text: "Appearance"
                     }
 
-                    Item {
-                        id: host
+                    FieldRow {
+                        label: "Theme"
 
-                        property Item page: section.modelData.page
+                        FormComboBox {
+                            id: themeBox
 
-                        function attach() {
-                            if (page === null) {
-                                return;
-                            }
-                            page.parent = host;
-                            page.anchors.fill = host;
-                        }
-
-                        Layout.fillWidth: true
-                        implicitHeight: page ? page.implicitHeight : 0
-                        onPageChanged: attach()
-                        Component.onCompleted: attach()
-                        // The loader deletes the page; not with this item.
-                        Component.onDestruction: {
-                            if (page !== null) {
-                                page.parent = null;
-                            }
+                            objectName: "themeBox"
+                            Layout.fillWidth: true
+                            model: root.themeIds
+                            onActivated: root.patchSettings({
+                                "theme": currentText
+                            })
                         }
                     }
-                }
-            }
 
-            SectionTitle {
-                text: "Keys"
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    color: Roost.theme.textMuted
-                    text: "Add a key to a command, take one off, or reset the command to the keys of its plugin. The window asks roostd to write keymap.json: the file is rewritten as indented JSON, so its formatting is not kept, and a file that is not valid JSON is left alone."
-                }
-
-                FormButton {
-                    objectName: "openKeymapButton"
-                    text: "Open keymap.json"
-                    onClicked: root.openKeymap()
-                }
-            }
-
-            Label {
-                objectName: "keysStatus"
-                Layout.fillWidth: true
-                visible: root.keysWriting
-                color: Roost.theme.textMuted
-                text: "Saving the keys\u2026"
-            }
-
-            Label {
-                objectName: "keysError"
-                Layout.fillWidth: true
-                visible: text !== ""
-                wrapMode: Text.Wrap
-                color: Roost.theme.error
-                text: root.keysError
-                Accessible.role: Accessible.AlertMessage
-                Accessible.name: text
-                // As the warning of the dialog: heard when it appears.
-                onTextChanged: shown => {
-                    if (shown !== "") {
-                        Accessible.announce(shown, Accessible.Assertive);
+                    SettingHelp {
+                        text: "Colors of the window and the terminals."
                     }
-                }
-            }
 
-            Repeater {
-                id: keyRepeater
+                    FieldRow {
+                        label: "Terminal font"
 
-                model: root.keyRows
+                        // A list of the installed monospace families, and a name can be
+                        // typed: one that is not installed or not monospace keeps the
+                        // line of the problem under the row.
+                        FormComboBox {
+                            id: terminalFamilyBox
 
-                delegate: RowLayout {
-                    id: keyRow
+                            objectName: "terminalFamilyBox"
+                            Layout.fillWidth: true
+                            editable: true
+                            onActivated: index => root.commitFamily(textAt(index))
+                            Keys.onEscapePressed: event => {
+                                // With the list open, Escape closes the list.
+                                event.accepted = !popup.visible;
+                                if (event.accepted) {
+                                    root.revertFamily();
+                                }
+                            }
+                            Component.onCompleted: root.showFamily()
 
-                    required property var modelData
+                            Connections {
+                                function onAboutToShow() {
+                                    root.openFamilies();
+                                }
 
-                    // The control that the keyboard goes to for a row after a
-                    // change: the × of the first of `chords` that the row
-                    // has, else "Add key".
-                    function buttonFor(chords) {
-                        for (const chord of chords) {
-                            for (let at = 0; at < chips.count; ++at) {
-                                const chip = chips.itemAt(at);
-                                if (chip !== null && keyChords.sameKey(chip.modelData.text) === keyChords.sameKey(chord)) {
-                                    return chip.removeButton;
+                                function onClosed() {
+                                    // What came while the list was open shows now;
+                                    // a text that is being typed stays.
+                                    if (!(terminalFamilyBox.contentItem.activeFocus && terminalFamilyBox.editText !== terminalFamilyBox.currentText)) {
+                                        root.showFamily();
+                                    }
+                                }
+
+                                target: terminalFamilyBox.popup
+                            }
+
+                            // Leaving the box or Enter, as a field of the form.
+                            Connections {
+                                function onEditingFinished() {
+                                    // An untouched text is not a choice: it may be of a
+                                    // family the document no longer has; show the
+                                    // document instead of writing the text back.
+                                    if (terminalFamilyBox.editText === root.shownFamilyText) {
+                                        root.showFamily();
+                                    } else {
+                                        root.commitFamily(terminalFamilyBox.editText);
+                                    }
+                                }
+
+                                target: terminalFamilyBox.contentItem
+                                ignoreUnknownSignals: true
+                            }
+                        }
+
+                        ResetButton {
+                            objectName: "terminalFamilyReset"
+                            visible: root.terminalFont.family !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
+                            onClicked: root.patchTerminalFont("family", null)
+                        }
+                    }
+
+                    SettingHelp {
+                        text: "Monospace font of the terminals."
+                    }
+
+                    FieldRow {
+                        label: "Terminal font size"
+
+                        FormField {
+                            id: terminalSizeField
+
+                            function shown() {
+                                return String(root.terminalFont.size ?? "");
+                            }
+
+                            objectName: "terminalSizeField"
+                            Layout.fillWidth: true
+                            placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultTerminalFont)
+                            onEditingFinished: {
+                                const size = root.sizeOf(text);
+                                if (size === undefined) {
+                                    text = shown();
+                                } else if (String(size ?? "") !== shown()) {
+                                    root.patchTerminalFont("size", size);
                                 }
                             }
                         }
-                        return addButton;
+
+                        ResetButton {
+                            objectName: "terminalSizeReset"
+                            visible: root.terminalFont.size !== undefined || (root.isStored(root.settingsDocument.terminalFont) && !root.isObject(root.settingsDocument.terminalFont))
+                            onClicked: root.patchTerminalFont("size", null)
+                        }
                     }
 
-                    objectName: "keymapRow"
-                    Layout.fillWidth: true
-                    spacing: 12
+                    SettingHelp {
+                        text: "Size of the text in terminals, 6-72."
+                    }
 
-                    ColumnLayout {
-                        Layout.preferredWidth: 180
-                        Layout.alignment: Qt.AlignTop
-                        spacing: 0
+                    SettingProblems {
+                        objectName: "terminalFontProblems"
+                        setting: "terminalFont"
+                    }
 
-                        Label {
-                            objectName: "keymapTitle"
+                    SettingInUse {
+                        objectName: "terminalFontInUse"
+                        setting: "terminalFont"
+                        inUse: Roost.theme.terminalFont
+                    }
+
+                    FieldRow {
+                        label: "Interface font size"
+
+                        FormField {
+                            id: uiSizeField
+
+                            function shown() {
+                                return String(root.settingsDocument.uiFontSize ?? "");
+                            }
+
+                            objectName: "uiSizeField"
                             Layout.fillWidth: true
-                            elide: Text.ElideRight
-                            text: keyRow.modelData.title
+                            placeholderText: "default: " + Roost.theme.sizeText(Roost.theme.defaultUiFont)
+                            onEditingFinished: {
+                                const size = root.sizeOf(text);
+                                if (size === undefined) {
+                                    text = shown();
+                                } else if (String(size ?? "") !== shown()) {
+                                    root.patchSettings({
+                                        "uiFontSize": size
+                                    });
+                                }
+                            }
                         }
 
-                        Label {
-                            objectName: "keymapCommand"
+                        ResetButton {
+                            objectName: "uiSizeReset"
+                            visible: root.settingsDocument.uiFontSize !== undefined
+                            onClicked: root.patchSettings({
+                                "uiFontSize": null
+                            })
+                        }
+                    }
+
+                    SettingHelp {
+                        text: "Size of the text of the window: lists, menus, settings. 6-72."
+                    }
+
+                    SettingProblems {
+                        objectName: "uiFontSizeProblems"
+                        setting: "uiFontSize"
+                    }
+
+                    SettingInUse {
+                        objectName: "uiFontInUse"
+                        setting: "uiFontSize"
+                        inUse: Roost.theme.uiFont
+                    }
+
+                    FieldRow {
+                        label: "Focus ring color"
+
+                        FormComboBox {
+                            id: focusPresetBox
+
+                            objectName: "focusPresetBox"
                             Layout.fillWidth: true
-                            elide: Text.ElideRight
+                            model: ["Base", "Contrast", "Custom"]
+                            onActivated: index => {
+                                const preset = root.focusPresets[index];
+                                // Custom starts from the colour the ring has now.
+                                root.patchSettings({
+                                    "focusColor": preset === "custom" && root.focusColor.custom === undefined ? {
+                                        "preset": preset,
+                                        "custom": String(Roost.theme.focus)
+                                    } : {
+                                        "preset": preset
+                                    }
+                                });
+                            }
+                        }
+
+                        // The colour of the two presets, from the theme.
+                        Label {
+                            objectName: "focusPresetColor"
+                            visible: root.focusColor.preset !== "custom"
                             color: Roost.theme.textMuted
-                            font: Roost.theme.smallFont
-                            text: keyRow.modelData.command + (keyRow.modelData.when ? "  (" + keyRow.modelData.when + ")" : "")
+                            text: String(root.focusColor.preset === "contrast" ? Roost.theme.focusContrastText : Roost.theme.focusBaseText)
+                        }
+
+                        // Any colour that the swatches below do not have: a hex field.
+                        // What is typed is written; a colour that is hard to read is a
+                        // warning of the theme below the field, and what is not a
+                        // colour a reason.
+                        FormField {
+                            id: focusCustomField
+
+                            function shown() {
+                                return root.focusColor.custom ?? "";
+                            }
+
+                            objectName: "focusCustomField"
+                            visible: root.focusColor.preset === "custom"
+                            Layout.preferredWidth: 110
+                            placeholderText: "#rrggbb"
+                            onEditingFinished: {
+                                const color = text.trim() === "" ? null : text.trim();
+                                if ((color ?? "") !== shown()) {
+                                    root.patchFocusColor("custom", color);
+                                }
+                            }
+                        }
+
+                        ResetButton {
+                            objectName: "focusColorReset"
+                            visible: root.isStored(root.settingsDocument.focusColor)
+                            onClicked: root.patchSettings({
+                                "focusColor": null
+                            })
                         }
                     }
 
+                    // The swatches of the ring colour, in the column of the fields and
+                    // always shown with the preset box: a click on one is the whole
+                    // choice, whichever preset is on (it makes the preset Custom).
+                    // The colour in force is marked; the field above takes any other.
                     Flow {
+                        id: swatchRow
+
+                        // The row is one stop of Tab, as a radio group: the swatch that
+                        // has the keyboard is the stop while it has it, otherwise the
+                        // colour in force (the first if none of the swatches is).
+                        readonly property int entry: {
+                            for (let i = 0; i < swatches.count; ++i) {
+                                if (swatches.itemAt(i)?.inForce) {
+                                    return i;
+                                }
+                            }
+                            return 0;
+                        }
+                        property int focused: -1
+
+                        // Moves the keyboard to the swatch of the next row up (-1) or
+                        // down (1), the nearest in x; nothing if there is no such row.
+                        function moveRow(from, direction) {
+                            const here = swatches.itemAt(from);
+                            let rowY = null;
+                            for (let i = 0; i < swatches.count; ++i) {
+                                const y = swatches.itemAt(i).y;
+                                if ((y - here.y) * direction > 0 && (rowY === null || (y - rowY) * direction < 0)) {
+                                    rowY = y;
+                                }
+                            }
+                            let best = null;
+                            for (let i = 0; i < swatches.count && rowY !== null; ++i) {
+                                const item = swatches.itemAt(i);
+                                if (item.y === rowY && (best === null || Math.abs(item.x - here.x) < Math.abs(best.x - here.x))) {
+                                    best = item;
+                                }
+                            }
+                            if (best !== null) {
+                                best.forceActiveFocus(Qt.TabFocusReason);
+                            }
+                        }
+
+                        function moveAlong(from, step) {
+                            const item = swatches.itemAt(from + step);
+                            if (item) {
+                                item.forceActiveFocus(Qt.TabFocusReason);
+                            }
+                        }
+
+                        objectName: "focusSwatches"
+                        Accessible.role: Accessible.Grouping
+                        Accessible.name: "Focus ring color"
                         Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignTop
+                        Layout.leftMargin: 160 + 12
+                        spacing: 8 + Roost.theme.cursorRingWidth
+
+                        Repeater {
+                            id: swatches
+
+                            model: Roost.theme.focusSwatches
+
+                            delegate: AbstractButton {
+                                id: swatch
+
+                                required property int index
+                                required property string modelData
+                                readonly property bool inForce: Qt.colorEqual(Roost.theme.focus, modelData)
+                                // The presets are named as the box names them.
+                                readonly property string presetName: modelData.toLowerCase() === Roost.theme.focusBaseText.toLowerCase() ? "Base" : modelData.toLowerCase() === Roost.theme.focusContrastText.toLowerCase() ? "Contrast" : ""
+
+                                objectName: "focusSwatch" + index
+                                implicitWidth: 28
+                                implicitHeight: 28
+                                activeFocusOnTab: swatchRow.focused === index || (swatchRow.focused < 0 && swatchRow.entry === index)
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        swatchRow.focused = index;
+                                    } else if (swatchRow.focused === index) {
+                                        swatchRow.focused = -1;
+                                    }
+                                }
+                                // Arrows move inside the row; Space and Enter pick.
+                                Keys.onLeftPressed: swatchRow.moveAlong(index, -1)
+                                Keys.onRightPressed: swatchRow.moveAlong(index, 1)
+                                Keys.onUpPressed: swatchRow.moveRow(index, -1)
+                                Keys.onDownPressed: swatchRow.moveRow(index, 1)
+                                // A held Enter repeats: one pick per press.
+                                Keys.onReturnPressed: event => {
+                                    if (!event.isAutoRepeat) {
+                                        clicked();
+                                    }
+                                }
+                                Keys.onEnterPressed: event => {
+                                    if (!event.isAutoRepeat) {
+                                        clicked();
+                                    }
+                                }
+                                Accessible.role: Accessible.RadioButton
+                                Accessible.name: presetName === "" ? modelData : presetName + " (" + modelData + ")"
+                                Accessible.description: root.focusColor.preset === "custom" ? "" : "Picking it makes the preset Custom"
+                                Accessible.checkable: true
+                                Accessible.checked: inForce
+                                onClicked: root.pickFocusColor(modelData)
+
+                                background: Rectangle {
+                                    radius: width / 2
+                                    color: swatch.modelData
+                                    border.width: 1
+                                    border.color: Roost.theme.line
+
+                                    // The colour in force: a ring of the surface inside.
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        anchors.margins: 4
+                                        visible: swatch.inForce
+                                        radius: width / 2
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: Roost.theme.surface
+                                    }
+
+                                    // The ring of the focus, outside with a gap of 2 px.
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                                        visible: swatch.visualFocus
+                                        radius: width / 2
+                                        color: "transparent"
+                                        border.width: Roost.theme.cursorRingWidth
+                                        border.color: Roost.theme.focus
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    SettingHelp {
+                        text: "Outline of the control that the keyboard is on."
+                    }
+
+                    SettingProblems {
+                        objectName: "focusColorProblems"
+                        setting: "focusColor"
+                    }
+                }
+
+                ColumnLayout {
+                    objectName: "updatesPage"
+                    Layout.fillWidth: true
+                    visible: root.shownKey === "updates"
+                    spacing: 8
+
+                    SectionTitle {
+                        text: "Updates"
+                    }
+
+                    FieldRow {
+                        label: "Check for updates"
+
+                        Switch {
+                            id: updatesCheckSwitch
+
+                            objectName: "updatesCheckSwitch"
+                            // The default until the document is read; showDocument()
+                            // sets it, a binding would not survive a click.
+                            checked: true
+                            implicitHeight: 38
+                            // The track and the knob in the tokens (derived, no mockup:
+                            // docs/design/18-style.md): `primary` on, `textMuted` off
+                            // (the white knob keeps its contrast).
+                            indicator: Rectangle {
+                                objectName: "switchTrack"
+                                x: updatesCheckSwitch.leftPadding
+                                y: (updatesCheckSwitch.height - height) / 2
+                                implicitWidth: 40
+                                implicitHeight: 22
+                                radius: height / 2
+                                color: updatesCheckSwitch.checked ? Roost.theme.primary : Roost.theme.textMuted
+
+                                // The ring of the focus around the track, outside with
+                                // a gap of 2 px, as at FormButton.
+                                Rectangle {
+                                    objectName: "switchRing"
+                                    anchors.fill: parent
+                                    anchors.margins: -(2 + Roost.theme.cursorRingWidth)
+                                    visible: updatesCheckSwitch.visualFocus
+                                    radius: height / 2
+                                    color: "transparent"
+                                    border.width: Roost.theme.cursorRingWidth
+                                    border.color: Roost.theme.focus
+                                }
+
+                                Rectangle {
+                                    objectName: "switchKnob"
+                                    x: updatesCheckSwitch.checked ? parent.width - width - 2 : 2
+                                    y: 2
+                                    width: parent.height - 4
+                                    height: width
+                                    radius: width / 2
+                                    color: Roost.theme.surface
+                                }
+                            }
+                            background: null
+                            onToggled: root.patchSettings({
+                                "updates": {
+                                    "check": checked
+                                }
+                            })
+                        }
+                    }
+
+                    SettingHelp {
+                        text: "Look for a new version of roost."
+                    }
+                }
+
+                Repeater {
+                    model: root.settingsPages
+
+                    delegate: ColumnLayout {
+                        id: section
+
+                        required property var modelData
+                        readonly property string pluginId: modelData.pluginId
+
+                        objectName: "pluginSettings"
+                        Layout.fillWidth: true
+                        visible: root.shownKey === "plugin:" + pluginId
                         spacing: 8
 
-                        Repeater {
-                            id: chips
+                        SectionTitle {
+                            text: root.pluginTitle(section.pluginId)
+                        }
 
-                            model: keyRow.modelData.keys
+                        Item {
+                            id: host
 
-                            delegate: RowLayout {
-                                id: keyChip
+                            property Item page: section.modelData.page
 
-                                required property var modelData
-                                readonly property Item removeButton: removeKeyButton
+                            function attach() {
+                                if (page === null) {
+                                    return;
+                                }
+                                page.parent = host;
+                                page.anchors.fill = host;
+                            }
 
-                                spacing: 4
+                            Layout.fillWidth: true
+                            implicitHeight: page ? page.implicitHeight : 0
+                            onPageChanged: attach()
+                            Component.onCompleted: attach()
+                            // The loader deletes the page; not with this item.
+                            Component.onDestruction: {
+                                if (page !== null) {
+                                    page.parent = null;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ColumnLayout {
+                    objectName: "keysPage"
+                    Layout.fillWidth: true
+                    visible: root.shownKey === "keys"
+                    spacing: 8
+
+                    SectionTitle {
+                        text: "Keys"
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            color: Roost.theme.textMuted
+                            text: "Add a key to a command, take one off, or reset the command to the keys of its plugin. The window asks roostd to write keymap.json: the file is rewritten as indented JSON, so its formatting is not kept, and a file that is not valid JSON is left alone."
+                        }
+
+                        FormButton {
+                            objectName: "openKeymapButton"
+                            text: "Open keymap.json"
+                            onClicked: root.openKeymap()
+                        }
+                    }
+
+                    Label {
+                        objectName: "keysStatus"
+                        Layout.fillWidth: true
+                        visible: root.keysWriting
+                        color: Roost.theme.textMuted
+                        text: "Saving the keys\u2026"
+                    }
+
+                    Label {
+                        objectName: "keysError"
+                        Layout.fillWidth: true
+                        visible: text !== ""
+                        wrapMode: Text.Wrap
+                        color: Roost.theme.error
+                        text: root.keysError
+                        Accessible.role: Accessible.AlertMessage
+                        Accessible.name: text
+                        // As the warning of the dialog: heard when it appears.
+                        onTextChanged: shown => {
+                            if (shown !== "") {
+                                Accessible.announce(shown, Accessible.Assertive);
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        id: keyRepeater
+
+                        model: root.keyRows
+
+                        delegate: RowLayout {
+                            id: keyRow
+
+                            required property var modelData
+
+                            // The control that the keyboard goes to for a row after a
+                            // change: the × of the first of `chords` that the row
+                            // has, else "Add key".
+                            function buttonFor(chords) {
+                                for (const chord of chords) {
+                                    for (let at = 0; at < chips.count; ++at) {
+                                        const chip = chips.itemAt(at);
+                                        if (chip !== null && keyChords.sameKey(chip.modelData.text) === keyChords.sameKey(chord)) {
+                                            return chip.removeButton;
+                                        }
+                                    }
+                                }
+                                return addButton;
+                            }
+
+                            objectName: "keymapRow"
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            ColumnLayout {
+                                Layout.preferredWidth: 180
+                                Layout.alignment: Qt.AlignTop
+                                spacing: 0
 
                                 Label {
-                                    objectName: "keymapKey"
-                                    text: keyChip.modelData.text
+                                    objectName: "keymapTitle"
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    text: keyRow.modelData.title
                                 }
 
                                 Label {
-                                    objectName: "keymapSource"
-                                    visible: text !== ""
+                                    objectName: "keymapCommand"
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
                                     color: Roost.theme.textMuted
                                     font: Roost.theme.smallFont
-                                    text: keyChip.modelData.source === "user" ? "user" : ""
-                                }
-
-                                FormButton {
-                                    id: removeKeyButton
-
-                                    objectName: "removeKeyButton"
-                                    implicitWidth: 28
-                                    implicitHeight: 28
-                                    leftPadding: 0
-                                    rightPadding: 0
-                                    text: "\u00d7"
-                                    enabled: !root.keysWriting
-                                    Accessible.name: "Remove " + keyChip.modelData.text + " from " + keyRow.modelData.title
-                                    onClicked: root.removeKey(keyRow.modelData, keyChip.modelData.text)
+                                    text: keyRow.modelData.command + (keyRow.modelData.when ? "  (" + keyRow.modelData.when + ")" : "")
                                 }
                             }
-                        }
 
-                        // A key of the plugins that another entry holds:
-                        // Reset of this row does not give it back.
-                        Repeater {
-                            model: keyRow.modelData.held
+                            Flow {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignTop
+                                spacing: 8
 
-                            delegate: Label {
-                                required property var modelData
+                                Repeater {
+                                    id: chips
 
-                                objectName: "keymapHeld"
-                                color: Roost.theme.textMuted
-                                font: Roost.theme.smallFont
-                                text: modelData.key + " is held by " + root.titleOf(modelData.command)
+                                    model: keyRow.modelData.keys
+
+                                    delegate: RowLayout {
+                                        id: keyChip
+
+                                        required property var modelData
+                                        readonly property Item removeButton: removeKeyButton
+
+                                        spacing: 4
+
+                                        Label {
+                                            objectName: "keymapKey"
+                                            text: keyChip.modelData.text
+                                        }
+
+                                        Label {
+                                            objectName: "keymapSource"
+                                            visible: text !== ""
+                                            color: Roost.theme.textMuted
+                                            font: Roost.theme.smallFont
+                                            text: keyChip.modelData.source === "user" ? "user" : ""
+                                        }
+
+                                        FormButton {
+                                            id: removeKeyButton
+
+                                            objectName: "removeKeyButton"
+                                            implicitWidth: 28
+                                            implicitHeight: 28
+                                            leftPadding: 0
+                                            rightPadding: 0
+                                            text: "\u00d7"
+                                            enabled: !root.keysWriting
+                                            Accessible.name: "Remove " + keyChip.modelData.text + " from " + keyRow.modelData.title
+                                            onClicked: root.removeKey(keyRow.modelData, keyChip.modelData.text)
+                                        }
+                                    }
+                                }
+
+                                // A key of the plugins that another entry holds:
+                                // Reset of this row does not give it back.
+                                Repeater {
+                                    model: keyRow.modelData.held
+
+                                    delegate: Label {
+                                        required property var modelData
+
+                                        objectName: "keymapHeld"
+                                        color: Roost.theme.textMuted
+                                        font: Roost.theme.smallFont
+                                        text: modelData.key + " is held by " + root.titleOf(modelData.command)
+                                    }
+                                }
+                            }
+
+                            FormButton {
+                                id: addButton
+
+                                objectName: "addKeyButton"
+                                Layout.alignment: Qt.AlignTop
+                                text: "Add key"
+                                enabled: !root.keysWriting
+                                Accessible.name: "Add a key to " + keyRow.modelData.title
+                                onClicked: root.addKey(keyRow.modelData)
+                            }
+
+                            ResetButton {
+                                objectName: "resetKeysButton"
+                                Layout.alignment: Qt.AlignTop
+                                visible: keyRow.modelData.changed
+                                enabled: !root.keysWriting
+                                Accessible.name: "Reset the keys of " + keyRow.modelData.title
+                                onClicked: root.resetKeys(keyRow.modelData)
                             }
                         }
-                    }
-
-                    FormButton {
-                        id: addButton
-
-                        objectName: "addKeyButton"
-                        Layout.alignment: Qt.AlignTop
-                        text: "Add key"
-                        enabled: !root.keysWriting
-                        Accessible.name: "Add a key to " + keyRow.modelData.title
-                        onClicked: root.addKey(keyRow.modelData)
-                    }
-
-                    ResetButton {
-                        objectName: "resetKeysButton"
-                        Layout.alignment: Qt.AlignTop
-                        visible: keyRow.modelData.changed
-                        enabled: !root.keysWriting
-                        Accessible.name: "Reset the keys of " + keyRow.modelData.title
-                        onClicked: root.resetKeys(keyRow.modelData)
                     }
                 }
             }

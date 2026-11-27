@@ -272,13 +272,31 @@ Checked CheckWindowParts(const QJsonObject& contributes,
     if (!panels.isUndefined() && !panels.isArray()) {
         return Fail(QStringLiteral("\"contributes.panels\" must be an array"));
     }
+    // The path of the page, or an object {qml, title}.
     const QJsonValue settings = contributes.value("settings");
-    if (!settings.isUndefined() &&
-        (!settings.isString() ||
-         !InsidePlugin(directory, settings.toString()))) {
+    if (settings.isUndefined()) {
+        return {};
+    }
+    if (settings.isObject()) {
+        const QJsonObject page = settings.toObject();
+        const QJsonValue qml = page.value("qml");
+        if (!qml.isString() || !InsidePlugin(directory, qml.toString())) {
+            return Fail(
+                QStringLiteral("\"contributes.settings.qml\" must be a path "
+                               "inside the plugin directory"));
+        }
+        const QJsonValue title = page.value("title");
+        if (!title.isUndefined() && !title.isString()) {
+            return Fail(QStringLiteral(
+                "\"contributes.settings.title\" must be a string"));
+        }
+        return {};
+    }
+    if (!settings.isString() || !InsidePlugin(directory, settings.toString())) {
         return Fail(
             QStringLiteral("\"contributes.settings\" must be a path "
-                           "inside the plugin directory"));
+                           "inside the plugin directory, or an object "
+                           "{qml, title}"));
     }
     return {};
 }

@@ -68,7 +68,7 @@
 | `sessions.newSession` | `Ctrl+Shift+N`, `mac`: `Cmd+N`, без `when` (вклад плагина `sessions`, не `shell`) | `LayoutView.qml`: открывает форму новой сессии в списке, у которого клавиатура, иначе в видимом списке, связанном с терминалом в фокусе (список на скрытой вкладке и список с незагруженной панелью пропускаются: клавиша ничего не делает, если не нашлось загруженного), иначе в первом видимом; при скрытых списках ничего не делает (`06-panels.md`) |
 | `shell.reportBug` | `Cmd+Shift+B`, только `mac` | `Main.qml`: диалог отчёта об ошибке |
 | `shell.palette` | `Ctrl+Shift+P`, `mac`: `Cmd+Shift+P`, без `when` | `Main.qml`: палитра команд (см. «Палитра») |
-| `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md) |
+| `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md); необязательные `args` — `{category: "appearance"\|"keys"\|"updates"}` или `{plugin: "<id>"}` открывают его на этой категории, без `args` окно открывается на последней выбранной |
 | `shell.about` | нет | `Main.qml`: окно «About roost» (05-plugins.md); ещё пунктом меню roost (macOS) и кнопкой «About…» панели инструментов (Linux) |
 | `terminal.copy` | `Ctrl+Shift+C`, `mac`: `Cmd+C`, `when` `terminal.view` | `TerminalPanel.qml`: копирует выделение терминала |
 | `terminal.fontBigger` | `Ctrl+Shift+=`, `mac`: `Cmd+=` и `Cmd+Shift+=` (вторая запись вклада: люди жмут `Cmd++`), без `when` (вклад плагина `terminal`) | `Main.qml`: размер шрифта терминала на 1 больше, не выше 72 |
