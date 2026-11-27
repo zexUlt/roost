@@ -280,8 +280,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shards: [3]
-        shard: [0, 1, 2]
+        shards: [4]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
