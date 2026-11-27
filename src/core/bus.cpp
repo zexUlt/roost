@@ -101,3 +101,7 @@ bool EventBus::Publish(const QString& name, const QJsonValue& payload) {
 }
 
 }  // namespace roost
+
+namespace roost {
+int Bad_Global_Name = 0;
+}  // namespace roost
