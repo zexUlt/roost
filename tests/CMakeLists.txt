@@ -977,9 +977,11 @@ target_compile_definitions(install_layout_test PRIVATE
     QT_RUN_PATH="${ROOST_TEST_QT_RUN_PATH}"
     CLAUDE_ADAPTER_FILE="$<TARGET_FILE_NAME:claude-adapter>"
     CODEX_ADAPTER_FILE="$<TARGET_FILE_NAME:codex-adapter>"
+    NOTIFICATIONS_BACKEND_FILE="$<TARGET_FILE_NAME:notifications-backend>"
     SESSIONS_MODULE_FILE="$<TARGET_FILE_NAME:sessions_qml>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
-add_dependencies(install_layout_test roost roostd claude-adapter codex-adapter sessions_qml)
+add_dependencies(install_layout_test roost roostd claude-adapter codex-adapter
+    notifications-backend sessions_qml)
 
 # `roost --smoke-sessions` as a process: the real roostd with the built-in
 # plugins behind a fake `claude`; a sessions plugin without its QML module and
