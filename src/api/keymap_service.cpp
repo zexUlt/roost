@@ -56,6 +56,11 @@ QString KeymapService::PlatformName() {
                                             : QStringLiteral("linux");
 }
 
+QString KeymapService::OtherPlatformName() {
+    return HostPlatform() == EPlatform::Mac ? QStringLiteral("linux")
+                                            : QStringLiteral("mac");
+}
+
 void KeymapService::Start() {
     if (!CheckThread(*this, "KeymapService::Start") || Started_) {
         return;
@@ -73,6 +78,14 @@ QFuture<rpc::Result> KeymapService::Get() {
         return rpc::Ready(Table_);
     }
     return Fetch();
+}
+
+QFuture<rpc::Result> KeymapService::GetOtherPlatform() {
+    if (!CheckThread(*this, "KeymapService::GetOtherPlatform")) {
+        return rpc::Ready(std::unexpected(WrongThread()));
+    }
+    return Io_.Request(QStringLiteral("keymap.get"),
+                       QJsonObject{{PLATFORM, OtherPlatformName()}});
 }
 
 namespace {

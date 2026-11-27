@@ -673,6 +673,10 @@ private slots:
             {"commands.run",
              {{"command", "fixture.echo"}, {"args", QJsonArray{1, "two"}}}},
             {"keymap.get", {}},
+            // The fixture's own command: a plugin may set its own keys.
+            {"keymap.resetCommand", {{"command", "fixture.echo"}}},
+            {"keymap.setCommand",
+             {{"command", "fixture.echo"}, {"entries", QJsonArray{}}}},
             {"plugins.list", {}},
             {"sessions.list", {}},
             {"store.get", {{"plugin", "fixture"}}},

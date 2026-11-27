@@ -87,8 +87,21 @@ public:
         Owners_.bindPanel(owner, panel);
     }
 
-    QObject* registerCallOwner(QQmlContext* context) {
-        return Owners_.add(context);
+    // `plugin` is the id of the plugin whose panel the context is: the
+    // methods that a plugin may call only for its own (keymap.setCommand,
+    // keymap.resetCommand) are judged by it. Empty: no plugin.
+    QObject* registerCallOwner(QQmlContext* context,
+                               const QString& plugin = {}) {
+        return Owners_.add(context, plugin);
+    }
+
+    // The files under `directory` are the code of `plugin`: see
+    // CallOwners::addPluginDirectory.
+    void addPluginDirectory(const QString& plugin, const QString& directory) {
+        Owners_.addPluginDirectory(plugin, directory);
+    }
+    void dropPluginDirectory(const QString& plugin) {
+        Owners_.dropPluginDirectory(plugin);
     }
 
     // Any method of the dispatcher by name, as host->call of the C SDK does.
@@ -96,6 +109,13 @@ public:
     Q_INVOKABLE void call(const QString& method,
                           const QJSValue& params = QJSValue(),
                           const QJSValue& callback = QJSValue());
+
+    // The id of the plugin whose code is calling, "" for the window's own: the
+    // plugin that has a frame among the JS frames that are running. A window
+    // helper that a plugin must not reach asks it first (the keys of the
+    // settings window). A window-local helper, as bindingKey: it has no twin in
+    // host->call.
+    Q_INVOKABLE QString callerPlugin() const;
 
     // The Qt key a binding matches for a QML KeyEvent: event.key on a Latin
     // layout, else the key the US layout types at the physical position of the

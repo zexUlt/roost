@@ -272,6 +272,9 @@ std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(
     plugin->Native = declared.Native;
     plugin->Contributes = declared.Contributes;
     plugin->Context = std::make_unique<QQmlContext>(Engine_.rootContext());
+    // The QML of the plugin that no panel made (a singleton of its module) is
+    // its own by the file.
+    Roost_.addPluginDirectory(plugin->Id, plugin->Directory);
     Plugin& ref = *plugin;
 
     const QJsonValue panels = ref.Contributes.value("panels");
@@ -396,7 +399,7 @@ QQuickItem* PluginLoader::Instantiate(Plugin& plugin, QQmlComponent& component,
                                       const QString& instanceId,
                                       const QString& what, QString& error) {
     auto* context = new QQmlContext(plugin.Context.get());
-    QObject* owner = Roost_.registerCallOwner(context);
+    QObject* owner = Roost_.registerCallOwner(context, plugin.Id);
     QObject* object = component.beginCreate(context);
     if (object == nullptr) {
         error = component.errorString().trimmed();
@@ -531,6 +534,7 @@ void PluginLoader::Unload(Plugin& plugin) {
     plugin.Panels.clear();
     plugin.Settings.reset();
     plugin.Context.reset();
+    Roost_.dropPluginDirectory(plugin.Id);
     DropProblems(plugin.Id);
 }
 

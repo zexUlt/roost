@@ -6,7 +6,10 @@
 // The owner is a child of the context.
 // Against the real roostd and the fixture backend.
 
+#include <QFile>
+#include <QFileInfo>
 #include <QJSEngine>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -16,9 +19,11 @@
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <memory>
+#include <utility>
 
 #include "api/api.hpp"
 #include "api/api_test_support.hpp"
@@ -64,6 +69,25 @@ QtObject {
             Roost.sessions.refresh(cb)
         }
     }
+    // The keys of a command by Roost.call, as a plugin's panel or the shell
+    // sends them; what the answer was, error or not, goes to the probe.
+    function keys(method, command, t) {
+        const params = {command: command}
+        if (method === "keymap.setCommand") {
+            params.entries = [{key: "Ctrl+Alt+Z"}]
+        }
+        Roost.call(method, params, function (e, r) {
+            probe.Hit(t, JSON.stringify({code: e ? e.code : null,
+                                         message: e ? e.message : null}))
+        })
+    }
+    // A call that goes through a function of another object, as a plugin's
+    // page that calls a helper of the window: the keys are set there, with the
+    // panel's frame still below on the stack.
+    property var relay: null
+    function through(method, command, t) { relay.keys(method, command, t) }
+    // The plugin that the window's own code sees as its caller.
+    function caller() { return Roost.callerPlugin() }
     function setPins(n) { Roost.store.set("fixture", {pins: n}, callbackFor(tag)) }
     function hang(cb) { Roost.commands.run("fixture.hang", undefined, cb) }
     // A call from an object created inside the panel.
@@ -184,9 +208,9 @@ private:
 
     // A panel as the loader will make it: its own context, registered with an
     // owner, and the QML in it.
-    bool MakePanel() {
+    bool MakePanel(const QString& plugin = {}) {
         Context_ = new QQmlContext(Engine_->rootContext(), Engine_.get());
-        Owner_ = Singleton_->registerCallOwner(Context_);
+        Owner_ = Singleton_->registerCallOwner(Context_, plugin);
         Panel_ = Create(Context_, "panel");
         return Panel_ != nullptr;
     }
@@ -331,6 +355,175 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("shell"), 1, TIMEOUT_MS);
         Settle();
         QCOMPARE(Probe_.Count("panel"), 0);
+    }
+
+    // A panel of a plugin sets the keys of the commands that plugin declares
+    // in its `contributes.commands`; the shell, which is no plugin's, sets
+    // any. A plugin that asks for another's command is refused with the usual
+    // error and the file is not made.
+    void APluginSetsTheKeysOfItsOwnCommandsOnly() {
+        QVERIFY(Setup());
+        const QString file = Daemon_->ConfigPath() + "/keymap.json";
+        const auto answer = [&](const char* tag) {
+            const QJsonObject object =
+                QJsonDocument::fromJson(Probe_.Last.value(tag).toUtf8())
+                    .object();
+            return std::pair{object.value("code"), object.value("message")};
+        };
+        const auto keys = [&](QObject* caller, const char* method,
+                              const char* command, const char* tag) {
+            QVERIFY(QMetaObject::invokeMethod(caller, "keys",
+                                              Q_ARG(QVariant, QString(method)),
+                                              Q_ARG(QVariant, QString(command)),
+                                              Q_ARG(QVariant, QString(tag))));
+        };
+
+        // The panel of plugin "other" asks for a command of "fixture".
+        QVERIFY(MakePanel("other"));
+        keys(Panel_, "keymap.setCommand", "fixture.echo", "set-other");
+        keys(Panel_, "keymap.resetCommand", "fixture.echo", "reset-other");
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("set-other"), 1, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("reset-other"), 1, TIMEOUT_MS);
+        for (const char* tag : {"set-other", "reset-other"}) {
+            const auto [code, message] = answer(tag);
+            QCOMPARE(code, QJsonValue(-32602));
+            QVERIFY2(message.toString().contains("fixture.echo") &&
+                         message.toString().contains("other"),
+                     tag);
+        }
+        // The control: a call after the refused ones was answered by roostd
+        // (the shell's), so the refused ones had their turn; the file is
+        // still not there.
+        keys(Shell_, "keymap.resetCommand", "fixture.echo", "reset-shell");
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("reset-shell"), 1, TIMEOUT_MS);
+        QCOMPARE(answer("reset-shell").first, QJsonValue::Null);
+        QVERIFY(!QFileInfo::exists(file));
+
+        // The panel of "fixture" sets its own command.
+        delete Owner_.data();
+        DestroyPanelAndContext();
+        QVERIFY(MakePanel("fixture"));
+        keys(Panel_, "keymap.setCommand", "fixture.echo", "set-own");
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("set-own"), 1, TIMEOUT_MS);
+        QCOMPARE(answer("set-own").first, QJsonValue::Null);
+        QFile written(file);
+        QVERIFY(written.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(written.readAll()).array(),
+                 (QJsonArray{QJsonObject{{"command", "fixture.echo"},
+                                         {"key", "Ctrl+Alt+Z"}}}));
+        written.close();
+
+        // The shell sets a command of a plugin that is not its own.
+        keys(Shell_, "keymap.resetCommand", "fixture.echo", "reset-own-shell");
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("reset-own-shell"), 1,
+                                  TIMEOUT_MS);
+        QCOMPARE(answer("reset-own-shell").first, QJsonValue::Null);
+    }
+
+    // The shell's function that a plugin's panel calls is judged as the
+    // panel's: the call it makes while the panel's frame is on the stack is a
+    // call of the plugin, and a call from the shell alone is not.
+    void APluginThatCallsAShellFunctionIsStillThePlugin() {
+        QVERIFY(Setup());
+        const QString file = Daemon_->ConfigPath() + "/keymap.json";
+        QVERIFY(MakePanel("other"));
+        QVERIFY(
+            Panel_->setProperty("relay", QVariant::fromValue(Shell_.data())));
+
+        QVariant seen;
+        QVERIFY(QMetaObject::invokeMethod(Shell_, "caller",
+                                          Q_RETURN_ARG(QVariant, seen)));
+        QCOMPARE(seen.toString(), QString());
+        QVERIFY(QMetaObject::invokeMethod(Panel_, "caller",
+                                          Q_RETURN_ARG(QVariant, seen)));
+        QCOMPARE(seen.toString(), QString("other"));
+
+        QVERIFY(QMetaObject::invokeMethod(
+            Panel_, "through", Q_ARG(QVariant, QString("keymap.setCommand")),
+            Q_ARG(QVariant, QString("fixture.echo")),
+            Q_ARG(QVariant, QString("through-other"))));
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("through-other"), 1, TIMEOUT_MS);
+        const QJsonObject refused =
+            QJsonDocument::fromJson(Probe_.Last.value("through-other").toUtf8())
+                .object();
+        QCOMPARE(refused.value("code"), QJsonValue(-32602));
+        QVERIFY(!QFileInfo::exists(file));
+
+        // The control: the same helper of the shell, called by the shell.
+        QVERIFY(QMetaObject::invokeMethod(
+            Shell_, "keys", Q_ARG(QVariant, QString("keymap.resetCommand")),
+            Q_ARG(QVariant, QString("fixture.echo")),
+            Q_ARG(QVariant, QString("through-shell"))));
+        QTRY_COMPARE_WITH_TIMEOUT(Probe_.Count("through-shell"), 1, TIMEOUT_MS);
+        QVERIFY(
+            QJsonDocument::fromJson(Probe_.Last.value("through-shell").toUtf8())
+                .object()
+                .value("code")
+                .isNull());
+    }
+
+    // A singleton of a plugin's own QML module is made in the root context of
+    // the engine, below no panel: it is the plugin's by the file it is written
+    // in, once the loader says where the plugin is.
+    void ASingletonOfThePluginsModuleIsThePlugin() {
+        QVERIFY(Setup());
+        QTemporaryDir modules;
+        QVERIFY(modules.isValid());
+        const QString module = modules.filePath("PluginSing");
+        QVERIFY(QDir().mkpath(module));
+        const auto write = [](const QString& path, const QByteArray& text) {
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly) && file.write(text) > 0;
+        };
+        QVERIFY(write(module + "/qmldir",
+                      "module PluginSing\nsingleton Sing 1.0 Sing.qml\n"));
+        QVERIFY(write(module + "/Sing.qml", R"(
+pragma Singleton
+import QtQml
+import Roost.Api
+QtObject {
+    function keys(method, command, t) {
+        Roost.call(method, {command: command}, function (e, r) {
+            probe.Hit(t, JSON.stringify({code: e ? e.code : null}))
+        })
+    }
+}
+)"));
+        Engine_->addImportPath(modules.path());
+        QQmlComponent user(Engine_.get());
+        user.setData(
+            "import QtQml\nimport PluginSing 1.0\nQtObject {"
+            " function go(t) { Sing.keys('keymap.resetCommand', "
+            "'fixture.echo', t) } }",
+            QUrl());
+        QObject* caller = user.create(Engine_->rootContext());
+        QVERIFY2(caller != nullptr, qPrintable(user.errorString()));
+        QJSEngine::setObjectOwnership(caller, QJSEngine::CppOwnership);
+        // The code of the answer, "timed out" when none came.
+        const auto go = [&](const QString& tag) -> QJsonValue {
+            if (!QMetaObject::invokeMethod(caller, "go",
+                                           Q_ARG(QVariant, tag)) ||
+                !QTest::qWaitFor([&] { return Probe_.Count(tag) == 1; },
+                                 TIMEOUT_MS)) {
+                return QStringLiteral("timed out");
+            }
+            return QJsonDocument::fromJson(Probe_.Last.value(tag).toUtf8())
+                .object()
+                .value("code");
+        };
+
+        // Nobody knows whose file it is: the window's.
+        QCOMPARE(go("unknown"), QJsonValue::Null);
+        // The loader says the directory is plugin "other"'s.
+        Singleton_->addPluginDirectory("other", modules.path());
+        QCOMPARE(go("known"), QJsonValue(-32602));
+        // The plugin goes: the file is no one's again.
+        Singleton_->dropPluginDirectory("other");
+        QCOMPARE(go("dropped"), QJsonValue::Null);
+        // The plugin that declares the command is let through by its files.
+        Singleton_->addPluginDirectory("fixture", modules.path());
+        QCOMPARE(go("own"), QJsonValue::Null);
+        delete caller;
     }
 
     void ALiveNestedCallIsAnswered() {

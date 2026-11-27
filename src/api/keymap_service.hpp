@@ -67,6 +67,13 @@ public:
     // continuation with a context.
     QFuture<rpc::Result> Get();
 
+    // keymap.get for the platform that the window is not on: asked of roostd
+    // each time and kept nowhere, since the window has no use for the other
+    // table except to send a command's keys whole (SetCommand sets the keys
+    // of both platforms, the file being shared). The future finishes in the IO
+    // thread: attach a continuation with a context.
+    QFuture<rpc::Result> GetOtherPlatform();
+
     // keymap.setCommand: roostd sets the whole set of the user's keys of one
     // command in keymap.json, in one write (design.md §16). `entries` are
     // {key?, mac?} (as in the file): all the keys the command must have
@@ -106,6 +113,8 @@ public:
 
     // The platform's name in the protocol: "mac" or "linux".
     static QString PlatformName();
+    // The name of the other one.
+    static QString OtherPlatformName();
 
 signals:
     // The table was replaced, by the answer of roostd or by an event.

@@ -44,6 +44,10 @@ struct Call {
     QString Method;
     QJsonValue Params = QJsonValue::Undefined;  // an object, an array or absent
     QObject* Peer = nullptr;
+    // The plugin whose code makes the call, for a dispatcher that answers a
+    // plugin and the window alike (api::Dispatcher); empty for the window
+    // itself and for every other dispatcher.
+    QString Plugin;
 };
 
 // A handler answers through a future, so it can wait on a backend process. One
