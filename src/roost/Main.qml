@@ -120,9 +120,10 @@ ApplicationWindow {
     // Shows the settings window, or raises it; macOS calls it from the
     // "Settings…" item of the menu bar (the native menu puts it in the
     // application menu) and Cmd+, (the command shell.settings), other
-    // platforms from the toolbar button.
-    function openSettings() {
-        settingsWindow.open();
+    // platforms from the toolbar button. `target` is the args of the command
+    // (SettingsWindow.open): the category to open on.
+    function openSettings(target) {
+        settingsWindow.open(target);
     }
 
     // Shows the "About roost" window, or raises it; macOS calls it from the
@@ -558,7 +559,7 @@ ApplicationWindow {
             Roost.commands.registerCommand("shell.focusList", () => layoutView.focusList());
             Roost.commands.registerCommand("shell.reportBug", () => root.reportBug());
             Roost.commands.registerCommand("shell.palette", () => root.openPalette());
-            Roost.commands.registerCommand("shell.settings", () => root.openSettings());
+            Roost.commands.registerCommand("shell.settings", args => root.openSettings(args));
             Roost.commands.registerCommand("shell.about", () => root.openAbout());
             Roost.commands.registerCommand("terminal.fontBigger", () => root.changeFontSize(1));
             Roost.commands.registerCommand("terminal.fontSmaller", () => root.changeFontSize(-1));

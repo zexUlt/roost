@@ -290,10 +290,13 @@ std::unique_ptr<PluginLoader::Plugin> PluginLoader::Load(
 
 void PluginLoader::LoadSettings(Plugin& plugin) {
     const QString name = QLatin1String(SETTINGS_PROBLEM_NAME);
-    const QJsonValue qml = plugin.Contributes.value("settings");
-    if (qml.isUndefined()) {
+    const QJsonValue declared = plugin.Contributes.value("settings");
+    if (declared.isUndefined()) {
         return;
     }
+    // The path alone, or {qml, title}: the title is the window's to read.
+    const QJsonValue qml =
+        declared.isObject() ? declared.toObject().value("qml") : declared;
     if (!qml.isString() || qml.toString().isEmpty()) {
         AddProblem(plugin.Id, name,
                    QStringLiteral("\"settings\" must be a non-empty string"));

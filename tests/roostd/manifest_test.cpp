@@ -457,6 +457,53 @@ private slots:
             << contributes("settings", "/etc/passwd") << "contributes.settings";
         QTest::newRow("settings empty")
             << contributes("settings", "") << "contributes.settings";
+        const auto page = [&](const QJsonObject& object) {
+            return contributes("settings", object);
+        };
+        QTest::newRow("settings object without a qml")
+            << page(QJsonObject{{"title", "Notifications"}})
+            << "contributes.settings.qml";
+        QTest::newRow("settings object with an empty qml")
+            << page(QJsonObject{{"qml", ""}}) << "contributes.settings.qml";
+        QTest::newRow("settings object with a qml that is no string")
+            << page(QJsonObject{{"qml", 1}}) << "contributes.settings.qml";
+        QTest::newRow("settings object with a qml outside")
+            << page(QJsonObject{{"qml", "../../etc/passwd"}})
+            << "contributes.settings.qml";
+        QTest::newRow("settings object with an absolute qml")
+            << page(QJsonObject{{"qml", "/etc/passwd"}})
+            << "contributes.settings.qml";
+        QTest::newRow("settings object with a title that is no string")
+            << page(QJsonObject{{"qml", "qml/Settings.qml"}, {"title", 1}})
+            << "contributes.settings.title";
+        QTest::newRow("settings object with a null title")
+            << page(QJsonObject{{"qml", "qml/Settings.qml"},
+                                {"title", QJsonValue::Null}})
+            << "contributes.settings.title";
+    }
+
+    // `contributes.settings` is a path, or {qml, title}: the title stays in
+    // the contributes that plugins.list hands to the window.
+    void TheObjectFormOfSettingsParses() {
+        const auto titled = ParseManifest(
+            Json(With(Minimal(), "contributes",
+                      QJsonObject{{"settings",
+                                   QJsonObject{{"qml", "qml/Settings.qml"},
+                                               {"title", "Notifications"}}}})),
+            DIRECTORY);
+        QVERIFY2(titled, qPrintable(Why(titled)));
+        QCOMPARE(titled->Contributes.value("settings")
+                     .toObject()
+                     .value("title")
+                     .toString(),
+                 QString("Notifications"));
+        // The title is optional.
+        const auto untitled = ParseManifest(
+            Json(With(Minimal(), "contributes",
+                      QJsonObject{{"settings",
+                                   QJsonObject{{"qml", "qml/Settings.qml"}}}})),
+            DIRECTORY);
+        QVERIFY2(untitled, qPrintable(Why(untitled)));
     }
 
     void BadManifestsAreRefused() {

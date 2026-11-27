@@ -130,11 +130,13 @@ bool WriteFile(const QString& path, const QByteArray& content) {
            file.write(content) == content.size();
 }
 
-// A plugin directory with a manifest and files; `settings` is the manifest key
-// (nothing when empty).
-bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
-               const QString& settings, const QMap<QString, QByteArray>& files,
-               const QJsonValue& native = QJsonValue::Undefined) {
+// A plugin directory with a manifest and files; `settings` is the value of the
+// manifest key `contributes.settings` (nothing when undefined): a path, or the
+// object {qml, title}.
+bool AddPluginDeclaring(testing::RoostdProcess& daemon, const QString& id,
+                        const QJsonValue& settings,
+                        const QMap<QString, QByteArray>& files,
+                        const QJsonValue& native = QJsonValue::Undefined) {
     QJsonObject contributes{
         {"commands",
          QJsonArray{QJsonObject{{"id", id + ".hello"}, {"title", "Hello"}},
@@ -143,7 +145,7 @@ bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
          QJsonArray{
              QJsonObject{{"command", id + ".hello"}, {"key", "Ctrl+Alt+J"}},
              QJsonObject{{"command", id + ".other"}, {"key", "Ctrl+Alt+O"}}}}};
-    if (!settings.isEmpty()) {
+    if (!settings.isUndefined()) {
         contributes.insert("settings", settings);
     }
     QJsonObject manifest{{"id", id},
@@ -161,6 +163,17 @@ bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
     }
     return WriteFile(directory + "/plugin.json",
                      QJsonDocument(manifest).toJson());
+}
+
+// The same with the path of the page (nothing when empty).
+bool AddPlugin(testing::RoostdProcess& daemon, const QString& id,
+               const QString& settings, const QMap<QString, QByteArray>& files,
+               const QJsonValue& native = QJsonValue::Undefined) {
+    return AddPluginDeclaring(daemon, id,
+                              settings.isEmpty()
+                                  ? QJsonValue(QJsonValue::Undefined)
+                                  : QJsonValue(settings),
+                              files, native);
 }
 
 // The first entry of the terminal family box.
@@ -352,7 +365,7 @@ private:
         window->Pages =
             std::make_unique<SettingsPages>(*window->Object, *window->Loader);
         if (open) {
-            QMetaObject::invokeMethod(window->Object.get(), "open");
+            OpenAt(*window, QVariant());
         }
         return window;
     }
@@ -587,6 +600,53 @@ private:
     // The item that has the keyboard of the window.
     static QQuickItem* Focused(const SettingsWindow& window) {
         return window.Window()->activeFocusItem();
+    }
+
+    // The category that the window shows ("appearance", "keys", "updates" or
+    // "plugin:<id>").
+    static QString ShownKey(const SettingsWindow& window) {
+        return window.Object->property("shownKey").toString();
+    }
+
+    // What a test does to reach the controls of a category without the
+    // keyboard: the window chooses it, as a click on its row does.
+    static void Choose(const SettingsWindow& window, const QString& key) {
+        QVERIFY(QMetaObject::invokeMethod(window.Object.get(), "chooseCategory",
+                                          Q_ARG(QVariant, key)));
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(window), key, TIMEOUT_MS);
+    }
+
+    // The list of the categories has the keyboard: the list itself or its
+    // current row (a view hands the focus to the row that is current).
+    static bool ListHasKeyboard(const SettingsWindow& window) {
+        const QQuickItem* list = window.Find("categoryList");
+        const QQuickItem* focused = Focused(window);
+        return list != nullptr && focused != nullptr &&
+               (focused == list || list->isAncestorOf(focused));
+    }
+
+    // What shell.settings does: the window opens, on the category of `target`.
+    static bool OpenAt(const SettingsWindow& window, const QVariant& target) {
+        return QMetaObject::invokeMethod(window.Object.get(), "open",
+                                         Q_ARG(QVariant, target));
+    }
+
+    // The titles of the rows of the list of categories, top to bottom.
+    static QStringList CategoryTitles(const SettingsWindow& window) {
+        QList<QQuickItem*> rows = window.FindAll("categoryItem");
+        std::ranges::sort(rows, [](const QQuickItem* a, const QQuickItem* b) {
+            return a->y() < b->y();
+        });
+        QStringList titles;
+        for (const QQuickItem* row : rows) {
+            titles.append(row->property("text").toString());
+        }
+        return titles;
+    }
+
+    // Whether the page of a category is the one shown.
+    static bool PageIsShown(const SettingsWindow& window, const QString& name) {
+        return IsShown(window, name);
     }
 
     // What a user does to a button of a row: reaches it and clicks it.
@@ -849,9 +909,264 @@ private slots:
         Config_.reset();
     }
 
+    // The categories are a list on the left: the built-in ones, then one for
+    // each plugin with a page, by title. The title is the one of the object
+    // form of `contributes.settings`; the string form has none, so the id.
+    void TheListShowsTheBuiltInCategoriesAndThePluginsByTitle() {
+        QVERIFY(AddPluginDeclaring(*Daemon_, "titled",
+                                   QJsonObject{{"qml", "qml/Settings.qml"},
+                                               {"title", "Notifications"}},
+                                   {{"qml/Settings.qml", FIXTURE_PAGE}}));
+        // The roostd of init() has the plugins of the first AddPlugin only.
+        Daemon_->Stop();
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(CategoryTitles(*window),
+                                  (QStringList{"Appearance", "Keys", "Updates",
+                                               "Notifications", FIXTURE}),
+                                  TIMEOUT_MS);
+        // The first time the window opens on Appearance.
+        QCOMPARE(ShownKey(*window), QString("appearance"));
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "appearancePage"),
+                                 TIMEOUT_MS);
+        QVERIFY(!PageIsShown(*window, "keysPage"));
+        QVERIFY(!PageIsShown(*window, "updatesPage"));
+        // The row is named for assistive technology by the title.
+        for (QQuickItem* row : window->FindAll("categoryItem")) {
+            QAccessibleInterface* item =
+                QAccessible::queryAccessibleInterface(row);
+            QVERIFY(item != nullptr);
+            QCOMPARE(item->role(), QAccessible::ListItem);
+            QCOMPARE(item->text(QAccessible::Name),
+                     row->property("text").toString());
+        }
+    }
+
+    // Up and Down in the list choose a category and the page follows at once;
+    // the ends hold.
+    void UpAndDownChangeThePage() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* list = window->Find("categoryList");
+        QVERIFY(list != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(list->width() > 0, TIMEOUT_MS);
+        list->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(ListHasKeyboard(*window));
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "appearancePage"),
+                                 TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Up);
+        QCOMPARE(ShownKey(*window), QString("appearance"));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        QVERIFY(PageIsShown(*window, "keysPage"));
+        QVERIFY(!PageIsShown(*window, "appearancePage"));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), QString("updates"));
+        QVERIFY(PageIsShown(*window, "updatesPage"));
+        QVERIFY(!PageIsShown(*window, "keysPage"));
+        // The plugin's category is after Updates.
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryTitles(*window).contains(FIXTURE),
+                                 TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), "plugin:" + FIXTURE);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "pluginSettings"),
+                                 TIMEOUT_MS);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), "plugin:" + FIXTURE);
+        QTest::keyClick(window->Window(), Qt::Key_Up);
+        QCOMPARE(ShownKey(*window), QString("updates"));
+        // The list keeps the keyboard.
+        QVERIFY(ListHasKeyboard(*window));
+    }
+
+    // A click on a row chooses its category.
+    void AClickOnARowChoosesTheCategory() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryTitles(*window).size() == 4,
+                                 TIMEOUT_MS);
+        QQuickItem* keys = nullptr;
+        for (QQuickItem* row : window->FindAll("categoryItem")) {
+            if (row->property("text").toString() == "Keys") {
+                keys = row;
+            }
+        }
+        QVERIFY(keys != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(keys->width() > 0 && keys->height() > 0,
+                                 TIMEOUT_MS);
+        QTest::mouseClick(
+            window->Window(), Qt::LeftButton, Qt::NoModifier,
+            keys->mapToScene(QPointF(keys->width() / 2, keys->height() / 2))
+                .toPoint());
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        QVERIFY(PageIsShown(*window, "keysPage"));
+    }
+
+    // Tab goes from the list into the page, through its controls, and from
+    // the last of them back to the list; Shift+Tab goes back the same way.
+    void TabGoesIntoThePageAndBackToTheList() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* list = window->Find("categoryList");
+        QVERIFY(list != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            list->width() > 0 && PageIsShown(*window, "appearancePage"),
+            TIMEOUT_MS);
+        list->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(ListHasKeyboard(*window));
+        // Appearance: the first control of the page, and back.
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QCOMPARE(Focused(*window), window->Find("themeBox"));
+        QTest::keyClick(window->Window(), Qt::Key_Tab, Qt::ShiftModifier);
+        QVERIFY(ListHasKeyboard(*window));
+        // Updates, whose page has one control: in, round to the list, and
+        // Shift+Tab from the list to that control.
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        QCOMPARE(ShownKey(*window), QString("updates"));
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QCOMPARE(Focused(*window), window->Find("updatesCheckSwitch"));
+        QTest::keyClick(window->Window(), Qt::Key_Tab);
+        QVERIFY(ListHasKeyboard(*window));
+        QTest::keyClick(window->Window(), Qt::Key_Tab, Qt::ShiftModifier);
+        QCOMPARE(Focused(*window), window->Find("updatesCheckSwitch"));
+    }
+
+    // Tab from the last control of a page with many of them (Appearance:
+    // the swatches are its last stop) also returns to the list.
+    void TabFromTheLastControlOfAppearanceReturnsToTheList() {
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QQuickItem* list = window->Find("categoryList");
+        QVERIFY(list != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "appearancePage") &&
+                                     window->Find("focusSwatch0") != nullptr &&
+                                     window->Find("focusSwatch0")->width() > 0,
+                                 TIMEOUT_MS);
+        // Tab from the list through the page to the end, as a user does.
+        list->forceActiveFocus(Qt::TabFocusReason);
+        int presses = 0;
+        do {
+            QTest::keyClick(window->Window(), Qt::Key_Tab);
+            ++presses;
+        } while (!ListHasKeyboard(*window) && presses < 40);
+        QVERIFY(ListHasKeyboard(*window));
+        // It went through the controls, the swatches among them.
+        QVERIFY(presses > 5);
+    }
+
+    // The command shell.settings opens on the category that its args name.
+    void TheTargetOfShellSettingsOpensItsPage() {
+        // A target for a window that was never shown: its page is made by
+        // the first show, and chosen at once.
+        auto window = OpenWindow(false);
+        QVERIFY(window);
+        QVERIFY(OpenAt(*window, QVariantMap{{"plugin", FIXTURE}}));
+        QCOMPARE(ShownKey(*window), "plugin:" + FIXTURE);
+        QTRY_VERIFY_WITH_TIMEOUT(PageIsShown(*window, "pluginSettings") &&
+                                     IsShown(*window, "fixtureField"),
+                                 TIMEOUT_MS);
+        QVERIFY(!PageIsShown(*window, "appearancePage"));
+        // A built-in one, on the window that is shown.
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "keys"}}));
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        QVERIFY(PageIsShown(*window, "keysPage"));
+        QVERIFY(!PageIsShown(*window, "pluginSettings"));
+        // No args: the category chosen last.
+        QVERIFY(OpenAt(*window, QVariant()));
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        // A category that does not exist: one warning, the choice stays.
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("shell.settings: no such settings category"));
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "nonsense"}}));
+        QCOMPARE(ShownKey(*window), QString("keys"));
+        // A plugin has no category named like a built-in one, and the other
+        // way round.
+        QTest::ignoreMessage(
+            QtWarningMsg,
+            QRegularExpression("shell.settings: no such settings category"));
+        QVERIFY(OpenAt(*window, QVariantMap{{"plugin", "keys"}}));
+        QCOMPARE(ShownKey(*window), QString("keys"));
+    }
+
+    // The command carries its args to the window: the one made by Main.qml.
+    void TheCommandCarriesTheCategoryToTheWindow() {
+        api::Api api;
+        QQmlApplicationEngine engine;
+        auto* singleton =
+            engine.singletonInstance<RoostSingleton*>("Roost.Api", "Roost");
+        QVERIFY(singleton != nullptr);
+        singleton->setApi(api);
+        engine.loadFromModule("Roost.Shell", "Main");
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto* main = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        QVERIFY(main != nullptr);
+        auto* settings = main->findChild<QQuickWindow*>("settingsWindow");
+        QVERIFY(settings != nullptr);
+        settings->setProperty("opensFiles", false);
+        const QFuture<rpc::Result> run = api.Commands().Run(
+            "shell.settings", QJsonObject{{"category", "keys"}});
+        QVERIFY(WaitFor(run));
+        QVERIFY2(run.result(), qPrintable(Why(run.result())));
+        QVERIFY(settings->isVisible());
+        QCOMPARE(settings->property("shownKey").toString(), QString("keys"));
+        settings->hide();
+    }
+
+    // The window with Appearance chosen, light and dark, for a person to look
+    // at (ROOST_TEST_SNAPSHOTS names the directory; without it nothing is
+    // saved). The dark theme is the test theme of ResolveTheme.
+    void AppearanceIsDrawnInTheLightAndTheDarkTheme() {
+        auto light = OpenWindow();
+        QVERIFY(light);
+        QTRY_VERIFY_WITH_TIMEOUT(IsShown(*light, "appearancePage") &&
+                                     light->Find("focusSwatch9") != nullptr &&
+                                     light->Find("focusSwatch9")->width() > 0 &&
+                                     CategoryTitles(*light).size() == 4,
+                                 TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(light->Window(), "light"));
+        light.reset();
+
+        QVERIFY(Daemon_->Stop());
+        const QString themeFile = Daemon_->ConfigPath() + "/dark-theme.json";
+        QVERIFY(WriteFile(themeFile, R"({
+            "windowBackground": "#11161c", "windowText": "#e6edf3",
+            "controlBackground": "#1b222a", "inputBackground": "#151b22",
+            "panelBackground": "#1a2129", "overlayBackground": "#f21a2129",
+            "text": "#e6edf3", "textStrong": "#e6edf3",
+            "textSecondary": "#a9b6c3", "textMuted": "#93a1b0",
+            "accent": "#7fb0ff", "accentTint": "#1c2f4d",
+            "selection": "#2a4a7a", "cursorFocused": "#1e2a3a",
+            "cursorUnfocused": "#1a222b", "warning": "#e0b36a",
+            "error": "#ff7b80", "canvas": "#11161c", "surface": "#1a2129",
+            "line": "#2b3540", "selectedBackground": "#1c2f4d",
+            "focus": "#7fb0ff", "primary": "#3d78d8",
+            "primaryHover": "#4a86e8", "hoverBackground": "#212a34",
+            "primaryText": "#ffffff", "terminalBackground": "#11161c",
+            "terminalForeground": "#d6dde4"})"));
+        testing::ScopedEnv theme("ROOST_TEST_THEME_FILE", themeFile.toUtf8());
+        QVERIFY(WriteFile(Daemon_->ConfigPath() + "/settings.json",
+                          R"({"theme": "test"})"));
+        QVERIFY(StartDaemon());
+        auto dark = OpenWindow();
+        QVERIFY(dark);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            dark->Singleton->theme()->property("canvas").value<QColor>(),
+            QColor("#11161c"), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(IsShown(*dark, "appearancePage") &&
+                                     dark->Find("focusSwatch9") != nullptr &&
+                                     dark->Find("focusSwatch9")->width() > 0 &&
+                                     CategoryTitles(*dark).size() == 4,
+                                 TIMEOUT_MS);
+        QVERIFY(testing::SaveSnapshot(dark->Window(), "dark"));
+    }
+
     void TheSectionOfThePluginIsShown() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QVERIFY(window->Window()->isVisible());
         QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
         QQuickItem* section = window->FindAll("pluginSettings").first();
@@ -885,8 +1200,6 @@ private slots:
     void TheRingOfTheFirstAndTheLastControlIsNotCut() {
         auto window = OpenWindow();
         QVERIFY(window);
-        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
-                                 TIMEOUT_MS);
         QQuickItem* scroll = window->Find("settingsScroll");
         QVERIFY(scroll != nullptr);
         // Low enough for the form to scroll, as on a small screen.
@@ -912,8 +1225,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(ringIsInside(first), TIMEOUT_MS);
         QVERIFY(testing::SaveSnapshot(window->Window(), "ring-top"));
 
-        // The last control of the form, scrolled into view to the very end.
-        QQuickItem* last = window->Find("openKeymapButton");
+        // The last control of the page, scrolled into view to the very end.
+        QQuickItem* last = window->Find("focusSwatch9");
         QVERIFY(last != nullptr);
         auto* flickable = scroll->property("contentItem").value<QQuickItem*>();
         QVERIFY(flickable != nullptr);
@@ -934,10 +1247,10 @@ private slots:
     void AControlBelowTheVisiblePartIsReached() {
         auto window = OpenWindow();
         QVERIFY(window);
-        QTRY_VERIFY_WITH_TIMEOUT(!window->FindAll("keymapRow").isEmpty(),
-                                 TIMEOUT_MS);
         QQuickItem* scroll = window->Find("settingsScroll");
-        QQuickItem* check = window->Find("updatesCheckSwitch");
+        // The last swatch of the focus ring colour: the last control of the
+        // Appearance page.
+        QQuickItem* check = window->Find("focusSwatch9");
         QVERIFY(scroll != nullptr && check != nullptr);
         window->Window()->setHeight(300);
         QTRY_VERIFY_WITH_TIMEOUT(scroll->height() < 260, TIMEOUT_MS);
@@ -957,8 +1270,10 @@ private slots:
         check->forceActiveFocus(Qt::TabFocusReason);
         QTRY_VERIFY_WITH_TIMEOUT(view().contains(outer()), TIMEOUT_MS);
         Click(*window, check);
-        QTRY_VERIFY(
-            Document("settings").value("updates").toObject().contains("check"));
+        QTRY_VERIFY(Document("settings")
+                        .value("focusColor")
+                        .toObject()
+                        .contains("custom"));
     }
 
     void APluginWithoutAPageHasNoSection() {
@@ -967,6 +1282,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
         QVERIFY(window->Loader->Problems().isEmpty());
@@ -979,6 +1295,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
         const auto problems = window->Loader->Problems();
@@ -1007,7 +1324,8 @@ private slots:
                                    window->Pages.get(), nullptr);
                     }
                 });
-        QVERIFY(QMetaObject::invokeMethod(window->Object.get(), "open"));
+        QVERIFY(OpenAt(*window, QVariant()));
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_COMPARE(window->FindAll("pluginSettings").size(), 1);
         QVERIFY2(changes < 20, "the pages are refreshed again and again");
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
@@ -1039,7 +1357,7 @@ private slots:
         QCOMPARE(window->Pages->PluginIds(), QStringList());
         QVERIFY(window->Find("fixtureField") == nullptr);
 
-        QVERIFY(QMetaObject::invokeMethod(window->Object.get(), "open"));
+        QVERIFY(OpenAt(*window, QVariant()));
         QCOMPARE(window->Pages->PluginIds(), QStringList{FIXTURE});
         QTRY_VERIFY(window->Find("fixtureField") != nullptr);
     }
@@ -1050,6 +1368,7 @@ private slots:
         {
             auto window = OpenWindow();
             QVERIFY(window);
+            Choose(*window, "plugin:" + FIXTURE);
             QTRY_VERIFY(window->Find("fixtureField") != nullptr);
             QVERIFY(window->Edit("fixtureField", "kept"));
             QTRY_COMPARE(Document(FIXTURE).value("settings").toObject(),
@@ -1078,6 +1397,7 @@ private slots:
     void APageIsMadeAgainWhenThePluginIsReloaded() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_VERIFY(window->Find("fixtureField") != nullptr);
         QVERIFY(window->Edit("fixtureField", "before"));
         QTRY_COMPARE(Document(FIXTURE).value("settings").toObject(),
@@ -1234,6 +1554,7 @@ private slots:
     void TheUpdateSwitchWritesItsKey() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "updates");
         QQuickItem* check = window->Find("updatesCheckSwitch");
         QVERIFY(check != nullptr);
         // No key is the default: on.
@@ -1267,6 +1588,7 @@ private slots:
     void TheUpdateSwitchIsDrawnInTheTokens() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "updates");
         QQuickItem* check = window->Find("updatesCheckSwitch");
         QVERIFY(check != nullptr);
         QQuickItem* track = window->Find("switchTrack");
@@ -1297,6 +1619,7 @@ private slots:
     void TheFocusRingOfTheSwitchIsAroundTheTrack() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "updates");
         QQuickItem* check = window->Find("updatesCheckSwitch");
         QQuickItem* track = window->Find("switchTrack");
         QQuickItem* ring = window->Find("switchRing");
@@ -1322,6 +1645,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "updates");
         QTRY_VERIFY(
             !window->Find("updatesCheckSwitch")->property("checked").toBool());
     }
@@ -1331,6 +1655,7 @@ private slots:
     void AFailedWriteReturnsTheUpdateSwitch() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "updates");
         QQuickItem* check = window->Find("updatesCheckSwitch");
         QVERIFY(check != nullptr);
         QVERIFY(window->Edit("uiSizeField", "14"));
@@ -1386,6 +1711,7 @@ private slots:
     void TheKeysAreListedAndTheFileIsOnlyOffered() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(window->FindAll("keymapRow").size(), 2,
                                   TIMEOUT_MS);
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
@@ -1419,6 +1745,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1452,6 +1779,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1490,6 +1818,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1517,6 +1846,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1557,6 +1887,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1575,6 +1906,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(OpenCapture(*window, HELLO));
@@ -1603,6 +1935,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(OpenCapture(*window, HELLO));
@@ -1633,6 +1966,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1665,6 +1999,7 @@ private slots:
     void AKeyThatTheCommandHasIsSaidSo() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1698,6 +2033,7 @@ private slots:
         QFETCH(QString, reason);
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1736,6 +2072,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QStringList mine =
             ON_MAC ? QStringList{"Cmd+Alt+L", "Ctrl+Alt+J"}
                    : QStringList{"Ctrl+Alt+J", "Ctrl+Alt+L", "Ctrl+Alt+P"};
@@ -1779,6 +2116,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1827,6 +2165,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -1857,6 +2196,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(OpenCapture(*window, HELLO));
@@ -1890,6 +2230,7 @@ private slots:
     void AKeyThatTheCommandGotWhileTheWarningIsShownIsNotWritten() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(OpenCapture(*window, OTHER));
@@ -1929,6 +2270,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         const QString second = "second.other";
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, second),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
@@ -1966,6 +2308,7 @@ private slots:
     void AWriteThatChangesNothingEndsByTheTimeout() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(
@@ -1996,6 +2339,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -2024,6 +2368,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -2062,6 +2407,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -2084,6 +2430,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -2114,6 +2461,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+J", "Ctrl+Alt+O"}),
                                   TIMEOUT_MS);
@@ -2149,6 +2497,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
@@ -2186,6 +2535,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
         const Announcements announced;
@@ -2210,6 +2560,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         // The file is ignored: what the plugin gives is what the table has.
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
@@ -2250,6 +2601,7 @@ private slots:
         KeymapEdited_ = true;
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QVERIFY(OpenCapture(*window, HELLO));
@@ -2297,6 +2649,7 @@ private slots:
     void TheWarningIsAnAlertAndTabReachesTheButtons() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
         QStringList announced;
@@ -2349,6 +2702,7 @@ private slots:
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_VERIFY_WITH_TIMEOUT(window->Find("fixtureField") != nullptr,
                                  TIMEOUT_MS);
         QQuickItem* page = window->Find("fixtureField")->parentItem();
@@ -2439,6 +2793,7 @@ Item {
         QVERIFY(StartDaemon());
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "plugin:" + FIXTURE);
         QTRY_VERIFY_WITH_TIMEOUT(window->Find("fixtureField") != nullptr,
                                  TIMEOUT_MS);
         QQuickItem* page = window->Find("fixtureField")->parentItem();
@@ -2470,6 +2825,7 @@ Item {
     void ThePressedKeyDoesNotRunItsCommand() {
         auto window = OpenWindow();
         QVERIFY(window);
+        Choose(*window, "keys");
         QTRY_VERIFY_WITH_TIMEOUT(window->Api->Keymap().IsLoaded(), TIMEOUT_MS);
         int ran = 0;
         QObject owner;
@@ -2532,7 +2888,8 @@ Item {
 #endif
         QVERIFY(settings->isVisible());
         // Open again while it is shown: the same window.
-        QVERIFY(QMetaObject::invokeMethod(main, "openSettings"));
+        QVERIFY(QMetaObject::invokeMethod(main, "openSettings",
+                                          Q_ARG(QVariant, QVariant())));
         QCOMPARE(main->findChildren<QQuickWindow*>("settingsWindow").size(), 1);
         QVERIFY(settings->isVisible());
     }
