@@ -12,6 +12,7 @@
 #include "core/store.hpp"
 #include "roostd/adapter_bridge.hpp"
 #include "roostd/backend.hpp"
+#include "roostd/bus_subscriptions.hpp"
 #include "roostd/manifest.hpp"
 
 namespace roost {
@@ -75,6 +76,23 @@ DisabledPlugins ReadDisabledPlugins(const Store& store);
 //                         events of the process that is gone: the bus keeps
 //                         the order within one pattern only.
 //
+// and gives the backend of a plugin its side of the bus (design.md §5):
+//
+//   bus.subscribe {pattern} -> {subscription}   requests of the backend, as
+//   bus.unsubscribe {subscription} -> null      the socket side serves them
+//   bus.event {subscription, name, payload}     roostd's notification to the
+//                                               backend, for each event of a
+//                                               subscription
+//   bus.publish {name, payload?}                notification of the backend:
+//                                               published as is if the name
+//                                               starts with "<plugin id>.";
+//                                               any other, an invalid one and
+//                                               one that does not fit a frame
+//                                               is dropped with a warning
+//
+// The subscriptions of a backend end when its process does; the restarted one
+// subscribes again. Any other request of a backend gets MethodNotFound.
+//
 // The server must outlive it; after it is gone, commands.run fails with
 // BackendUnavailable.
 class PluginHost : public QObject {
@@ -113,6 +131,10 @@ private:
     void OnStateChanged(const QString& pluginId, const QJsonObject& params);
     void OnRemoved(const QString& pluginId, const QJsonObject& params);
     void OnListed(const QString& pluginId, const QJsonObject& params);
+    void OnPublish(const QString& pluginId, const QJsonObject& params);
+    rpc::Result OnBackendRequest(const QString& pluginId, Backend& backend,
+                                 const QString& method,
+                                 const QJsonValue& params);
     // Whether the plugin is the one that serves the agent.
     bool ServesAgent(const QString& pluginId, const QString& agent) const;
 
@@ -120,6 +142,9 @@ private:
     BackendOptions Options_;
     PluginRegistry Registry_;
     std::unordered_map<QString, std::unique_ptr<Backend>> Backends_;
+    // What each backend subscribed to, gone before the backends: their
+    // listeners write to them.
+    std::unordered_map<QString, std::unique_ptr<BusSubscriptions>> Subscribed_;
     // In load order. Declared after the backends, so gone before them.
     std::vector<std::unique_ptr<AdapterBridge>> Bridges_;
     bool Loaded_ = false;
