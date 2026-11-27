@@ -1,11 +1,14 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QObject>
 
+#include "core/rpc.hpp"
 #include "core/store.hpp"
 
 namespace roost {
 
+class PluginHost;
 class PluginRegistry;
 class Server;
 
@@ -36,13 +39,19 @@ class Server;
 //
 // with the whole document, patched or not.
 //
-// The server and the registry must outlive it; after it is gone, its methods
+// The backend of a plugin reaches its own document by the same two methods,
+// store.get and store.patch (design.md §5), through the same code: replies,
+// errors and events are those of the socket. The params have no "plugin" or
+// have the id of the plugin whose backend asks; any other id is InvalidParams,
+// and so is any other document. A backend cannot call store.set.
+//
+// The server and the plugin host must outlive it; after it is gone, its methods
 // fail with InternalError.
 class StoreService : public QObject {
     Q_OBJECT
 
 public:
-    StoreService(Store store, Server& server, const PluginRegistry& plugins,
+    StoreService(Store store, Server& server, PluginHost& plugins,
                  QObject* parent = nullptr);
     ~StoreService() override;
 
@@ -50,6 +59,10 @@ public:
     StoreService& operator=(const StoreService&) = delete;
 
 private:
+    // One method each, for the socket and for a backend.
+    rpc::Result Get(const QJsonObject& params);
+    rpc::Result Set(const QJsonObject& params);
+    rpc::Result Patch(const QJsonObject& params);
     bool HasDocument(const QString& id) const;
 
     Store Store_;

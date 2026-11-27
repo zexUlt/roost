@@ -234,6 +234,20 @@ target_compile_definitions(codex_adapter_test PRIVATE
     CODEX_ADAPTER_PATH="$<TARGET_FILE:codex-adapter>")
 add_dependencies(codex_adapter_test codex-adapter)
 
+# The notifications plugin: the real roostd, the real backend and a fixture
+# agent that reports the changes of state of its sessions.
+roost_add_qt_test(notifications_test plugins/notifications_test.cpp
+    roost_test_helpers)
+target_compile_definitions(notifications_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    FIXTURE_BACKEND_PATH="$<TARGET_FILE:fixture_backend>"
+    NOTIFICATIONS_PLUGIN_DIR="${PROJECT_BINARY_DIR}/roost-plugins/notifications")
+add_dependencies(notifications_test roostd fixture_backend notifications-backend)
+
+# The runner of the commands of that plugin: the limits, on the real bash.
+roost_add_qt_test(notifications_runner_test plugins/notifications_runner_test.cpp
+    notifications_backend_lib roost_test_helpers)
+
 # The Claude adapter: its parsing, then the real binary over stdio.
 roost_add_qt_test(claude_adapter_test plugins/claude_adapter_test.cpp claude_adapter_lib)
 target_compile_definitions(claude_adapter_test PRIVATE
@@ -933,9 +947,11 @@ target_compile_definitions(install_layout_test PRIVATE
     QT_RUN_PATH="${ROOST_TEST_QT_RUN_PATH}"
     CLAUDE_ADAPTER_FILE="$<TARGET_FILE_NAME:claude-adapter>"
     CODEX_ADAPTER_FILE="$<TARGET_FILE_NAME:codex-adapter>"
+    NOTIFICATIONS_BACKEND_FILE="$<TARGET_FILE_NAME:notifications-backend>"
     SESSIONS_MODULE_FILE="$<TARGET_FILE_NAME:sessions_qml>"
     FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
-add_dependencies(install_layout_test roost roostd claude-adapter codex-adapter sessions_qml)
+add_dependencies(install_layout_test roost roostd claude-adapter codex-adapter
+    notifications-backend sessions_qml)
 
 # `roost --smoke-sessions` as a process: the real roostd with the built-in
 # plugins behind a fake `claude`; a sessions plugin without its QML module and

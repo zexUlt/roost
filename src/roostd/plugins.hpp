@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -91,7 +92,9 @@ DisabledPlugins ReadDisabledPlugins(const Store& store);
 //                                               is dropped with a warning
 //
 // The subscriptions of a backend end when its process does; the restarted one
-// subscribes again. Any other request of a backend gets MethodNotFound.
+// subscribes again. A request for any other method is answered by what a
+// service added with ServeBackends, as the store does for store.get and
+// store.patch of the backend's own document; without one, MethodNotFound.
 //
 // The server must outlive it; after it is gone, commands.run fails with
 // BackendUnavailable.
@@ -117,6 +120,14 @@ public:
               const DisabledPlugins& disabled = {});
 
     const PluginRegistry& Registry() const { return Registry_; }
+
+    // Serves a method to the backends: the answer to a request of the backend
+    // of plugin `pluginId`, at once (see Backend::SetRequestHandler). False if
+    // the method is taken or is one of bus.*.
+    using BackendMethod = std::function<rpc::Result(const QString& pluginId,
+                                                    const QJsonValue& params)>;
+    [[nodiscard]] bool ServeBackends(const QString& method,
+                                     BackendMethod handler);
 
     // Null if the plugin has no backend or is not loaded.
     Backend* BackendOf(const QString& pluginId) const;
@@ -145,6 +156,7 @@ private:
     // What each backend subscribed to, gone before the backends: their
     // listeners write to them.
     std::unordered_map<QString, std::unique_ptr<BusSubscriptions>> Subscribed_;
+    std::unordered_map<QString, BackendMethod> BackendMethods_;
     // In load order. Declared after the backends, so gone before them.
     std::vector<std::unique_ptr<AdapterBridge>> Bridges_;
     bool Loaded_ = false;

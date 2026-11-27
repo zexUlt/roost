@@ -254,7 +254,8 @@ for library in QtQuick/Controls/Fusion/libqtquickcontrols2fusionstyleplugin.so \
 done
 for file in plugins/codex/plugin.json plugins/codex/backend/codex-adapter \
     plugins/claude/backend/claude-adapter plugins/sessions/qml/RoostSessions/qmldir \
-    plugins/sessions/qml/RoostSessions/libsessions_qml.so plugins/claude/plugin.json; do
+    plugins/sessions/qml/RoostSessions/libsessions_qml.so plugins/claude/plugin.json \
+    plugins/notifications/plugin.json plugins/notifications/backend/notifications-backend; do
     [ -e "$appdir/usr/lib/roost/$file" ] || fail "usr/lib/roost/$file is missing"
 done
 # The agent icons of the sessions list are SVG.

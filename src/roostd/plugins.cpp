@@ -303,9 +303,20 @@ rpc::Result PluginHost::OnBackendRequest(const QString& pluginId,
     if (method == QStringLiteral("bus.unsubscribe")) {
         return subscribed.HandleUnsubscribe(params);
     }
+    if (const auto served = BackendMethods_.find(method);
+        served != BackendMethods_.end()) {
+        return served->second(pluginId, params);
+    }
     return std::unexpected(rpc::Error::FromCode(
         rpc::EErrorCode::MethodNotFound,
         QStringLiteral("Method not found: %1").arg(method)));
+}
+
+bool PluginHost::ServeBackends(const QString& method, BackendMethod handler) {
+    if (method.startsWith(QStringLiteral("bus."))) {
+        return false;
+    }
+    return BackendMethods_.emplace(method, std::move(handler)).second;
 }
 
 void PluginHost::OnPublish(const QString& pluginId, const QJsonObject& params) {

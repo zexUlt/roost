@@ -137,8 +137,7 @@ int main(int argc, char* argv[]) {
     qInfo("roostd: %zu plugins loaded", plugins.Registry().Plugins().size());
 
     // Gone before the plugins, like the channels.
-    roost::StoreService store(roost::Store(*config), server,
-                              plugins.Registry());
+    roost::StoreService store(roost::Store(*config), server, plugins);
 
     // Gone before the plugins, whose registry it reads.
     roost::KeymapService keymap(*config, server, plugins.Registry());
