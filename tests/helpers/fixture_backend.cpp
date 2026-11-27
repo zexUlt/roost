@@ -15,6 +15,8 @@
 //   fixture.hang     never answers
 //   fixture.badError answers with an error that is not an object
 //   fixture.empty    answers with neither a result nor an error
+//   fixture.stall    never reads its stdin again and never answers, until it is
+//                    killed
 //   fixture.lastWord answers only when its stdin closes, on the way out
 //   fixture.notify   sends each message of the args as it is, then answers
 //   fixture.received answers the messages roostd sent that are no command: the
@@ -172,6 +174,10 @@ void Run(const QJsonValue& id, const QString& command, const QJsonValue& args,
         Answer(id, reply);
     } else if (command == "fixture.hang") {
         // No answer.
+    } else if (command == "fixture.stall") {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::hours(1));
+        }
     } else if (command == "fixture.badError") {
         Send({{"jsonrpc", "2.0"}, {"id", id}, {"error", "boom"}});
     } else if (command == "fixture.empty") {

@@ -128,13 +128,14 @@ private:
     }
 
     rpc::Result RunInBackend(const QString& command,
-                             const QJsonValue& args = QJsonValue::Undefined) {
+                             const QJsonValue& args = QJsonValue::Undefined,
+                             const QString& plugin = "one") {
         QJsonObject params{{"command", command}};
         if (!args.isUndefined()) {
             params.insert("args", args);
         }
         const QFuture<rpc::Result> future =
-            Host_->BackendOf("one")->Request("commands.run", params);
+            Host_->BackendOf(plugin)->Request("commands.run", params);
         if (!WaitFor(future)) {
             return std::unexpected(rpc::Error{.Message = "timed out"});
         }
@@ -143,20 +144,41 @@ private:
 
     // Has the backend send these messages, in this order. Returns once roostd
     // has read all of them: the fixture answers after it wrote the last one.
-    void BackendSends(const QJsonArray& messages) {
-        const rpc::Result sent = RunInBackend("fixture.notify", messages);
+    void BackendSends(const QJsonArray& messages,
+                      const QString& plugin = "one") {
+        const rpc::Result sent =
+            RunInBackend("fixture.notify", messages, plugin);
         QVERIFY2(sent, qPrintable(MessageOf(sent)));
     }
 
     // What roostd sent the backend, since it started. The fixture reads its
     // input in order, so what roostd wrote before this request is in it.
-    QJsonArray BackendReceived() {
-        const rpc::Result received = RunInBackend("fixture.received");
+    QJsonArray BackendReceived(const QString& plugin = "one") {
+        const rpc::Result received =
+            RunInBackend("fixture.received", QJsonValue::Undefined, plugin);
         if (!received) {
             QTest::qFail(qPrintable(MessageOf(received)), __FILE__, __LINE__);
             return {};
         }
         return received->toArray();
+    }
+
+    // The events of these names among what the backend got, in order: a case
+    // counts what it is about, not what else the daemon publishes on its path.
+    static QJsonArray EventsNamed(const QJsonArray& received,
+                                  const QStringList& names) {
+        QJsonArray events;
+        for (const QJsonValue& message : received) {
+            const QJsonObject object = message.toObject();
+            if (object.value("method") == "bus.event" &&
+                names.contains(object.value("params")
+                                   .toObject()
+                                   .value("name")
+                                   .toString())) {
+                events.append(object);
+            }
+        }
+        return events;
     }
 
     // The answer the backend got to its request.
@@ -176,10 +198,12 @@ private:
 
     // Has the backend subscribe to the pattern as request `id`; the id of
     // the subscription.
-    int BackendSubscribes(int id, const QString& pattern) {
+    int BackendSubscribes(int id, const QString& pattern,
+                          const QString& plugin = "one") {
         BackendSends(
-            {Request(id, "bus.subscribe", QJsonObject{{"pattern", pattern}})});
-        const QJsonObject answer = AnswerTo(BackendReceived(), id);
+            {Request(id, "bus.subscribe", QJsonObject{{"pattern", pattern}})},
+            plugin);
+        const QJsonObject answer = AnswerTo(BackendReceived(plugin), id);
         return answer.value("result")
             .toObject()
             .value("subscription")
@@ -219,18 +243,21 @@ private slots:
         Server_->Bus().Publish("sessions.x", QJsonValue());
         Server_->Bus().Publish("session.listed", QJsonObject{{"agent", "x"}});
 
-        const QJsonArray received = BackendReceived();
-        QCOMPARE(received.size(), 3);
-        QCOMPARE(received[0].toObject(),
+        const QJsonArray all = BackendReceived();
+        QCOMPARE(AnswerTo(all, 1),
                  ResultOf(1, QJsonObject{{"subscription", subscription}}));
-        QCOMPARE(received[1].toObject(),
+        const QJsonArray received =
+            EventsNamed(all, {"one.hello", "session", "sessions.x",
+                              "session.stateChanged", "session.listed"});
+        QCOMPARE(received.size(), 2);
+        QCOMPARE(received[0].toObject(),
                  Event(subscription, "session.stateChanged",
                        QJsonObject{{"agent", "claude"},
                                    {"id", "s1"},
                                    {"title", ""},
                                    {"cwd", ""},
                                    {"state", "blocked"}}));
-        QCOMPARE(received[2].toObject(), Event(subscription, "session.listed",
+        QCOMPARE(received[1].toObject(), Event(subscription, "session.listed",
                                                QJsonObject{{"agent", "x"}}));
     }
 
@@ -242,10 +269,11 @@ private slots:
         QVERIFY(exact > 0 && all > 0 && exact != all);
         Server_->Bus().Publish("fixture.ping", 7);
 
-        const QJsonArray received = BackendReceived();
-        QCOMPARE(received.size(), 4);
-        QCOMPARE(received[2].toObject(), Event(exact, "fixture.ping", 7));
-        QCOMPARE(received[3].toObject(), Event(all, "fixture.ping", 7));
+        const QJsonArray received =
+            EventsNamed(BackendReceived(), {"fixture.ping"});
+        QCOMPARE(received.size(), 2);
+        QCOMPARE(received[0].toObject(), Event(exact, "fixture.ping", 7));
+        QCOMPARE(received[1].toObject(), Event(all, "fixture.ping", 7));
     }
 
     void AnUnsubscribedBackendGetsNothingMore() {
@@ -259,8 +287,8 @@ private slots:
         Server_->Bus().Publish("fixture.ping", QJsonValue());
 
         const QJsonArray received = BackendReceived();
-        QCOMPARE(received.size(), 2);
-        QCOMPARE(received[1].toObject(), ResultOf(2, QJsonValue()));
+        QCOMPARE(AnswerTo(received, 2), ResultOf(2, QJsonValue()));
+        QVERIFY(EventsNamed(received, {"fixture.ping"}).isEmpty());
     }
 
     void ASubscriptionDiesWithTheProcessAndIsNotRestored() {
@@ -289,9 +317,10 @@ private slots:
         QCOMPARE(Server_->Bus().SubscriptionCount(), before + 1);
         Server_->Bus().Publish("session.listed", QJsonObject{{"agent", "y"}});
         Server_->Bus().Publish("fixture.ping", QJsonValue());
-        const QJsonArray received = BackendReceived();
-        QCOMPARE(received.size(), 2);
-        QCOMPARE(received[1].toObject(), Event(subscription, "session.listed",
+        const QJsonArray received =
+            EventsNamed(BackendReceived(), {"session.listed", "fixture.ping"});
+        QCOMPARE(received.size(), 1);
+        QCOMPARE(received[0].toObject(), Event(subscription, "session.listed",
                                                QJsonObject{{"agent", "y"}}));
     }
 
@@ -300,21 +329,59 @@ private slots:
         AddPlugin("two");
         QVERIFY(Start());
         const std::size_t before = Server_->Bus().SubscriptionCount();
-        const rpc::Result sent = [&] {
-            const QFuture<rpc::Result> future =
-                Host_->BackendOf("two")->Request(
-                    "commands.run",
-                    QJsonObject{{"command", "fixture.notify"},
-                                {"args", QJsonArray{Request(
-                                             1, "bus.subscribe",
-                                             QJsonObject{{"pattern", "*"}})}}});
-            WaitFor(future);
-            return future.result();
-        }();
-        QVERIFY(sent);
+        const int subscription = BackendSubscribes(1, "*", "two");
+        QVERIFY(subscription > 0);
         QCOMPARE(Server_->Bus().SubscriptionCount(), before + 1);
         QVERIFY(!RunInBackend("fixture.crash"));
         QCOMPARE(Server_->Bus().SubscriptionCount(), before + 1);
+
+        // It still gets its events.
+        Server_->Bus().Publish("fixture.ping", 5);
+        const QJsonArray received =
+            EventsNamed(BackendReceived("two"), {"fixture.ping"});
+        QCOMPARE(received.size(), 1);
+        QCOMPARE(received[0].toObject(),
+                 Event(subscription, "fixture.ping", 5));
+    }
+
+    void ABackendThatDoesNotReadItsEventsIsBroken() {
+        AddPlugin("one");
+        QVERIFY(Start());
+        Backend* const backend = Host_->BackendOf("one");
+        const std::size_t before = Server_->Bus().SubscriptionCount();
+        QVERIFY(BackendSubscribes(1, "fixture.*") > 0);
+        QCOMPARE(Server_->Bus().SubscriptionCount(), before + 1);
+
+        QSignalSpy crashed(backend, &Backend::Crashed);
+        const QFuture<rpc::Result> stalled = backend->Request(
+            "commands.run", QJsonObject{{"command", "fixture.stall"}});
+        const QString reason = "does not read its stdin";
+        QTest::ignoreMessage(QtWarningMsg,
+                             qPrintable("roostd: the backend of one " + reason +
+                                        "; killing it"));
+        QTest::ignoreMessage(QtWarningMsg,
+                             qPrintable("roostd: the backend of one " + reason +
+                                        "; restarting it in 10 ms"));
+        // More than the backend can hold in its pipe and roostd may keep
+        // for it.
+        const QString payload(1024 * 1024, u'x');
+        const int count =
+            static_cast<int>(Backend::MAX_UNSENT_BYTES >> 20) + 16;
+        for (int i = 0; i < count; ++i) {
+            Server_->Bus().Publish("fixture.ping", payload);
+        }
+
+        QTRY_VERIFY_WITH_TIMEOUT(!crashed.isEmpty(), TIMEOUT_MS);
+        QCOMPARE(crashed.at(0).at(0).toString(), reason);
+        QVERIFY(WaitFor(stalled));
+        QVERIFY(!stalled.result());
+        QCOMPARE(Server_->Bus().SubscriptionCount(), before);
+
+        // It is back, with nothing subscribed and nothing waiting for it.
+        QTRY_VERIFY_WITH_TIMEOUT(RunInBackend("fixture.received").has_value(),
+                                 TIMEOUT_MS);
+        QVERIFY(BackendReceived().isEmpty());
+        QCOMPARE(crashed.size(), 1);
     }
 
     void ABackendPublishesUnderItsOwnPrefix() {
@@ -371,32 +438,44 @@ private slots:
             Notification("bus.publish", QJsonObject{{"name", "one.last"}}),
         });
 
+        // Only the events this case publishes or tries to; a daemon event
+        // under `*` is none of its business.
+        const QStringList aboutThis{"one.hello", "two.hello", "oneother.hello",
+                                    "one.big", "one.last"};
+        auto events = [&] {
+            QList<QJsonObject> list;
+            for (const auto& call : notified) {
+                const QJsonObject params =
+                    call.at(1).value<QJsonValue>().toObject();
+                if (call.at(0).toString() == "bus.event" &&
+                    aboutThis.contains(params.value("name").toString())) {
+                    list.append(params);
+                }
+            }
+            return list;
+        };
         auto names = [&] {
             QStringList list;
-            for (const auto& call : notified) {
-                list.append(call.at(1)
-                                .value<QJsonValue>()
-                                .toObject()
-                                .value("name")
-                                .toString());
+            for (const QJsonObject& event : events()) {
+                list.append(event.value("name").toString());
             }
             return list;
         };
         QTRY_VERIFY_WITH_TIMEOUT(names().contains("one.last"), TIMEOUT_MS);
         QCOMPARE(names(), (QStringList{"one.hello", "one.last"}));
-        QCOMPARE(notified.at(0).at(0).toString(), QString("bus.event"));
-        QCOMPARE(notified.at(0).at(1).value<QJsonValue>(),
-                 QJsonValue(QJsonObject{{"subscription", socketSubscription},
-                                        {"name", "one.hello"},
-                                        {"payload", QJsonObject{{"a", 1}}}}));
+        QCOMPARE(events().at(0),
+                 (QJsonObject{{"subscription", socketSubscription},
+                              {"name", "one.hello"},
+                              {"payload", QJsonObject{{"a", 1}}}}));
 
         // A backend subscribed to its own prefix gets its own events, with
         // a null payload for an absent one.
-        const QJsonArray received = BackendReceived();
-        QCOMPARE(received.size(), 3);
-        QCOMPARE(received[1].toObject(),
+        const QJsonArray received =
+            EventsNamed(BackendReceived(), {"one.hello", "one.last"});
+        QCOMPARE(received.size(), 2);
+        QCOMPARE(received[0].toObject(),
                  Event(own, "one.hello", QJsonObject{{"a", 1}}));
-        QCOMPARE(received[2].toObject(), Event(own, "one.last", QJsonValue()));
+        QCOMPARE(received[1].toObject(), Event(own, "one.last", QJsonValue()));
     }
 
     void ABadSubscribeOrUnsubscribeIsAnErrorLikeTheSocketOnes() {

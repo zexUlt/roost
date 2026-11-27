@@ -127,12 +127,12 @@ QFuture<rpc::Result> Backend::Request(const QString& method,
     promise.start();
     QFuture<rpc::Result> future = promise.future();
     Pending_.emplace(id, std::move(promise));
-    Process_->write(Line(request));
+    Write(Line(request));
     return future;
 }
 
 bool Backend::Notify(const QString& method, const QJsonValue& params) {
-    if (!IsRunning()) {
+    if (!IsRunning() || !BreakReason_.isEmpty()) {
         return false;
     }
     QJsonObject notification{
@@ -142,8 +142,8 @@ bool Backend::Notify(const QString& method, const QJsonValue& params) {
     if (!params.isUndefined()) {
         notification.insert(QStringLiteral("params"), params);
     }
-    Process_->write(Line(notification));
-    return true;
+    Write(Line(notification));
+    return BreakReason_.isEmpty();
 }
 
 void Backend::SetRequestHandler(RequestHandler handler) {
@@ -267,7 +267,18 @@ void Backend::Answer(const QJsonValue& id, const QString& method,
         }
         response.insert(QStringLiteral("error"), error);
     }
-    Process_->write(Line(response));
+    Write(Line(response));
+}
+
+void Backend::Write(const QByteArray& line) {
+    // Broken and being killed: nobody reads what is written now.
+    if (!BreakReason_.isEmpty()) {
+        return;
+    }
+    Process_->write(line);
+    if (Process_->bytesToWrite() > MAX_UNSENT_BYTES) {
+        Break(QStringLiteral("does not read its stdin"));
+    }
 }
 
 void Backend::Break(const QString& reason) {

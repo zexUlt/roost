@@ -51,6 +51,9 @@ class Backend : public QObject {
 
 public:
     static constexpr qsizetype MAX_LINE_LENGTH = 16LL * 1024 * 1024;
+    // Not read by the backend, and more than this waits to be written: the
+    // backend is broken, as a socket peer is closed (Server::MAX_UNSENT_BYTES).
+    static constexpr qint64 MAX_UNSENT_BYTES = 64LL * 1024 * 1024;
 
     // command: the program, then its arguments.
     Backend(QString name, QStringList command, QString workingDirectory,
@@ -100,6 +103,8 @@ private:
                 const QJsonValue& params);
     // Kills the process; its exit then counts as a crash for this reason.
     void Break(const QString& reason);
+    // Every write to the process goes through it.
+    void Write(const QByteArray& line);
     void OnStopped(const QString& reason);
     void FailPending(const QString& reason);
 
