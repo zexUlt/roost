@@ -36,7 +36,7 @@ add_library(roost_app STATIC
 target_link_libraries(roost_app PUBLIC roost_qml_api roost_terminal Qt6::Quick Qt6::QuickControls2)
 
 # The notifier of the platform behind DesktopNotifier (one file makes it): D-Bus
-# on Linux, none elsewhere yet. The D-Bus one is a library of its own, so that
+# on Linux, UNUserNotificationCenter on macOS, none elsewhere. The D-Bus one is a library of its own, so that
 # QtDBus is linked only by what uses it: the executable on Linux, and the test
 # of the class wherever Qt6::DBus is found (a development machine too).
 if(TARGET Qt6::DBus)
@@ -47,7 +47,19 @@ if(TARGET Qt6::DBus)
     )
     target_link_libraries(roost_notifier_linux PUBLIC roost_app Qt6::DBus)
 endif()
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# The macOS one: Objective-C++ over UserNotifications, a library of its own for
+# the same reason (its test links it without the executable).
+if(APPLE)
+    add_library(roost_notifier_macos STATIC
+        desktop_notifier_macos.hpp
+        desktop_notifier_macos.mm
+        desktop_notifier_macos_ids.cpp
+        desktop_notifier_make_macos.cpp
+    )
+    target_compile_options(roost_notifier_macos PRIVATE -fobjc-arc)
+    target_link_libraries(roost_notifier_macos PUBLIC roost_app
+        "-framework Foundation" "-framework UserNotifications")
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(roost_app PRIVATE desktop_notifier_none.cpp)
 endif()
 
@@ -98,6 +110,8 @@ target_link_libraries(roost PRIVATE roost_core roost_app
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(roost PRIVATE roost_notifier_linux)
+elseif(APPLE)
+    target_link_libraries(roost PRIVATE roost_notifier_macos)
 endif()
 
 # Not a bundle in the build tree: build/<preset>/bin/roost stays a plain

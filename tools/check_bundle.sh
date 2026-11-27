@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The macOS bundle stands on its own (docs/design/11-build.md): every Mach-O in
 # it names only libraries of the bundle (@rpath, @executable_path,
-# @loader_path) or of the system, the QML modules the window and the plugins
-# import are deployed, the licences are in it, the signature verifies, and the
-# bundled window starts the bundled roostd and shows the sessions.
+# @loader_path) or of the system, the window links UserNotifications, the QML
+# modules the window and the plugins import are deployed, the licences are in
+# it, the signature verifies, and the bundled window starts the bundled roostd
+# and shows the sessions.
 #
 # With a .dmg as the second argument the image is checked too: it verifies, it
 # holds roost.app (whose signature verifies), the link to /Applications and the
@@ -182,6 +183,16 @@ while IFS= read -r file; do
     done <<<"$runpaths"
 done <<<"$macho"
 echo "ok:   $count Mach-O files name only the bundle and the system"
+
+# The desktop notifications (src/roost/desktop_notifier_macos.mm) need
+# UserNotifications in the window; a build that drops the notifier for the
+# none one would still pass every check above.
+if otool -L "$app/Contents/MacOS/roost" |
+    grep -q '/System/Library/Frameworks/UserNotifications.framework/'; then
+    echo "ok:   roost links UserNotifications"
+else
+    fail "Contents/MacOS/roost does not link UserNotifications"
+fi
 
 # ---------------------------------------------------------------------------
 # What the window and the plugins import, and the licences. Fusion is the

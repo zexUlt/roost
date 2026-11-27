@@ -263,8 +263,9 @@ jobs:
   # src/roostd/server.cpp, src/terminal/qt_key_mapping.cpp,
   # tests/qml_api/terminal_item_input_test.cpp,
   # tests/bench/frame_budget_test.cpp), nor tests/bench/terminal_memory.cpp,
-  # src/qml_api/update_install_macos.cpp and
-  # tests/qml_api/terminal_grid_tree_test.cpp (it needs Qt6::QuickPrivate,
+  # src/qml_api/update_install_macos.cpp, src/roost/desktop_notifier_macos*.cpp,
+  # src/roost/desktop_notifier_make_macos.cpp, tests/roost/mac_notifier_test.cpp
+  # and tests/qml_api/terminal_grid_tree_test.cpp (it needs Qt6::QuickPrivate,
   # which the Linux images lack), which are built on macOS only: the
   # pre-commit tidy on the Mac covers them.
   #
@@ -401,7 +402,8 @@ jobs:
 
       # tests/gates/ holds deliberate violations; the gates job owns them.
       # tests/bench/terminal_memory.cpp (mach) and
-      # src/qml_api/update_install_macos.cpp (statfs, hdiutil) are built on
+      # src/qml_api/update_install_macos.cpp (statfs, hdiutil) and the macOS
+      # notifier (src/roost/desktop_notifier_*macos*.cpp, its test) are built on
       # macOS only, so they are not in the compilation database here.
       - name: Naming and the static analyser
         env:
@@ -414,6 +416,7 @@ jobs:
           find src tests plugins -name '*.cpp' -not -path 'tests/gates/*' \
             -not -path tests/bench/terminal_memory.cpp \
             -not -path src/qml_api/update_install_macos.cpp \
+            -not -name '*macos*.cpp' \
             -not -path tests/qml_api/terminal_grid_tree_test.cpp | sort |
             while IFS= read -r file; do
               sum=$(printf '%s' "$file" | md5sum | cut -c 1-8)

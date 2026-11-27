@@ -252,6 +252,14 @@ if(TARGET roost_notifier_linux)
         roost_notifier_linux)
 endif()
 
+# The macOS notifier of the window (UNUserNotificationCenter): the identifiers
+# of the requests, and what it does outside an application bundle. The
+# notification itself needs roost.app and the user's permission: by hand.
+if(TARGET roost_notifier_macos)
+    roost_add_qt_test(mac_notifier_test roost/mac_notifier_test.cpp
+        roost_notifier_macos)
+endif()
+
 # The windows' side of the desktop notifications: the real roostd, the real
 # notifications plugin and a fixture agent, with windows of the real controller
 # and a notifier that records.
