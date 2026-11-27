@@ -58,8 +58,19 @@ ApplicationWindow {
     property int keysWriteTimeout: 3000
     // What to do when the write ends: done(error), error being null.
     property var afterWrite: null
-    // Numbers the writes: the answer of one that was given up on is ignored.
+    // Numbers the writes: the answer of one that was given up on is ignored,
+    // except that of the last one (see answeredLate).
     property int keysWriteId: 0
+    // The write that the wait gave up on without an answer, 0 when none: its
+    // answer, if it comes later, tells what the wait could not.
+    property int keysTimedOut: 0
+    readonly property string noAnswerMessage: "roostd did not answer the change of the keys"
+    // Where the keyboard goes when the action on a key is done, null when
+    // nowhere: {command, args, when, chords}, the control being the × of the
+    // first of `chords` that the row still has, else the "Add key" of the row.
+    // The table that follows a write makes the rows anew, and the control that
+    // had the keyboard goes with them (it is off during the write besides).
+    property var keysFocus: null
 
     readonly property var terminalFont: settingsDocument.terminalFont ?? ({})
     // The families of the terminal font box. The list of the installed ones is
@@ -338,8 +349,11 @@ ApplicationWindow {
     // One row for each command of the plugins (in their order) and for each
     // (args, when) that it has keys for: those of the table, and where the
     // plugins give it a key. A command with no key has one row, to give it
-    // one. `changed`: the user has a key of it in the file, or a key that the
-    // plugins give it is not in the table (the user took it off).
+    // one. A key that the plugins give the row and the table does not have is
+    // either one that the user took off (a record of the file that Reset
+    // takes out), or one that another entry holds (`held`: Reset of this row
+    // does not touch that entry, so it does not help). `changed`: the user has
+    // a key of the row in the file, or took a key of its plugins off.
     function buildKeyRows(pluginList, bindings) {
         const commands = {};
         const order = [];
@@ -393,13 +407,30 @@ ApplicationWindow {
             for (const name of command.names) {
                 const group = command.groups[name];
                 const present = group.keys.map(k => keyChords.sameKey(k.text));
+                let takenOff = false;
+                const held = [];
+                for (const text of group.contributed) {
+                    if (present.includes(keyChords.sameKey(text))) {
+                        continue;
+                    }
+                    const holder = bindings.find(b => keyChords.sameKey(b.key) === keyChords.sameKey(text) && (b.when ?? "") === group.when);
+                    if (holder === undefined) {
+                        takenOff = true;
+                    } else {
+                        held.push({
+                            "key": text,
+                            "command": holder.command
+                        });
+                    }
+                }
                 rows.push({
                     "command": id,
                     "title": command.title,
                     "args": group.args,
                     "when": group.when,
                     "keys": group.keys,
-                    "changed": group.keys.some(k => k.source === "user") || group.contributed.some(c => !present.includes(keyChords.sameKey(c)))
+                    "held": held,
+                    "changed": group.keys.some(k => k.source === "user") || takenOff
                 });
             }
         }
@@ -497,6 +528,59 @@ ApplicationWindow {
         if (next) {
             next(err);
         }
+        // Not while another write has begun (the second of a Confirm), nor
+        // while the dialog is open: it gives the keyboard back when it closes.
+        if (!keysWriting && !captureDialog.visible) {
+            restoreKeysFocus();
+        }
+    }
+
+    // The keyboard goes back to where the user was, after the rows were made
+    // anew: see keysFocus. Not taken from a control that the user went to
+    // meanwhile.
+    function restoreKeysFocus() {
+        const target = keysFocus;
+        keysFocus = null;
+        if (target === null) {
+            return;
+        }
+        const now = activeFocusItem;
+        // Lost: on no control (the root item of the scene has no parent), or
+        // on one of the keys.
+        const lost = now === null || now.parent === null || now === contentItem || now === scroll || ["removeKeyButton", "addKeyButton", "resetKeysButton"].includes(now.objectName);
+        if (!lost) {
+            return;
+        }
+        // The row of the target; when it is gone (its last key was taken
+        // off), the first row of the command.
+        let row = null;
+        for (let at = 0; at < keyRepeater.count; ++at) {
+            const item = keyRepeater.itemAt(at);
+            if (item.modelData.command !== target.command) {
+                continue;
+            }
+            if (item.modelData.when === target.when && sameArgs(item.modelData.args, target.args)) {
+                row = item;
+                break;
+            }
+            row = row ?? item;
+        }
+        if (row !== null) {
+            row.buttonFor(target.chords).forceActiveFocus(Qt.TabFocusReason);
+        }
+    }
+
+    // The answer of a write that the wait gave up on: roostd did answer, so
+    // what the wait said (it did not) is not the truth. The table that
+    // follows is taken as any other.
+    function answeredLate(err) {
+        if (keysTimedOut !== keysWriteId) {
+            return;
+        }
+        keysTimedOut = 0;
+        const said = text => text.endsWith(noAnswerMessage) ? (err ? text.slice(0, text.length - noAnswerMessage.length) + messageOf(err) : "") : text;
+        keysError = said(keysError);
+        captureDialog.problem = said(captureDialog.problem);
     }
 
     // One write of the keys, alone: `send(answered)` makes the call (or the
@@ -517,9 +601,14 @@ ApplicationWindow {
         afterWrite = done;
         // No answer is waited for longer than this either: a call that is
         // never answered must not leave the controls off.
+        keysTimedOut = 0;
         keysWriteTimer.restart();
         send(err => {
-            if (id !== keysWriteId || !keysWriting) {
+            if (id !== keysWriteId) {
+                return;
+            }
+            if (!keysWriting) {
+                answeredLate(err);
                 return;
             }
             if (err) {
@@ -566,7 +655,20 @@ ApplicationWindow {
         return withoutKey(keys, text).concat([text]);
     }
 
+    // The keyboard is to go to the × of `chords` (the first that is still
+    // there), else to "Add key", of the row.
+    function keepFocus(row, chords) {
+        keysFocus = {
+            "command": row.command,
+            "args": row.args,
+            "when": row.when,
+            "chords": chords
+        };
+    }
+
     function removeKey(row, text) {
+        const keys = row.keys.map(k => k.text);
+        keepFocus(row, keys.slice(keys.indexOf(text)));
         setKeys(row.command, row.args, row.when, keys => withoutKey(keys, text), showWrite);
     }
 
@@ -576,6 +678,7 @@ ApplicationWindow {
             showWrite(refusal);
             return;
         }
+        keepFocus(row, []);
         writeKeys(answered => Roost.call("keymap.resetCommand", targetOf(row.command, row.args, row.when), answered), showWrite);
     }
 
@@ -583,6 +686,7 @@ ApplicationWindow {
         if (keysWriting) {
             return;
         }
+        keepFocus(row, []);
         capturing = row;
         held = null;
         captureDialog.commandTitle = row.title;
@@ -903,9 +1007,14 @@ ApplicationWindow {
         id: keysWriteTimer
 
         interval: root.keysWriteTimeout
-        onTriggered: root.endWrite(root.keysAnswered ? null : {
-            "message": "roostd did not answer the change of the keys"
-        })
+        onTriggered: {
+            if (!root.keysAnswered) {
+                root.keysTimedOut = root.keysWriteId;
+            }
+            root.endWrite(root.keysAnswered ? null : {
+                "message": root.noAnswerMessage
+            });
+        }
     }
 
     KeyCaptureDialog {
@@ -917,6 +1026,9 @@ ApplicationWindow {
         onClosed: {
             root.capturing = null;
             root.held = null;
+            if (!root.keysWriting) {
+                root.restoreKeysFocus();
+            }
         }
     }
 
@@ -1496,15 +1608,38 @@ ApplicationWindow {
                 text: root.keysError
                 Accessible.role: Accessible.AlertMessage
                 Accessible.name: text
+                // As the warning of the dialog: heard when it appears.
+                onTextChanged: shown => {
+                    if (shown !== "") {
+                        Accessible.announce(shown, Accessible.Assertive);
+                    }
+                }
             }
 
             Repeater {
+                id: keyRepeater
+
                 model: root.keyRows
 
                 delegate: RowLayout {
                     id: keyRow
 
                     required property var modelData
+
+                    // The control that the keyboard goes to for a row after a
+                    // change: the × of the first of `chords` that the row
+                    // has, else "Add key".
+                    function buttonFor(chords) {
+                        for (const chord of chords) {
+                            for (let at = 0; at < chips.count; ++at) {
+                                const chip = chips.itemAt(at);
+                                if (chip !== null && keyChords.sameKey(chip.modelData.text) === keyChords.sameKey(chord)) {
+                                    return chip.removeButton;
+                                }
+                            }
+                        }
+                        return addButton;
+                    }
 
                     objectName: "keymapRow"
                     Layout.fillWidth: true
@@ -1538,12 +1673,15 @@ ApplicationWindow {
                         spacing: 8
 
                         Repeater {
+                            id: chips
+
                             model: keyRow.modelData.keys
 
                             delegate: RowLayout {
                                 id: keyChip
 
                                 required property var modelData
+                                readonly property Item removeButton: removeKeyButton
 
                                 spacing: 4
 
@@ -1561,6 +1699,8 @@ ApplicationWindow {
                                 }
 
                                 FormButton {
+                                    id: removeKeyButton
+
                                     objectName: "removeKeyButton"
                                     implicitWidth: 28
                                     implicitHeight: 28
@@ -1573,9 +1713,26 @@ ApplicationWindow {
                                 }
                             }
                         }
+
+                        // A key of the plugins that another entry holds:
+                        // Reset of this row does not give it back.
+                        Repeater {
+                            model: keyRow.modelData.held
+
+                            delegate: Label {
+                                required property var modelData
+
+                                objectName: "keymapHeld"
+                                color: Roost.theme.textMuted
+                                font: Roost.theme.smallFont
+                                text: modelData.key + " is held by " + root.titleOf(modelData.command)
+                            }
+                        }
                     }
 
                     FormButton {
+                        id: addButton
+
                         objectName: "addKeyButton"
                         Layout.alignment: Qt.AlignTop
                         text: "Add key"

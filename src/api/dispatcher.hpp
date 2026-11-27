@@ -59,6 +59,11 @@ public:
     // The names of the methods, sorted.
     QStringList Methods() const;
 
+    // Whether the answer to `method` depends on the plugin that calls
+    // (keymap.setCommand, keymap.resetCommand): only for these the caller
+    // looks for the plugin, which is a walk of the JS stack.
+    static bool JudgesPlugin(const QString& method);
+
     // The future finishes in the thread of `context` (this object's, if
     // null), and finishes canceled if the context is destroyed first. An
     // unknown name is MethodNotFound; errors of roostd, whatever their code,

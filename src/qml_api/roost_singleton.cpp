@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QtLogging>
 
+#include "api/dispatcher.hpp"
 #include "qml_api/js_callback.hpp"
 #include "terminal/physical_keys.hpp"
 #include "terminal/qt_key_mapping.hpp"
@@ -153,8 +154,12 @@ void RoostSingleton::call(const QString& method, const QJSValue& params,
                         QStringLiteral("the API of the window is not set"))));
         return;
     }
-    callMethod(*Api_, Engine_, context, method, toJson(Engine_, params),
-               callback, {}, Owners_.callingPlugin(Engine_));
+    // The plugin is looked for only where the answer depends on it: the walk
+    // of the JS stack costs a path lookup for each frame.
+    callMethod(
+        *Api_, Engine_, context, method, toJson(Engine_, params), callback, {},
+        api::Dispatcher::JudgesPlugin(method) ? Owners_.callingPlugin(Engine_)
+                                              : QString());
 }
 
 QString RoostSingleton::callerPlugin() const {

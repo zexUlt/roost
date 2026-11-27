@@ -27,6 +27,8 @@
 #include <QTest>
 #include <QUrl>
 
+#include <csignal>
+
 #include <algorithm>
 #include <functional>
 #include <memory>
@@ -196,6 +198,44 @@ QList<QQuickItem*> FindAll(QQuickItem* root, const QString& name) {
 }
 
 }  // namespace
+
+// The announcements that the window makes to assistive technology while this
+// lives: the texts, in order.
+class Announcements {
+public:
+    Announcements() {
+        Sink() = &Texts_;
+        Previous_ =
+            QAccessible::installUpdateHandler([](QAccessibleEvent* event) {
+                if (event->type() == QAccessible::Announcement &&
+                    Sink() != nullptr) {
+                    Sink()->append(
+                        static_cast<QAccessibleAnnouncementEvent*>(event)
+                            ->message());
+                }
+            });
+    }
+
+    ~Announcements() {
+        QAccessible::installUpdateHandler(Previous_);
+        Sink() = nullptr;
+    }
+
+    Announcements(const Announcements&) = delete;
+    Announcements& operator=(const Announcements&) = delete;
+
+    const QStringList& Texts() const { return Texts_; }
+
+private:
+    // Where the handler, which is a plain function, puts what it hears.
+    static QStringList*& Sink() {
+        static QStringList* sink = nullptr;
+        return sink;
+    }
+
+    QStringList Texts_;
+    QAccessible::UpdateHandler Previous_ = nullptr;
+};
 
 // Does something at once, in the thread of the emitter, when a signal that it
 // is connected to is emitted: a test changes the world at an exact point of
@@ -414,21 +454,30 @@ private:
 
     // What a user does to a control: Tab to it, which scrolls the form to it
     // when it is below the visible part (what a font of another size does to
-    // the layout), and a click at its middle.
-    static void Click(const SettingsWindow& window, QQuickItem* item) {
+    // the layout), and a click at its middle. `find` is called again after
+    // each wait: a table that arrives makes the rows anew, and an item that
+    // was found before a wait may be gone after it.
+    static void Click(const SettingsWindow& window,
+                      const std::function<QQuickItem*()>& find) {
         // The layout gives the control its place after the window is shown.
-        QTRY_VERIFY(item->width() > 0 && item->height() > 0);
+        QTRY_VERIFY(find() != nullptr && find()->width() > 0 &&
+                    find()->height() > 0);
         // A table that has just arrived moves its rows at the polish of the
         // next frame: a click before it lands where the control was.
         QSignalSpy frame(window.Window(), &QQuickWindow::frameSwapped);
         window.Window()->update();
         QVERIFY(frame.wait(TIMEOUT_MS));
+        // Found after the wait, and not used across another.
+        QQuickItem* item = find();
+        QVERIFY(item != nullptr);
         item->forceActiveFocus(Qt::TabFocusReason);
         QQuickItem* scroll = window.Find("settingsScroll");
         QVERIFY(scroll != nullptr);
         const auto middle = [&] {
-            return item->mapToScene(
-                QPointF(item->width() / 2, item->height() / 2));
+            QQuickItem* now = find();
+            return now == nullptr ? QPointF(-1, -1)
+                                  : now->mapToScene(QPointF(now->width() / 2,
+                                                            now->height() / 2));
         };
         QTRY_VERIFY(scroll
                         ->mapRectToScene(
@@ -436,6 +485,11 @@ private:
                         .contains(middle()));
         QTest::mouseClick(window.Window(), Qt::LeftButton, Qt::NoModifier,
                           middle().toPoint());
+    }
+
+    // The control is not part of the rows: it stays as it is.
+    static void Click(const SettingsWindow& window, QQuickItem* item) {
+        Click(window, std::function<QQuickItem*()>([item] { return item; }));
     }
 
     // What another program, or a hand edit, leaves in the document: a patch
@@ -477,14 +531,70 @@ private:
         return keys;
     }
 
+    // The button of the name in the row of a command, null when there is none:
+    // found now, and to be found again after any wait.
+    static QQuickItem* ButtonOf(const SettingsWindow& window,
+                                const QString& command, const QString& button,
+                                int index = 0) {
+        QQuickItem* row = KeyRow(window, command);
+        if (row == nullptr) {
+            return nullptr;
+        }
+        const QList<QQuickItem*> buttons = FindAll(row, button);
+        return index < buttons.size() ? buttons.at(index) : nullptr;
+    }
+
+    // The keys that the row of a command shows, in the order of the row.
+    static QStringList KeysInOrder(const SettingsWindow& window,
+                                   const QString& command) {
+        QQuickItem* row = KeyRow(window, command);
+        QStringList keys;
+        if (row != nullptr) {
+            for (QQuickItem* key : FindAll(row, "keymapKey")) {
+                keys.append(key->property("text").toString());
+            }
+        }
+        return keys;
+    }
+
+    // The notes of a row about the keys of its plugins that another entry
+    // holds.
+    static QStringList HeldNotes(const SettingsWindow& window,
+                                 const QString& command) {
+        QQuickItem* row = KeyRow(window, command);
+        QStringList notes;
+        if (row != nullptr) {
+            for (QQuickItem* note : FindAll(row, "keymapHeld")) {
+                notes.append(note->property("text").toString());
+            }
+        }
+        return notes;
+    }
+
+    // The user has the keyboard on a control (reached by Tab, which is what
+    // gives it the focus here) and presses a key. The control is found when
+    // it is ready and used with no wait in between.
+    static void PressOn(const SettingsWindow& window,
+                        const std::function<QQuickItem*()>& find, Qt::Key key) {
+        QTRY_VERIFY_WITH_TIMEOUT(find() != nullptr && find()->isVisible() &&
+                                     find()->isEnabled() && find()->width() > 0,
+                                 TIMEOUT_MS);
+        find()->forceActiveFocus(Qt::TabFocusReason);
+        QCOMPARE(Focused(window), find());
+        QTest::keyClick(window.Window(), key);
+    }
+
+    // The item that has the keyboard of the window.
+    static QQuickItem* Focused(const SettingsWindow& window) {
+        return window.Window()->activeFocusItem();
+    }
+
     // What a user does to a button of a row: reaches it and clicks it.
     static void ClickInRow(const SettingsWindow& window, const QString& command,
                            const QString& button, int index = 0) {
-        QQuickItem* row = KeyRow(window, command);
-        QVERIFY(row != nullptr);
-        const QList<QQuickItem*> buttons = FindAll(row, button);
-        QVERIFY(index < buttons.size());
-        Click(window, buttons.at(index));
+        Click(window, [&]() -> QQuickItem* {
+            return ButtonOf(window, command, button, index);
+        });
     }
 
     // The dialog of the capture, as an object (it is no item).
@@ -503,11 +613,16 @@ private:
     // and the keyboard is in its capture area.
     static bool OpenCapture(const SettingsWindow& window,
                             const QString& command) {
-        QQuickItem* row = KeyRow(window, command);
-        if (row == nullptr || FindAll(row, "addKeyButton").isEmpty()) {
+        if (!QTest::qWaitFor(
+                [&] {
+                    return ButtonOf(window, command, "addKeyButton") != nullptr;
+                },
+                TIMEOUT_MS)) {
             return false;
         }
-        Click(window, FindAll(row, "addKeyButton").first());
+        Click(window, [&]() -> QQuickItem* {
+            return ButtonOf(window, command, "addKeyButton");
+        });
         const auto captures = [&] {
             QQuickItem* capture = window.Find("keyCapture");
             return capture != nullptr && capture->hasActiveFocus();
@@ -563,6 +678,13 @@ private:
         return nullptr;
     }
 
+    // Whether the button that takes a key off a command is there and enabled.
+    static bool IsRemoveEnabled(const SettingsWindow& window,
+                                const QString& command, const QString& chord) {
+        QQuickItem* button = RemoveButtonOf(window, command, chord);
+        return button != nullptr && button->isEnabled();
+    }
+
     // Whether the item of the name is there and shown.
     static bool IsShown(const SettingsWindow& window, const QString& name) {
         QQuickItem* item = window.Find(name);
@@ -591,10 +713,7 @@ private:
     // HELLO is given Ctrl+Alt+K; what is in the file and the table then is
     // that action and nothing else.
     void NothingBeforeTheBarrierWasWritten(const SettingsWindow& window) {
-        QVERIFY(!KeysWriting(window));
-        QVERIFY(OpenCapture(window, HELLO));
-        PressCtrlAlt(window, Qt::Key_K);
-        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(window), TIMEOUT_MS);
+        BarrierWrite(window);
         QTRY_COMPARE_WITH_TIMEOUT(
             KeysOf(window, HELLO),
             (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J", "Ctrl+Alt+K"}),
@@ -608,6 +727,27 @@ private:
             QJsonObject{{"command", HELLO}, {"key", "Ctrl+Alt+H"}}));
         QVERIFY(entries.contains(OwnEntry(HELLO, "Ctrl+Alt+K")));
         QCOMPARE(KeymapFile().size(), 2);
+    }
+
+    // The same for a file that the test replaced: it is `before` and the
+    // barrier's key, in this order, and nothing else.
+    void NothingBeforeTheBarrierWasWritten(const SettingsWindow& window,
+                                           const QJsonArray& before) {
+        BarrierWrite(window);
+        QTRY_VERIFY_WITH_TIMEOUT(KeysOf(window, HELLO).contains("Ctrl+Alt+K"),
+                                 TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(window), TIMEOUT_MS);
+        QJsonArray expected = before;
+        expected.append(OwnEntry(HELLO, "Ctrl+Alt+K"));
+        QCOMPARE(KeymapFile(), expected);
+    }
+
+    // The action of the barrier: HELLO is given Ctrl+Alt+K in the dialog.
+    void BarrierWrite(const SettingsWindow& window) {
+        QVERIFY(!KeysWriting(window));
+        QVERIFY(OpenCapture(window, HELLO));
+        PressCtrlAlt(window, Qt::Key_K);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(window), TIMEOUT_MS);
     }
 
     // The entries of keymap.json as the daemon has written them.
@@ -1642,18 +1782,24 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
                                   TIMEOUT_MS);
-        QQuickItem* removeFile = RemoveButtonOf(*window, HELLO, "Ctrl+Alt+H");
-        QQuickItem* removePlugin = RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J");
-        QVERIFY(removeFile != nullptr && removePlugin != nullptr);
-
-        Click(*window, removeFile);
+        // The buttons are found after each wait (the rows are made anew when
+        // a table arrives), and not used across one.
+        Click(*window,
+              [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+H"); });
         // The table is 100 ms behind the write at the least, and the event
         // loop has not run since the click.
         QVERIFY(KeysWriting(*window));
         QVERIFY(IsShown(*window, "keysStatus"));
+        QQuickItem* removePlugin = RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J");
         QVERIFY(removePlugin != nullptr && !removePlugin->isEnabled());
         QVERIFY(!IsEnabled(*window, HELLO, "addKeyButton"));
-        Click(*window, removePlugin);
+        // A second click on the button that is off, with no wait between
+        // finding it and the click: it is not taken.
+        QTest::mouseClick(window->Window(), Qt::LeftButton, Qt::NoModifier,
+                          removePlugin
+                              ->mapToScene(QPointF(removePlugin->width() / 2,
+                                                   removePlugin->height() / 2))
+                              .toPoint());
 
         QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
         QVERIFY(!IsShown(*window, "keysStatus"));
@@ -1663,9 +1809,9 @@ private slots:
         QCOMPARE(UnbindsOf("Ctrl+Alt+J"), 0);
 
         // The same click now, with the table in: both are taken off.
-        removePlugin = RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J");
-        QVERIFY(removePlugin != nullptr && removePlugin->isEnabled());
-        Click(*window, removePlugin);
+        QVERIFY(IsRemoveEnabled(*window, HELLO, "Ctrl+Alt+J"));
+        Click(*window,
+              [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"); });
         QTRY_VERIFY_WITH_TIMEOUT(
             KeysOf(*window, HELLO).isEmpty() && !KeysWriting(*window),
             TIMEOUT_MS);
@@ -1804,20 +1950,26 @@ private slots:
         QVERIFY(DialogIsOpen(*window));
         QVERIFY(!DialogText(*window, "keyConflict").isEmpty());
         QCOMPARE(KeymapBytes(), edited);
-        // Cancel writes nothing.
+        // Cancel writes nothing: what follows it, the barrier, is the only
+        // write that the file has.
         ClickInDialog(*window, "keyCaptureCancel");
         QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
-        QCOMPARE(KeymapBytes(), edited);
+        NothingBeforeTheBarrierWasWritten(
+            *window, QJsonDocument::fromJson(edited).array());
     }
 
     // A write that changes nothing is answered and has no table after it:
-    // the controls do not stay off for it.
+    // the controls do not stay off for it. The wait is long until the answer
+    // is there (a slow roostd cannot make it time out), and short after it:
+    // nothing is expected to come then, so the short wait is only how long
+    // the test gives the table that does not come.
     void AWriteThatChangesNothingEndsByTheTimeout() {
         auto window = OpenWindow();
         QVERIFY(window);
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
                                   QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
-        QVERIFY(window->Object->setProperty("keysWriteTimeout", 600));
+        QVERIFY(
+            window->Object->setProperty("keysWriteTimeout", 10 * TIMEOUT_MS));
         // Reset of a command that has nothing of the user's: roostd answers
         // and writes nothing, so it publishes no table.
         const QVariant row = QVariantMap{{"command", OTHER}, {"when", ""}};
@@ -1826,14 +1978,224 @@ private slots:
         QVERIFY(KeysWriting(*window));
         QVERIFY(IsShown(*window, "keysStatus"));
         QTRY_VERIFY_WITH_TIMEOUT(
-            window->Object->property("keysAnswered").toBool() ||
-                !KeysWriting(*window),
-            TIMEOUT_MS);
+            window->Object->property("keysAnswered").toBool(), TIMEOUT_MS);
+        QVERIFY(KeysWriting(*window));
+        QVERIFY(window->Object->setProperty("keysWriteTimeout", 300));
         QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
         QVERIFY(!IsShown(*window, "keysStatus"));
         QVERIFY(IsEnabled(*window, OTHER, "removeKeyButton"));
         QVERIFY(window->Object->property("keysError").toString().isEmpty());
         QCOMPARE(KeysOf(*window, OTHER), QStringList{"Ctrl+Alt+O"});
+    }
+
+    // After a change of the keys the table makes the rows anew, and the button
+    // that had the keyboard is gone (it was off during the write, besides): the
+    // keyboard goes back to the row that the user was in, by key presses, as
+    // Tab and Space do it. "Add key": back on its button of the row.
+    void TheKeyboardIsOnAddKeyOfTheRowAfterAKeyIsAdded() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        PressOn(
+            *window, [&] { return ButtonOf(*window, HELLO, "addKeyButton"); },
+            Qt::Key_Space);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            window->Find("keyCapture") != nullptr &&
+                window->Find("keyCapture")->hasActiveFocus(),
+            TIMEOUT_MS);
+        PressCtrlAlt(*window, Qt::Key_K);
+        QTRY_VERIFY_WITH_TIMEOUT(!DialogIsOpen(*window), TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            KeysOf(*window, HELLO),
+            (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J", "Ctrl+Alt+K"}),
+            TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Focused(*window) != nullptr &&
+                Focused(*window) == ButtonOf(*window, HELLO, "addKeyButton"),
+            TIMEOUT_MS);
+    }
+
+    // "×": on the × of the next key of the row, else on its "Add key".
+    void TheKeyboardGoesToTheNextKeyAfterAKeyIsTakenOff() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        // The plugin's key first, the file's after it.
+        QCOMPARE(KeysInOrder(*window, HELLO),
+                 (QStringList{"Ctrl+Alt+J", "Ctrl+Alt+H"}));
+        PressOn(
+            *window,
+            [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"); },
+            Qt::Key_Space);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+H"}, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Focused(*window) != nullptr &&
+                Focused(*window) ==
+                    RemoveButtonOf(*window, HELLO, "Ctrl+Alt+H"),
+            TIMEOUT_MS);
+
+        // The last key of the row: nothing is next, so "Add key".
+        PressOn(
+            *window,
+            [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+H"); },
+            Qt::Key_Space);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO), QStringList{},
+                                  TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Focused(*window) != nullptr &&
+                Focused(*window) == ButtonOf(*window, HELLO, "addKeyButton"),
+            TIMEOUT_MS);
+    }
+
+    // "Reset": on the "Add key" of the row.
+    void TheKeyboardIsOnAddKeyOfTheRowAfterReset() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        PressOn(
+            *window,
+            [&] { return ButtonOf(*window, HELLO, "resetKeysButton"); },
+            Qt::Key_Space);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Focused(*window) != nullptr &&
+                Focused(*window) == ButtonOf(*window, HELLO, "addKeyButton"),
+            TIMEOUT_MS);
+    }
+
+    // A user who goes on to another control while the write is under way
+    // keeps the keyboard there: it is not taken back.
+    void TheKeyboardIsNotTakenFromAControlTheUserWentTo() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        PressOn(
+            *window,
+            [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"); },
+            Qt::Key_Space);
+        QVERIFY(KeysWriting(*window));
+        QQuickItem* theme = window->Find("themeBox");
+        QVERIFY(theme != nullptr);
+        theme->forceActiveFocus(Qt::TabFocusReason);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+H"}, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QCOMPARE(Focused(*window), theme);
+    }
+
+    // A key of the plugins that another command's entry of the file holds is
+    // not a change that Reset of this row can undo (the entry is the other
+    // command's): the row has no Reset, and says who holds the key. The row
+    // that has the entry does, and its Reset gives the key back.
+    void AKeyThatAnotherCommandsEntryHoldsIsSaidAndHasNoReset() {
+        KeymapEdited_ = true;
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(WriteFile(
+            KeymapPath(),
+            R"([{"key": "Ctrl+Alt+O", "command": "settings-fixture.hello"}])"));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+J", "Ctrl+Alt+O"}),
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(HeldNotes(*window, OTHER),
+                                  QStringList{"Ctrl+Alt+O is held by Hello"},
+                                  TIMEOUT_MS);
+        QCOMPARE(KeysOf(*window, OTHER), QStringList{});
+        QVERIFY(HeldNotes(*window, HELLO).isEmpty());
+        QQuickItem* otherReset = ButtonOf(*window, OTHER, "resetKeysButton");
+        QVERIFY(otherReset != nullptr && !otherReset->isVisible());
+        QQuickItem* helloReset = ButtonOf(*window, HELLO, "resetKeysButton");
+        QVERIFY(helloReset != nullptr && helloReset->isVisible());
+
+        // Reset of the row that has the entry takes it out of the file, and
+        // the key is the other command's again.
+        ClickInRow(*window, HELLO, "resetKeysButton");
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, OTHER),
+                                  QStringList{"Ctrl+Alt+O"}, TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        QTRY_VERIFY_WITH_TIMEOUT(!KeysWriting(*window), TIMEOUT_MS);
+        QCOMPARE(KeymapFile().size(), 0);
+        QVERIFY(HeldNotes(*window, OTHER).isEmpty());
+        QVERIFY(!ButtonOf(*window, OTHER, "resetKeysButton")->isVisible());
+        QVERIFY(!ButtonOf(*window, HELLO, "resetKeysButton")->isVisible());
+    }
+
+    // The wait for the answer ran out, and the answer comes after it: the
+    // write was made, so "roostd did not answer" is wrong and goes, and the
+    // table that follows is taken. roostd is stopped for the wait (a signal
+    // of the test's own child, not a kill) and goes on afterwards.
+    void ALateAnswerAfterTheTimeoutIsTheTruth() {
+        KeymapEdited_ = true;
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}),
+                                  TIMEOUT_MS);
+        const auto pid = static_cast<pid_t>(Daemon_->ProcessId());
+        QVERIFY(pid > 0);
+        const auto resume = qScopeGuard([pid] { ::kill(pid, SIGCONT); });
+        QVERIFY(window->Object->setProperty("keysWriteTimeout", 300));
+        QCOMPARE(::kill(pid, SIGSTOP), 0);
+        Click(*window,
+              [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+H"); });
+        QTRY_COMPARE_WITH_TIMEOUT(
+            window->Object->property("keysError").toString(),
+            QString("roostd did not answer the change of the keys"),
+            TIMEOUT_MS);
+        QVERIFY(!KeysWriting(*window));
+        QCOMPARE(KeysOf(*window, HELLO),
+                 (QStringList{"Ctrl+Alt+H", "Ctrl+Alt+J"}));
+
+        QCOMPARE(::kill(pid, SIGCONT), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            window->Object->property("keysError").toString().isEmpty(),
+            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        QVERIFY(!KeysWriting(*window));
+        QVERIFY(!IsShown(*window, "keysError"));
+    }
+
+    // The error under the keys is announced when it appears, as the warning
+    // of the dialog is.
+    void TheErrorOfTheKeysIsAnnounced() {
+        KeymapEdited_ = true;
+        QVERIFY(Daemon_->Stop());
+        QVERIFY(WriteFile(KeymapPath(), "[ not json"));
+        QVERIFY(StartDaemon());
+        auto window = OpenWindow();
+        QVERIFY(window);
+        QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
+                                  QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
+        const Announcements announced;
+        Click(*window,
+              [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"); });
+        QTRY_VERIFY_WITH_TIMEOUT(IsShown(*window, "keysError"), TIMEOUT_MS);
+        const QString text =
+            window->Find("keysError")->property("text").toString();
+        QVERIFY2(text.contains("keymap.json is not JSON"), qPrintable(text));
+        QTRY_VERIFY_WITH_TIMEOUT(announced.Texts().contains(text), TIMEOUT_MS);
     }
 
     // A file that is not JSON is left as it is, and the window says so where
@@ -1852,7 +2214,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(KeysOf(*window, HELLO),
                                   QStringList{"Ctrl+Alt+J"}, TIMEOUT_MS);
 
-        Click(*window, RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"));
+        Click(*window,
+              [&] { return RemoveButtonOf(*window, HELLO, "Ctrl+Alt+J"); });
         QTRY_VERIFY_WITH_TIMEOUT(IsShown(*window, "keysError"), TIMEOUT_MS);
         QQuickItem* error = window->Find("keysError");
         QString text = error->property("text").toString();

@@ -282,6 +282,11 @@ QStringList Dispatcher::Methods() const {
     return names;
 }
 
+bool Dispatcher::JudgesPlugin(const QString& method) {
+    return method == QStringLiteral("keymap.setCommand") ||
+           method == QStringLiteral("keymap.resetCommand");
+}
+
 QFuture<rpc::Result> Dispatcher::Call(const QString& method,
                                       const QJsonValue& params,
                                       QObject* context, const QString& plugin) {

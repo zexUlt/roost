@@ -281,6 +281,45 @@ private slots:
         QCOMPARE(QJsonDocument::fromJson(written.readAll()).array().size(), 1);
     }
 
+    // What a plugin declares is known once plugins.list has been answered; a
+    // plugin's keymap call before that is refused for that reason, and not
+    // judged by an empty list. An Api that never connected has no list at all,
+    // which is the state without the race of a connection that is up and has
+    // not been answered yet.
+    void APluginIsRefusedWhileThePluginsAreNotLoaded() {
+        Api_ = std::make_unique<api::Api>();
+        QVERIFY(!Api_->Plugins().IsLoaded());
+        const QJsonObject set{
+            {"command", "fixture.echo"},
+            {"entries", QJsonArray{QJsonObject{{"key", "Ctrl+Alt+Z"}}}}};
+        const QJsonObject reset{{"command", "fixture.echo"}};
+        for (const auto& [method, params] :
+             {std::pair<QString, QJsonObject>{"keymap.setCommand", set},
+              std::pair<QString, QJsonObject>{"keymap.resetCommand", reset}}) {
+            const rpc::Result refused =
+                Call(method, params, nullptr, "fixture");
+            QVERIFY2(!refused, qPrintable(method));
+            QCOMPARE(refused.error().Code, INVALID_PARAMS);
+            QVERIFY2(refused.error().Message.contains("not loaded yet") &&
+                         refused.error().Message.contains("fixture.echo"),
+                     qPrintable(refused.error().Message));
+        }
+    }
+
+    // Only the two keymap writes are judged by the plugin that calls: the
+    // other methods do not look for it (it is a walk of the JS stack).
+    void OnlyTheKeymapWritesJudgeThePlugin() {
+        Api_ = std::make_unique<api::Api>();
+        QStringList judging;
+        for (const QString& method : Api_->Dispatch().Methods()) {
+            if (api::Dispatcher::JudgesPlugin(method)) {
+                judging.append(method);
+            }
+        }
+        QCOMPARE(judging,
+                 (QStringList{"keymap.resetCommand", "keymap.setCommand"}));
+    }
+
     // A plugin manages the commands of its own `contributes.commands`, not the
     // ones whose id begins with its id: `a` is not `a.b`, a plugin may declare
     // a command outside `<id>.*` (the builtin shell has terminal.copy), and a

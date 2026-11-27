@@ -96,9 +96,10 @@ Dialog {
             Accessible.name: "Press the new key for " + root.commandTitle
             Keys.onPressed: event => {
                 // Escape is left to the popup, which closes. Tab and Shift+Tab
-                // are the way to the buttons: they are no key a command could
-                // be given (without Cmd, Ctrl or Alt it is refused), so
-                // nothing is lost.
+                // are the way to the buttons, so they move the focus and are
+                // not captured: not even for a row with `when`, where roostd
+                // would take them as a key. A user who wants them on a command
+                // writes them in keymap.json, which can bind them.
                 const navigates = (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & ~Qt.ShiftModifier) === 0;
                 if (event.key === Qt.Key_Escape || navigates) {
                     event.accepted = false;

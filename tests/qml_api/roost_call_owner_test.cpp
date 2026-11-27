@@ -357,10 +357,10 @@ private slots:
         QCOMPARE(Probe_.Count("panel"), 0);
     }
 
-    // A panel of a plugin sets the keys of the commands of that plugin
-    // (`<id>.*`); the shell, which is no plugin's, sets any. A plugin that
-    // asks for another's command is refused with the usual error and the
-    // file is not made.
+    // A panel of a plugin sets the keys of the commands that plugin declares
+    // in its `contributes.commands`; the shell, which is no plugin's, sets
+    // any. A plugin that asks for another's command is refused with the usual
+    // error and the file is not made.
     void APluginSetsTheKeysOfItsOwnCommandsOnly() {
         QVERIFY(Setup());
         const QString file = Daemon_->ConfigPath() + "/keymap.json";

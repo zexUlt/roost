@@ -222,6 +222,7 @@ QFuture<QJsonValue> Dispatcher::HandleOne(const QJsonValue& message,
                 .Method = method.toString(),
                 .Params = params,
                 .Peer = peer,
+                .Plugin = {},
             });
         } catch (...) {
             answer =
