@@ -6,6 +6,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 
 #include <vector>
 
@@ -84,6 +85,34 @@ private slots:
         QCOMPARE(Results_[0].ExitCode, std::optional<int>(7));
         QCOMPARE(Results_[0].Stderr.size(), 2000);
         QVERIFY(Results_[0].Stderr.endsWith("aaaEND\n"));
+    }
+
+    void TheStderrIsCutAtACharacterNotInsideOne() {
+        // Ten bytes of five characters, seven kept: the cut falls inside the
+        // second character, and the tail starts after it.
+        CommandRunner runner(RunnerOptions{.StderrBytes = 7}, Collect());
+        // Octal escapes: the arguments of a process are recoded by Qt on macOS.
+        QVERIFY(runner.Submit(
+            Job("utf",
+                "printf '\\303\\251\\303\\251\\303\\251\\303\\251\\303\\251' "
+                ">&2")));
+        QTRY_COMPARE_WITH_TIMEOUT(Results_.size(), std::size_t{1}, TIMEOUT_MS);
+        QCOMPARE(Results_[0].Stderr,
+                 QString::fromUtf8("\xc3\xa9\xc3\xa9\xc3\xa9"));
+    }
+
+    void ACommandThatExitedBeforeTheTimeoutIsReportedAsExited() {
+        // The loop is held while the command exits and the timer expires, so
+        // that both are due at once: whichever the loop takes first, the
+        // command exited with 5 and did not time out.
+        CommandRunner runner(
+            RunnerOptions{.Timeout = std::chrono::milliseconds(200)},
+            Collect());
+        QVERIFY(runner.Submit(Job("quick", "exit 5")));
+        QThread::msleep(600);
+        QTRY_COMPARE_WITH_TIMEOUT(Results_.size(), std::size_t{1}, TIMEOUT_MS);
+        QCOMPARE(Results_[0].ExitCode, std::optional<int>(5));
+        QVERIFY(Results_[0].Error.isEmpty());
     }
 
     void ACommandThatCannotStartIsAResultNotASilence() {

@@ -172,6 +172,18 @@ private:
         QVERIFY2(sent, qPrintable(MessageOf(sent)));
     }
 
+    // Has the fixture backend die, and waits until roostd has started it again
+    // and it answers: roostd has announced the restart by then.
+    void RestartAdapter() {
+        // The backend exits without answering: an error, or nothing.
+        Call("commands.run", QJsonObject{{"command", "fixture.crash"}});
+        QTRY_VERIFY_WITH_TIMEOUT(
+            Call("commands.run", QJsonObject{{"command", "fixture.notify"},
+                                             {"args", QJsonArray{}}})
+                .has_value(),
+            TIMEOUT_MS);
+    }
+
     // Replaces `settings` and leaves `results` alone, as the settings page.
     void PutSettings(const QJsonObject& settings) {
         const rpc::Result patched =
@@ -190,12 +202,18 @@ private:
 
     QJsonObject Results() { return Document().value("results").toObject(); }
 
+    // One command at a time, in the order they were queued: a command added
+    // last is a barrier that runs after all before it, so that "nothing ran"
+    // is checked after the runs that could have been wrong.
+    std::unique_ptr<ScopedEnv> OneAtATime_;
     std::unique_ptr<QTemporaryDir> Work_;
     std::unique_ptr<RoostdProcess> Roostd_;
     std::unique_ptr<RpcClient> Client_;
 
 private slots:
     void init() {
+        OneAtATime_ = std::make_unique<ScopedEnv>(
+            "ROOST_NOTIFICATIONS_TEST_MAX_RUNNING", "1");
         Work_ = std::make_unique<QTemporaryDir>();
         QVERIFY(Work_->isValid());
     }
@@ -203,41 +221,44 @@ private slots:
     void cleanup() {
         Client_.reset();
         Roostd_.reset();
+        OneAtATime_.reset();
     }
 
     void ABlockedSessionRunsTheCommandOnceWithTheEnvironmentAndStdin() {
         QVERIFY(Start());
+        // One file of each kind for each session: two sessions run it.
         const QString run = QStringLiteral(
-            "echo x >> '%1'; for v in ROOST_NOTIFY_VERSION ROOST_EVENT "
-            "ROOST_AGENT ROOST_SESSION_ID ROOST_SESSION_TITLE "
-            "ROOST_SESSION_CWD ROOST_STATE ROOST_WAITING_FOR ROOST_MESSAGE; "
-            "do printf '%s=%s\\n' \"$v\" \"${!v}\"; done > '%2'; cat > '%3'");
-        PutSettings(
-            {{"commands",
-              QJsonArray{QJsonObject{{"name", "rec"},
-                                     {"run", run.arg(Path("runs"), Path("env"),
-                                                     Path("stdin"))},
-                                     {"events", QJsonArray{"blocked"}}},
-                         QJsonObject{{"name", "fail"},
-                                     {"run", "echo oops >&2; exit 3"},
-                                     {"events", QJsonArray{"blocked"}}},
-                         Command("barrier", {"failed"})}}});
+            "echo \"$ROOST_SESSION_ID\" >> '%1'; for v in ROOST_NOTIFY_VERSION "
+            "ROOST_EVENT ROOST_AGENT ROOST_SESSION_ID ROOST_SESSION_TITLE "
+            "ROOST_SESSION_CWD ROOST_STATE ROOST_MESSAGE; do printf '%s=%s\\n' "
+            "\"$v\" \"${!v}\"; done > '%2/env.'\"$ROOST_SESSION_ID\"; cat > "
+            "'%2/stdin.'\"$ROOST_SESSION_ID\"");
+        PutSettings({{"commands",
+                      QJsonArray{QJsonObject{{"name", "rec"},
+                                             {"run", run.arg(Path("runs"),
+                                                             Work_->path())},
+                                             {"events", QJsonArray{"blocked"}}},
+                                 QJsonObject{{"name", "fail"},
+                                             {"run", "echo oops >&2; exit 3"},
+                                             {"events", QJsonArray{"blocked"}}},
+                                 Command("barrier", {"failed"})}}});
 
-        // The first state seen of a session is where it is: no run, even for
-        // a session that is blocked then.
+        // The adapters send only changes, so a session first reported as
+        // blocked is a change: it runs, as s1 does when it turns blocked. The
+        // same state again runs nothing.
         Reports({Report("born-blocked", "blocked", "Fresh"),
                  Report("s1", "working", "Fix the build", "/work/tree"),
                  Report("s1", "blocked", "Fix the build", "/work/tree"),
                  Report("s1", "blocked", "Fix the build", "/work/tree")});
-        // The barrier: its run comes after every run the events before it
-        // could have caused, and so does its result.
+        // The barrier runs after every run the events before it caused, and
+        // so does its result.
         Reports({Report("b", "working"), Report("b", "failed")});
         QTRY_VERIFY_WITH_TIMEOUT(Results().contains("barrier") &&
                                      Results().contains("rec") &&
                                      Results().contains("fail"),
                                  TIMEOUT_MS);
 
-        QCOMPARE(Lines("runs"), QStringList{"x"});
+        QCOMPARE(Lines("runs"), (QStringList{"born-blocked", "s1"}));
         QStringList env{"ROOST_NOTIFY_VERSION=1",
                         "ROOST_EVENT=blocked",
                         "ROOST_AGENT=" + AGENT,
@@ -245,11 +266,10 @@ private slots:
                         "ROOST_SESSION_TITLE=Fix the build",
                         "ROOST_SESSION_CWD=/work/tree",
                         "ROOST_STATE=blocked",
-                        "ROOST_WAITING_FOR=",
                         "ROOST_MESSAGE=Fix the build needs you"};
         env.sort();
-        QCOMPARE(Lines("env"), env);
-        QCOMPARE(QJsonDocument::fromJson(Content("stdin")).object(),
+        QCOMPARE(Lines("env.s1"), env);
+        QCOMPARE(QJsonDocument::fromJson(Content("stdin.s1")).object(),
                  (QJsonObject{{"version", 1},
                               {"event", "blocked"},
                               {"agent", AGENT},
@@ -257,8 +277,12 @@ private slots:
                               {"title", "Fix the build"},
                               {"cwd", "/work/tree"},
                               {"state", "blocked"},
-                              {"waitingFor", ""},
                               {"message", "Fix the build needs you"}}));
+        QCOMPARE(QJsonDocument::fromJson(Content("stdin.born-blocked"))
+                     .object()
+                     .value("message")
+                     .toString(),
+                 "Fresh needs you");
 
         // What the settings page shows: the last result of each command.
         const QJsonObject results = Results();
@@ -386,14 +410,16 @@ private slots:
                   Command("all"), Command("blocked-only", {"blocked"}),
                   // The settings leave failed out, whatever it says.
                   Command("failed-too", {"blocked", "done", "failed"}, true),
-                  Command("failed-only", {"failed"}),
-                  Command("off", {}, false)}}});
+                  Command("failed-only", {"failed"}), Command("off", {}, false),
+                  // Last in the order of a run: it runs after the others for
+                  // the last event, so that all that could run has run.
+                  Command("barrier", {"done"})}}});
         Reports({Report("s", "working"), Report("s", "blocked"),
                  Report("s", "done"), Report("s", "failed"),
                  Report("barrier", "working"), Report("barrier", "done")});
-        QTRY_VERIFY_WITH_TIMEOUT(
-            Lines("failed-too.log").size() == 3 && Lines("all.log").size() == 3,
-            TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(Lines("barrier.log"),
+                                  (QStringList{"done:barrier", "done:s"}),
+                                  TIMEOUT_MS);
 
         const QStringList all{"blocked:s", "done:barrier", "done:s"};
         QCOMPARE(Lines("all.log"), all);
@@ -436,10 +462,11 @@ private slots:
         QVERIFY2(every, qPrintable(MessageOf(every)));
         QCOMPARE(every->toObject().value("ran").toArray(),
                  (QJsonArray{"a", "b"}));
-        // b comes after off in the settings: when it has run, off would have.
+        // One at a time, in the order of the settings: when b, the last, has
+        // run, off would have.
         QTRY_VERIFY_WITH_TIMEOUT(Lines("b.log") == QStringList{"test:"},
                                  TIMEOUT_MS);
-        QCOMPARE(Lines("a.log").size(), 2);
+        QTRY_COMPARE_WITH_TIMEOUT(Lines("a.log").size(), 2, TIMEOUT_MS);
         QVERIFY(!QFile::exists(Path("off.log")));
 
         // A disabled command is run when it is asked for by name.
@@ -476,6 +503,10 @@ private slots:
                                   TIMEOUT_MS);
         // one is gone, and blocked is out.
         QCOMPARE(Lines("one.log"), QStringList{"blocked:s1"});
+        // The result of a command that is gone goes with it.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !Results().contains("one") && Results().contains("two"),
+            TIMEOUT_MS);
     }
 
     void ABadFieldIsSkippedAndTheRestWorks() {
@@ -501,18 +532,38 @@ private slots:
 
     void ARemovedSessionIsForgotten() {
         QVERIFY(Start());
-        PutSettings({{"commands", QJsonArray{Command("c", {"blocked"})}}});
-        Reports({Report("s", "working"),
+        PutSettings({{"commands", QJsonArray{Command("c", {"blocked"}),
+                                             Command("barrier", {"failed"})}}});
+        Reports({Report("s", "working"), Report("s", "blocked"),
                  QJsonObject{{"jsonrpc", "2.0"},
                              {"method", "session.removed"},
                              {"params",
                               QJsonObject{{"agent", AGENT}, {"session", "s"}}}},
-                 // The same id again is a new session: its first state is
-                 // only remembered, and nothing runs.
-                 Report("s", "blocked"), Report("s", "working"),
-                 Report("s", "blocked")});
+                 // The same id again is a new session: blocked is its first
+                 // state, a change, and runs again. Without the removal it
+                 // would be the same state.
+                 Report("s", "blocked"), Report("s", "blocked")});
+        Reports({Report("b", "working"), Report("b", "failed")});
+        QTRY_VERIFY_WITH_TIMEOUT(Lines("barrier.log").size() == 1, TIMEOUT_MS);
+        QCOMPARE(Lines("c.log"), (QStringList{"blocked:s", "blocked:s"}));
+    }
+
+    void ARestartOfTheAdapterForgetsTheStatesOfItsAgents() {
+        QVERIFY(Start());
+        PutSettings({{"commands", QJsonArray{Command("c", {"blocked"}),
+                                             Command("barrier", {"failed"})}}});
+        Reports({Report("s", "working"), Report("s", "blocked")});
         QTRY_COMPARE_WITH_TIMEOUT(Lines("c.log"), QStringList{"blocked:s"},
                                   TIMEOUT_MS);
+
+        // The adapter does not tell what changed while it was down: the
+        // session may have worked and been blocked again. Its next report of
+        // blocked is a change, not a repeat.
+        RestartAdapter();
+        Reports({Report("s", "blocked")});
+        Reports({Report("b", "working"), Report("b", "failed")});
+        QTRY_VERIFY_WITH_TIMEOUT(Lines("barrier.log").size() == 1, TIMEOUT_MS);
+        QCOMPARE(Lines("c.log"), (QStringList{"blocked:s", "blocked:s"}));
     }
 };
 

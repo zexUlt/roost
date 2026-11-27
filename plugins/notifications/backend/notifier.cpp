@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QProcessEnvironment>
 
+#include <algorithm>
 #include <ranges>
 
 #include "notifications/backend/diagnostics.hpp"
@@ -149,6 +150,8 @@ void Notifier::OnBusEvent(const QJsonObject& params) {
         OnStateChanged(payload.toObject());
     } else if (name == QStringLiteral("session.removed")) {
         OnRemoved(payload.toObject());
+    } else if (name == QStringLiteral("session.adapterStarted")) {
+        OnAdapterStarted(payload.toObject());
     } else if (name == QStringLiteral("store.changed") &&
                payload.toObject().value(QStringLiteral("plugin")).toString() ==
                    PLUGIN) {
@@ -164,25 +167,34 @@ void Notifier::OnStateChanged(const QJsonObject& session) {
         .Title = session.value(QStringLiteral("title")).toString(),
         .WorkingDirectory = session.value(QStringLiteral("cwd")).toString(),
         .State = session.value(QStringLiteral("state")).toString(),
-        .WaitingFor = session.value(QStringLiteral("waitingFor")).toString(),
     };
     if (seen.Id.isEmpty() || seen.State.isEmpty()) {
         return;
     }
     const auto key = std::pair{seen.Agent, seen.Id};
+    // The adapters send session.stateChanged only for a change (the first
+    // list of an adapter is the baseline and sends nothing), so a session seen
+    // for the first time is a change too. The same state again is not: an
+    // adapter may repeat it for a new title.
     const auto known = States_.find(key);
-    // The first state of a session is where it is, not a change.
-    const bool changed = known != States_.end() && known->second != seen.State;
-    if (known == States_.end()) {
-        States_.emplace(key, seen.State);
-    } else {
-        known->second = seen.State;
-    }
-    if (!changed) {
+    if (known != States_.end() && known->second == seen.State) {
         return;
     }
+    States_.insert_or_assign(key, seen.State);
     if (const auto event = EventFromName(seen.State)) {
         Notify(*event, seen);
+    }
+}
+
+void Notifier::OnAdapterStarted(const QJsonObject& started) {
+    // A state kept from before the restart must not swallow the next change:
+    // the adapter does not tell what changed while it was down.
+    const QJsonArray agents = started.value(QStringLiteral("agents")).toArray();
+    for (const QJsonValue& agent : agents) {
+        const QString id = agent.toString();
+        std::erase_if(States_, [&id](const auto& entry) {
+            return entry.first.first == id;
+        });
     }
 }
 
@@ -198,6 +210,31 @@ void Notifier::ApplyDocument(const QJsonObject& document) {
     }
     SettingsRead_ = settings;
     Settings_ = ParseSettings(settings);
+    ForgetResultsOfRemovedCommands(document.value(QStringLiteral("results")));
+}
+
+void Notifier::ForgetResultsOfRemovedCommands(const QJsonValue& results) {
+    QJsonObject gone;
+    for (const QString& name : results.toObject().keys()) {
+        const bool present = std::ranges::any_of(
+            Settings_.Commands,
+            [&name](const CommandSpec& spec) { return spec.Name == name; });
+        if (!present) {
+            gone.insert(name, QJsonValue(QJsonValue::Null));
+        }
+    }
+    if (gone.isEmpty()) {
+        return;
+    }
+    SendRequest(QStringLiteral("store.patch"),
+                QJsonObject{{QStringLiteral("patch"),
+                             QJsonObject{{QStringLiteral("results"), gone}}}},
+                [](const QJsonObject& response) {
+                    if (response.contains(QStringLiteral("error"))) {
+                        Warn(QStringLiteral("cannot drop old results: %1")
+                                 .arg(ReasonOf(response)));
+                    }
+                });
 }
 
 void Notifier::Notify(EEvent event, const Session& session) {
@@ -258,7 +295,6 @@ CommandJob Notifier::MakeJob(const CommandSpec& spec, const QString& event,
     environment.insert(QStringLiteral("ROOST_SESSION_CWD"),
                        session.WorkingDirectory);
     environment.insert(QStringLiteral("ROOST_STATE"), session.State);
-    environment.insert(QStringLiteral("ROOST_WAITING_FOR"), session.WaitingFor);
     environment.insert(QStringLiteral("ROOST_MESSAGE"), message);
     const QJsonObject input{
         {QStringLiteral("version"), 1},
@@ -268,7 +304,6 @@ CommandJob Notifier::MakeJob(const CommandSpec& spec, const QString& event,
         {QStringLiteral("title"), session.Title},
         {QStringLiteral("cwd"), session.WorkingDirectory},
         {QStringLiteral("state"), session.State},
-        {QStringLiteral("waitingFor"), session.WaitingFor},
         {QStringLiteral("message"), message},
     };
     return CommandJob{

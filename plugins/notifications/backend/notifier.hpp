@@ -50,35 +50,42 @@ struct NotifierOptions {
 // {...}}}, so that `settings` is never overwritten:
 //
 //   {"exitCode": n, "error": "timeout"|"failed to start"|"crashed",
-//    "stderr": "<last 2000 bytes>", "at": <ms since the epoch>,
-//    "event": "<event>"}
+//    "stderr": "<last 2000 bytes, from a character boundary>", "at": <ms since
+//    the epoch>, "event": "<event>"}
 //
 // "exitCode" is there for a command that exited, "error" for one that did
 // not; the other is absent (a null of a patch deletes the key).
 //
 // An event is a session whose state changes into blocked, done or failed. The
-// first state seen of a session is only remembered, so that a restart of
-// roostd or of this backend notifies nothing; session.removed forgets the
-// session; the same state again notifies nothing. A command runs for an event
-// that is in `events` and in its own `events` unless it is not `enabled`.
+// adapters take the baseline themselves and send session.stateChanged only for
+// a change, so a session not seen before is a change, and a session first
+// reported as blocked notifies. The same state again notifies nothing (an
+// adapter may repeat it for a new title). session.removed forgets the session,
+// and session.adapterStarted forgets the sessions of the restarted agents, so
+// that a state kept from before the restart does not swallow the next change.
+// A command runs for an event that is in `events` and in its own `events`
+// unless it is not `enabled`.
+//
+// When `settings` changes, the `results` of the commands that are no longer in
+// it are deleted.
 //
 // A command is `bash -c <run>`, never with data of the session in the text. It
 // gets the environment of the backend and
 //
 //   ROOST_NOTIFY_VERSION=1  ROOST_EVENT  ROOST_AGENT  ROOST_SESSION_ID
-//   ROOST_SESSION_TITLE  ROOST_SESSION_CWD  ROOST_STATE  ROOST_WAITING_FOR
-//   ROOST_MESSAGE
+//   ROOST_SESSION_TITLE  ROOST_SESSION_CWD  ROOST_STATE  ROOST_MESSAGE
 //
 // and the same on stdin as one JSON object, the names without ROOST_ in camel
-// case: {version, event, agent, sessionId, title, cwd, state, waitingFor,
-// message}. ROOST_WAITING_FOR is the `waitingFor` of the session if it has
-// one. ROOST_MESSAGE is "<title> needs you", "<title> is done" or "<title>
+// case: {version, event, agent, sessionId, title, cwd, state, message}.
+// ROOST_MESSAGE is "<title> needs you", "<title> is done" or "<title>
 // failed", the id for a session without a title.
 //
 // commands.run {command: "notifications.test", args: {name?}} runs the
 // command `name`, even a disabled one, or every enabled command, whatever
 // their events, with ROOST_EVENT=test and the message "Test notification from
-// roost", and answers {ran: [names]} as they start. A name that is not in the
+// roost", and answers {ran: [names]} at once: the commands that were started
+// or queued behind the running ones (a command dropped for a full queue is not
+// in it), not those that have run. A name that is not in the
 // settings is InvalidParams.
 class Notifier : public QObject {
     Q_OBJECT
@@ -108,7 +115,6 @@ private:
         QString Title;
         QString WorkingDirectory;
         QString State;
-        QString WaitingFor;
     };
 
     using Answer = std::function<void(const QJsonObject& response)>;
@@ -119,6 +125,8 @@ private:
     void OnBusEvent(const QJsonObject& params);
     void OnStateChanged(const QJsonObject& session);
     void OnRemoved(const QJsonObject& removed);
+    void OnAdapterStarted(const QJsonObject& started);
+    void ForgetResultsOfRemovedCommands(const QJsonValue& results);
     void ApplyDocument(const QJsonObject& document);
     void Notify(EEvent event, const Session& session);
     jsonrpc::Result RunTest(const QJsonValue& args);

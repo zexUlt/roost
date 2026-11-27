@@ -43,12 +43,8 @@ public:
             Process_.write(Job_.Input);
             Process_.closeWriteChannel();
         });
-        connect(&Process_, &QProcess::readyReadStandardError, this, [this] {
-            Stderr_.append(Process_.readAllStandardError());
-            if (Stderr_.size() > StderrBytes_) {
-                Stderr_.remove(0, Stderr_.size() - StderrBytes_);
-            }
-        });
+        connect(&Process_, &QProcess::readyReadStandardError, this,
+                [this] { AppendStderr(); });
         connect(&Process_, &QProcess::errorOccurred, this,
                 [this](QProcess::ProcessError error) {
                     if (error == QProcess::FailedToStart) {
@@ -58,10 +54,7 @@ public:
                 });
         connect(&Process_, &QProcess::finished, this,
                 [this](int exitCode, QProcess::ExitStatus status) {
-                    Stderr_.append(Process_.readAllStandardError());
-                    if (Stderr_.size() > StderrBytes_) {
-                        Stderr_.remove(0, Stderr_.size() - StderrBytes_);
-                    }
+                    AppendStderr();
                     if (TimedOut_) {
                         End(std::nullopt, QStringLiteral("timeout"),
                             QString::fromUtf8(Stderr_));
@@ -75,6 +68,16 @@ public:
 
         Timer_.setSingleShot(true);
         connect(&Timer_, &QTimer::timeout, this, [this] {
+            // A process that has exited but whose end the loop has not yet
+            // delivered did not time out: take its end now, with its exit
+            // code, and do not kill a group that may be a new process's.
+            if (Process_.state() == QProcess::Running &&
+                Process_.waitForFinished(0)) {
+                return;
+            }
+            if (Ended_) {
+                return;
+            }
             TimedOut_ = true;
             const auto group = static_cast<pid_t>(Process_.processId());
             if (group > 0) {
@@ -102,6 +105,21 @@ public:
     Run& operator=(const Run&) = delete;
 
 private:
+    // Keeps the last StderrBytes_ bytes, starting at a character: a cut inside
+    // a UTF-8 sequence would show as a replacement character.
+    void AppendStderr() {
+        Stderr_.append(Process_.readAllStandardError());
+        if (Stderr_.size() <= StderrBytes_) {
+            return;
+        }
+        qsizetype from = Stderr_.size() - StderrBytes_;
+        while (from < Stderr_.size() &&
+               (static_cast<unsigned char>(Stderr_[from]) & 0xC0) == 0x80) {
+            ++from;
+        }
+        Stderr_.remove(0, from);
+    }
+
     void End(std::optional<int> exitCode, const QString& error,
              const QString& stderrText) {
         if (std::exchange(Ended_, true)) {

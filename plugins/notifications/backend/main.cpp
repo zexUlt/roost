@@ -5,7 +5,9 @@
 // per line, and exits when its stdin closes.
 //
 // ROOST_NOTIFICATIONS_TEST_TIMEOUT_MS replaces the 10 s a command may run; for
-// tests only.
+// tests only. ROOST_NOTIFICATIONS_TEST_MAX_RUNNING replaces the 4 commands that
+// run at once; with 1 they run strictly in the order they were queued, which
+// lets a test make a barrier of the last command; for tests only.
 
 #include <QCoreApplication>
 
@@ -23,6 +25,11 @@ int main(int argc, char** argv) {
     options.Runner.Timeout = roost::plugin::Milliseconds(
         qEnvironmentVariable("ROOST_NOTIFICATIONS_TEST_TIMEOUT_MS"),
         options.Runner.Timeout);
+    if (const int maxRunning = qEnvironmentVariableIntValue(
+            "ROOST_NOTIFICATIONS_TEST_MAX_RUNNING");
+        maxRunning > 0) {
+        options.Runner.MaxRunning = maxRunning;
+    }
     roost::notifications::Notifier notifier(options, roost::plugin::SendStdio);
 
     return roost::plugin::RunStdio(
