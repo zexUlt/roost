@@ -13,7 +13,9 @@ terminal emulator. Every feature is a plugin, and panels can be linked.
 Status: the window lists Claude Code background sessions and saved Codex
 threads and opens them in a terminal panel; panels split, tab and link; keys
 come from `keymap.json`; there are a command palette and a settings window.
-Notifications are not there yet. Design and plan: [docs/design.md](docs/design.md).
+A session that needs you or fails shows a desktop notification and can run
+your own commands; "finished" is opt-in (Settings → Notifications). Design
+and plan: [docs/design.md](docs/design.md).
 
 ## Install
 
