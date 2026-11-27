@@ -77,9 +77,57 @@ bool IsRunning(qint64 pid) {
 }
 
 // Is there no process left in the group? The group of a leader that has been
-// reaped lives on while any member does.
+// reaped lives on while any member does. kill(-group, 0) also reports the
+// group alive while an unreaped zombie is in it, so the test needs the
+// orphans reaped by init or systemd, as on the runners of CI.
 bool GroupIsGone(qint64 group) {
     return ::kill(-static_cast<pid_t>(group), 0) == -1 && errno == ESRCH;
+}
+
+// The watchdog of a command: the child of its shell that runs the binary of
+// the backend (it is a fork of it), 0 if there is none.
+qint64 WatchdogOf(qint64 shell) {
+    QProcess ps;
+    ps.start("ps", {"-A", "-o", "pid=,ppid=,command="});
+    if (!ps.waitForFinished(TIMEOUT_MS)) {
+        return 0;
+    }
+    const QStringList lines =
+        QString::fromUtf8(ps.readAllStandardOutput()).split(u'\n');
+    for (const QString& line : lines) {
+        const QStringList fields =
+            line.trimmed().split(u' ', Qt::SkipEmptyParts);
+        if (fields.size() >= 3 && fields[1].toLongLong() == shell &&
+            line.contains("notifications-backend")) {
+            return fields[0].toLongLong();
+        }
+    }
+    return 0;
+}
+
+// How many descriptors does the process hold? -1 if they cannot be read.
+int OpenDescriptors(qint64 pid) {
+    const QDir proc(QStringLiteral("/proc/%1/fd").arg(pid));
+    if (proc.exists()) {
+        return static_cast<int>(
+            proc.entryList(QDir::NoDotAndDotDot | QDir::AllEntries).size());
+    }
+    QProcess lsof;
+    lsof.start("lsof", {"-n", "-P", "-F", "f", "-p", QString::number(pid)});
+    if (!lsof.waitForFinished(TIMEOUT_MS) ||
+        lsof.exitStatus() != QProcess::NormalExit) {
+        return -1;
+    }
+    int count = 0;
+    for (const QByteArray& line : lsof.readAllStandardOutput().split('\n')) {
+        // "f<number>" is a descriptor, "fcwd" or "ftxt" are not.
+        bool number = false;
+        if (line.startsWith('f')) {
+            line.mid(1).toInt(&number);
+        }
+        count += number ? 1 : 0;
+    }
+    return count;
 }
 
 }  // namespace
@@ -451,6 +499,66 @@ private slots:
         QCOMPARE(::kill(static_cast<pid_t>(backend), SIGKILL), 0);
         QTRY_VERIFY_WITH_TIMEOUT(
             !IsRunning(child) && !IsRunning(shell) && GroupIsGone(shell), 2000);
+    }
+
+    void TwoCommandsRunningAtOnceDieWithTheBackendThatIsKilled() {
+        // The watchdog of the second command is forked from a backend that
+        // holds the lifeline of the first: the copy it inherits must not keep
+        // that pipe open.
+        const ScopedEnv timeout("ROOST_NOTIFICATIONS_TEST_TIMEOUT_MS", "60000");
+        // Side by side, not one after the other as in the other cases.
+        const ScopedEnv together("ROOST_NOTIFICATIONS_TEST_MAX_RUNNING", "2");
+        QVERIFY(Start());
+        QJsonArray commands;
+        for (const QString name : {"first", "second"}) {
+            commands.append(QJsonObject{
+                {"name", name},
+                {"run",
+                 QStringLiteral("sleep 600 & echo $! > '%1'; "
+                                "echo $$ > '%2'; echo $PPID > '%3'; "
+                                "wait")
+                     .arg(Path(name + "-child.pid"), Path(name + "-shell.pid"),
+                          Path("backend.pid"))},
+                {"events", QJsonArray{"blocked"}}});
+        }
+        PutSettings({{"commands", commands}});
+        Reports({Report("s1", "working"), Report("s1", "blocked")});
+        QTRY_VERIFY_WITH_TIMEOUT(!Lines("first-child.pid").isEmpty() &&
+                                     !Lines("first-shell.pid").isEmpty() &&
+                                     !Lines("second-child.pid").isEmpty() &&
+                                     !Lines("second-shell.pid").isEmpty() &&
+                                     !Lines("backend.pid").isEmpty(),
+                                 TIMEOUT_MS);
+        const qint64 backend = Lines("backend.pid").first().toLongLong();
+        QVERIFY(backend > 1);
+        QList<qint64> children;
+        QList<qint64> shells;
+        for (const QString name : {"first", "second"}) {
+            children.append(Lines(name + "-child.pid").first().toLongLong());
+            shells.append(Lines(name + "-shell.pid").first().toLongLong());
+        }
+        for (const qint64 pid : children + shells) {
+            QVERIFY(pid > 1);
+            QVERIFY(IsRunning(pid));
+        }
+
+        // The second watchdog came from a backend that held the lifeline of
+        // the first, and has only its own: with a copy of the other, the first
+        // command would live until the second watchdog is gone.
+        for (const qint64 shell : shells) {
+            const qint64 watchdog = WatchdogOf(shell);
+            QVERIFY(watchdog > 1);
+            const int held = OpenDescriptors(watchdog);
+            QVERIFY2(held >= 0, "descriptors cannot be read");
+            QCOMPARE(held, 1);
+        }
+
+        QCOMPARE(::kill(static_cast<pid_t>(backend), SIGKILL), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !IsRunning(children[0]) && !IsRunning(children[1]) &&
+                !IsRunning(shells[0]) && !IsRunning(shells[1]) &&
+                GroupIsGone(shells[0]) && GroupIsGone(shells[1]),
+            2000);
     }
 
     void ACommandThatEndsLeavesNoProcessOfItsGroupBehind() {

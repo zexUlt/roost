@@ -13,6 +13,37 @@ namespace {
 
 constexpr int WATCH_POLL_MS = 100;
 
+// Closes every descriptor but `keep`. In one call where the system has it
+// (close_range on Linux with glibc 2.34, closefrom on the BSDs), by a loop
+// otherwise. Async-signal-safe: system calls only.
+void CloseAllBut(int keep) {
+#if defined(__linux__) && defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 34)
+    // Both sides of the kept one. A kernel without close_range (before 5.9)
+    // or a filter that forbids it leaves the descriptors open: the loop below
+    // then takes over.
+    if ((keep == 0 ||
+         ::close_range(0, static_cast<unsigned>(keep) - 1, 0) == 0) &&
+        ::close_range(static_cast<unsigned>(keep) + 1, ~0U, 0) == 0) {
+        return;
+    }
+#endif
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+    defined(__DragonFly__)
+    for (int fd = 0; fd < keep; ++fd) {
+        ::close(fd);
+    }
+    ::closefrom(keep + 1);
+    return;
+#endif
+    const int limit = std::min(::getdtablesize(), 65536);
+    for (int fd = 0; fd < limit; ++fd) {
+        if (fd != keep) {
+            ::close(fd);
+        }
+    }
+}
+
 // Runs in the watchdog, forked from the child before it execs, so only
 // async-signal-safe calls are allowed. Does not return. The watchdog is a
 // child of the command and in its group, so that the kill on a timeout takes
@@ -22,12 +53,7 @@ constexpr int WATCH_POLL_MS = 100;
     // the lifeline of another command would keep that pipe open, and the
     // standard streams and the pipe of the exec status would keep the parent
     // waiting for the end of the command.
-    const int limit = std::min(::getdtablesize(), 65536);
-    for (int fd = 0; fd < limit; ++fd) {
-        if (fd != lifeline) {
-            ::close(fd);
-        }
-    }
+    CloseAllBut(lifeline);
     pollfd watched{lifeline, POLLIN, 0};
     for (;;) {
         // The command is gone and the watchdog was handed to init: nothing

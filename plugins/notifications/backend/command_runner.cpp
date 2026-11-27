@@ -116,6 +116,10 @@ public:
                 process->failChildProcessModifier("fork of the watchdog",
                                                   errno);
             }
+            // The watchdog has its own copy. This one would keep the pipe
+            // open for as long as the command has not exec'd, and then the
+            // lifeline would not end with the backend.
+            ::close(writeEnd);
         });
         Timer_.start(Timeout_);
         Process_.start();
