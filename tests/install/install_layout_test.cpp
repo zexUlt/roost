@@ -219,6 +219,8 @@ private:
             plugins + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
             plugins + "/codex/plugin.json",
             plugins + "/codex/backend/" + CODEX_ADAPTER_FILE,
+            plugins + "/notifications/plugin.json",
+            plugins + "/notifications/backend/" + NOTIFICATIONS_BACKEND_FILE,
             plugins + "/sessions/plugin.json",
             plugins + "/sessions/qml/SessionsPanel.qml",
             plugins + "/sessions/qml/RoostSessions/qmldir",
@@ -241,6 +243,8 @@ private:
                 "roost.app/Contents/MacOS/roostd",
                 QString("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE,
                 QString("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE,
+                QString("roost.app/Contents/MacOS/") +
+                    NOTIFICATIONS_BACKEND_FILE,
                 QString("roost.app/Contents/PlugIns/roost/") +
                     SESSIONS_MODULE_FILE,
             });
@@ -345,7 +349,9 @@ private slots:
         QStringList programs{
             BinDir() + "/roost", BinDir() + "/roostd",
             PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE,
-            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE};
+            PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE,
+            PluginsDir() + "/notifications/backend/" +
+                NOTIFICATIONS_BACKEND_FILE};
         for (const QString& program : programs) {
             QVERIFY2(QFileInfo(program).isExecutable(), qPrintable(program));
         }
@@ -358,10 +364,13 @@ private slots:
             PluginsDir() + "/claude/backend/" + CLAUDE_ADAPTER_FILE;
         const QString codex =
             PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE;
+        const QString notifications = PluginsDir() + "/notifications/backend/" +
+                                      NOTIFICATIONS_BACKEND_FILE;
         const QString module = SessionsModuleDir() + "/" + SESSIONS_MODULE_FILE;
         if (!IS_MACOS) {
             QVERIFY(!QFileInfo(adapter).isSymLink());
             QVERIFY(!QFileInfo(codex).isSymLink());
+            QVERIFY(!QFileInfo(notifications).isSymLink());
             QVERIFY(!QFileInfo(module).isSymLink());
             return;
         }
@@ -372,6 +381,8 @@ private slots:
         const QList<Link> links{
             {adapter, Path("roost.app/Contents/MacOS/") + CLAUDE_ADAPTER_FILE},
             {codex, Path("roost.app/Contents/MacOS/") + CODEX_ADAPTER_FILE},
+            {notifications,
+             Path("roost.app/Contents/MacOS/") + NOTIFICATIONS_BACKEND_FILE},
             {module,
              Path("roost.app/Contents/PlugIns/roost/") + SESSIONS_MODULE_FILE},
         };
@@ -483,6 +494,11 @@ private slots:
                      : PluginsDir() + "/codex/backend/" + CODEX_ADAPTER_FILE,
             ADAPTER_RUN_PATH);
         CheckRunPath(tool,
+                     IS_MACOS ? BinDir() + "/" + NOTIFICATIONS_BACKEND_FILE
+                              : PluginsDir() + "/notifications/backend/" +
+                                    NOTIFICATIONS_BACKEND_FILE,
+                     ADAPTER_RUN_PATH);
+        CheckRunPath(tool,
                      IS_MACOS
                          ? Path("roost.app/Contents/PlugIns/roost/") +
                                SESSIONS_MODULE_FILE
@@ -564,8 +580,8 @@ private slots:
                      qPrintable(directory));
         }
         ids.sort();
-        QCOMPARE(ids, (QStringList{"claude", "codex", "sessions", "shell",
-                                   "terminal"}));
+        QCOMPARE(ids, (QStringList{"claude", "codex", "notifications",
+                                   "sessions", "shell", "terminal"}));
 
         // The adapter is started from its place in the plugin directory (on
         // macOS a symlink to the one in Contents/MacOS), runs the fake claude.
