@@ -217,7 +217,10 @@ private:
         if (!window->Read->isValid()) {
             return nullptr;
         }
-        QMetaObject::invokeMethod(window->Object.get(), "open");
+        // No target: the window opens on the default category, as Main.qml
+        // does for a plain "open settings".
+        QMetaObject::invokeMethod(window->Object.get(), "open",
+                                  Q_ARG(QVariant, QVariant()));
         return window;
     }
 
@@ -1142,10 +1145,19 @@ private slots:
         QVERIFY(Daemon_->Start(ROOSTD_PATH));
         auto window = OpenReadWindow();
         QVERIFY(window);
-        // Narrow enough for the swatches to wrap.
-        window->Window()->setWidth(420);
+        // Narrow enough for the swatches to wrap, wide enough (with the list
+        // of the categories at its side) for a row to hold more than one.
+        constexpr int narrowWidth = 600;
+        QQuickItem* flow = window->Find("focusSwatches");
+        QVERIFY(flow != nullptr);
+        // The Flow takes the whole change of the width, but a frame or more
+        // after it: the rows are read once it has.
+        const qreal flowWidth =
+            flow->width() - (window->Window()->width() - narrowWidth);
+        window->Window()->setWidth(narrowWidth);
         window->Window()->requestActivate();
         QVERIFY(QTest::qWaitForWindowActive(window->Window(), TIMEOUT_MS));
+        QTRY_COMPARE_WITH_TIMEOUT(flow->width(), flowWidth, TIMEOUT_MS);
         const auto y = [&](int i) { return window->Swatch(i)->y(); };
         QTRY_VERIFY_WITH_TIMEOUT(y(9) > y(0), TIMEOUT_MS);
         int rowEnd = 0;
