@@ -1092,6 +1092,16 @@ target_compile_definitions(settings_window_test PRIVATE
     ROOSTD_PATH="$<TARGET_FILE:roostd>")
 add_dependencies(settings_window_test roostd)
 
+# The settings page of the notifications plugin: the real plugin (page and
+# backend) and the real window against the real roostd.
+roost_add_qt_test(notifications_settings_test roost/notifications_settings_test.cpp
+    roost_app roost_shell roost_shellplugin roost_qml_api roost_qml_apiplugin
+    roost_test_helpers Qt6::Qml Qt6::Quick)
+target_compile_definitions(notifications_settings_test PRIVATE
+    ROOSTD_PATH="$<TARGET_FILE:roostd>"
+    NOTIFICATIONS_PLUGIN_DIR="${PROJECT_BINARY_DIR}/roost-plugins/notifications")
+add_dependencies(notifications_settings_test roostd notifications-backend)
+
 # The setting of the focus ring colour: Base, Contrast and Custom change the
 # `focus` token of every window, a colour that is too light is refused, and the
 # choice survives a restart; the settings window and the real roostd.

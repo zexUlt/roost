@@ -54,12 +54,12 @@ void StoreAdapter::set(const QString& plugin, const QJSValue& document,
                callback);
 }
 
-void StoreAdapter::patch(const QString& plugin, const QJSValue& patch,
+bool StoreAdapter::patch(const QString& plugin, const QJSValue& patch,
                          const QJSValue& callback) {
     QObject* const context =
         Owners_.contextFor(Engine_, this, QStringLiteral("store.patch"));
     if (context == nullptr) {
-        return;
+        return false;
     }
     QJsonObject params{{QStringLiteral("plugin"), plugin}};
     if (!patch.isUndefined()) {
@@ -67,6 +67,7 @@ void StoreAdapter::patch(const QString& plugin, const QJSValue& patch,
     }
     callMethod(Api_, Engine_, context, QStringLiteral("store.patch"), params,
                callback);
+    return true;
 }
 
 }  // namespace roost

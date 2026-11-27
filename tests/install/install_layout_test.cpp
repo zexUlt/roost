@@ -221,6 +221,7 @@ private:
             plugins + "/codex/backend/" + CODEX_ADAPTER_FILE,
             plugins + "/notifications/plugin.json",
             plugins + "/notifications/backend/" + NOTIFICATIONS_BACKEND_FILE,
+            plugins + "/notifications/qml/NotificationsSettings.qml",
             plugins + "/sessions/plugin.json",
             plugins + "/sessions/qml/SessionsPanel.qml",
             plugins + "/sessions/qml/RoostSessions/qmldir",
