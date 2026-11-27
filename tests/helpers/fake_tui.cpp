@@ -53,9 +53,11 @@ void OnResize(int /*signal*/) {
     errno = saved;
 }
 
-// A pipe with both ends non-blocking and closed on exec.
+// A pipe with both ends non-blocking and closed on exec; on failure both
+// ends are -1.
 bool MakeWakePipe(int (&ends)[2]) {
     if (::pipe(ends) != 0) {
+        ends[0] = ends[1] = -1;
         return false;
     }
     for (const int end : ends) {
@@ -64,6 +66,7 @@ bool MakeWakePipe(int (&ends)[2]) {
             ::fcntl(end, F_SETFD, FD_CLOEXEC) == -1) {
             ::close(ends[0]);
             ::close(ends[1]);
+            ends[0] = ends[1] = -1;
             return false;
         }
     }
@@ -233,10 +236,11 @@ int main(int argc, char** argv) {
         const nfds_t count = wake[0] != -1 ? 2 : 1;
         if (::poll(waits, count, -1) == -1) {
             if (errno == EINTR) {
-                continue;  // a resize
+                continue;  // a signal: RESIZED or the pipe tells a resize
             }
             // Any other error is left to read(), which ends the loop below.
         } else if (count == 2 && (waits[1].revents & POLLIN) != 0) {
+            // Until EAGAIN: one wake for any number of resizes.
             char drained[64];
             while (::read(wake[0], drained, sizeof(drained)) > 0) {
             }
