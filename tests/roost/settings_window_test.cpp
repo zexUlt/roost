@@ -19,6 +19,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QQmlExtensionPlugin>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -631,6 +632,39 @@ private:
                                          Q_ARG(QVariant, target));
     }
 
+    // The index of the highlighted row of the list of categories, -1 when
+    // none: read from the rows themselves, not from the list.
+    static int HighlightedRow(const SettingsWindow& window) {
+        QList<QQuickItem*> rows = window.FindAll("categoryItem");
+        std::ranges::sort(rows, [](const QQuickItem* a, const QQuickItem* b) {
+            return a->y() < b->y();
+        });
+        int found = -1;
+        for (int i = 0; i < rows.size(); ++i) {
+            if (rows[i]->property("highlighted").toBool()) {
+                if (found != -1) {
+                    return -2;
+                }
+                found = i;
+            }
+        }
+        return found;
+    }
+
+    // The list highlights the row of the category that is shown, in the list
+    // and in the row; the key of the shown one is `key`.
+    static void VerifyHighlight(const SettingsWindow& window,
+                                const QString& key) {
+        QTRY_COMPARE_WITH_TIMEOUT(ShownKey(window), key, TIMEOUT_MS);
+        const QQuickItem* list = window.Find("categoryList");
+        QVERIFY(list != nullptr);
+        const int index = window.Object->property("categoryIndex").toInt();
+        QVERIFY(index >= 0);
+        QTRY_COMPARE_WITH_TIMEOUT(list->property("currentIndex").toInt(), index,
+                                  TIMEOUT_MS);
+        QTRY_COMPARE_WITH_TIMEOUT(HighlightedRow(window), index, TIMEOUT_MS);
+    }
+
     // The titles of the rows of the list of categories, top to bottom.
     static QStringList CategoryTitles(const SettingsWindow& window) {
         QList<QQuickItem*> rows = window.FindAll("categoryItem");
@@ -1184,6 +1218,83 @@ private slots:
         QVERIFY(OpenAt(*window, QVariantMap{{"plugin", "keys"}}));
         QTRY_COMPARE_WITH_TIMEOUT(ShownKey(*window), QString("keys"),
                                   TIMEOUT_MS);
+    }
+
+    // The page of one more plugin turns up (a plugin loaded after the window
+    // opened): the list gets one more row, after the ones of the fixture.
+    static void AddPluginPage(const SettingsWindow& window) {
+        QQmlExpression add(qmlContext(window.Object.get()), window.Object.get(),
+                           "settingsPages = settingsPages.concat("
+                           "[{pluginId: \"zzz-late\", page: null}])");
+        add.evaluate();
+        QVERIFY2(!add.hasError(), qPrintable(add.error().toString()));
+        QTRY_VERIFY_WITH_TIMEOUT(CategoryTitles(window).contains("zzz-late"),
+                                 TIMEOUT_MS);
+    }
+
+    // The list highlights the row of the category that shell.settings opened,
+    // and Up and Down move from it, while the plugins of the window are read
+    // and while another page turns up: on a window that was never shown and on
+    // a window that is shown again.
+    void TheListHighlightsTheOpenedCategory() {
+        auto window = OpenWindow(false);
+        QVERIFY(window);
+        QSignalSpy read(window->Object.get(), SIGNAL(pluginsChanged()));
+        QVERIFY(OpenAt(*window, QVariantMap{{"plugin", FIXTURE}}));
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+        QTRY_VERIFY_WITH_TIMEOUT(!read.isEmpty(), TIMEOUT_MS);
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+        AddPluginPage(*window);
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+        QVERIFY(!PageIsShown(*window, "appearancePage"));
+        window->Find("categoryList")->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(ListHasKeyboard(*window));
+        QTest::keyClick(window->Window(), Qt::Key_Up);
+        VerifyHighlight(*window, QString("updates"));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        VerifyHighlight(*window, QString("plugin:zzz-late"));
+        // Closed and opened again on the plugin: its plugins are read again.
+        window->Window()->setVisible(false);
+        read.clear();
+        QVERIFY(OpenAt(*window, QVariantMap{{"plugin", FIXTURE}}));
+        QTRY_VERIFY_WITH_TIMEOUT(!read.isEmpty(), TIMEOUT_MS);
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+        // Re-targeted, the window being shown.
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "keys"}}));
+        VerifyHighlight(*window, QString("keys"));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        VerifyHighlight(*window, QString("updates"));
+        QVERIFY(OpenAt(*window, QVariantMap{{"plugin", FIXTURE}}));
+        VerifyHighlight(*window, "plugin:" + FIXTURE);
+    }
+
+    // A built-in category: the row follows it while the plugins are read and
+    // while another page turns up, and Up and Down move from it.
+    void TheListHighlightsABuiltinCategory() {
+        auto window = OpenWindow(false);
+        QVERIFY(window);
+        QSignalSpy read(window->Object.get(), SIGNAL(pluginsChanged()));
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "keys"}}));
+        VerifyHighlight(*window, QString("keys"));
+        QTRY_VERIFY_WITH_TIMEOUT(!read.isEmpty(), TIMEOUT_MS);
+        AddPluginPage(*window);
+        VerifyHighlight(*window, QString("keys"));
+        window->Find("categoryList")->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(ListHasKeyboard(*window));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        VerifyHighlight(*window, QString("updates"));
+        QTest::keyClick(window->Window(), Qt::Key_Up);
+        VerifyHighlight(*window, QString("keys"));
+        // Closed and opened again on it.
+        window->Window()->setVisible(false);
+        read.clear();
+        QVERIFY(OpenAt(*window, QVariantMap{{"category", "keys"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(!read.isEmpty(), TIMEOUT_MS);
+        VerifyHighlight(*window, QString("keys"));
+        QTest::keyClick(window->Window(), Qt::Key_Down);
+        VerifyHighlight(*window, QString("updates"));
     }
 
     // The command carries its args to the window: the one made by Main.qml.
