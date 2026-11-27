@@ -69,7 +69,7 @@
 | `sessions.open` | нет; не объявлена в манифесте, поэтому её нет в палитре (аргументы `{agent, id}` из палитры не задать) | `SessionsPanel.qml`: выбирает сессию `agent`/`id`, как Enter на её строке (`selected`, затем `activated()`: терминал показывает сессию); сессии нет в списке — предупреждение и ничего больше. Команду запускает окно по клику на уведомление рабочего стола (`05-plugins.md`) |
 | `shell.reportBug` | `Cmd+Shift+B`, только `mac` | `Main.qml`: диалог отчёта об ошибке |
 | `shell.palette` | `Ctrl+Shift+P`, `mac`: `Cmd+Shift+P`, без `when` | `Main.qml`: палитра команд (см. «Палитра») |
-| `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md) |
+| `shell.settings` | `Cmd+,`, только `mac` | `Main.qml`: окно настроек (05-plugins.md); необязательные `args` — `{category: "appearance"\|"keys"\|"updates"}` или `{plugin: "<id>"}` открывают его на этой категории, без `args` окно открывается на последней выбранной |
 | `shell.about` | нет | `Main.qml`: окно «About roost» (05-plugins.md); ещё пунктом меню roost (macOS) и кнопкой «About…» панели инструментов (Linux) |
 | `terminal.copy` | `Ctrl+Shift+C`, `mac`: `Cmd+C`, `when` `terminal.view` | `TerminalPanel.qml`: копирует выделение терминала |
 | `terminal.fontBigger` | `Ctrl+Shift+=`, `mac`: `Cmd+=` и `Cmd+Shift+=` (вторая запись вклада: люди жмут `Cmd++`), без `when` (вклад плагина `terminal`) | `Main.qml`: размер шрифта терминала на 1 больше, не выше 72 |

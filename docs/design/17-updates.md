@@ -75,7 +75,7 @@ AppImage (Linux, `update_install_appimage.cpp`; замену файла дела
 
 ## Настройка
 
-`settings.updates.check` (05-plugins.md, общий раздел настроек): булево, по умолчанию `true`. `false` отменяет идущий запрос и снимает таймер; запросов нет, пока ключ `false`. Правка `settings` действует в окне сразу (`store.changed`): `true` запускает проверку сразу. Документ `settings`, который не прочитался при подключении, — как пустой: проверка включена, как по умолчанию (тема остаётся как есть). Не булево значение ключа и не объект в `updates` — значение по умолчанию (проверка включена), строка в журнал и строка в полосе проблем: `settings.updates.check must be true or false; the check is on`, `settings.updates must be an object with check; the check is on` (как проблемы шрифтов, `Roost.updates.problems`).
+`settings.updates.check` (05-plugins.md, категория Updates окна настроек): булево, по умолчанию `true`. `false` отменяет идущий запрос и снимает таймер; запросов нет, пока ключ `false`. Правка `settings` действует в окне сразу (`store.changed`): `true` запускает проверку сразу. Документ `settings`, который не прочитался при подключении, — как пустой: проверка включена, как по умолчанию (тема остаётся как есть). Не булево значение ключа и не объект в `updates` — значение по умолчанию (проверка включена), строка в журнал и строка в полосе проблем: `settings.updates.check must be true or false; the check is on`, `settings.updates must be an object with check; the check is on` (как проблемы шрифтов, `Roost.updates.problems`).
 
 ## Строка в окне
 
@@ -85,7 +85,7 @@ Dismiss прячет предложение, пока не выйдет верс
 
 ## Окно настроек
 
-Общий раздел: переключатель «Check for updates» пишет `updates.check` одним `store.patch` одного ключа (`{updates: {check: false}}`), как поля шрифтов; не удалась запись — переключатель возвращается к хранимому значению, причина под полями.
+Категория Updates окна настроек: переключатель «Check for updates» пишет `updates.check` одним `store.patch` одного ключа (`{updates: {check: false}}`), как поля шрифтов; не удалась запись — переключатель возвращается к хранимому значению, причина под полями.
 
 ## Тесты
 

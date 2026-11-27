@@ -43,11 +43,12 @@ namespace roost {
 // the panel type is "<plugin id>.<name>".
 //
 // The manifest key `contributes.settings` names the QML file of the settings
-// page of the plugin (05-plugins.md). It is loaded like a panel, inside the
-// plugin's directory, but it has no type id, inputs or outputs: a plugin has
-// at most one page, and CreateSettingsPage(pluginId) makes an instance of it.
-// A page that cannot be loaded is a problem with the panel name "(settings)";
-// a plugin without the key has no page and no problem.
+// page of the plugin (05-plugins.md): a path, or an object {qml, title}. It is
+// loaded like a panel, inside the plugin's directory, but it has no type id,
+// inputs or outputs: a plugin has at most one page, and
+// CreateSettingsPage(pluginId) makes an instance of it. A page that cannot be
+// loaded is a problem with the panel name "(settings)"; a plugin without the
+// key has no page and no problem.
 //
 // A plugin that declares `native.qmlImportPath` gets that directory on the
 // import path of the engine, so its panels can import the QML module in it.
