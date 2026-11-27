@@ -1,0 +1,181 @@
+#include "notifications/backend/command_runner.hpp"
+
+#include <QDateTime>
+#include <QProcess>
+#include <QTimer>
+
+#include <signal.h>
+
+#include <utility>
+
+#include "common/backend_process.hpp"
+#include "notifications/backend/diagnostics.hpp"
+
+namespace roost::notifications {
+
+// One process. Ends exactly once, whichever of the exit, the failure to start
+// and the timeout comes first.
+class CommandRunner::Run : public QObject {
+public:
+    Run(CommandJob job, const RunnerOptions& options, CommandRunner& runner)
+        : QObject(&runner),
+          Job_(std::move(job)),
+          StderrBytes_(options.StderrBytes),
+          Runner_(runner),
+          Process_(this),
+          Timer_(this) {
+        Process_.setProgram(QStringLiteral("bash"));
+        Process_.setArguments({QStringLiteral("-c"), Job_.Run});
+        Process_.setProcessEnvironment(Job_.Environment);
+        // roostd starts the backend in the plugin directory; a command runs
+        // from the home directory, as the commands of the other plugins do.
+        if (const QString home = plugin::HomeDirectory(); !home.isEmpty()) {
+            Process_.setWorkingDirectory(home);
+        }
+        Process_.setStandardOutputFile(QProcess::nullDevice());
+        // A session of its own, so that the group is the process and all it
+        // forked, and default signal handlers, as roostd gives its backends.
+        Process_.setUnixProcessParameters(
+            QProcess::UnixProcessFlag::CreateNewSession |
+            QProcess::UnixProcessFlag::ResetSignalHandlers);
+
+        connect(&Process_, &QProcess::started, this, [this] {
+            Process_.write(Job_.Input);
+            Process_.closeWriteChannel();
+        });
+        connect(&Process_, &QProcess::readyReadStandardError, this, [this] {
+            Stderr_.append(Process_.readAllStandardError());
+            if (Stderr_.size() > StderrBytes_) {
+                Stderr_.remove(0, Stderr_.size() - StderrBytes_);
+            }
+        });
+        connect(&Process_, &QProcess::errorOccurred, this,
+                [this](QProcess::ProcessError error) {
+                    if (error == QProcess::FailedToStart) {
+                        End(std::nullopt, QStringLiteral("failed to start"),
+                            Process_.errorString());
+                    }
+                });
+        connect(&Process_, &QProcess::finished, this,
+                [this](int exitCode, QProcess::ExitStatus status) {
+                    Stderr_.append(Process_.readAllStandardError());
+                    if (Stderr_.size() > StderrBytes_) {
+                        Stderr_.remove(0, Stderr_.size() - StderrBytes_);
+                    }
+                    if (TimedOut_) {
+                        End(std::nullopt, QStringLiteral("timeout"),
+                            QString::fromUtf8(Stderr_));
+                    } else if (status == QProcess::CrashExit) {
+                        End(std::nullopt, QStringLiteral("crashed"),
+                            QString::fromUtf8(Stderr_));
+                    } else {
+                        End(exitCode, QString(), QString::fromUtf8(Stderr_));
+                    }
+                });
+
+        Timer_.setSingleShot(true);
+        connect(&Timer_, &QTimer::timeout, this, [this] {
+            TimedOut_ = true;
+            const auto group = static_cast<pid_t>(Process_.processId());
+            if (group > 0) {
+                ::killpg(group, SIGKILL);
+            }
+            Process_.kill();
+        });
+        Timeout_ = options.Timeout;
+    }
+
+    void Start() {
+        Timer_.start(Timeout_);
+        Process_.start();
+    }
+
+    ~Run() override {
+        // Gone while it runs, with the runner: nothing is left behind.
+        if (!Ended_ && Process_.state() != QProcess::NotRunning) {
+            Process_.disconnect(this);
+            plugin::StopRun(Process_);
+        }
+    }
+
+    Run(const Run&) = delete;
+    Run& operator=(const Run&) = delete;
+
+private:
+    void End(std::optional<int> exitCode, const QString& error,
+             const QString& stderrText) {
+        if (std::exchange(Ended_, true)) {
+            return;
+        }
+        Timer_.stop();
+        Process_.disconnect(this);
+        CommandResult result{.Name = Job_.Name,
+                             .Event = Job_.Event,
+                             .ExitCode = exitCode,
+                             .Error = error,
+                             .Stderr = stderrText,
+                             .At = QDateTime::currentMSecsSinceEpoch()};
+        Runner_.OnEnded(this, result);
+    }
+
+    CommandJob Job_;
+    qsizetype StderrBytes_;
+    CommandRunner& Runner_;
+    QProcess Process_;
+    QTimer Timer_;
+    std::chrono::milliseconds Timeout_{};
+    QByteArray Stderr_;
+    bool TimedOut_ = false;
+    bool Ended_ = false;
+};
+
+CommandRunner::CommandRunner(RunnerOptions options, Done done, QObject* parent)
+    : QObject(parent), Options_(options), Done_(std::move(done)) {}
+
+CommandRunner::~CommandRunner() {
+    Queue_.clear();
+    // The runs are children of the runner and are deleted with it.
+}
+
+bool CommandRunner::Submit(CommandJob job) {
+    if (static_cast<int>(Running_.size()) < Options_.MaxRunning) {
+        Launch(std::move(job));
+        return true;
+    }
+    if (static_cast<int>(Queue_.size()) >= Options_.MaxQueued) {
+        Warn(QStringLiteral("%1 commands are waiting: the run of %2 for %3 is "
+                            "dropped")
+                 .arg(Queue_.size())
+                 .arg(job.Name, job.Event));
+        return false;
+    }
+    Queue_.push_back(std::move(job));
+    return true;
+}
+
+int CommandRunner::RunningCount() const {
+    return static_cast<int>(Running_.size());
+}
+
+int CommandRunner::QueuedCount() const {
+    return static_cast<int>(Queue_.size());
+}
+
+void CommandRunner::Launch(CommandJob job) {
+    auto* run = new Run(std::move(job), Options_, *this);
+    Running_.push_back(run);
+    run->Start();
+}
+
+void CommandRunner::OnEnded(Run* run, const CommandResult& result) {
+    Running_.remove(run);
+    run->deleteLater();
+    if (!Queue_.empty()) {
+        CommandJob next = std::move(Queue_.front());
+        Queue_.pop_front();
+        Launch(std::move(next));
+    }
+    Done_(result);
+}
+
+}  // namespace roost::notifications

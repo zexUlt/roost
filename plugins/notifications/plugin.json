@@ -1,0 +1,11 @@
+{
+  "id": "notifications",
+  "version": "0.1.0",
+  "api": "0",
+  "backend": { "command": ["backend/notifications-backend"] },
+  "contributes": {
+    "commands": [
+      { "id": "notifications.test", "title": "Send a test notification" }
+    ]
+  }
+}
