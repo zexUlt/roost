@@ -19,7 +19,13 @@ set_target_properties(notifications-backend PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ROOST_NOTIFICATIONS_PLUGIN_DIR}/backend)
 
 configure_file(plugin.json ${ROOST_NOTIFICATIONS_PLUGIN_DIR}/plugin.json COPYONLY)
+# The settings page of the plugin (contributes.settings): plain QML, read by
+# the window from the directory of the plugin.
+configure_file(qml/NotificationsSettings.qml
+    ${ROOST_NOTIFICATIONS_PLUGIN_DIR}/qml/NotificationsSettings.qml COPYONLY)
 
 install(FILES plugin.json DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/notifications
     COMPONENT roost)
+install(FILES qml/NotificationsSettings.qml
+    DESTINATION ${ROOST_INSTALL_PLUGINS_DIR}/notifications/qml COMPONENT roost)
 roost_install_plugin_binary(notifications notifications-backend backend)

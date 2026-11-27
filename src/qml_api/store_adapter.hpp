@@ -31,8 +31,10 @@ public:
 
     // callback(error, null); the patch is a JSON object that is merged into
     // the document (RFC 7386: a null removes a key, an object is merged, the
-    // rest replaces), which roostd checks. `changed` follows.
-    Q_INVOKABLE void patch(const QString& plugin, const QJSValue& patch,
+    // rest replaces), which roostd checks. `changed` follows. False when the
+    // call could not be made (the caller has no context): the callback is then
+    // never called.
+    Q_INVOKABLE bool patch(const QString& plugin, const QJSValue& patch,
                            const QJSValue& callback = QJSValue());
 
 signals:

@@ -4,6 +4,7 @@
   "api": "0",
   "backend": { "command": ["backend/notifications-backend"] },
   "contributes": {
+    "settings": { "qml": "qml/NotificationsSettings.qml", "title": "Notifications" },
     "commands": [
       { "id": "notifications.test", "title": "Send a test notification" }
     ]
