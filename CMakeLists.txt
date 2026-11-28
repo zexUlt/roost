@@ -11,7 +11,7 @@ if(NOT ROOST_VERSION_PATCH MATCHES "^(0|[1-9][0-9]*)$")
 endif()
 
 project(roost
-    VERSION 0.6.${ROOST_VERSION_PATCH}
+    VERSION 0.7.${ROOST_VERSION_PATCH}
     DESCRIPTION "A desktop app over background coding-agent sessions"
     LANGUAGES C CXX
 )
